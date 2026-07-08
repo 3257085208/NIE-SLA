@@ -1,0 +1,20 @@
+[Unit]
+Description=NStatus external probe agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nstatus-agent
+EnvironmentFile=/opt/nstatus-agent/agent_orangepi.env
+ExecStart=/usr/bin/python3 /opt/nstatus-agent/agent_orangepi.py
+Restart=always
+RestartSec=10
+User=nstatus
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

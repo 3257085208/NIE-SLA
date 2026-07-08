@@ -1,0 +1,335 @@
+import { clamp, nowSec, parseBoolean, sanitizeAgentId, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA } from './utils.js';
+import { json, constantTimeEqual } from './auth.js';
+import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
+import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, getPublicSettings } from './admin.js';
+import { summarizeTraffic, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
+
+export async function getStatusCached(request, env, url) {
+  const ttl = clamp(Number(env.STATUS_CACHE_TTL || 45), 0, 300);
+  const wantsFresh = url.searchParams.get('fresh') === '1' || url.searchParams.get('cache') === '0';
+  const wantsLite = url.searchParams.get('lite') === '1';
+  if (!ttl || (wantsFresh && isAdminRequest(request, env))) return getStatusFresh(env, url);
+  const cacheUrl = new URL(url.origin + url.pathname);
+  cacheUrl.searchParams.set('days', String(clamp(Number(url.searchParams.get('days') || 30), 1, 90)));
+  cacheUrl.searchParams.set('privacy', publicCachePrivacyVersion(env));
+  if (wantsLite) cacheUrl.searchParams.set('lite', '1');
+  const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
+  const cache = caches.default;
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+  const canUseSnapshot = !wantsLite && (!wantsFresh || !isAdminRequest(request, env));
+  const res = canUseSnapshot ? (await getStatusSnapshot(env, url)) || await getStatusFresh(env, url) : await getStatusFresh(env, url);
+  const headers = new Headers(res.headers);
+  headers.set('cache-control', `public, max-age=${ttl}`);
+  headers.set('x-nstatus-cache', 'miss');
+  const cachedRes = new Response(res.body, { status: res.status, headers });
+  try { await cache.put(cacheKey, cachedRes.clone()); } catch (_) {}
+  return cachedRes;
+}
+
+function isAdminRequest(request, env) {
+  const configured = env.ADMIN_TOKEN;
+  if (!configured) return false;
+  const auth = request.headers.get('authorization') || '';
+  const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
+  return constantTimeEqual(token, configured);
+}
+
+export async function getStatusFresh(env, url) {
+  if (parseBoolean(env.ENSURE_SCHEMA_ON_READ ?? false, false)) await ensureV6Schema(env);
+  let payload = await buildStatusPayload(env, url);
+  if (url?.searchParams?.get('lite') === '1') payload = compactStatusPayload(payload);
+  return json(sanitizePublicStatusPayload(payload, env), 200, env);
+}
+
+function compactStatusPayload(payload) {
+  const targets = (payload.targets || []).map((target) => ({
+    id: target.id,
+    name: target.name,
+    group_name: target.group_name,
+    type: target.type,
+    enabled: target.enabled,
+    interval_sec: target.interval_sec,
+    ok: target.ok,
+    checked_at: target.checked_at,
+    latency_ms: target.latency_ms,
+    uptime_24h: target.uptime_24h,
+    error: target.error,
+    last_metrics_at: target.last_metrics_at,
+    agent_version: target.agent_version,
+    machine_uptime_sec: target.machine_uptime_sec,
+    agent_metrics: target.agent_metrics ? { traffic: target.agent_metrics.traffic || null } : null,
+    traffic: target.agent_metrics?.traffic || target.traffic || null,
+  }));
+  return {
+    ok: payload.ok,
+    name: payload.name,
+    now: payload.now,
+    days: payload.days,
+    regions: payload.regions,
+    frontend_theme: payload.frontend_theme,
+    frontend: payload.frontend,
+    traffic: payload.traffic,
+    privacy: payload.privacy,
+    storage: payload.storage,
+    timezone: payload.timezone,
+    targets,
+    summaries: [],
+    incidents: [],
+    warnings: payload.warnings || [],
+    lite: true,
+  };
+}
+
+async function buildStatusPayload(env, url = null) {
+  let sync_warning = null;
+  try { if (parseBoolean(env.AUTO_SYNC_TARGETS ?? false, false)) await syncEnvTargetsMaybe(env); } catch (_) { sync_warning = 'TARGETS_JSON sync failed; using last known targets'; }
+  const days = clamp(Number(url?.searchParams?.get('days') || DEFAULT_STATUS_DAYS), 1, 90);
+  const startDay = dateAddLocal(env, -days + 1);
+  const targetsPromise = env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.traffic_enabled, t.traffic_quota_gb, t.traffic_mode FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all()
+    .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.traffic_enabled, t.traffic_quota_gb FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all())
+    .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all());
+  const metricsPromise = env.DB.prepare(`SELECT * FROM agent_metrics_state`).all().catch(() => ({ results: [] }));
+  const latestPromise = env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo, uptime_24h, uptime_7d, avg_latency_24h, last_fail_at, current_outage_started_at, last_recover_at, status_changed_at FROM latest_status`).all().catch(() => ({ results: [] }));
+  const pingTargetsPromise = env.DB.prepare(`SELECT id, name FROM ping_targets WHERE enabled = 1 ORDER BY name`).all().catch(() => ({ results: [] }));
+  const [targets, metricsResult, latestResult, pingTargetsResult] = await Promise.all([targetsPromise, metricsPromise, latestPromise, pingTargetsPromise]);
+  const r2State = await readR2State(env);
+  const latestMap = {};
+  for (const row of latestResult.results || []) latestMap[row.target_id] = row;
+  const summaries = mergeSummaryRows(getSummaryRowsFromState(r2State, startDay), await getCheckBucketSummaries(env, startDay));
+  const dayList = [];
+  for (let i = days - 1; i >= 0; i--) dayList.push(dateAddLocal(env, -i));
+  const maskIps = publicMaskIps(env);
+  const hidePorts = publicHidePorts(env);
+  const incidents = parseBoolean(env.INCIDENTS_TO_D1 ?? true, true) ? await getRecentIncidents(env, 40, maskIps, hidePorts) : [];
+  const traffic = trafficPeriod(env);
+  const targetTrafficSettings = {};
+  for (const t of targets.results || []) targetTrafficSettings[sanitizeAgentId(t.id)] = trafficSettingsFromTarget(t, env);
+  const trafficMap = {};
+  try {
+    const trafficRows = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all();
+    for (const row of trafficRows.results || []) trafficMap[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
+  } catch (_) {}
+  const metricsMap = {};
+  // Agent heartbeat: fill uptime for NAT/agent-monitored targets
+  const agentActiveDays = new Set();
+  for (const r of metricsResult.results || []) {
+    if (r.updated_at) {
+      const key = sanitizeAgentId(r.agent_id);
+      const settings = targetTrafficSettings[key] || { enabled: false, quota_gb: 0, quota_bytes: 0, ...traffic };
+      if (key) metricsMap[key] = publicAgentSummary(r, summarizeTraffic(trafficMap[`${key}|${settings.month}`], settings));
+      const day = dayFromSec(Math.floor(new Date(r.updated_at).getTime() / 1000), env);
+      agentActiveDays.add(key + ':' + day);
+    }
+  }
+  if (agentActiveDays.size) {
+    const seen = new Set(summaries.map(s => s.target_id + '|' + s.day));
+    for (const t of targets.results || []) {
+      const aid = sanitizeAgentId(t.id);
+      if (!aid) continue;
+      for (let i = 0; i < dayList.length; i++) {
+        if (seen.has(t.id + '|' + dayList[i])) continue;
+        if (agentActiveDays.has(aid + ':' + dayList[i])) {
+          seen.add(t.id + '|' + dayList[i]);
+          summaries.push({ target_id: t.id, day: dayList[i], total: 1, ok_count: 1, sum_latency_ms: 0 });
+        }
+      }
+    }
+  }
+
+  const rows = (targets.results || []).map((targetRow) => {
+    const r2Status = r2State.targets?.[targetRow.id] || {};
+    const d1Status = latestMap[targetRow.id] || {};
+    const status = Number(d1Status.checked_at || 0) > Number(r2Status.checked_at || 0) ? d1Status : r2Status;
+    const row = { ...targetRow, ...status };
+    const displayHost = row.type === 'tcp' ? publicHost(row.target_host, maskIps) : row.target_host;
+    const displayUrl = row.type === 'http' ? publicUrl(row.url, env) : row.url;
+    const displayTarget = row.type === 'http' ? displayUrl : displayHost;
+    const agentState = metricsMap[sanitizeAgentId(targetRow.id)] || null;
+    const publicRow = { ...row, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || 'Auto', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null };
+    if (hidePorts) delete publicRow.target_port;
+    return publicRow;
+  });
+  // Add CNY price conversion
+  const rates = await getExchangeRates(env);
+  if (rates && rows.length) {
+    for (const row of rows) {
+      if (row.price != null && row.currency) {
+        const rate = rates[row.currency.toUpperCase()] || 1;
+        row.price_cny = Math.round((Number(row.price) / rate) * 100) / 100;
+      }
+    }
+  }
+  const frontend = await publicFrontend(env);
+  return { ok: true, name: env.PUBLIC_SITE_NAME || 'NStatus', now: new Date().toISOString(), days: dayList, regions: REGION_LABELS, region_proxy_enabled: Boolean(env.REGION_PROXY), frontend_theme: frontend.theme, frontend, traffic, ping_targets: pingTargetsResult.results || [], privacy: { mask_ips: maskIps, hide_ports: hidePorts, hide_colo: true }, storage: { mode: 'd1-check-buckets+r2-state', raw_checks_in_d1: false, raw_history_in_r2: Boolean(env.ARCHIVE), d1_regular_check_writes: true, status_cache_ttl: clamp(Number(env.STATUS_CACHE_TTL || 45), 0, 300) }, timezone: { offset_minutes: timezoneOffsetMin(env), label: timezoneLabel(env) }, targets: rows, summaries, incidents, warnings: sync_warning ? [sync_warning] : [] };
+}
+
+async function publicFrontend(env) {
+  try {
+    const settings = await getPublicSettings(env);
+    return { theme: settings.frontend_theme || 'classic' };
+  } catch (_) {
+    return { theme: String(env.PUBLIC_FRONTEND_THEME || '').toLowerCase() === 'cards' ? 'cards' : 'classic' };
+  }
+}
+
+function publicAgentSummary(row, traffic = null) {
+  const net = parseJsonSafe(row.net);
+  if (net) {
+    delete net.rx_raw;
+    delete net.tx_raw;
+    delete net.rx_bytes;
+    delete net.tx_bytes;
+  }
+  const vpsInfo = parseJsonSafe(row.vps_info);
+  return {
+    updated_at: row.updated_at || null,
+    agent_version: row.agent_version || null,
+    hostname: row.hostname || null,
+    cpu_percent: Number(row.cpu_percent || 0) || 0,
+    process_count: Number(row.process_count || 0) || 0,
+    thread_count: Number(row.thread_count || row.process_count || 0) || 0,
+    memory: parseJsonSafe(row.memory),
+    load: parseJsonSafe(row.load),
+    disk: parseJsonSafe(row.disk),
+    net,
+    uptime_sec: Number(row.uptime_sec || 0) || null,
+    vps_info: vpsInfo && Object.keys(vpsInfo).length ? vpsInfo : null,
+    pings: row.pings ? parseJsonSafe(row.pings) : [],
+    traffic,
+  };
+}
+
+function parseJsonSafe(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch (_) { return {}; }
+}
+
+function mergeSummaryRows(...groups) {
+  const byKey = new Map();
+  for (const group of groups) {
+    for (const row of group || []) {
+      if (!row?.target_id || !row?.day) continue;
+      byKey.set(`${row.target_id}|${row.day}`, {
+        target_id: row.target_id,
+        day: row.day,
+        total: Number(row.total || 0),
+        ok_count: Number(row.ok_count || 0),
+        sum_latency_ms: Number(row.sum_latency_ms || 0),
+      });
+    }
+  }
+  return [...byKey.values()].sort((a, b) => a.day.localeCompare(b.day) || a.target_id.localeCompare(b.target_id));
+}
+
+export async function getStatusSnapshot(env, url) {
+  if (!env.ARCHIVE || !parseBoolean(env.STATUS_SNAPSHOT_TO_R2 ?? true, true)) return null;
+  if (clamp(Number(url.searchParams.get('days') || DEFAULT_STATUS_DAYS), 1, 90) !== DEFAULT_STATUS_DAYS) return null;
+  const key = String(env.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, '');
+  try {
+    const object = await env.ARCHIVE.get(key);
+    if (!object) return null;
+    const payload = await object.json();
+    const generatedAt = Math.floor(new Date(payload?.generated_at || payload?.now || 0).getTime() / 1000);
+    if (!payload?.ok || payload?.schema !== STATUS_SNAPSHOT_SCHEMA || !Number.isFinite(generatedAt) || !generatedAt || generatedAt < nowSec() - clamp(Number(env.STATUS_SNAPSHOT_MAX_AGE_SEC || 900), 60, 86400)) return null;
+    const frontend = await publicFrontend(env);
+    payload.frontend_theme = frontend.theme;
+    payload.frontend = { ...(payload.frontend || {}), ...frontend };
+    await attachAgentState(payload, env);
+    return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${clamp(Number(env.STATUS_CACHE_TTL || 45), 0, 300)}`, 'x-nstatus-source': 'r2-status-snapshot' });
+  } catch (_) { return null; }
+}
+
+async function attachAgentState(payload, env) {
+  if (!Array.isArray(payload?.targets) || !env.DB) return;
+  try {
+    const traffic = trafficPeriod(env);
+    const targetTrafficSettings = {};
+    try {
+      const targetRows = await env.DB.prepare(`SELECT id, traffic_enabled, traffic_quota_gb, traffic_mode, expires_at FROM targets`).all();
+      for (const row of targetRows.results || []) targetTrafficSettings[sanitizeAgentId(row.id)] = trafficSettingsFromTarget(row, env);
+    } catch (_) {
+      try {
+        const targetRows = await env.DB.prepare(`SELECT id, traffic_enabled, traffic_quota_gb, expires_at FROM targets`).all();
+        for (const row of targetRows.results || []) targetTrafficSettings[sanitizeAgentId(row.id)] = trafficSettingsFromTarget(row, env);
+      } catch (_) {}
+    }
+    const trafficMap = {};
+    const trafficRows = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all();
+    for (const row of trafficRows.results || []) trafficMap[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
+    const rows = await env.DB.prepare(`SELECT * FROM agent_metrics_state`).all();
+    const byAgent = {};
+    for (const row of rows.results || []) {
+      const key = sanitizeAgentId(row.agent_id);
+      const settings = targetTrafficSettings[key] || { enabled: false, quota_gb: 0, quota_bytes: 0, ...traffic };
+      if (key) byAgent[key] = publicAgentSummary(row, summarizeTraffic(trafficMap[`${key}|${settings.month}`], settings));
+    }
+    for (const target of payload.targets) {
+      const state = byAgent[sanitizeAgentId(target.id)];
+      if (!state) continue;
+      target.last_metrics_at = state.updated_at || null;
+      target.agent_version = state.agent_version || null;
+      target.machine_uptime_sec = Number(state.uptime_sec || 0) || null;
+      target.agent_metrics = state;
+    }
+  } catch (_) {}
+}
+
+export async function writeStatusSnapshot(env) {
+  if (!env.ARCHIVE || !parseBoolean(env.STATUS_SNAPSHOT_TO_R2 ?? true, true)) return { ok: true, skipped: true, reason: 'disabled_or_missing_r2' };
+  const every = clamp(Number(env.STATUS_SNAPSHOT_EVERY_SEC || 300), 30, 3600);
+  const key = String(env.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, '');
+  const last = await getStatusSnapshotGeneratedAt(env, key);
+  if (last && last > nowSec() - every) return { ok: true, skipped: true, reason: 'too_soon', last_write_at: last };
+  const url = new URL('https://nstatus.internal/api/status');
+  url.searchParams.set('days', String(DEFAULT_STATUS_DAYS));
+  const payload = await buildStatusPayload(env, url);
+  payload.schema = STATUS_SNAPSHOT_SCHEMA;
+  payload.generated_at = new Date().toISOString();
+  payload.storage = { ...(payload.storage || {}), status_snapshot_in_r2: true, status_snapshot_key: key };
+  await env.ARCHIVE.put(key, JSON.stringify(payload), { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: { schema: STATUS_SNAPSHOT_SCHEMA, generated_at: payload.generated_at } });
+  return { ok: true, key, targets: payload.targets?.length || 0, summaries: payload.summaries?.length || 0 };
+}
+
+export async function getChecksCached(request, env, url) {
+  const ttl = clamp(Number(env.CHECKS_CACHE_TTL || 60), 0, 300);
+  if (!ttl) return getChecks(env, url);
+  const defaultLimit = clamp(Number(env.CHECKS_DEFAULT_LIMIT || 864), 24, 20000);
+  const maxLimit = clamp(Number(env.CHECKS_MAX_LIMIT || 12000), 100, 20000);
+  const requestedLimit = clamp(Number(url.searchParams.get('limit') || defaultLimit), 1, maxLimit);
+  const requestedHours = clamp(Number(url.searchParams.get('hours') || env.CHECKS_WINDOW_HOURS || 72), 1, 24 * 30);
+  const cacheUrl = new URL(url.origin + url.pathname);
+  const targetId = url.searchParams.get('target_id') || '';
+  if (targetId) cacheUrl.searchParams.set('target_id', targetId);
+  cacheUrl.searchParams.set('limit', String(requestedLimit));
+  cacheUrl.searchParams.set('hours', String(requestedHours));
+  const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
+  const cache = caches.default;
+  const cached = await cache.match(cacheKey);
+  if (cached) return cached;
+  const res = await getChecks(env, cacheUrl);
+  const headers = new Headers(res.headers);
+  headers.set('cache-control', `public, max-age=${ttl}`);
+  headers.set('x-nstatus-cache', 'miss');
+  const cachedRes = new Response(res.body, { status: res.status, headers });
+  try { await cache.put(cacheKey, cachedRes.clone()); } catch (_) {}
+  return cachedRes;
+}
+
+async function getChecks(env, url) {
+  if (parseBoolean(env.ENSURE_SCHEMA_ON_READ ?? false, false)) await ensureV6Schema(env);
+  const id = url.searchParams.get('target_id');
+  const defaultLimit = clamp(Number(env.CHECKS_DEFAULT_LIMIT || 864), 24, 20000);
+  const maxLimit = clamp(Number(env.CHECKS_MAX_LIMIT || 12000), 100, 20000);
+  const limit = clamp(Number(url.searchParams.get('limit') || defaultLimit), 1, maxLimit);
+  const hours = clamp(Number(url.searchParams.get('hours') || env.CHECKS_WINDOW_HOURS || 72), 1, 24 * 30);
+  if (!id) return json({ ok: false, error: 'target_id is required' }, 400, env);
+  const days = Math.ceil(hours / 24);
+  const since = nowSec() - hours * 3600;
+  const allPoints = await readCheckBuckets(env, id, days);
+  const checks = allPoints.filter(p => Number(p.checked_at) >= since).sort((a, b) => Number(b.checked_at) - Number(a.checked_at)).slice(0, limit).map(publicCheckPoint);
+  const daily = dailyPointsFromChecks(allPoints, env);
+  const agentSeries = await getAgentSeriesForTarget(env, id, days, since, limit);
+  return json({ ok: true, source: 'd1-check-buckets', checks, daily_points: daily, agent_series: agentSeries }, 200, env);
+}

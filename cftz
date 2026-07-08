@@ -1,0 +1,836 @@
+#!/usr/bin/env bash
+# cftz - NStatus VPS Agent 管理工具
+# Usage: cftz {install|uninstall|update|log|set|status}
+
+set -euo pipefail
+
+DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://sla.niekaixiang.com}"
+SERVICE_NAME="nstatus-metrics"
+INSTALL_DIR="/usr/local/bin"
+WORK_DIR="/opt/nstatus-metrics"
+ENV_FILE="${WORK_DIR}/nstatus-metrics.env"
+BIN_NAME="nstatus-metrics"
+AGENT_USER="nstatus"
+
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; RED='\033[0;31m'; BOLD='\033[1m'; NC='\033[0m'
+NL=$'\n'
+ok()    { echo -e "  ${GREEN}[OK]${NC} $*"; }
+warn()  { echo -e "  ${YELLOW}!${NC} $*"; }
+err()   { echo -e "  ${RED}[ERR]${NC} $*" >&2; }
+info()  { echo -e "  $*"; }
+
+curl_config_escape() {
+    local s="${1-}"
+    s=${s//\\/\\\\}
+    s=${s//"/\\"}
+    printf '%s' "$s"
+}
+
+curl_api() {
+    local token="$1" totp="${2:-}" cfg rc
+    shift 2
+    cfg=$(mktemp) || return 1
+    chmod 0600 "$cfg" 2>/dev/null || true
+    {
+        printf 'header = "Authorization: Bearer %s"\n' "$(curl_config_escape "$token")"
+        if [[ -n "$totp" ]]; then
+            printf 'header = "x-totp-code: %s"\n' "$(curl_config_escape "$totp")"
+        fi
+    } > "$cfg"
+    if curl --config "$cfg" "$@"; then
+        rc=0
+    else
+        rc=$?
+    fi
+    rm -f "$cfg"
+    return $rc
+}
+
+
+install_unlock_deps() {
+    local enabled="${NSTATUS_UNLOCK_CHECK_ENABLED:-1}"
+    case "${enabled,,}" in 0|false|off) return 0 ;; esac
+    local need=0
+    for cmd in curl jq bc dig ip; do
+        command -v "$cmd" >/dev/null 2>&1 || need=1
+    done
+    command -v nc >/dev/null 2>&1 || command -v netcat >/dev/null 2>&1 || need=1
+    [[ "$need" -eq 0 ]] && return 0
+    info "installing unlock check dependencies"
+    if command -v apk >/dev/null 2>&1; then
+        apk add --no-cache curl jq bc bind-tools iproute2 netcat-openbsd >/dev/null 2>&1 || warn "failed to install some unlock dependencies"
+    elif command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq >/dev/null 2>&1 || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl jq bc dnsutils iproute2 netcat-openbsd >/dev/null 2>&1 || warn "failed to install some unlock dependencies"
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y -q curl jq bc bind-utils iproute nmap-ncat >/dev/null 2>&1 || warn "failed to install some unlock dependencies"
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y -q curl jq bc bind-utils iproute nmap-ncat >/dev/null 2>&1 || warn "failed to install some unlock dependencies"
+    else
+        warn "package manager not found; install curl jq bc dig nc ip manually for unlock checks"
+    fi
+}
+
+detect_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64)  echo "amd64" ;;
+        i386|i486|i586|i686) echo "386" ;;
+        aarch64|arm64) echo "arm64" ;;
+        armv5*)        echo "armv5" ;;
+        armv6*)        echo "armv6" ;;
+        armv7l|armv7*|armhf) echo "arm" ;;
+        *)             err "unsupported architecture: $(uname -m)"; exit 1 ;;
+    esac
+}
+
+download_binary() {
+    local arch=$(detect_arch)
+    local url="${DOWNLOAD_BASE}/bin/${BIN_NAME}-linux-${arch}?v=$(date +%s)"
+    local tmpbin=$(mktemp)
+    if command -v curl &>/dev/null; then
+        curl -fSL "$url" -o "$tmpbin" --progress-bar || { rm -f "$tmpbin"; err "下载失败"; exit 1; }
+    elif command -v wget &>/dev/null; then
+        wget -q "$url" -O "$tmpbin" || { rm -f "$tmpbin"; err "下载失败"; exit 1; }
+    else
+        rm -f "$tmpbin"; err "需要 curl 或 wget"; exit 1
+    fi
+    chmod +x "$tmpbin"
+    echo "$tmpbin"
+}
+
+read_env() {
+    if [[ -f "$ENV_FILE" ]]; then
+        source "$ENV_FILE"
+    fi
+}
+
+# ── 子命令 ────────────────────────────────────────────────────────
+
+detect_init() {
+    if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then echo "systemd"
+    elif command -v rc-service &>/dev/null; then echo "openrc"
+    else echo ""; fi
+}
+
+do_install() {
+    [[ $EUID -ne 0 ]] && { err "请使用 root 权限: sudo cftz install"; exit 1; }
+
+    echo -e "\n${BOLD}正在安装 NStatus Metrics Agent${NC}\n"
+
+    local arch=$(detect_arch)
+    info "架构: ${arch}"
+
+    local api="${NSTATUS_API_BASE:-}"
+    local tok="${NSTATUS_AGENT_TOKEN:-}"
+    local aid="${NSTATUS_AGENT_ID:-$(hostname)}"
+    local interval="${NSTATUS_INTERVAL_SEC:-300}"
+    local unlock_enabled="${NSTATUS_UNLOCK_CHECK_ENABLED:-1}"
+    local unlock_sec="${NSTATUS_UNLOCK_CHECK_SEC:-300}"
+    local unlock_url="${NSTATUS_UNLOCK_CHECK_URL:-https://IP.Check.Place}"
+    local unlock_timeout="${NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC:-90}"
+
+    [[ -z "$api" ]] && read -rp "  API URL: " api </dev/tty
+    [[ -z "$tok" ]] && { read -rsp "  Token: " tok </dev/tty; echo; }
+    [[ -z "$api" || -z "$tok" ]] && { err "API 和 Token 不能为空"; exit 1; }
+
+    local tmpbin=$(download_binary)
+    install_unlock_deps
+
+    # 创建用户
+    if id -u "$AGENT_USER" &>/dev/null 2>&1; then
+        ok "用户已存在"
+    elif command -v useradd &>/dev/null; then
+        useradd --system --no-create-home --shell /usr/sbin/nologin "$AGENT_USER" 2>/dev/null || useradd -r -s /usr/sbin/nologin "$AGENT_USER"
+        ok "用户已创建"
+    elif command -v adduser &>/dev/null; then
+        adduser -S -D -H -s /sbin/nologin "$AGENT_USER" 2>/dev/null || adduser -D -H -s /sbin/nologin "$AGENT_USER"
+        ok "用户已创建"
+    fi
+
+    mkdir -p "$WORK_DIR"
+    if command -v install &>/dev/null; then
+        install -m 0755 "$tmpbin" "${WORK_DIR}/${BIN_NAME}"
+    else
+        cp "$tmpbin" "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"
+    fi
+    ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
+    rm -f "$tmpbin"
+
+    printf '%s\n' \
+      "NSTATUS_API_BASE=${api}" \
+      "NSTATUS_AGENT_TOKEN=${tok}" \
+      "NSTATUS_AGENT_ID=${aid}" \
+      "NSTATUS_AGENT_LABEL=${aid}" \
+      "NSTATUS_INTERVAL_SEC=${interval}" \
+      "NSTATUS_UNLOCK_CHECK_ENABLED=${unlock_enabled}" \
+      "NSTATUS_UNLOCK_CHECK_SEC=${unlock_sec}" \
+      "NSTATUS_UNLOCK_CHECK_URL=${unlock_url}" \
+      "NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC=${unlock_timeout}" > "$ENV_FILE"
+    chmod 0600 "$ENV_FILE"
+    chown -R "$AGENT_USER":"$AGENT_USER" "$WORK_DIR" 2>/dev/null || chown -R "$AGENT_USER" "$WORK_DIR" 2>/dev/null || true
+
+    local init=$(detect_init)
+    case "$init" in
+        systemd)
+            cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=NStatus VPS Metrics Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${WORK_DIR}
+EnvironmentFile=${ENV_FILE}
+ExecStart=${WORK_DIR}/${BIN_NAME}
+Restart=always
+RestartSec=15
+User=${AGENT_USER}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${WORK_DIR}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            systemctl daemon-reload
+            systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+            systemctl restart "$SERVICE_NAME"
+            ok "systemd 服务已启动"
+            ;;
+        openrc)
+            cat > "/etc/init.d/${SERVICE_NAME}" <<EOF
+#!/sbin/openrc-run
+name="${SERVICE_NAME}"
+description="NStatus VPS Metrics Agent"
+command="${WORK_DIR}/${BIN_NAME}"
+command_args=""
+pidfile="/run/\${RC_SVCNAME}.pid"
+command_background=true
+depend() { need net; after firewall; }
+EOF
+            chmod +x "/etc/init.d/${SERVICE_NAME}"
+            rc-update add "$SERVICE_NAME" default 2>/dev/null || true
+            rc-service "$SERVICE_NAME" start 2>/dev/null
+            ok "OpenRC 服务已启动"
+            ;;
+        *)
+            "${WORK_DIR}/${BIN_NAME}" &
+            ok "已后台启动 (PID $!)"
+            ;;
+    esac
+
+    echo
+    info "目标: ${aid}"
+    info "日志: cftz log"
+}
+
+do_uninstall() {
+    [[ $EUID -ne 0 ]] && { err "请使用 root 权限: sudo cftz uninstall"; exit 1; }
+
+    echo -e "\n${BOLD}正在卸载 NStatus Metrics Agent${NC}\n"
+
+    local init=$(detect_init)
+    case "$init" in
+        systemd)
+            systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+            systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+            rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+            systemctl daemon-reload 2>/dev/null || true
+            ;;
+        openrc)
+            rc-service "$SERVICE_NAME" stop 2>/dev/null || true
+            rc-update del "$SERVICE_NAME" 2>/dev/null || true
+            rm -f "/etc/init.d/${SERVICE_NAME}"
+            ;;
+    esac
+    rm -f "${INSTALL_DIR}/${BIN_NAME}"
+    rm -f "${INSTALL_DIR}/cftz"
+    rm -rf "$WORK_DIR"
+    userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
+
+    ok "已完全移除"
+}
+
+do_update() {
+    [[ $EUID -ne 0 ]] && { err "请使用 root 权限: sudo cftz update"; exit 1; }
+
+    echo -e "\n${BOLD}正在更新 NStatus Metrics Agent${NC}\n"
+
+    if [[ ! -f "${WORK_DIR}/${BIN_NAME}" && ! -f "${INSTALL_DIR}/${BIN_NAME}" ]]; then
+        err "Agent 未安装，请先运行: cftz install"
+        exit 1
+    fi
+
+    local tmpbin=$(download_binary)
+    install_unlock_deps
+    local init=$(detect_init)
+    case "$init" in
+        systemd) systemctl stop "$SERVICE_NAME" 2>/dev/null || true ;;
+        openrc)  rc-service "$SERVICE_NAME" stop 2>/dev/null || true ;;
+    esac
+    mkdir -p "$WORK_DIR"
+    if command -v install &>/dev/null; then
+        install -m 0755 "$tmpbin" "${WORK_DIR}/${BIN_NAME}"
+    else
+        cp "$tmpbin" "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"
+    fi
+    ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
+    chown "$AGENT_USER":"$AGENT_USER" "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || chown "$AGENT_USER" "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || true
+    rm -f "$tmpbin"
+    case "$init" in
+        systemd) systemctl start "$SERVICE_NAME" ;;
+        openrc)  rc-service "$SERVICE_NAME" start 2>/dev/null ;;
+        *)       "${WORK_DIR}/${BIN_NAME}" & ;;
+    esac
+
+    # 同步更新 cftz 自身
+    local cftz_url="${DOWNLOAD_BASE}/cftz?v=$(date +%s)"
+    if command -v curl &>/dev/null; then
+        curl -fSL "$cftz_url" -o "${INSTALL_DIR}/cftz" --silent && ok "cftz 脚本已更新" || warn "cftz 脚本更新失败"
+    elif command -v wget &>/dev/null; then
+        wget -q "$cftz_url" -O "${INSTALL_DIR}/cftz" && ok "cftz 脚本已更新" || warn "cftz 脚本更新失败"
+    fi
+    chmod +x "${INSTALL_DIR}/cftz" 2>/dev/null || true
+
+    ok "更新完成并已重启"
+}
+
+do_log() {
+    local lines="${1:-30}"
+    journalctl -u "$SERVICE_NAME" -n "$lines" --no-pager
+}
+
+do_set() {
+    [[ $EUID -ne 0 ]] && { err "请使用 root 权限: sudo cftz set"; exit 1; }
+
+    if [[ ! -f "$ENV_FILE" ]]; then
+        err "Agent 未安装，请先运行: cftz install"
+        exit 1
+    fi
+
+    read_env
+    local api="${NSTATUS_API_BASE:-}"
+    local tok="${NSTATUS_AGENT_TOKEN:-}"
+    local aid="${NSTATUS_AGENT_ID:-}"
+    local interval="${NSTATUS_INTERVAL_SEC:-300}"
+    local ping_targets="${NSTATUS_PING_TARGETS:-*}"
+    local ping_sec="${NSTATUS_PING_SEC:-20}"
+    local unlock_enabled="${NSTATUS_UNLOCK_CHECK_ENABLED:-1}"
+    local unlock_sec="${NSTATUS_UNLOCK_CHECK_SEC:-300}"
+    local unlock_url="${NSTATUS_UNLOCK_CHECK_URL:-https://IP.Check.Place}"
+    local unlock_timeout="${NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC:-90}"
+
+    while true; do
+        echo -e "\n${BOLD}Agent 配置${NC}\n"
+        info "目标 ID = 管理面板中探针目标的 ID"
+        echo
+        printf "  ${CYAN}1${NC}) API 地址:     ${api:-<未设置>}\n"
+        printf "  ${CYAN}2${NC}) Token:        ${tok:0:8}****\n"
+        printf "  ${CYAN}3${NC}) 目标 ID:      ${aid:-<未设置>}\n"
+        printf "  ${CYAN}4${NC}) 上报间隔:     ${interval}s\n"
+        printf "  ${CYAN}5${NC}) Ping 目标:    ${ping_targets:-无}\n"
+        printf "  ${CYAN}6${NC}) Ping 间隔:    ${ping_sec}s\n"
+        echo
+        info "选择编号修改 (回车保存退出):"
+        read -rp "  [1-6]: " sel </dev/tty
+
+        case "${sel:-}" in
+            1) IFS= read -rp "  API 地址 [${api}]: " v </dev/tty; [[ -n "$v" ]] && api="$v"; ok "API: ${api}" ;;
+            2) read -rsp "  Token [${tok:0:8}****]: " v </dev/tty; echo; [[ -n "$v" ]] && tok="$v"; ok "Token 已更新" ;;
+            3) aid=$(do_set_target "$api" "$tok" "$aid") ;;
+            4) read -rp "  上报间隔秒 [${interval}]: " v </dev/tty; [[ -n "$v" ]] && interval="$v"; ok "间隔: ${interval}s" ;;
+            6) read -rp "  Ping 间隔秒 [${ping_sec}]: " v </dev/tty; [[ -n "$v" ]] && ping_sec="$v"; ok "Ping 间隔: ${ping_sec}s" ;;
+            "") break ;;
+            *) warn "无效选择" ;;
+        esac
+    done
+
+    printf '%s\n' \
+      "NSTATUS_API_BASE=${api}" \
+      "NSTATUS_AGENT_TOKEN=${tok}" \
+      "NSTATUS_AGENT_ID=${aid}" \
+      "NSTATUS_AGENT_LABEL=${aid}" \
+      "NSTATUS_INTERVAL_SEC=${interval}" \
+      "NSTATUS_PING_TARGETS=${ping_targets}" \
+      "NSTATUS_PING_SEC=${ping_sec}" \
+      "NSTATUS_UNLOCK_CHECK_ENABLED=${unlock_enabled}" \
+      "NSTATUS_UNLOCK_CHECK_SEC=${unlock_sec}" \
+      "NSTATUS_UNLOCK_CHECK_URL=${unlock_url}" \
+      "NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC=${unlock_timeout}" > "$ENV_FILE"
+    chmod 0600 "$ENV_FILE"
+    chown -R "$AGENT_USER":"$AGENT_USER" "$WORK_DIR"
+    systemctl restart "$SERVICE_NAME"
+
+    ok "配置已保存并重启"
+    info "目标: ${aid}"
+    info "Ping:  ${ping_targets:-无}"
+}
+
+do_set_target() {
+    local api="$1" tok="$2" cur="$3"
+    local list_json
+    list_json=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/agent/targets" \
+        -H "Accept: application/json" 2>/dev/null) || true
+
+    if [[ -z "$list_json" ]]; then
+        warn "API 不可达或返回为空，请手动输入" >&2
+        read -rp "  目标 ID [${cur}]: " v </dev/tty
+        echo "${v:-$cur}"
+        return
+    fi
+
+    if ! echo "$list_json" | grep -q '"ok": true'; then
+        warn "API 错误: $(echo "$list_json" | head -c 120)" >&2
+        read -rp "  目标 ID [${cur}]: " v </dev/tty
+        echo "${v:-$cur}"
+        return
+    fi
+
+    # 显示输出到 stderr (调用者用 $(...) 捕获 stdout)
+    echo -e "\n${BOLD}可选探针目标${NC} (选择作为本 Agent 的目标 ID)\n" >&2
+    local ol=$(echo "$list_json" | tr -d '\r\n\t ')
+    local pr="${ol//'{"id"'/${NL}{\"id\"}}"
+    local pc=0
+    declare -a aids=() anames=() atypes=()
+    while IFS= read -r obj; do
+        [[ -z "$obj" ]] && continue
+        echo "$obj" | grep -q '^{"id"' || continue
+        local pid=$(echo "$obj" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//') || true
+        local pn=$(echo "$obj" | grep -o '"name":"[^"]*"' | head -1 | sed 's/"name":"//;s/"//') || true
+        local pt=$(echo "$obj" | grep -o '"type":"[^"]*"' | head -1 | sed 's/"type":"//;s/"//') || true
+        [[ -z "$pid" ]] && continue
+        pc=$((pc + 1))
+        aids+=("$pid"); anames+=("$pn"); atypes+=("$pt")
+        local mark=" "
+        [[ "$pid" == "$cur" ]] && mark="*"
+        printf "  ${CYAN}%s%2d${NC}) %-30s %s %s\n" "$mark" "$pc" "$pn" "$pt" "$pid" >&2
+    done <<< "$pr"
+
+    if [[ $pc -eq 0 ]]; then
+        warn "未找到目标，请手动输入" >&2
+        read -rp "  目标 ID [${cur}]: " v </dev/tty
+        echo "${v:-$cur}"
+        return
+    fi
+
+    echo >&2
+    info "当前: ${cur}  (* = 已选中)  回车=保持当前" >&2
+    read -rp "  输入编号或手动输入 ID: " choice </dev/tty
+
+    if [[ -z "$choice" ]]; then
+        ok "目标: ${cur}" >&2
+        echo "$cur"
+    elif [[ "$choice" =~ ^[0-9]+$ && "$choice" -ge 1 && "$choice" -le $pc ]]; then
+        local idx=$((choice - 1))
+        ok "目标: ${anames[$idx]} (${aids[$idx]})" >&2
+        echo "${aids[$idx]}"
+    else
+        ok "目标: ${choice}" >&2
+        echo "$choice"
+    fi
+}
+
+do_set_ping() {
+    local api="$1" tok="$2" cur="$3"
+    local pt_list=""
+    pt_list=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/agent/ping-targets" \
+        -H "Accept: application/json" 2>/dev/null) || true
+
+    if [[ -z "$pt_list" ]] || echo "$pt_list" | grep -q '"Unauthorized"'; then
+        warn "无法获取 Ping 目标列表" >&2
+        read -rp "  Ping 目标 (ID逗号分隔, *=全部, 空=禁用): " v </dev/tty
+        echo "${v:-$cur}"
+        return
+    fi
+
+    local ol=$(echo "$pt_list" | tr -d '\r\n\t ')
+    local pr="${ol//'{"id"'/${NL}{\"id\"}}"
+    local pc=0
+    declare -a pids=() pnames=() ptgts=()
+
+    while IFS= read -r obj; do
+        [[ -z "$obj" ]] && continue
+        echo "$obj" | grep -q '^{"id"' || continue
+        local pid=$(echo "$obj" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//') || true
+        local pn=$(echo "$obj" | grep -o '"name":"[^"]*"' | head -1 | sed 's/"name":"//;s/"//') || true
+        local pt=$(echo "$obj" | grep -o '"target":"[^"]*"' | head -1 | sed 's/"target":"//;s/"//') || true
+        [[ -z "$pid" ]] && continue
+        pc=$((pc + 1))
+        pids+=("$pid")
+        pnames+=("$pn")
+        ptgts+=("$pt")
+        printf "  ${CYAN}%2d${NC})  %-20s -> %s\n" "$pc" "$pn" "$pt" >&2
+    done <<< "$pr"
+
+    [[ $pc -eq 0 ]] && { warn "没有可用的 Ping 目标" >&2; echo "$cur"; return; }
+
+    echo >&2
+    info "当前: ${cur:-无}  |  *=全部  none=禁用" >&2
+    read -rp "  输入编号 (逗号分隔多选): " choice </dev/tty
+
+    if [[ "$choice" == "none" ]]; then
+        ok "TCP Ping 已禁用" >&2
+        echo ""
+    elif [[ -z "$choice" ]] || [[ "$choice" == "*" ]]; then
+        ok "已选择全部 ${pc} 个目标" >&2
+        echo "*"
+    else
+        local result=""
+        IFS=',' read -ra chs <<< "$choice"
+        for ch in "${chs[@]}"; do
+            ch=$(echo "$ch" | tr -d ' ')
+            [[ "$ch" =~ ^[0-9]+$ && "$ch" -ge 1 && "$ch" -le $pc ]] || continue
+            local idx=$((ch - 1))
+            result="${result}${result:+,}${pids[$idx]}"
+        done
+        if [[ -n "$result" ]]; then
+            ok "已选择: $result" >&2
+            echo "$result"
+        else
+            warn "无效选择，保持当前值" >&2
+            echo "$cur"
+        fi
+    fi
+}
+
+do_status() {
+    systemctl status "$SERVICE_NAME" --no-pager 2>/dev/null || warn "服务未运行"
+}
+
+# ── 管理面板 ──────────────────────────────────────────────────────
+
+do_admin() {
+    read_env
+    local api="${NSTATUS_API_BASE:-}"
+    local tok=""
+    local totp=""
+    read -rsp "  Admin Token: " tok </dev/tty
+    echo
+    [[ -z "$tok" ]] && { err "Token 不能为空"; return 1; }
+
+    read -rp "  TOTP 验证码 (未配置则留空): " totp </dev/tty
+    if [[ -n "$totp" ]] && ! [[ "$totp" =~ ^[0-9]{6}$ ]]; then
+        err "TOTP 验证码必须为6位数字"
+        return 1
+    fi
+
+    local check
+    if [[ -n "$totp" ]]; then
+        check=$(curl_api "$tok" "${totp:-}" -sS --max-time 10 "${api}/api/targets" \
+                    -H "Accept: application/json" \
+                    2>&1) || true
+    else
+        check=$(curl_api "$tok" "${totp:-}" -sS --max-time 10 "${api}/api/targets" \
+                    -H "Accept: application/json" 2>&1) || true
+    fi
+    if [[ -z "$check" ]]; then
+        err "API 不可达: ${api}"
+        return 1
+    fi
+    if ! echo "$check" | grep -q '"ok": true'; then
+        err "Token 或 TOTP 验证码无效: $(echo "$check" | head -c 200)"
+        return 1
+    fi
+    ok "验证通过"
+
+    while true; do
+        echo -e "\n${BOLD}管理面板${NC}\n"
+        echo -e "  ${CYAN}1${NC}) 管理探针目标 (VPS / Web)"
+        echo -e "  ${CYAN}2${NC}) 管理 Ping 目标 (TCP Ping)"
+        echo -e "  ${CYAN}q${NC}) 退出"
+        echo
+        read -rp "  选择: " sel </dev/tty
+        case "${sel:-q}" in
+            1) do_admin_targets "$api" "$tok" "$totp" ;;
+            2) do_admin_pings "$api" "$tok" "$totp" ;;
+            q|Q) break ;;
+            *) warn "无效选择" ;;
+        esac
+    done
+}
+
+do_admin_targets() {
+    local api="$1" tok="$2" totp="$3"
+    while true; do
+        local list_json
+        if [[ -n "$totp" ]]; then
+            list_json=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" \
+                    -H "Accept: application/json" \
+                    2>/dev/null) || true
+        else
+            list_json=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" \
+                    -H "Accept: application/json" 2>/dev/null) || true
+        fi
+
+        local ol=$(echo "$list_json" | tr -d '\r\n\t ')
+        local pr="${ol//'{"id"'/${NL}{\"id\"}}"
+        local tc=0
+        declare -a tids=() tnames=() ttypes=() tgroups=() tenabled=() thosts=() tports=() turls=()
+
+        echo -e "\n${BOLD}探针目标${NC}\n"
+        printf "  %-4s %-28s %-8s %-14s %s\n" "#" "名称" "类型" "分组" "状态"
+        printf "  %-4s %-28s %-8s %-14s %s\n" "---" "----------------------------" "--------" "--------------" "------"
+        while IFS= read -r obj; do
+            [[ -z "$obj" ]] && continue
+            echo "$obj" | grep -q '^{"id"' || continue
+            local tid=$(echo "$obj" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//') || true
+            local tn=$(echo "$obj" | grep -o '"name":"[^"]*"' | head -1 | sed 's/"name":"//;s/"//') || true
+            local tt=$(echo "$obj" | grep -o '"type":"[^"]*"' | head -1 | sed 's/"type":"//;s/"//') || true
+            local tg=$(echo "$obj" | grep -o '"group_name":"[^"]*"' | head -1 | sed 's/"group_name":"//;s/"//') || true
+            local te=$(echo "$obj" | grep -o '"enabled":[0-9]*' | head -1 | sed 's/"enabled"://') || true
+            local th=$(echo "$obj" | grep -o '"target_host":"[^"]*"' | head -1 | sed 's/"target_host":"//;s/"//') || true
+            local tp=$(echo "$obj" | grep -o '"target_port":[0-9]*' | head -1 | sed 's/"target_port"://') || true
+            local tu=$(echo "$obj" | grep -o '"url":"[^"]*"' | head -1 | sed 's/"url":"//;s/"//') || true
+            [[ -z "$tid" ]] && continue
+            tc=$((tc + 1))
+            tids+=("$tid"); tnames+=("$tn"); ttypes+=("$tt"); tgroups+=("$tg"); tenabled+=("$te")
+            thosts+=("$th"); tports+=("$tp"); turls+=("$tu")
+            printf "  ${CYAN}%-4s${NC} %-28s %-8s %-14s %s\n" "${tc})" "$tn" "$tt" "$tg" "$([[ "$te" == "1" ]] && echo -e "${GREEN}启用${NC}" || echo -e "${RED}禁用${NC}")"
+        done <<< "$pr"
+
+        echo
+        echo -e "  ${BOLD}a${NC}) 新增   ${BOLD}e${NC}) 编辑   ${BOLD}d${NC}) 删除   ${BOLD}t${NC}) 切换   ${BOLD}q${NC}) 返回"
+        echo
+        read -rp "  选择: " sel </dev/tty
+
+        case "${sel:-q}" in
+            q|Q) break ;;
+            a|A)
+                IFS= read -rp "  名称: " n </dev/tty
+                read -rp "  类型 (tcp/http): " ty </dev/tty
+                IFS= read -rp "  分组: " gr </dev/tty
+                if [[ "$ty" == "http" ]]; then
+                    IFS= read -rp "  URL: " ur </dev/tty
+                    read -rp "  预期状态码 [200,301,302]: " es </dev/tty
+                    local body="{\"name\":\"$n\",\"group_name\":\"$gr\",\"type\":\"http\",\"url\":\"$ur\",\"expected_status\":\"${es:-200,301,302}\"}"
+                else
+                    read -rp "  主机 [0.0.0.0]: " ho </dev/tty
+                    read -rp "  端口 [1]: " po </dev/tty
+                    read -rp "  区域 [auto]: " re </dev/tty
+                    local body="{\"name\":\"$n\",\"group_name\":\"$gr\",\"type\":\"tcp\",\"target_host\":\"${ho:-0.0.0.0}\",\"target_port\":${po:-1},\"probe_region\":\"${re:-auto}\"}"
+                fi
+                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" -X POST \
+                    -H "Content-Type: application/json" \
+                    -d "$body" 2>/dev/null)
+                echo "$result" | grep -q '"ok": true' && ok "添加成功" || err "失败: $result"
+                ;;
+            e|E)
+                read -rp "  编辑编号: " num </dev/tty
+                [[ "$num" =~ ^[0-9]+$ && "$num" -ge 1 && "$num" -le $tc ]] || { warn "无效"; continue; }
+                local idx=$((num - 1)); local tid="${tids[$idx]}"; local tt="${ttypes[$idx]}"
+                read -rp "  ID [${tid}]: " nid </dev/tty
+                nid="${nid:-$tid}"
+                IFS= read -rp "  名称 [${tnames[$idx]}]: " n </dev/tty
+                IFS= read -rp "  分组 [${tgroups[$idx]}]: " gr </dev/tty
+                local name="${n:-${tnames[$idx]}}" group="${gr:-${tgroups[$idx]}}"
+                if [[ "$nid" != "$tid" ]]; then
+                    local body="{\"id\":\"$nid\",\"name\":\"$name\",\"group_name\":\"$group\""
+                    if [[ "$tt" == "http" ]]; then
+                        IFS= read -rp "  URL [${turls[$idx]}]: " ur </dev/tty
+                        ur="${ur:-${turls[$idx]}}"
+                        body="$body,\"url\":\"$ur\""
+                    else
+                        read -rp "  主机 [${thosts[$idx]}]: " ho </dev/tty
+                        ho="${ho:-${thosts[$idx]}}"
+                        read -rp "  端口 [${tports[$idx]}]: " po </dev/tty
+                        po="${po:-${tports[$idx]}}"
+                        body="$body,\"target_host\":\"$ho\",\"target_port\":$po"
+                    fi
+                    body="$body,\"type\":\"$tt\"}"
+                    curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/$tid" -X DELETE \
+                    2>/dev/null
+                    if [[ -n "$totp" ]]; then
+                        local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" -X POST \
+                    -H "Content-Type: application/json" \
+                             -d "$body" 2>/dev/null)
+                    else
+                        local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" -X POST \
+                    -H "Content-Type: application/json" \
+                            -d "$body" 2>/dev/null)
+                    fi
+                    echo "$result" | grep -q '"ok": true' && ok "已迁移至 $nid" || err "失败"
+                else
+                    local body="{\"name\":\"$name\",\"group_name\":\"$group\""
+                    if [[ "$tt" == "http" ]]; then
+                        IFS= read -rp "  URL [${turls[$idx]}]: " ur </dev/tty; [[ -n "$ur" ]] && body="$body,\"url\":\"$ur\""
+                    else
+                        read -rp "  主机 [${thosts[$idx]}]: " ho </dev/tty; [[ -n "$ho" ]] && body="$body,\"target_host\":\"$ho\""
+                        read -rp "  端口 [${tports[$idx]}]: " po </dev/tty; [[ -n "$po" ]] && body="$body,\"target_port\":$po"
+                    fi
+                    body="$body}"
+                    if [[ -n "$totp" ]]; then
+                        local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/$tid" -X PATCH \
+                    -H "Content-Type: application/json" \
+                             -d "$body" 2>/dev/null)
+                    else
+                        local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/$tid" -X PATCH \
+                    -H "Content-Type: application/json" \
+                            -d "$body" 2>/dev/null)
+                    fi
+                    echo "$result" | grep -q '"ok": true' && ok "已更新" || err "失败"
+                fi
+                ;;
+            d|D)
+                read -rp "  删除编号: " num </dev/tty
+                [[ "$num" =~ ^[0-9]+$ && "$num" -ge 1 && "$num" -le $tc ]] || { warn "无效"; continue; }
+                local idx=$((num - 1))
+                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/${tids[$idx]}" -X DELETE \
+                    2>/dev/null)
+                echo "$result" | grep -q '"ok": true' && ok "已删除 ${tids[$idx]}" || err "失败"
+                ;;
+            t|T)
+                read -rp "  切换编号: " num </dev/tty
+                [[ "$num" =~ ^[0-9]+$ && "$num" -ge 1 && "$num" -le $tc ]] || { warn "无效"; continue; }
+                local idx=$((num - 1)); local nv=1
+                [[ "${tenabled[$idx]}" == "1" ]] && nv=0
+                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/${tids[$idx]}" -X PATCH \
+                    -H "Content-Type: application/json" \
+                    -d "{\"enabled\":$nv}" 2>/dev/null)
+                echo "$result" | grep -q '"ok": true' && ok "已切换 ${tids[$idx]}" || err "失败"
+                ;;
+            *) warn "无效选择" ;;
+        esac
+    done
+}
+
+do_admin_pings() {
+    local api="$1" tok="$2" totp="$3"
+    while true; do
+        local list_json
+        if [[ -n "$totp" ]]; then
+            list_json=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets" \
+                    -H "Accept: application/json" \
+                    2>/dev/null) || true
+        else
+            list_json=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets" \
+                    -H "Accept: application/json" 2>/dev/null) || true
+        fi
+        local ol=$(echo "$list_json" | tr -d '\r\n\t ')
+        local pr="${ol//'{"id"'/${NL}{\"id\"}}"
+        local pc=0
+        declare -a pids=() pnames=() ptgts=() penabled=()
+        echo -e "\n${BOLD}Ping 目标${NC}\n"
+        printf "  %-4s %-24s %-32s %s\n" "#" "ID" "目标" "状态"
+        printf "  %-4s %-24s %-32s %s\n" "---" "------------------------" "--------------------------------" "------"
+        while IFS= read -r obj; do
+            [[ -z "$obj" ]] && continue
+            echo "$obj" | grep -q '^{"id"' || continue
+            local pid=$(echo "$obj" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//') || true
+            local pn=$(echo "$obj" | grep -o '"name":"[^"]*"' | head -1 | sed 's/"name":"//;s/"//') || true
+            local pt=$(echo "$obj" | grep -o '"target":"[^"]*"' | head -1 | sed 's/"target":"//;s/"//') || true
+            local pe=$(echo "$obj" | grep -o '"enabled":[0-9]*' | head -1 | sed 's/"enabled"://') || true
+            [[ -z "$pid" ]] && continue
+            pc=$((pc + 1))
+            pids+=("$pid"); pnames+=("$pn"); ptgts+=("$pt"); penabled+=("$pe")
+            printf "  ${CYAN}%-4s${NC} %-24s %-32s %s\n" "${pc})" "$pid" "$pt" "$([[ "$pe" == "1" ]] && echo -e "${GREEN}启用${NC}" || echo -e "${RED}禁用${NC}")"
+        done <<< "$pr"
+        echo
+        echo -e "  ${BOLD}a${NC}) 新增   ${BOLD}d${NC}) 删除   ${BOLD}t${NC}) 切换   ${BOLD}q${NC}) 返回"
+        echo
+        read -rp "  选择: " sel </dev/tty
+        case "${sel:-q}" in
+            q|Q) break ;;
+            a)
+                read -rp "  ID: " nid </dev/tty
+                IFS= read -rp "  名称: " nname </dev/tty
+                IFS= read -rp "  目标 (主机:端口): " ntarget </dev/tty
+                [[ -z "$nname" || -z "$ntarget" ]] && { warn "名称和目标不能为空"; continue; }
+                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets" -X POST \
+                    -H "Content-Type: application/json" \
+                    -d "{\"id\":\"${nid:-$nname}\",\"name\":\"$nname\",\"target\":\"$ntarget\"}" 2>/dev/null)
+                echo "$result" | grep -q '"ok": true' && ok "添加成功" || err "失败"
+                ;;
+            d)
+                read -rp "  删除编号: " num </dev/tty
+                [[ "$num" =~ ^[0-9]+$ && "$num" -ge 1 && "$num" -le $pc ]] || { warn "无效"; continue; }
+                local idx=$((num - 1))
+                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets/${pids[$idx]}" -X DELETE \
+                    2>/dev/null)
+                echo "$result" | grep -q '"ok": true' && ok "已删除 ${pids[$idx]}" || err "失败"
+                ;;
+            t)
+                read -rp "  切换编号: " num </dev/tty
+                [[ "$num" =~ ^[0-9]+$ && "$num" -ge 1 && "$num" -le $pc ]] || { warn "无效"; continue; }
+                local idx=$((num - 1)); local nv=1
+                [[ "${penabled[$idx]}" == "1" ]] && nv=0
+                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets/${pids[$idx]}" -X PATCH \
+                    -H "Content-Type: application/json" \
+                    -d "{\"enabled\":$nv}" 2>/dev/null)
+                echo "$result" | grep -q '"ok": true' && ok "已切换 ${pids[$idx]}" || err "失败"
+                ;;
+            *) warn "无效选择" ;;
+        esac
+    done
+}
+
+do_totp_setup() {
+    read_env
+    local api="${NSTATUS_API_BASE:-}"
+    local tok=""
+    read -rsp "  Admin Token: " tok </dev/tty
+    echo
+    [[ -z "$tok" ]] && { err "Token 不能为空"; return 1; }
+
+    local result=$(curl_api "$tok" "${totp:-}" -sS --max-time 10 "${api}/api/totp/setup" \
+        -X POST 2>&1) || true
+
+    if ! echo "$result" | grep -q '"ok": true'; then
+        err "设置失败: $result"
+        return 1
+    fi
+
+    local secret=$(echo "$result" | grep -o '"secret":"[^"]*"' | head -1 | sed 's/"secret":"//;s/"//')
+    local uri=$(echo "$result" | grep -o '"uri":"[^"]*"' | head -1 | sed 's/"uri":"//;s/"//')
+
+    echo -e "\n${BOLD}扫描二维码或手动输入密钥:${NC}\n"
+
+    if command -v qrencode &>/dev/null; then
+        echo "$uri" | qrencode -t UTF8 -m 1 -s 2
+    fi
+
+    echo
+    printf "  ${BOLD}密钥:${NC}  ${CYAN}%s${NC}\n" "$secret"
+    echo "  账号: NStatus:admin"
+    echo "  位数: 6"
+    echo
+    read -rp "  输入当前验证码确认: " code </dev/tty
+    [[ -z "$code" ]] && { err "验证码不能为空"; return 1; }
+
+    local verify=$(curl_api "$tok" "${totp:-}" -sS --max-time 10 "${api}/api/totp/verify" \
+        -X POST  \
+        -H "Content-Type: application/json" \
+        -d "{\"code\":\"$code\"}" 2>&1) || true
+
+    if echo "$verify" | grep -q '"ok": true'; then
+        ok "TOTP 已启用。以后 cftz admin 需要输入验证码。"
+    else
+        err "验证失败，请重新运行 cftz totp-setup。"
+    fi
+}
+
+case "${1:-}" in
+    install)   do_install ;;
+    uninstall) do_uninstall ;;
+    update)    do_update ;;
+    log)       do_log "${2:-30}" ;;
+    set)       do_set ;;
+    status)    do_status ;;
+    admin)     do_admin ;;
+    totp-setup) do_totp_setup ;;
+    *)
+        echo -e "${BOLD}cftz${NC} - NStatus VPS Agent 管理工具"
+        echo
+        echo "  cftz install    安装 Agent"
+        echo "  cftz uninstall  完全移除 Agent"
+        echo "  cftz update     更新到最新版本"
+        echo "  cftz log [N]    查看最近 N 行日志 (默认30)"
+        echo "  cftz set        配置 API / Token / 目标 / Ping"
+        echo "  cftz admin      管理探针目标 (增/删/改/切换)"
+        echo "  cftz status     查看服务状态"
+        echo
+        ;;
+esac
+# v1.1.0

@@ -1,0 +1,98 @@
+name: Agent CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  fmt:
+    name: Rust fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          rustup toolchain install 1.86.0 --profile minimal
+          rustup component add rustfmt --toolchain 1.86.0
+      - working-directory: agent
+        run: cargo +1.86.0 fmt -- --check
+
+  linux:
+    name: Linux ${{ matrix.name }}
+    needs: fmt
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            name: amd64
+            out: nstatus-metrics-linux-amd64
+          - target: aarch64-unknown-linux-musl
+            name: arm64
+            out: nstatus-metrics-linux-arm64
+          - target: armv7-unknown-linux-musleabihf
+            name: armv7
+            out: nstatus-metrics-linux-arm
+          - target: armv5te-unknown-linux-musleabi
+            name: armv5
+            out: nstatus-metrics-linux-armv5
+          - target: arm-unknown-linux-musleabi
+            name: armv6
+            out: nstatus-metrics-linux-armv6
+          - target: i686-unknown-linux-musl
+            name: 386
+            out: nstatus-metrics-linux-386
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install 1.86.0 --profile minimal
+      - run: rustup target add --toolchain 1.86.0 ${{ matrix.target }}
+      - working-directory: agent
+        run: cargo +1.86.0 build --release --target ${{ matrix.target }}
+      - working-directory: agent
+        run: |
+          mkdir -p bin
+          cp target/${{ matrix.target }}/release/nstatus-metrics bin/${{ matrix.out }}
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.out }}
+          path: agent/bin/${{ matrix.out }}
+
+  windows:
+    name: Windows amd64
+    needs: fmt
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup toolchain install 1.86.0 --profile minimal
+      - run: rustup target add --toolchain 1.86.0 x86_64-pc-windows-msvc
+      - working-directory: agent
+        run: cargo +1.86.0 build --release --target x86_64-pc-windows-msvc
+      - shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force agent/bin | Out-Null
+          Copy-Item agent/target/x86_64-pc-windows-msvc/release/nstatus-metrics.exe agent/bin/nstatus-metrics-windows-amd64.exe
+      - uses: actions/upload-artifact@v5
+        with:
+          name: nstatus-metrics-windows-amd64.exe
+          path: agent/bin/nstatus-metrics-windows-amd64.exe
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: nstatus-metrics-*
+          merge-multiple: true
+          path: bin/
+      - run: ls -lh bin/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: bin/*
+          generate_release_notes: true

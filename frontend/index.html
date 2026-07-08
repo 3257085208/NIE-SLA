@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>NStatus</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="./style.css?v=20260708-mobile-polish" />
+</head>
+<body data-frontend-theme="cards">
+  <script>
+    (() => {
+      try {
+        const theme = localStorage.getItem('nstatus.frontendTheme');
+        if (theme === 'classic' || theme === 'cards') document.body.dataset.frontendTheme = theme;
+      } catch (_) {}
+    })();
+  </script>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="./" aria-label="NStatus Home">
+        <span class="brand-main" id="brandName">NStatus</span>
+      </a>
+      <div class="footer-right" style="margin-left:auto;">
+        <span>Powered by</span>
+        <span class="cf-logo" aria-hidden="true"><img class="cf-logo-img" src="https://upload.wikimedia.org/wikipedia/commons/4/4b/Cloudflare_Logo.svg" alt="Cloudflare"></span>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap main">
+    <section class="hero">
+      <div class="system-banner" id="globalBanner">
+        <strong>Loading status</strong>
+      </div>
+
+      <p class="intro" id="subline">Loading service status...</p>
+
+      <div class="summary-line" id="summaryLine">
+        <span>Services -</span>
+        <span>Operational -</span>
+        <span>Avg. -</span>
+        <span>Updated -</span>
+      </div>
+    </section>
+
+    <section class="search-row">
+      <input id="serviceSearch" class="search-input" placeholder="Search services, IP, domain or group..." autocomplete="off" />
+    </section>
+
+
+
+
+    <section class="incident-log collapsed" id="incidentLogPanel">
+      <button class="incident-toggle" id="incidentToggle" type="button" aria-expanded="false">
+        <span>Incident log</span>
+        <small id="incidentSummary">No incidents</small>
+        <span class="incident-caret" aria-hidden="true">+</span>
+      </button>
+      <div class="incident-body" id="incidentBody" hidden>
+        <div class="empty">No offline events yet.</div>
+      </div>
+    </section>
+
+    <section id="groups" class="groups" aria-live="polite"></section>
+
+    <section class="inline-chart-panel" id="inlineChartPanel" hidden>
+      <div class="chart-toolbar">
+        <div>
+          <h2 id="chartTitle">Response time</h2>
+          <p id="chartMeta">Last 24 hours</p>
+        </div>
+        <div class="chart-actions">
+          <div class="chart-tabs-wrap">
+            <div class="metric-tabs" role="tablist" aria-label="Metric type">
+              <button type="button" class="metric-tab active" data-metric="latency">Latency</button>
+              <button type="button" class="metric-tab" data-metric="cpu">CPU</button>
+              <button type="button" class="metric-tab" data-metric="mem">Mem</button>
+              <button type="button" class="metric-tab" data-metric="disk">Disk</button>
+              <button type="button" class="metric-tab" data-metric="load">Load</button>
+              <button type="button" class="metric-tab" data-metric="net">Net</button>
+              <button type="button" class="metric-tab" data-metric="conns">Conns</button>
+              <button type="button" class="metric-tab" data-metric="diskio">DiskIO</button>
+              <button type="button" class="metric-tab" data-metric="ping">TCP Ping</button>
+            </div>
+            <div class="chart-range-row">
+              <div class="range-tabs" id="rangeTabs" role="tablist">
+                <button type="button" class="range-tab active" data-range="day">Day</button>
+                <button type="button" class="range-tab" data-range="week">Week</button>
+                <button type="button" class="range-tab" data-range="month">Month</button>
+              </div>
+              <div class="metric-range-tabs" id="metricRangeTabs" role="tablist" style="display:none">
+                <button type="button" class="metric-range-tab active" data-range="1h">1h</button>
+                <button type="button" class="metric-range-tab" data-range="6h">6h</button>
+                <button type="button" class="metric-range-tab" data-range="24h">24h</button>
+              </div>
+              <button type="button" class="chart-reset" id="chartReset" disabled>Reset</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-title-row">
+          <span id="chartServiceName">No service selected</span>
+          <strong id="chartAvg">Avg.: -</strong>
+        </div>
+        <div class="chart-canvas-wrap" id="chartCanvasWrap">
+          <canvas id="latencyChart"></canvas>
+        </div>
+      </div>
+      <div class="vps-info-bar" id="vpsInfoBar" hidden></div>
+    </section>
+
+    <section class="checks-panel">
+      <div class="checks-head">
+        <div>
+          <h2>Recent checks</h2>
+          <p id="checksHint">Select a service to view recent check records.</p>
+        </div>
+        <div class="checks-controls">
+          <label>
+            <span>Per page</span>
+            <select id="pageSize">
+              <option value="5" selected>5</option>
+              <option value="10">10</option>
+              <option value="30">30</option>
+              <option value="50">50</option>
+            </select>
+          </label>
+          <button class="small-btn" id="prevPage" type="button">Prev</button>
+          <span id="pageInfo">-</span>
+          <button class="small-btn" id="nextPage" type="button">Next</button>
+        </div>
+      </div>
+      <div id="checks" class="checks muted">No data yet.</div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div class="footer-left">Copyright © NStatus 2026</div>
+      <div class="footer-right"></div>
+    </div>
+  </footer>
+
+  <script src="./config.js?v=20260704-runtime-config2"></script>
+  <script type="module" src="./app.js?v=20260708-unlock-compact"></script>
+  <script src="./vendor/chart.umd.min.js?v=4.4.9" async onload="window.dispatchEvent(new Event('nstatus:chartjs-ready'))"></script>
+</body>
+</html>

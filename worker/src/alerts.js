@@ -1,0 +1,751 @@
+import { clamp, nowSec, parseBoolean, sanitizeAgentId, isPrivateHost } from './utils.js';
+import { summarizeTraffic, trafficSettingsFromTarget } from './traffic.js';
+import { safeJson } from './auth.js';
+
+const SETTINGS_KEY = 'alert_settings';
+const TG_TOKEN_KEY = 'alert_telegram_bot_token';
+const SECRET_PREFIX = 'enc:v1:';
+const DEFAULT_SETTINGS = {
+  enabled: false,
+  telegram_chat_id: '',
+  offline_minutes: 10,
+  repeat_minutes: 360,
+  notify_online: true,
+  cpu_percent: 90,
+  memory_percent: 90,
+  disk_percent: 90,
+  load1: 0,
+  disk_read_mb_s: 0,
+  disk_write_mb_s: 0,
+  net_rx_mb_s: 0,
+  net_tx_mb_s: 0,
+  process_count: 0,
+  thread_count: 0,
+  expiry_days: 7,
+  traffic_remaining_percent: 10,
+  traffic_remaining_gb: 0,
+};
+
+const NUMERIC_FIELDS = new Set([
+  'offline_minutes',
+  'repeat_minutes',
+  'cpu_percent',
+  'memory_percent',
+  'disk_percent',
+  'load1',
+  'disk_read_mb_s',
+  'disk_write_mb_s',
+  'net_rx_mb_s',
+  'net_tx_mb_s',
+  'process_count',
+  'thread_count',
+  'expiry_days',
+  'traffic_remaining_percent',
+  'traffic_remaining_gb',
+]);
+
+const BOOLEAN_FIELDS = new Set(['enabled', 'notify_online']);
+
+export async function getAlertSettings(env, options = {}) {
+  const stored = await readStoredSettings(env);
+  const settings = normalizeAlertSettings(stored);
+  const token = await telegramToken(env);
+  const chatId = telegramChatId(env, settings);
+  const out = {
+    ...settings,
+    telegram_chat_id: chatId || settings.telegram_chat_id || '',
+    telegram_bot_token_set: Boolean(token),
+    telegram_bot_token_source: String(env.TELEGRAM_BOT_TOKEN || env.TG_BOT_TOKEN || '').trim() ? 'env' : (token ? 'db' : 'none'),
+    last_result: await readAlertLastResult(env),
+  };
+  if (options.includeSecret) out.telegram_bot_token = token;
+  return out;
+}
+
+export async function updateAlertSettings(request, env) {
+  if (!env.DB) return { ok: false, error: 'D1 binding DB is required' };
+  const body = await safeJson(request);
+  const previous = await readStoredSettings(env);
+  const next = normalizeAlertSettings({ ...previous, ...pickSettings(body) });
+  await setMeta(env, SETTINGS_KEY, JSON.stringify(next));
+
+  if (Object.prototype.hasOwnProperty.call(body || {}, 'telegram_bot_token')) {
+    const token = String(body.telegram_bot_token || '').trim();
+    if (token) await setMeta(env, TG_TOKEN_KEY, await encryptSecret(token, env));
+  }
+  if (parseBoolean(body?.telegram_bot_token_clear, false)) await setMeta(env, TG_TOKEN_KEY, '');
+  return { ok: true, ...(await getAlertSettings(env)) };
+}
+
+export async function sendTestAlert(request, env) {
+  const body = await safeJson(request).catch(() => ({}));
+  const settings = await getAlertSettings(env, { includeSecret: true });
+  const result = await sendTelegram(env, settings, [
+    `NStatus 测试报警`,
+    `站点：${String(env.PUBLIC_SITE_NAME || 'NStatus')}`,
+    `时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}`,
+    body?.message ? `备注：${String(body.message).slice(0, 200)}` : '',
+  ].filter(Boolean).join('\n'));
+  return { ok: result.ok, error: result.error || undefined };
+}
+
+export async function runAlertChecks(env, options = {}) {
+  if (!env.DB) return { ok: true, skipped: true, reason: 'no_db' };
+  const settings = await getAlertSettings(env, { includeSecret: true });
+  if (!settings.enabled && !options.force) return finishAlertRun(env, { ok: true, skipped: true, reason: 'disabled' });
+  if (!settings.telegram_bot_token || !telegramChatId(env, settings)) return finishAlertRun(env, { ok: true, skipped: true, reason: 'telegram_not_configured' });
+  await ensureAlertStateTable(env);
+
+  const [targetRows, metricRows, trafficRows, latestRows] = await Promise.all([
+    env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 ORDER BY group_name, name`).all().catch(() => ({ results: [] })),
+    env.DB.prepare(`SELECT * FROM agent_metrics_state`).all().catch(() => ({ results: [] })),
+    env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all().catch(() => ({ results: [] })),
+    env.DB.prepare(`SELECT * FROM latest_status`).all().catch(() => ({ results: [] })),
+  ]);
+
+  const metricsByAgent = new Map();
+  for (const row of metricRows.results || []) {
+    const id = sanitizeAgentId(row.agent_id);
+    if (id) metricsByAgent.set(id, row);
+  }
+
+  const trafficByKey = new Map();
+  for (const row of trafficRows.results || []) {
+    trafficByKey.set(`${sanitizeAgentId(row.agent_id)}|${row.month}`, row);
+  }
+
+  const latestByTarget = new Map();
+  for (const row of latestRows.results || []) {
+    if (row.target_id) latestByTarget.set(String(row.target_id), row);
+  }
+
+  const now = nowSec();
+  const messages = [];
+  const maxMessages = clamp(Number(options.max_messages || env.ALERT_MAX_MESSAGES_PER_RUN || 20), 1, 100);
+  for (const target of targetRows.results || []) {
+    if (messages.length >= maxMessages) break;
+    const targetSettings = targetAlertSettings(target, settings);
+    if (!targetSettings.enabled) continue;
+    const agentId = sanitizeAgentId(target.id);
+    const metric = metricsByAgent.get(agentId) || null;
+    const latest = latestByTarget.get(String(target.id)) || null;
+    await collectProbeStaleAlert(env, targetSettings, target, latest, now, messages, maxMessages);
+    if (messages.length >= maxMessages) break;
+    await collectProbeDownAlert(env, targetSettings, target, latest, now, messages, maxMessages);
+    if (messages.length >= maxMessages) break;
+    await collectOfflineAlert(env, targetSettings, target, metric, now, messages, maxMessages);
+    if (messages.length >= maxMessages) break;
+    await collectMetricAlerts(env, targetSettings, target, metric, now, messages, maxMessages);
+    if (messages.length >= maxMessages) break;
+    await collectExpiryAlert(env, targetSettings, target, now, messages, maxMessages);
+    if (messages.length >= maxMessages) break;
+    await collectTrafficAlert(env, targetSettings, target, trafficByKey, now, messages, maxMessages);
+  }
+
+  const sent = [];
+  const errors = [];
+  const batches = buildTelegramAlertBatches(messages);
+  for (const batch of batches) {
+    const result = await sendTelegram(env, settings, batch.text);
+    if (result.ok) {
+      for (const item of batch.items) {
+        await item.commit();
+        sent.push({ target_id: item.targetId, rule_key: item.ruleKey });
+      }
+    } else {
+      for (const item of batch.items) {
+        errors.push({ target_id: item.targetId, rule_key: item.ruleKey, error: result.error });
+      }
+    }
+  }
+  return finishAlertRun(env, { ok: errors.length === 0, checked: (targetRows.results || []).length, queued: messages.length, sent: sent.length, telegram_messages: batches.length, errors });
+}
+
+function buildTelegramAlertBatches(messages, maxChars = 3600) {
+  if (!messages.length) return [];
+  const batches = [];
+  let current = [];
+  let currentText = '';
+  const headerFor = (start, count = 0) => `NStatus 报警汇总（${messages.length} 条${messages.length > 1 ? `，${start + 1}-${start + count}` : ''}）`;
+
+  const flush = () => {
+    if (!current.length) return;
+    const start = messages.indexOf(current[0]);
+    batches.push({ items: current, text: `${headerFor(start, current.length)}\n${currentText}`.slice(0, 3900) });
+    current = [];
+    currentText = '';
+  };
+
+  messages.forEach((item, index) => {
+    const entry = `\n${index + 1}. ${String(item.text || '').trim().replace(/\n{3,}/g, '\n\n').slice(0, 900)}`;
+    const candidate = currentText ? `${currentText}\n${entry}` : entry;
+    if (current.length && headerFor(index, current.length).length + candidate.length > maxChars) flush();
+    current.push(item);
+    currentText = currentText ? `${currentText}\n${entry}` : entry;
+  });
+  flush();
+  return batches;
+}
+
+async function collectProbeStaleAlert(env, settings, target, latest, now, messages, maxMessages) {
+  const ruleKey = 'probe_stale';
+  if (isAgentOnlyProbe(target, latest)) {
+    await clearIfActive(env, target.id, ruleKey, now);
+    return;
+  }
+  const latestAt = Math.max(Number(latest?.checked_at || 0), Number(target?.last_checked_at || 0));
+  if (!latestAt) return;
+  const staleSec = now - latestAt;
+  const isStale = staleSec >= probeStaleThresholdSec(settings, target);
+  const state = await getAlertState(env, target.id, ruleKey);
+  if (isStale) {
+    const text = [
+      `🟠 VPS 探测无数据：${targetLabel(target)}`,
+      `最后探测：${formatDateTime(latestAt)}`,
+      `已中断：${formatDuration(staleSec)}`,
+      `阈值：${formatDuration(probeStaleThresholdSec(settings, target))}`,
+    ].join('\n');
+    await enqueueActiveAlert(env, settings, messages, maxMessages, target.id, ruleKey, text, { value: staleSec });
+  } else if (state?.status === 'active') {
+    const text = [
+      `🟢 VPS 探测恢复：${targetLabel(target)}`,
+      `恢复探测：${formatDateTime(latestAt)}`,
+    ].join('\n');
+    if (settings.notify_online) {
+      messages.push({
+        targetId: target.id,
+        ruleKey,
+        text,
+        commit: () => markResolved(env, target.id, ruleKey, now),
+      });
+    } else {
+      await markResolved(env, target.id, ruleKey, now);
+    }
+  }
+}
+
+async function collectProbeDownAlert(env, settings, target, latest, now, messages, maxMessages) {
+  const ruleKey = 'probe_down';
+  if (!latest || isAgentOnlyProbe(target, latest) || isProbeStale(settings, target, latest, now)) {
+    if (isAgentOnlyProbe(target, latest)) await clearIfActive(env, target.id, ruleKey, now);
+    return;
+  }
+  const state = await getAlertState(env, target.id, ruleKey);
+  const isDown = Number(latest.ok || 0) !== 1;
+  if (isDown) {
+    const downAt = Number(latest.current_outage_started_at || latest.checked_at || 0) || now;
+    const downSec = now - downAt;
+    if (downSec < offlineThresholdSec(settings)) return;
+    const text = [
+      `🔴 VPS 探测异常：${targetLabel(target)}`,
+      `开始时间：${formatDateTime(downAt)}`,
+      `已异常：${formatDuration(downSec)}`,
+      latest.error ? `错误：${String(latest.error).slice(0, 180)}` : '',
+    ].filter(Boolean).join('\n');
+    await enqueueActiveAlert(env, settings, messages, maxMessages, target.id, ruleKey, text, { value: downSec });
+  } else if (state?.status === 'active') {
+    const text = [
+      `🟢 VPS 探测恢复：${targetLabel(target)}`,
+      `恢复时间：${formatDateTime(Number(latest.checked_at || now))}`,
+      latest.latency_ms != null ? `延迟：${Math.round(Number(latest.latency_ms))} ms` : '',
+    ].filter(Boolean).join('\n');
+    if (settings.notify_online) {
+      messages.push({
+        targetId: target.id,
+        ruleKey,
+        text,
+        commit: () => markResolved(env, target.id, ruleKey, now),
+      });
+    } else {
+      await markResolved(env, target.id, ruleKey, now);
+    }
+  }
+}
+
+async function collectOfflineAlert(env, settings, target, metric, now, messages, maxMessages) {
+  const ruleKey = 'agent_offline';
+  const thresholdSec = clamp(Number(settings.offline_minutes || 10), 1, 1440) * 60;
+  const seenAt = metricUpdatedAtSec(metric);
+  const isOffline = Boolean(seenAt && now - seenAt >= thresholdSec);
+  if (!metric && !seenAt) return;
+  const label = targetLabel(target);
+  const state = await getAlertState(env, target.id, ruleKey);
+  if (isOffline) {
+    const duration = formatDuration(now - seenAt);
+    const text = [
+      `🔴 VPS 离线：${label}`,
+      `最后上报：${formatDateTime(seenAt)}`,
+      `已失联：${duration}`,
+      `阈值：${settings.offline_minutes} 分钟`,
+    ].join('\n');
+    await enqueueActiveAlert(env, settings, messages, maxMessages, target.id, ruleKey, text, { value: now - seenAt });
+  } else if (state?.status === 'active') {
+    const text = [
+      `🟢 VPS 上线：${label}`,
+      `恢复上报：${formatDateTime(now)}`,
+      seenAt ? `最后上报：${formatDateTime(seenAt)}` : '',
+    ].filter(Boolean).join('\n');
+    if (settings.notify_online) {
+      messages.push({
+        targetId: target.id,
+        ruleKey,
+        text,
+        commit: () => markResolved(env, target.id, ruleKey, now),
+      });
+    } else {
+      await markResolved(env, target.id, ruleKey, now);
+    }
+  }
+}
+
+async function collectMetricAlerts(env, settings, target, metric, now, messages, maxMessages) {
+  const seenAt = metricUpdatedAtSec(metric);
+  if (!metric || !seenAt || now - seenAt > clamp(Number(settings.offline_minutes || 10), 1, 1440) * 120) return;
+  const values = metricValues(metric);
+  const rules = [
+    ['metric_cpu', 'CPU', values.cpuPercent, Number(settings.cpu_percent || 0), '%', (v) => `${v.toFixed(1)}%`],
+    ['metric_memory', '内存', values.memoryPercent, Number(settings.memory_percent || 0), '%', (v) => `${v.toFixed(1)}%`],
+    ['metric_disk', '硬盘', values.diskPercent, Number(settings.disk_percent || 0), '%', (v) => `${v.toFixed(1)}%`],
+    ['metric_load1', '负载', values.load1, Number(settings.load1 || 0), '', (v) => v.toFixed(2)],
+    ['metric_disk_read', '磁盘读', values.diskReadBytesSec, Number(settings.disk_read_mb_s || 0) * 1024 * 1024, 'B/s', formatBytesPerSec],
+    ['metric_disk_write', '磁盘写', values.diskWriteBytesSec, Number(settings.disk_write_mb_s || 0) * 1024 * 1024, 'B/s', formatBytesPerSec],
+    ['metric_net_rx', '下行', values.netRxBytesSec, Number(settings.net_rx_mb_s || 0) * 1024 * 1024, 'B/s', formatBytesPerSec],
+    ['metric_net_tx', '上行', values.netTxBytesSec, Number(settings.net_tx_mb_s || 0) * 1024 * 1024, 'B/s', formatBytesPerSec],
+    ['metric_process_count', '进程数', values.processCount, Number(settings.process_count || 0), '', (v) => String(Math.round(v))],
+    ['metric_thread_count', '线程数', values.threadCount, Number(settings.thread_count || 0), '', (v) => String(Math.round(v))],
+  ];
+  for (const [ruleKey, label, value, threshold, unit, formatter] of rules) {
+    if (messages.length >= maxMessages) return;
+    if (!Number.isFinite(value) || !Number.isFinite(threshold) || threshold <= 0) {
+      await clearIfActive(env, target.id, ruleKey, now);
+      continue;
+    }
+    if (value > threshold) {
+      const thresholdText = unit === 'B/s' ? formatBytesPerSec(threshold) : `${threshold}${unit}`;
+      const text = [
+        `⚠️ VPS 指标超限：${targetLabel(target)}`,
+        `项目：${label}`,
+        `当前：${formatter(value)}`,
+        `阈值：${thresholdText}`,
+        `上报：${formatDateTime(seenAt)}`,
+      ].join('\n');
+      await enqueueActiveAlert(env, settings, messages, maxMessages, target.id, ruleKey, text, { value });
+    } else {
+      await clearIfActive(env, target.id, ruleKey, now);
+    }
+  }
+}
+
+async function collectExpiryAlert(env, settings, target, now, messages, maxMessages) {
+  const daysThreshold = Number(settings.expiry_days || 0);
+  const expiresAt = Number(target.expires_at || 0);
+  if (!Number.isFinite(expiresAt) || expiresAt <= 0 || !Number.isFinite(daysThreshold) || daysThreshold <= 0) {
+    await clearIfActive(env, target.id, 'expiry', now);
+    return;
+  }
+  const daysLeft = Math.ceil((expiresAt - now) / 86400);
+  if (daysLeft < 0 || daysLeft > daysThreshold) {
+    await clearIfActive(env, target.id, 'expiry', now);
+    return;
+  }
+  const text = [
+    `⏰ VPS 即将到期：${targetLabel(target)}`,
+    `到期时间：${formatDateOnly(expiresAt)}`,
+    `剩余：${daysLeft} 天`,
+    target.price != null ? `费用：${target.price} ${target.currency || 'USD'}${target.billing_cycle ? ` / ${target.billing_cycle}` : ''}` : '',
+  ].filter(Boolean).join('\n');
+  await enqueueActiveAlert(env, settings, messages, maxMessages, target.id, `expiry:${expiresAt}`, text, { value: daysLeft });
+}
+
+async function collectTrafficAlert(env, settings, target, trafficByKey, now, messages, maxMessages) {
+  const trafficSettings = trafficSettingsFromTarget(target, env, now);
+  if (!trafficSettings.enabled || trafficSettings.quota_bytes <= 0) {
+    await clearTrafficStates(env, target.id, now);
+    return;
+  }
+  const row = trafficByKey.get(`${sanitizeAgentId(target.id)}|${trafficSettings.month}`);
+  const traffic = summarizeTraffic(row, trafficSettings);
+  const remainingBytes = Math.max(0, traffic.quota_bytes - traffic.total_bytes);
+  const remainingPercent = traffic.quota_bytes > 0 ? Math.max(0, 100 - Number(traffic.percent || 0)) : 100;
+  const percentLimit = Number(settings.traffic_remaining_percent || 0);
+  const gbLimit = Number(settings.traffic_remaining_gb || 0);
+  const hitPercent = Number.isFinite(percentLimit) && percentLimit > 0 && remainingPercent <= percentLimit;
+  const hitGb = Number.isFinite(gbLimit) && gbLimit > 0 && remainingBytes <= gbLimit * 1024 * 1024 * 1024;
+  const ruleKey = `traffic:${traffic.month || trafficSettings.month}`;
+  if (!hitPercent && !hitGb) {
+    await clearIfActive(env, target.id, ruleKey, now);
+    return;
+  }
+  const reasons = [];
+  if (hitPercent) reasons.push(`剩余百分比 ≤ ${percentLimit}%`);
+  if (hitGb) reasons.push(`剩余流量 ≤ ${gbLimit} GB`);
+  const text = [
+    `📉 VPS 流量不足：${targetLabel(target)}`,
+    `已用：${formatBytes(traffic.total_bytes)} / ${formatBytes(traffic.quota_bytes)} (${traffic.percent ?? 0}%)`,
+    `剩余：${formatBytes(remainingBytes)} (${remainingPercent.toFixed(1)}%)`,
+    `计费方式：${traffic.mode_label || traffic.mode}`,
+    `周期：${traffic.period_start || '-'} ~ ${traffic.period_end || '-'}`,
+    `触发：${reasons.join('，')}`,
+  ].join('\n');
+  await enqueueActiveAlert(env, settings, messages, maxMessages, target.id, ruleKey, text, { value: remainingBytes });
+}
+
+async function enqueueActiveAlert(env, settings, messages, maxMessages, targetId, ruleKey, text, extra = {}) {
+  if (messages.length >= maxMessages) return;
+  const now = nowSec();
+  const state = await getAlertState(env, targetId, ruleKey);
+  const repeatSec = clamp(Number(settings.repeat_minutes || 360), 0, 10080) * 60;
+  const shouldSend = !state || state.status !== 'active' || !state.last_sent_at || (repeatSec > 0 && now - Number(state.last_sent_at) >= repeatSec);
+  if (!shouldSend) return;
+  messages.push({
+    targetId,
+    ruleKey,
+    text,
+    commit: () => markActive(env, targetId, ruleKey, now, extra.value),
+  });
+}
+
+async function clearIfActive(env, targetId, ruleKey, now) {
+  const state = await getAlertState(env, targetId, ruleKey);
+  if (state?.status === 'active') await markResolved(env, targetId, ruleKey, now);
+}
+
+async function clearTrafficStates(env, targetId, now) {
+  try {
+    const rows = await env.DB.prepare(`SELECT rule_key FROM alert_state WHERE target_id = ? AND rule_key LIKE 'traffic:%' AND status = 'active'`).bind(targetId).all();
+    for (const row of rows.results || []) await markResolved(env, targetId, row.rule_key, now);
+  } catch (_) {}
+}
+
+async function getAlertState(env, targetId, ruleKey) {
+  try {
+    return await env.DB.prepare(`SELECT * FROM alert_state WHERE target_id = ? AND rule_key = ?`).bind(targetId, ruleKey).first();
+  } catch (_) {
+    return null;
+  }
+}
+
+async function markActive(env, targetId, ruleKey, now, value = null) {
+  await env.DB.prepare(`
+    INSERT INTO alert_state (target_id, rule_key, status, last_value, opened_at, resolved_at, last_sent_at, updated_at)
+    VALUES (?, ?, 'active', ?, ?, NULL, ?, ?)
+    ON CONFLICT(target_id, rule_key) DO UPDATE SET
+      status='active',
+      last_value=excluded.last_value,
+      opened_at=CASE WHEN alert_state.status = 'active' THEN alert_state.opened_at ELSE excluded.opened_at END,
+      resolved_at=NULL,
+      last_sent_at=excluded.last_sent_at,
+      updated_at=excluded.updated_at
+  `).bind(targetId, ruleKey, value == null ? null : Number(value), now, now, now).run();
+}
+
+async function markResolved(env, targetId, ruleKey, now) {
+  await env.DB.prepare(`
+    INSERT INTO alert_state (target_id, rule_key, status, opened_at, resolved_at, last_sent_at, updated_at)
+    VALUES (?, ?, 'ok', NULL, ?, NULL, ?)
+    ON CONFLICT(target_id, rule_key) DO UPDATE SET
+      status='ok',
+      resolved_at=excluded.resolved_at,
+      updated_at=excluded.updated_at
+  `).bind(targetId, ruleKey, now, now).run();
+}
+
+async function sendTelegram(env, settings, text) {
+  const token = settings.telegram_bot_token || await telegramToken(env);
+  const chatId = telegramChatId(env, settings);
+  if (!token || !chatId) return { ok: false, error: 'Telegram bot token or chat id is missing' };
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: String(text || '').slice(0, 3900),
+        disable_web_page_preview: true,
+      }),
+    });
+    if (res.ok) return { ok: true };
+    const data = await res.text().catch(() => '');
+    return { ok: false, error: `Telegram HTTP ${res.status}: ${data.slice(0, 200)}` };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err) };
+  }
+}
+
+async function finishAlertRun(env, result) {
+  try {
+    await setMeta(env, 'alert_last_result', JSON.stringify({
+      ...result,
+      at: nowSec(),
+      errors: sanitizeAlertErrors(result.errors),
+    }));
+  } catch (_) {}
+  return result;
+}
+
+function sanitizeAlertErrors(errors) {
+  return (Array.isArray(errors) ? errors : []).slice(0, 10).map((item) => ({
+    target_id: item?.target_id || '',
+    rule_key: item?.rule_key || '',
+    error: String(item?.error || '').replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot<redacted>').slice(0, 300),
+  }));
+}
+
+async function telegramToken(env) {
+  const fromEnv = String(env.TELEGRAM_BOT_TOKEN || env.TG_BOT_TOKEN || '').trim();
+  if (fromEnv) return fromEnv;
+  const stored = String(await getMeta(env, TG_TOKEN_KEY) || '').trim();
+  if (!stored) return '';
+  if (stored.startsWith(SECRET_PREFIX)) {
+    try { return await decryptSecret(stored.slice(SECRET_PREFIX.length), env); } catch (_) { return ''; }
+  }
+  try {
+    await setMeta(env, TG_TOKEN_KEY, await encryptSecret(stored, env));
+  } catch (_) {}
+  return stored;
+}
+
+function telegramChatId(env, settings) {
+  return String(env.TELEGRAM_CHAT_ID || env.TG_CHAT_ID || settings?.telegram_chat_id || '').trim();
+}
+
+async function readStoredSettings(env) {
+  if (!env.DB) return {};
+  try {
+    return JSON.parse(await getMeta(env, SETTINGS_KEY) || '{}') || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+async function readAlertLastResult(env) {
+  try {
+    return JSON.parse(await getMeta(env, 'alert_last_result') || 'null') || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function pickSettings(body) {
+  const out = {};
+  for (const key of [...NUMERIC_FIELDS, ...BOOLEAN_FIELDS, 'telegram_chat_id']) {
+    if (Object.prototype.hasOwnProperty.call(body || {}, key)) out[key] = body[key];
+  }
+  return out;
+}
+
+function normalizeAlertSettings(input = {}) {
+  const out = { ...DEFAULT_SETTINGS };
+  for (const [key, fallback] of Object.entries(DEFAULT_SETTINGS)) {
+    if (!Object.prototype.hasOwnProperty.call(input || {}, key)) continue;
+    if (BOOLEAN_FIELDS.has(key)) out[key] = parseBoolean(input[key], fallback);
+    else if (NUMERIC_FIELDS.has(key)) out[key] = normalizeNumber(key, input[key], fallback);
+    else out[key] = String(input[key] || '').trim();
+  }
+  return out;
+}
+
+function normalizeNumber(key, value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  const max = {
+    offline_minutes: 1440,
+    repeat_minutes: 10080,
+    cpu_percent: 100,
+    memory_percent: 100,
+    disk_percent: 100,
+    load1: 1000,
+    disk_read_mb_s: 100000,
+    disk_write_mb_s: 100000,
+    net_rx_mb_s: 100000,
+    net_tx_mb_s: 100000,
+    process_count: 1000000,
+    thread_count: 1000000,
+    expiry_days: 3650,
+    traffic_remaining_percent: 100,
+    traffic_remaining_gb: 1048576,
+  }[key] ?? 1000000;
+  const rounded = key.endsWith('_percent') || key.endsWith('_gb') || key.endsWith('_mb_s') || key === 'load1'
+    ? Math.round(Math.min(n, max) * 100) / 100
+    : Math.floor(Math.min(n, max));
+  return rounded;
+}
+
+function targetAlertSettings(target, globalSettings) {
+  return {
+    ...globalSettings,
+    enabled: target.alert_enabled == null ? true : parseBoolean(target.alert_enabled, true),
+    expiry_days: overrideNumber(target.alert_expiry_days, globalSettings.expiry_days),
+    traffic_remaining_percent: overrideNumber(target.alert_traffic_remaining_percent, globalSettings.traffic_remaining_percent),
+    traffic_remaining_gb: overrideNumber(target.alert_traffic_remaining_gb, globalSettings.traffic_remaining_gb),
+  };
+}
+
+function overrideNumber(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+function metricValues(row) {
+  const memory = parseJsonSafe(row?.memory);
+  const load = parseJsonSafe(row?.load);
+  const disk = parseJsonSafe(row?.disk);
+  const net = parseJsonSafe(row?.net);
+  const diskio = parseJsonSafe(row?.diskio);
+  return {
+    cpuPercent: Number(row?.cpu_percent || 0),
+    memoryPercent: Number(memory.percent || 0),
+    diskPercent: Number(disk.percent || 0),
+    load1: Number(load.load1 || 0),
+    netRxBytesSec: Number(net.rx_bytes_sec || 0),
+    netTxBytesSec: Number(net.tx_bytes_sec || 0),
+    diskReadBytesSec: Number(diskio.read_bytes_sec || 0),
+    diskWriteBytesSec: Number(diskio.write_bytes_sec || 0),
+    processCount: Number(row?.process_count || 0),
+    threadCount: Number(row?.thread_count || row?.process_count || 0),
+  };
+}
+
+function parseJsonSafe(value) {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch (_) { return {}; }
+}
+
+function metricUpdatedAtSec(row) {
+  if (!row?.updated_at) return 0;
+  const ts = Math.floor(new Date(row.updated_at).getTime() / 1000);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function offlineThresholdSec(settings) {
+  return clamp(Number(settings.offline_minutes || 10), 1, 1440) * 60;
+}
+
+function probeStaleThresholdSec(settings, target) {
+  const intervalSec = clamp(Number(target?.interval_sec || 300), 60, 86400);
+  return Math.max(offlineThresholdSec(settings), intervalSec * 3);
+}
+
+function isProbeStale(settings, target, latest, now) {
+  const latestAt = Math.max(Number(latest?.checked_at || 0), Number(target?.last_checked_at || 0));
+  return Boolean(latestAt && now - latestAt >= probeStaleThresholdSec(settings, target));
+}
+
+function isAgentOnlyProbe(target, latest) {
+  const error = String(latest?.error || '').toLowerCase();
+  return error.includes('private host') || (target?.type === 'tcp' && isPrivateHost(target?.target_host));
+}
+
+function targetLabel(target) {
+  const name = String(target?.name || target?.id || '').trim();
+  const id = String(target?.id || '').trim();
+  return name && id && name !== id ? `${name} (${id})` : (name || id || 'unknown');
+}
+
+function formatDateTime(ts) {
+  if (!ts) return '-';
+  return new Date(Number(ts) * 1000).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+}
+
+function formatDateOnly(ts) {
+  if (!ts) return '-';
+  return new Date(Number(ts) * 1000).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai' });
+}
+
+function formatDuration(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds || 0)));
+  if (s < 60) return `${s}秒`;
+  if (s < 3600) return `${Math.floor(s / 60)}分钟`;
+  if (s < 86400) return `${Math.floor(s / 3600)}小时${Math.floor((s % 3600) / 60)}分钟`;
+  return `${Math.floor(s / 86400)}天${Math.floor((s % 86400) / 3600)}小时`;
+}
+
+function formatBytesPerSec(value) {
+  return `${formatBytes(value)}/s`;
+}
+
+function formatBytes(value) {
+  const n = Math.max(0, Number(value || 0));
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  let size = n;
+  let idx = 0;
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024;
+    idx++;
+  }
+  const digits = size >= 100 || idx === 0 ? 0 : size >= 10 ? 1 : 2;
+  return `${size.toFixed(digits)} ${units[idx]}`;
+}
+
+async function ensureAlertStateTable(env) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS alert_state (
+    target_id TEXT NOT NULL,
+    rule_key TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'ok',
+    last_value REAL,
+    opened_at INTEGER,
+    resolved_at INTEGER,
+    last_sent_at INTEGER,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (target_id, rule_key)
+  )`).run();
+}
+
+async function getMeta(env, key) {
+  if (!env.DB) return null;
+  const row = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(key).first().catch(() => null);
+  return row?.value ?? null;
+}
+
+async function setMeta(env, key, value) {
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
+    .bind(key, String(value), nowSec()).run();
+}
+
+async function encryptSecret(secret, env) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    await secretKey(env, ['encrypt']),
+    new TextEncoder().encode(secret),
+  ));
+  const combined = new Uint8Array(iv.length + encrypted.length);
+  combined.set(iv, 0);
+  combined.set(encrypted, iv.length);
+  return SECRET_PREFIX + bytesToBase64(combined);
+}
+
+async function decryptSecret(payload, env) {
+  const combined = base64ToBytes(payload);
+  if (combined.length <= 12) throw new Error('Invalid encrypted Telegram token');
+  const iv = combined.slice(0, 12);
+  const encrypted = combined.slice(12);
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    await secretKey(env, ['decrypt']),
+    encrypted,
+  );
+  return new TextDecoder().decode(decrypted);
+}
+
+async function secretKey(env, usages) {
+  const material = String(env.ALERT_ENCRYPTION_KEY || env.TOTP_ENCRYPTION_KEY || '').trim();
+  if (!material) throw new Error('ALERT_ENCRYPTION_KEY or TOTP_ENCRYPTION_KEY is required to store Telegram token in D1');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM', length: 256 }, false, usages);
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}

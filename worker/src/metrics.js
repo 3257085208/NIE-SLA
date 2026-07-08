@@ -1,0 +1,787 @@
+import { sanitizeAgentId, clamp, nowSec, retentionSeconds, parseBoolean } from './utils.js';
+import { summarizeTraffic, trafficSettingsFromTarget } from './traffic.js';
+import { requireAgentForId, safeJson, json } from './auth.js';
+import { readR2Json, writeR2Json } from './storage.js';
+
+export async function submitAgentMetrics(request, env, ctx = null) {
+  if (!env.DB) return json({ ok: false, error: 'D1 binding DB is required' }, 500, env);
+
+  const body = await safeJson(request);
+  const agentId = sanitizeAgentId(body?.agent_id || env.DEFAULT_AGENT_ID || 'vps');
+  await requireAgentForId(request, env, agentId);
+  const agentLabel = String(body?.agent_label || agentId).trim().slice(0, 64) || agentId;
+  const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
+  const metrics = body?.metrics;
+  if (!metrics || typeof metrics !== 'object') return json({ ok: false, error: 'metrics object is required' }, 400, env);
+  const rawSamples = Array.isArray(metrics.samples) ? metrics.samples : [];
+  if (rawSamples.length > 310) return json({ ok: false, error: 'too many samples; max 310' }, 400, env);
+  const serialized = JSON.stringify(metrics);
+  if (serialized.length > 200_000) return json({ ok: false, error: 'metrics payload too large' }, 400, env);
+
+  const ts = nowSec();
+
+  const state = {
+    cpu_percent: Number(metrics.cpu_percent) || 0,
+    process_count: Number(metrics.process_count) || 0,
+    thread_count: Number(metrics.thread_count ?? metrics.process_count) || 0,
+    memory: metrics.memory || {},
+    load: metrics.load || {},
+    disk: metrics.disk || {},
+    net: metrics.net || {},
+    diskio: metrics.diskio || {},
+    stats: metrics.stats || null,
+    uptime_sec: Number(metrics.uptime_sec) || 0,
+  };
+
+  const vpsInfo = metrics.vps_info && typeof metrics.vps_info === 'object' ? metrics.vps_info : null;
+  const pings = Array.isArray(metrics.pings) ? metrics.pings : [];
+
+  try {
+    await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, metrics, state, vpsInfo, rawSamples, pings, ts });
+  } catch (err) {
+    console.error('persistAgentMetrics failed:', String(err?.message || err));
+    return json({ ok: false, error: 'failed to persist agent metrics' }, 500, env, { 'cache-control': 'no-store' });
+  }
+
+  const trafficTask = persistAgentTraffic(env, agentId, metrics, ts)
+    .catch((err) => console.error('persistAgentTraffic failed:', String(err?.message || err)));
+  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(trafficTask);
+  else await trafficTask;
+
+  return json({
+    ok: true,
+    agent_id: agentId,
+  }, 200, env, { 'cache-control': 'no-store' });
+}
+
+export async function getAgentMetrics(env, url, ctx = null) {
+  if (!env.DB) return json({ ok: true, latest: null, history: [] }, 200, env);
+
+  const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || env.DEFAULT_AGENT_ID || 'vps');
+  const hours = clamp(Number(url.searchParams.get('hours') || 24), 1, 168);
+  const maxPointsRaw = url.searchParams.has('max_points') ? Number(url.searchParams.get('max_points')) : Number(env.AGENT_METRICS_MAX_POINTS || 900);
+  const maxPoints = maxPointsRaw <= 0 ? 0 : clamp(maxPointsRaw, 60, 5000);
+  const includeHistory = url.searchParams.get('history') !== '0';
+  const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
+  const fields = metricFieldsForRequest(url.searchParams.get('metric') || url.searchParams.get('fields') || '');
+
+  let latest = null;
+  let latestTs = 0;
+  try {
+    const row = await env.DB.prepare(`SELECT * FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first();
+    if (row) {
+      const net = parseJsonSafe(row.net);
+      if (net) { delete net.rx_raw; delete net.tx_raw; delete net.rx_bytes; delete net.tx_bytes; }
+      latest = {
+        schema: 'nstatus-agent-metrics-v1', agent_id: row.agent_id, agent_label: row.agent_label,
+        agent_version: row.agent_version || null,
+        updated_at: row.updated_at, cpu_percent: row.cpu_percent,
+        process_count: Number(row.process_count || 0) || 0,
+        thread_count: Number(row.thread_count || row.process_count || 0) || 0,
+        memory: parseJsonSafe(row.memory), load: parseJsonSafe(row.load), disk: parseJsonSafe(row.disk),
+        net, diskio: parseJsonSafe(row.diskio),
+        stats: row.stats ? parseJsonSafe(row.stats) : null, uptime_sec: row.uptime_sec,
+        vps_info: row.vps_info ? parseJsonSafe(row.vps_info) : null,
+        pings: row.pings ? parseJsonSafe(row.pings) : [],
+      };
+      latest.traffic = await readAgentTraffic(env, agentId);
+      latestTs = Math.floor(new Date(latest.updated_at || 0).getTime() / 1000);
+    }
+  } catch (_) {}
+
+  const requestedUntil = nowSec();
+  const until = includeHistory && latestTs > 0 ? Math.min(requestedUntil, latestTs + 600) : requestedUntil;
+  const since = requestedUntil - hours * 3600;
+  const historyByTs = new Map();
+  const r2 = includeHistory ? await loadAgentMetricsR2History(env, agentId, since, until, historyByTs, fields, ctx) : { loaded: false, count: 0 };
+  const d1Fallback = includeHistory && parseBoolean(env.AGENT_METRICS_D1_FALLBACK ?? !env.ARCHIVE, !env.ARCHIVE);
+  if (includeHistory && d1Fallback) {
+    await loadAgentMetricsD1History(env, agentId, since, historyByTs);
+  }
+  const rawHistory = [...historyByTs.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, pt]) => selectMetricFields(pt, fields));
+  const history = maxPoints > 0 ? compactMetricPoints(rawHistory, maxPoints) : rawHistory;
+  const source = env.ARCHIVE
+    ? (r2.loaded ? (d1Fallback ? 'r2+d1-fallback' : 'r2') : (d1Fallback ? 'd1-fallback' : 'r2-empty'))
+    : 'd1';
+  const payload = {
+    ok: true,
+    latest,
+    history: responseFormat === 'columns' ? [] : history,
+    history_raw_count: rawHistory.length,
+    history_downsampled: rawHistory.length > history.length,
+    source,
+    traffic: await readAgentTraffic(env, agentId),
+  };
+  if (responseFormat === 'columns') payload.series = metricPointsToColumns(history, fields);
+
+  return json(payload, 200, env, { 'cache-control': 'public, max-age=15' });
+}
+
+async function agentTrafficSettings(env, agentId, ts = nowSec()) {
+  let row = null;
+  try {
+    row = await env.DB.prepare(`SELECT traffic_enabled, traffic_quota_gb, traffic_mode, expires_at FROM targets WHERE id = ?`).bind(agentId).first();
+  } catch (_) {
+    try {
+      row = await env.DB.prepare(`SELECT traffic_enabled, traffic_quota_gb, expires_at FROM targets WHERE id = ?`).bind(agentId).first();
+    } catch (_) {}
+  }
+  if (!row) {
+    try {
+      const rows = await env.DB.prepare(`SELECT id, traffic_enabled, traffic_quota_gb, traffic_mode, expires_at FROM targets`).all();
+      row = (rows.results || []).find((item) => sanitizeAgentId(item.id) === agentId) || null;
+    } catch (_) {
+      try {
+        const rows = await env.DB.prepare(`SELECT id, traffic_enabled, traffic_quota_gb, expires_at FROM targets`).all();
+        row = (rows.results || []).find((item) => sanitizeAgentId(item.id) === agentId) || null;
+      } catch (_) {}
+    }
+  }
+  return trafficSettingsFromTarget(row, env, ts);
+}
+
+async function readAgentTraffic(env, agentId) {
+  const settings = await agentTrafficSettings(env, agentId);
+  if (!settings.enabled || !agentId) return summarizeTraffic(null, settings);
+  try {
+    const row = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? AND month = ?`)
+      .bind(agentId, settings.month).first();
+    return summarizeTraffic(row, settings);
+  } catch (_) {
+    return summarizeTraffic(null, settings);
+  }
+}
+
+async function persistAgentTraffic(env, agentId, metrics, ts) {
+  const settings = await agentTrafficSettings(env, agentId, ts);
+  if (!settings.enabled || !env.DB || !agentId) return;
+  const rxRaw = Number(metrics?.net?.rx_bytes);
+  const txRaw = Number(metrics?.net?.tx_bytes);
+  if (!Number.isFinite(rxRaw) || !Number.isFinite(txRaw) || rxRaw < 0 || txRaw < 0) return;
+  const month = settings.month;
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_traffic_monthly (
+    agent_id TEXT NOT NULL,
+    month TEXT NOT NULL,
+    rx_bytes INTEGER NOT NULL DEFAULT 0,
+    tx_bytes INTEGER NOT NULL DEFAULT 0,
+    last_rx_bytes INTEGER,
+    last_tx_bytes INTEGER,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, month)
+  )`).run();
+  const row = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? AND month = ?`)
+    .bind(agentId, month).first();
+  if (!row) {
+    await env.DB.prepare(`INSERT INTO agent_traffic_monthly (agent_id, month, rx_bytes, tx_bytes, last_rx_bytes, last_tx_bytes, updated_at) VALUES (?, ?, 0, 0, ?, ?, ?)`)
+      .bind(agentId, month, Math.floor(rxRaw), Math.floor(txRaw), ts).run();
+    return;
+  }
+  const lastRx = Number(row.last_rx_bytes);
+  const lastTx = Number(row.last_tx_bytes);
+  const deltaRx = Number.isFinite(lastRx) && rxRaw >= lastRx ? Math.floor(rxRaw - lastRx) : 0;
+  const deltaTx = Number.isFinite(lastTx) && txRaw >= lastTx ? Math.floor(txRaw - lastTx) : 0;
+  await env.DB.prepare(`UPDATE agent_traffic_monthly SET rx_bytes = rx_bytes + ?, tx_bytes = tx_bytes + ?, last_rx_bytes = ?, last_tx_bytes = ?, updated_at = ? WHERE agent_id = ? AND month = ?`)
+    .bind(deltaRx, deltaTx, Math.floor(rxRaw), Math.floor(txRaw), ts, agentId, month).run();
+  try {
+    await env.DB.prepare(`DELETE FROM agent_traffic_monthly WHERE agent_id = ? AND month <> ?`).bind(agentId, month).run();
+  } catch (_) {}
+}
+
+async function loadAgentMetricsD1History(env, agentId, since, historyByTs) {
+  try {
+    const rows = await env.DB.prepare(`SELECT ts, data FROM agent_metrics_history WHERE agent_id = ? AND ts >= ? ORDER BY ts ASC`)
+      .bind(agentId, since).all();
+    for (const r of rows.results || []) {
+      const d = parseJsonSafe(r.data);
+      if (Array.isArray(d)) {
+        for (const pt of d) {
+          pt.ts = pt.ts || r.ts;
+          historyByTs.set(Number(pt.ts) || Number(r.ts), pt);
+        }
+      } else {
+        d.ts = d.ts || r.ts;
+        historyByTs.set(Number(d.ts) || Number(r.ts), d);
+      }
+    }
+  } catch (_) {}
+}
+
+async function loadAgentMetricsR2History(env, agentId, since, until, historyByTs, fields = null, ctx = null) {
+  if (!env.ARCHIVE) return { loaded: false, count: 0 };
+  const counts = await mapWithConcurrency(historyHours(since, until), 24, async (hour) => {
+    let localCount = 0;
+    const payload = await readR2Json(env, agentMetricsHourKey(env, agentId, hour), null);
+    scheduleMetricPayloadUpgrade(env, agentId, hour, payload, ctx);
+    const points = metricPointsFromPayload(payload, fields);
+    for (const point of points) {
+      const ts = Number(point?.ts || 0);
+      if (ts >= since && ts <= until) {
+        historyByTs.set(ts, selectMetricFields(point, fields));
+        localCount++;
+      }
+    }
+    return localCount;
+  });
+  const count = counts.reduce((a, b) => a + b, 0);
+  return { loaded: count > 0, count };
+}
+
+export async function writeAgentTelemetryR2History(env, agentId, points = [], pings = []) {
+  if (!env.ARCHIVE || (!points?.length && !pings?.length)) return { ok: true, skipped: true };
+  const byHour = new Map();
+  const ensureHour = (hour) => {
+    const bucket = byHour.get(hour) || { points: [], pings: [] };
+    byHour.set(hour, bucket);
+    return bucket;
+  };
+  for (const point of points) {
+    const normalized = normalizeMetricPoint(point);
+    const ts = Number(normalized.ts || 0);
+    if (!ts) continue;
+    const hour = hourStartSec(ts);
+    ensureHour(hour).points.push(normalized);
+  }
+  for (const ping of pings || []) {
+    const normalized = normalizePingPoint(ping);
+    const ts = Number(normalized.ts || 0);
+    if (!ts || !normalized.target_id) continue;
+    ensureHour(hourStartSec(ts)).pings.push(normalized);
+  }
+
+  let written = 0;
+  let pingWritten = 0;
+  for (const [hour, hourData] of byHour.entries()) {
+    const metricsKey = agentMetricsHourKey(env, agentId, hour);
+    const pingsKey = agentPingsHourKey(env, agentId, hour);
+    const existingMetrics = await readR2Json(env, metricsKey, null);
+    const existingMetricPoints = metricPointsFromPayload(existingMetrics);
+    const byTs = new Map();
+    for (const point of existingMetricPoints) {
+      const ts = Number(point?.ts || 0);
+      if (ts >= hour && ts < hour + 3600) byTs.set(ts, normalizeMetricPoint(point));
+    }
+    for (const point of hourData.points) byTs.set(Number(point.ts), point);
+    const merged = [...byTs.entries()].sort((a, b) => a[0] - b[0]).map(([, point]) => point);
+    const byPing = new Map();
+    const existingPings = await readR2Json(env, pingsKey, null);
+    const existingPingPoints = pingPointsFromPayload(existingPings);
+    for (const ping of existingPingPoints) {
+      const normalized = normalizePingPoint(ping);
+      const ts = Number(normalized.ts || 0);
+      if (ts >= hour && ts < hour + 3600 && normalized.target_id) byPing.set(pingKey(normalized), normalized);
+    }
+    for (const ping of hourData.pings) byPing.set(pingKey(ping), ping);
+    const mergedPings = [...byPing.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
+    const dayHour = utcDayHour(hour);
+    if (hourData.points.length || existingMetricPoints.length) await writeR2Json(env, metricsKey, {
+      schema: 'nstatus-agent-metrics-hour-v2',
+      agent_id: sanitizeAgentId(agentId),
+      day: dayHour.day,
+      hour: dayHour.hour,
+      updated_at: new Date().toISOString(),
+      series: metricPointsToColumns(merged),
+    }, { schema: 'nstatus-agent-metrics-hour-v2', agent_id: sanitizeAgentId(agentId), day: dayHour.day, hour: dayHour.hour });
+    if (hourData.pings.length || existingPingPoints.length) await writeR2Json(env, pingsKey, {
+      schema: 'nstatus-agent-pings-hour-v2',
+      agent_id: sanitizeAgentId(agentId),
+      day: dayHour.day,
+      hour: dayHour.hour,
+      updated_at: new Date().toISOString(),
+      series: pingPointsToSeries(mergedPings),
+    }, { schema: 'nstatus-agent-pings-hour-v2', agent_id: sanitizeAgentId(agentId), day: dayHour.day, hour: dayHour.hour });
+    written += merged.length;
+    pingWritten += mergedPings.length;
+  }
+  return { ok: true, hours: byHour.size, points: written, pings: pingWritten };
+}
+
+export async function cleanupAgentMetricsR2(env, options = {}) {
+  if (!env.ARCHIVE || !env.DB) return { ok: true, skipped: true };
+  const retentionHours = options.hours == null ? Number(env.AGENT_METRICS_R2_RETENTION_HOURS || 72) : Number(options.hours);
+  const retention = clamp(retentionHours, 1, 720) * 3600;
+  const cutoffHour = hourStartSec(nowSec() - retention);
+  const maxDeletes = clamp(Number(options.max_deletes || 500), 1, 5000);
+  const agentIds = new Set();
+  if (options.agent_id) agentIds.add(sanitizeAgentId(options.agent_id));
+  try {
+    const rows = await env.DB.prepare(`SELECT agent_id FROM agent_metrics_state`).all();
+    for (const row of rows.results || []) if (row.agent_id) agentIds.add(sanitizeAgentId(row.agent_id));
+  } catch (_) {}
+
+  let deleted = 0;
+  const errors = [];
+  for (const agentId of [...agentIds].filter(Boolean)) {
+    let cursor = undefined;
+    const prefix = `${agentMetricsR2Prefix(env)}/${agentId}/`;
+    do {
+      try {
+        const listed = await env.ARCHIVE.list({ prefix, cursor, limit: 1000 });
+        const stale = (listed.objects || []).map(obj => obj.key).filter(key => {
+          const hour = hourFromAgentMetricsKey(key);
+          return hour && hour < cutoffHour;
+        }).slice(0, Math.max(0, maxDeletes - deleted));
+        for (let i = 0; i < stale.length; i += 100) await env.ARCHIVE.delete(stale.slice(i, i + 100));
+        deleted += stale.length;
+        cursor = listed.truncated && deleted < maxDeletes ? listed.cursor : undefined;
+      } catch (err) {
+        errors.push(`${agentId}: ${String(err?.message || err)}`);
+        cursor = undefined;
+      }
+    } while (cursor && deleted < maxDeletes);
+    if (deleted >= maxDeletes) break;
+  }
+  return { ok: errors.length === 0, deleted, cutoff_hour: cutoffHour, errors };
+}
+
+function agentMetricsR2Prefix(env) {
+  return String(env.AGENT_METRICS_R2_PREFIX || 'agent-metrics-v1').replace(/^\/+|\/+$/g, '');
+}
+
+function agentMetricsHourKey(env, agentId, hourStart) {
+  const dh = utcDayHour(hourStart);
+  return `${agentMetricsR2Prefix(env)}/${sanitizeAgentId(agentId)}/${dh.day}/${dh.hour}/metrics.json`;
+}
+
+function agentPingsHourKey(env, agentId, hourStart) {
+  const dh = utcDayHour(hourStart);
+  return `${agentMetricsR2Prefix(env)}/${sanitizeAgentId(agentId)}/${dh.day}/${dh.hour}/pings.json`;
+}
+
+function hourFromAgentMetricsKey(key) {
+  const match = String(key || '').match(/\/(\d{4}-\d{2}-\d{2})\/(\d{2})(?:\/(?:metrics|pings))?\.json$/);
+  if (!match) return 0;
+  const ts = Math.floor(Date.parse(`${match[1]}T${match[2]}:00:00.000Z`) / 1000);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function utcDayHour(ts) {
+  const iso = new Date(hourStartSec(ts) * 1000).toISOString();
+  return { day: iso.slice(0, 10), hour: iso.slice(11, 13) };
+}
+
+function hourStartSec(ts) {
+  return Math.floor(Number(ts || 0) / 3600) * 3600;
+}
+
+function scheduleMetricPayloadUpgrade(env, agentId, hour, payload, ctx = null) {
+  if (!ctx || typeof ctx.waitUntil !== 'function' || !Array.isArray(payload?.points) || payload.series || hour >= hourStartSec(nowSec())) return;
+  const dh = utcDayHour(hour);
+  const task = writeR2Json(env, agentMetricsHourKey(env, agentId, hour), {
+    schema: 'nstatus-agent-metrics-hour-v2',
+    agent_id: sanitizeAgentId(agentId),
+    day: dh.day,
+    hour: dh.hour,
+    updated_at: new Date().toISOString(),
+    series: metricPointsToColumns(payload.points),
+  }, { schema: 'nstatus-agent-metrics-hour-v2', agent_id: sanitizeAgentId(agentId), day: dh.day, hour: dh.hour }).catch(() => {});
+  ctx.waitUntil(task);
+}
+
+function schedulePingPayloadUpgrade(env, agentId, hour, payload, ctx = null) {
+  if (!ctx || typeof ctx.waitUntil !== 'function' || !Array.isArray(payload?.pings) || payload.series || hour >= hourStartSec(nowSec())) return;
+  const dh = utcDayHour(hour);
+  const task = writeR2Json(env, agentPingsHourKey(env, agentId, hour), {
+    schema: 'nstatus-agent-pings-hour-v2',
+    agent_id: sanitizeAgentId(agentId),
+    day: dh.day,
+    hour: dh.hour,
+    updated_at: new Date().toISOString(),
+    series: pingPointsToSeries(payload.pings),
+  }, { schema: 'nstatus-agent-pings-hour-v2', agent_id: sanitizeAgentId(agentId), day: dh.day, hour: dh.hour }).catch(() => {});
+  ctx.waitUntil(task);
+}
+
+function historyHours(since, until) {
+  const out = [];
+  const startHour = hourStartSec(since);
+  const endHour = hourStartSec(until);
+  for (let hour = startHour; hour <= endHour; hour += 3600) out.push(hour);
+  return out;
+}
+
+async function mapWithConcurrency(items, limit, fn) {
+  const out = [];
+  const batchSize = clamp(Number(limit || 1), 1, 50);
+  for (let i = 0; i < items.length; i += batchSize) {
+    out.push(...await Promise.all(items.slice(i, i + batchSize).map(fn)));
+  }
+  return out;
+}
+
+const METRIC_FIELDS = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write'];
+const METRIC_FIELD_GROUPS = {
+  cpu: ['cpu'],
+  mem: ['mem'],
+  disk: ['disk'],
+  load: ['load1'],
+  net: ['net_rx', 'net_tx'],
+  conns: ['tcp_conns', 'udp_conns'],
+  diskio: ['disk_read', 'disk_write'],
+};
+
+export function metricFieldsForRequest(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+  if (METRIC_FIELD_GROUPS[raw]) return METRIC_FIELD_GROUPS[raw];
+  const fields = raw.split(',').map(item => item.trim()).filter(item => METRIC_FIELDS.includes(item));
+  return fields.length ? [...new Set(fields)] : null;
+}
+
+export function selectMetricFields(point, fields = null) {
+  const normalized = normalizeMetricPoint(point);
+  if (!Array.isArray(fields) || !fields.length) return normalized;
+  const out = { ts: normalized.ts };
+  for (const field of fields) out[field] = normalized[field];
+  return out;
+}
+
+export function metricPointsToColumns(points, fields = null) {
+  const list = (points || []).map(point => selectMetricFields(point, fields)).filter(p => Number(p.ts) > 0).sort((a, b) => a.ts - b.ts);
+  const usedFields = Array.isArray(fields) && fields.length
+    ? fields
+    : METRIC_FIELDS.filter(field => list.some(point => point[field] !== undefined));
+  const t0 = Number(list[0]?.ts || 0);
+  const values = Object.fromEntries(usedFields.map(field => [field, []]));
+  const dt = [];
+  for (const point of list) {
+    dt.push(Number(point.ts) - t0);
+    for (const field of usedFields) values[field].push(roundMetric(point[field]));
+  }
+  return { t0, dt, fields: usedFields, values };
+}
+
+export function metricPointsFromPayload(payload, fields = null) {
+  if (!payload) return [];
+  if (payload.series && Array.isArray(payload.series.dt)) return metricColumnsToPoints(payload.series, fields);
+  return (Array.isArray(payload.points) ? payload.points : []).map(point => selectMetricFields(point, fields));
+}
+
+function metricColumnsToPoints(series, fields = null) {
+  const values = series?.values || {};
+  const usedFields = Array.isArray(fields) && fields.length
+    ? fields
+    : Array.isArray(series?.fields) ? series.fields : Object.keys(values);
+  const t0 = Number(series?.t0 || 0);
+  return (series?.dt || []).map((delta, index) => {
+    const point = { ts: t0 + Number(delta || 0) };
+    for (const field of usedFields) point[field] = Number(values?.[field]?.[index] || 0);
+    return point;
+  });
+}
+
+export function compactMetricPoints(points, maxPoints = 900) {
+  const list = (points || []).map(normalizeMetricPoint).filter(p => Number(p.ts) > 0).sort((a, b) => a.ts - b.ts);
+  const max = clamp(Number(maxPoints || 0), 2, 5000);
+  if (list.length <= max) return list;
+  const step = Math.ceil(list.length / max);
+  const out = [];
+  for (let i = 0; i < list.length; i += step) out.push(averageMetricChunk(list.slice(i, i + step)));
+  out[0] = list[0];
+  out[out.length - 1] = list[list.length - 1];
+  return out;
+}
+
+function averageMetricChunk(chunk) {
+  const keys = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write'];
+  const out = { ts: Math.round(avgNumber(chunk, 'ts')) };
+  for (const key of keys) out[key] = roundMetric(avgNumber(chunk, key));
+  return out;
+}
+
+function avgNumber(items, key) {
+  const vals = items.map(item => Number(item?.[key])).filter(Number.isFinite);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
+}
+
+function roundMetric(value) {
+  return Math.round(Number(value || 0) * 100) / 100;
+}
+
+function normalizeMetricPoint(point) {
+  return {
+    ts: Number(point?.ts || 0),
+    cpu: Number(point?.cpu) || 0,
+    mem: Number(point?.mem) || 0,
+    disk: Number(point?.disk) || 0,
+    load1: Number(point?.load1 ?? point?.load) || 0,
+    net_rx: Number(point?.net_rx) || 0,
+    net_tx: Number(point?.net_tx) || 0,
+    tcp_conns: Number(point?.tcp_conns) || 0,
+    udp_conns: Number(point?.udp_conns) || 0,
+    disk_read: Number(point?.disk_read) || 0,
+    disk_write: Number(point?.disk_write) || 0,
+  };
+}
+
+function normalizePingPoint(point, fallbackTs = 0) {
+  const latency = point?.latency_ms == null ? null : Math.round(Number(point.latency_ms));
+  return {
+    target_id: String(point?.target_id || '').trim().slice(0, 128),
+    ts: Math.floor(Number(point?.ts || fallbackTs || 0)),
+    latency_ms: Number.isFinite(latency) && latency >= 0 ? latency : null,
+    ok: normalizeOkInt(point?.ok === undefined ? (Number.isFinite(latency) && latency >= 0) : point.ok),
+  };
+}
+
+function pingKey(point) {
+  return `${point.target_id}:${point.ts}`;
+}
+
+export async function loadAgentPingsR2History(env, agentId, since, until, out = [], ctx = null) {
+  if (!env.ARCHIVE) return { loaded: false, count: 0, pings: out };
+  const id = sanitizeAgentId(agentId);
+  const counts = await mapWithConcurrency(historyHours(since, until), 24, async (hour) => {
+    let localCount = 0;
+    const payload = await readR2Json(env, agentPingsHourKey(env, id, hour), null);
+    schedulePingPayloadUpgrade(env, id, hour, payload, ctx);
+    for (const ping of pingPointsFromPayload(payload)) {
+      const normalized = normalizePingPoint(ping);
+      if (normalized.target_id && normalized.ts >= since && normalized.ts <= until) {
+        out.push(normalized);
+        localCount++;
+      }
+    }
+    return localCount;
+  });
+  const count = counts.reduce((a, b) => a + b, 0);
+  return { loaded: count > 0, count, pings: out };
+}
+
+export function compactPingPointsByTarget(pings, maxPerTarget = 360) {
+  const max = clamp(Number(maxPerTarget || 0), 2, 5000);
+  const grouped = new Map();
+  for (const ping of pings || []) {
+    const point = normalizePingPoint(ping);
+    if (!point.target_id || !point.ts) continue;
+    const list = grouped.get(point.target_id) || [];
+    list.push(point);
+    grouped.set(point.target_id, list);
+  }
+  const out = [];
+  for (const list of grouped.values()) {
+    list.sort((a, b) => a.ts - b.ts);
+    out.push(...compactPingSeries(list, max));
+  }
+  return out.sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
+}
+
+export function pingPointsToSeries(pings) {
+  const grouped = new Map();
+  for (const ping of pings || []) {
+    const point = normalizePingPoint(ping);
+    if (!point.target_id || !point.ts) continue;
+    const list = grouped.get(point.target_id) || [];
+    list.push(point);
+    grouped.set(point.target_id, list);
+  }
+  return [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([targetId, list]) => {
+    list.sort((a, b) => a.ts - b.ts);
+    const t0 = Number(list[0]?.ts || 0);
+    return {
+      target_id: targetId,
+      t0,
+      dt: list.map(point => point.ts - t0),
+      latency_ms: list.map(point => point.latency_ms),
+      ok: list.map(point => Number(point.ok || 0)),
+    };
+  });
+}
+
+export function pingPointsFromPayload(payload) {
+  if (!payload) return [];
+  if (Array.isArray(payload.series)) return pingSeriesToPoints(payload.series);
+  return (Array.isArray(payload.pings) ? payload.pings : []).map(ping => normalizePingPoint(ping));
+}
+
+function pingSeriesToPoints(seriesList) {
+  const out = [];
+  for (const series of seriesList || []) {
+    const targetId = String(series?.target_id || '').trim();
+    const t0 = Number(series?.t0 || 0);
+    const dt = Array.isArray(series?.dt) ? series.dt : [];
+    for (let i = 0; i < dt.length; i++) {
+      out.push(normalizePingPoint({
+        target_id: targetId,
+        ts: t0 + Number(dt[i] || 0),
+        latency_ms: series?.latency_ms?.[i],
+        ok: series?.ok?.[i],
+      }));
+    }
+  }
+  return out;
+}
+
+function compactPingSeries(list, maxPoints) {
+  if (list.length <= maxPoints) return list;
+  const step = Math.ceil(list.length / maxPoints);
+  const out = [];
+  for (let i = 0; i < list.length; i += step) out.push(averagePingChunk(list.slice(i, i + step)));
+  out[0] = list[0];
+  out[out.length - 1] = list[list.length - 1];
+  return out;
+}
+
+function averagePingChunk(chunk) {
+  const okPoints = chunk.filter(p => Number(p.ok) === 1 && Number.isFinite(Number(p.latency_ms)));
+  const failed = chunk.some(p => Number(p.ok) !== 1);
+  return {
+    target_id: chunk[0]?.target_id || '',
+    ts: Math.round(avgNumber(chunk, 'ts')),
+    latency_ms: okPoints.length ? Math.round(avgNumber(okPoints, 'latency_ms')) : null,
+    ok: failed ? 0 : 1,
+  };
+}
+
+function mapSamples(samples) {
+  return samples.map(s => ({
+    ts: Number(s.ts) || 0, cpu: Number(s.cpu) || 0, mem: Number(s.mem) || 0,
+    disk: Number(s.disk) || 0, load1: Number(s.load) || 0,
+    net_rx: Number(s.net_rx) || 0, net_tx: Number(s.net_tx) || 0,
+    tcp_conns: Number(s.tcp_conns) || 0, udp_conns: Number(s.udp_conns) || 0,
+    disk_read: Number(s.disk_read) || 0, disk_write: Number(s.disk_write) || 0,
+  }));
+}
+
+function limitSeries(points, maxPoints) {
+  const list = (points || []).filter(p => Number(p?.ts || 0) > 0);
+  const max = clamp(Number(maxPoints || 0), 1, 60);
+  if (list.length <= max) return list;
+  if (max === 1) return [list[list.length - 1]];
+  const out = [];
+  const last = list.length - 1;
+  for (let i = 0; i < max; i++) out.push(list[Math.round((i * last) / (max - 1))]);
+  return out;
+}
+
+function toPoint(state) {
+  return {
+    ts: nowSec(), cpu: state.cpu_percent, mem: state.memory?.percent ?? 0,
+    disk: state.disk?.percent ?? 0, load1: state.load?.load1 ?? 0,
+    net_rx: state.net?.rx_bytes_sec ?? 0, net_tx: state.net?.tx_bytes_sec ?? 0,
+    tcp_conns: state.net?.tcp_conns ?? 0, udp_conns: state.net?.udp_conns ?? 0,
+    disk_read: state.diskio?.read_bytes_sec ?? 0, disk_write: state.diskio?.write_bytes_sec ?? 0,
+  };
+}
+
+function parseJsonSafe(v) {
+  if (!v) return {};
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch (_) { return {}; }
+}
+
+function normalizeOkInt(value) {
+  if (value === true || value === 1) return 1;
+  if (value === false || value === 0 || value == null) return 0;
+  const text = String(value).trim().toLowerCase();
+  return ['1', 'true', 'yes', 'ok', 'up'].includes(text) ? 1 : 0;
+}
+
+async function persistAgentMetrics(env, data) {
+  const { agentId, agentLabel, agentVersion, metrics, state, vpsInfo, rawSamples, pings, ts } = data;
+  await ensureAgentMetricsStateExtensions(env);
+  const rawPings = mapPings(pings, ts);
+  const statePings = await mergeStatePings(env, agentId, rawPings);
+  await env.DB.prepare(`
+    INSERT INTO agent_metrics_state (agent_id, agent_label, agent_version, updated_at, hostname, cpu_percent, process_count, thread_count, memory, load, disk, net, diskio, stats, uptime_sec, vps_info, pings)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(agent_id) DO UPDATE SET
+      agent_label=excluded.agent_label,
+      agent_version=COALESCE(excluded.agent_version, agent_version),
+      updated_at=excluded.updated_at, hostname=excluded.hostname,
+      cpu_percent=excluded.cpu_percent, process_count=excluded.process_count, thread_count=excluded.thread_count, memory=excluded.memory, load=excluded.load,
+      disk=excluded.disk, net=excluded.net, diskio=excluded.diskio,
+      stats=excluded.stats, uptime_sec=excluded.uptime_sec,
+      vps_info=CASE WHEN excluded.vps_info IS NOT NULL THEN excluded.vps_info ELSE vps_info END,
+      pings=excluded.pings
+  `).bind(
+    agentId, agentLabel, agentVersion, new Date().toISOString(),
+    String(metrics.hostname || '').slice(0, 128), state.cpu_percent, state.process_count, state.thread_count,
+    JSON.stringify(state.memory), JSON.stringify(state.load), JSON.stringify(state.disk),
+    JSON.stringify(state.net), JSON.stringify(state.diskio),
+    state.stats ? JSON.stringify(state.stats) : null, state.uptime_sec,
+    vpsInfo ? JSON.stringify(vpsInfo) : null,
+    JSON.stringify(statePings)
+  ).run();
+
+  const rawPoints = mapSamples(rawSamples);
+  if (!rawPoints.length) rawPoints.push(toPoint(state));
+  try { await writeAgentTelemetryR2History(env, agentId, rawPoints, rawPings); } catch (_) {}
+
+  if (rawPings.length > 0 && parseBoolean(env.AGENT_PINGS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE)) await writePingHistory(env, agentId, rawPings, ts);
+
+  if (parseBoolean(env.AGENT_METRICS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE)) {
+    const allPoints = limitSeries(rawPoints, Number(env.AGENT_METRICS_POINTS_PER_REPORT || 6));
+    try {
+      await env.DB.prepare(`INSERT OR REPLACE INTO agent_metrics_history (agent_id, ts, data) VALUES (?, ?, ?)`)
+        .bind(agentId, ts, JSON.stringify(allPoints)).run();
+    } catch (_) {}
+    try { await env.DB.prepare(`DELETE FROM agent_metrics_history WHERE agent_id = ? AND ts < ?`).bind(agentId, ts - retentionSeconds(env, 'AGENT_METRICS_RETENTION_HOURS', 6, 1, 72)).run(); } catch (_) {}
+  }
+}
+
+async function ensureAgentMetricsStateExtensions(env) {
+  try { await env.DB.prepare(`ALTER TABLE agent_metrics_state ADD COLUMN process_count INTEGER`).run(); } catch (_) {}
+  try { await env.DB.prepare(`ALTER TABLE agent_metrics_state ADD COLUMN thread_count INTEGER`).run(); } catch (_) {}
+  try { await env.DB.prepare(`ALTER TABLE agent_metrics_state ADD COLUMN pings TEXT`).run(); } catch (_) {}
+}
+
+async function mergeStatePings(env, agentId, incoming, maxPerTarget = 60, maxTotal = 600) {
+  const byKey = new Map();
+  const cutoff = nowSec() - retentionSeconds(env, 'PING_HISTORY_RETENTION_HOURS', 6, 1, 168);
+  try {
+    const row = await env.DB.prepare(`SELECT pings FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first();
+    const previous = parseJsonSafe(row?.pings);
+    if (Array.isArray(previous)) {
+      for (const ping of previous) {
+        const point = normalizePingPoint(ping);
+        if (point.target_id && point.ts >= cutoff) byKey.set(pingKey(point), point);
+      }
+    }
+  } catch (_) {}
+  for (const ping of incoming || []) {
+    const point = normalizePingPoint(ping);
+    if (point.target_id && point.ts >= cutoff) byKey.set(pingKey(point), point);
+  }
+  const grouped = new Map();
+  for (const point of byKey.values()) {
+    const list = grouped.get(point.target_id) || [];
+    list.push(point);
+    grouped.set(point.target_id, list);
+  }
+  const out = [];
+  for (const list of grouped.values()) {
+    list.sort((a, b) => a.ts - b.ts);
+    out.push(...list.slice(-maxPerTarget));
+  }
+  return out.sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id)).slice(-maxTotal);
+}
+
+async function writePingHistory(env, agentId, pings, fallbackTs) {
+  const statements = [];
+  for (const p of pings) {
+    const point = normalizePingPoint(p, fallbackTs);
+    const tid = point.target_id;
+    const pts = Math.floor(Number(point.ts || fallbackTs) / 60) * 60;
+    if (!tid || !Number.isFinite(pts)) continue;
+    statements.push(env.DB.prepare(`INSERT OR REPLACE INTO ping_history (target_id, agent_id, ts, latency_ms, ok) VALUES (?, ?, ?, ?, ?)`)
+      .bind(tid, agentId, pts, point.latency_ms, point.ok));
+  }
+  if (!statements.length) return;
+  if (typeof env.DB.batch === 'function') {
+    for (let i = 0; i < statements.length; i += 50) await env.DB.batch(statements.slice(i, i + 50));
+  } else {
+    for (const stmt of statements) await stmt.run();
+  }
+  try { await env.DB.prepare(`DELETE FROM ping_history WHERE agent_id = ? AND ts < ?`).bind(agentId, fallbackTs - retentionSeconds(env, 'PING_HISTORY_RETENTION_HOURS', 6, 1, 72)).run(); } catch (_) {}
+}
+
+function mapPings(pings, fallbackTs) {
+  const byKey = new Map();
+  for (const ping of pings || []) {
+    const normalized = normalizePingPoint(ping, fallbackTs);
+    if (normalized.target_id && normalized.ts > 0) byKey.set(pingKey(normalized), normalized);
+  }
+  return [...byKey.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
+}
