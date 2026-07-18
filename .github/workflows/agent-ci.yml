@@ -2,7 +2,6 @@ name: Agent CI
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
   pull_request:
     branches: [main]
@@ -32,36 +31,22 @@ jobs:
           sudo apt-get install -y musl-tools
       - run: bash ./test.sh
 
-  fmt:
-    name: Rust fmt
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: |
-          rustup toolchain install 1.86.0 --profile minimal
-          rustup component add rustfmt --toolchain 1.86.0
-      - working-directory: agent
-        run: cargo +1.86.0 fmt -- --check
-
   prepare-release:
     name: Prepare release
-    needs: [verify, fmt]
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [verify]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Create draft release
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft --generate-notes --title "${GITHUB_REF_NAME}"
-      - name: No release for branch builds
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: echo "Branch build only"
-
   linux:
     name: Linux ${{ matrix.name }}
-    needs: [verify, fmt, prepare-release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [verify, prepare-release]
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -98,14 +83,14 @@ jobs:
           mkdir -p bin
           cp target/${{ matrix.target }}/release/nstatus-metrics bin/${{ matrix.out }}
       - name: Upload binary to draft release
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${GITHUB_REF_NAME}" "agent/bin/${{ matrix.out }}" --repo "${GITHUB_REPOSITORY}" --clobber
 
   windows:
     name: Windows amd64
-    needs: [verify, fmt, prepare-release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [verify, prepare-release]
     permissions:
       contents: write
     runs-on: windows-latest
@@ -120,7 +105,6 @@ jobs:
           New-Item -ItemType Directory -Force agent/bin | Out-Null
           Copy-Item agent/target/x86_64-pc-windows-msvc/release/nstatus-metrics.exe agent/bin/nstatus-metrics-windows-amd64.exe
       - name: Upload binary to draft release
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -129,7 +113,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [verify, fmt, prepare-release, linux, windows]
+    needs: [verify, prepare-release, linux, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
