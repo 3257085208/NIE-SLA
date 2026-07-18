@@ -171,13 +171,26 @@ export function sanitizeAgentId(value) {
   return out || '';
 }
 
+export function agentStatusFields(state, env = {}) {
+  if (!state?.updated_at) return {};
+  const updatedAt = Math.floor(new Date(state.updated_at).getTime() / 1000);
+  const ageSec = Number.isFinite(updatedAt) && updatedAt > 0 ? Math.max(0, nowSec() - updatedAt) : null;
+  const offlineAfterSec = clamp(Number(env.AGENT_OFFLINE_AFTER_SEC || 900), 120, 3600);
+  return {
+    status_source: 'agent',
+    agent_online: ageSec != null && ageSec <= offlineAfterSec,
+    agent_last_seen_sec: ageSec,
+    agent_offline_after_sec: offlineAfterSec,
+  };
+}
+
 // ── Target normalization ─────────────────────────────────────────────────────
 
 export function normalizeTarget(input, allowPartial = false) {
   const type = String(input?.type || '').toLowerCase();
-  if (!['tcp', 'http'].includes(type)) throw new Error('type must be tcp or http');
+  if (!['tcp', 'http'].includes(type)) throw new Error('类型必须是 TCP 或 HTTP');
   const name = String(input?.name || '').trim();
-  if (!name) throw new Error('name is required');
+  if (!name) throw new Error('名称不能为空');
   const groupName = String(input?.group_name || input?.group || 'Default').trim() || 'Default';
   const timeoutMs = clamp(Number(input?.timeout_ms || DEFAULT_TIMEOUT_MS), 500, 30000);
   const intervalSec = clamp(Number(input?.interval_sec || DEFAULT_INTERVAL_SEC), MIN_INTERVAL_SEC, 86400);
@@ -187,15 +200,15 @@ export function normalizeTarget(input, allowPartial = false) {
   if (type === 'tcp') {
     targetHost = String(input?.target_host || input?.host || '').trim();
     targetPort = Number(input?.target_port || input?.port || 0);
-    if (!targetHost) throw new Error('target_host is required for tcp target');
-    if (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) throw new Error('target_port must be 1-65535');
+    if (!targetHost) throw new Error('TCP 目标必须填写主机');
+    if (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) throw new Error('目标端口必须在 1 到 65535 之间');
   }
   if (type === 'http') {
     url = String(input?.url || '').trim();
-    if (!/^https?:\/\//i.test(url)) throw new Error('url must start with http:// or https://');
+    if (!/^https?:\/\//i.test(url)) throw new Error('URL 必须以 http:// 或 https:// 开头');
     try {
       const u = new URL(url);
-      if (isPrivateHost(u.hostname)) throw new Error('url must not point to a private/internal address');
+      if (isPrivateHost(u.hostname)) throw new Error('URL 不能指向私有或内部地址');
     } catch (e) { if (e.message.includes('private')) throw e; }
     method = String(input?.method || 'GET').toUpperCase();
     if (!['GET', 'HEAD'].includes(method)) method = 'GET';
@@ -291,11 +304,11 @@ export function publicError(error, statusCode = null) {
   if (!error) return null;
   const msg = String(error);
   if (statusCode) return `Unexpected HTTP ${Number(statusCode)}`;
-  if (/timeout|timed out|abort/i.test(msg)) return 'Timeout';
+  if (/timeout|timed out|abort/i.test(msg)) return '连接超时';
   if (/dns|resolve|nxdomain|name not found/i.test(msg)) return 'DNS error';
-  if (/refused|reset|unreachable|network|connect|socket|econn/i.test(msg)) return 'Connection failed';
+  if (/refused|reset|unreachable|network|connect|socket|econn/i.test(msg)) return '连接失败';
   if (/certificate|tls|ssl/i.test(msg)) return 'TLS error';
-  return 'Check failed';
+  return '检查失败';
 }
 
 export function publicCheckPoint(point) {
@@ -318,6 +331,7 @@ export function sanitizePublicTarget(row, env, maskIps = publicMaskIps(env), hid
   if (!row || typeof row !== 'object') return row;
   const type = String(row.type || '').toLowerCase();
   const clean = { ...row };
+  delete clean.sort_order;
   const displayHost = type === 'tcp' ? publicHost(clean.target_host, maskIps) : clean.target_host;
   const displayUrl = type === 'http' ? publicUrl(clean.url, env) : clean.url;
   const displayTarget = type === 'http' ? displayUrl : displayHost;
@@ -394,7 +408,7 @@ export function isMissedMonitorPoint(point) {
 
 export function buildMissedPoints(env, previous, bucketAt, okInt, probeRegion, maxBucketsOverride = null) {
   const previousAt = Number(previous?.checked_at || 0);
-  if (!previousAt || Number(previous?.ok) !== 1) return [];
+  if (!previousAt) return [];
   const previousBucket = Math.floor(previousAt / BUCKET_SEC) * BUCKET_SEC;
   if (dayFromSec(previousBucket, env) !== dayFromSec(bucketAt, env)) return [];
   const gapBuckets = Math.floor((bucketAt - previousBucket) / BUCKET_SEC) - 1;
@@ -413,7 +427,7 @@ export function buildMissedPoints(env, previous, bucketAt, okInt, probeRegion, m
 
 export function buildOpenMissedPoints(env, previous, atSec = nowSec(), probeRegion = null) {
   const previousAt = Number(previous?.checked_at || 0);
-  if (!previousAt || Number(previous?.ok) !== 1) return [];
+  if (!previousAt) return [];
   const previousBucket = Math.floor(previousAt / BUCKET_SEC) * BUCKET_SEC;
   const nowValue = Number(atSec || nowSec());
   const currentBucket = Math.floor(nowValue / BUCKET_SEC) * BUCKET_SEC;
@@ -432,7 +446,7 @@ export function buildOpenMissedPoints(env, previous, atSec = nowSec(), probeRegi
 
 export function withTimeout(promise, ms, onTimeout) {
   let timer;
-  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => { try { onTimeout?.(); } catch (_) {} reject(new Error(`Timeout after ${ms}ms`)); }, ms); })]).finally(() => clearTimeout(timer));
+  return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => { try { onTimeout?.(); } catch (_) {} reject(new Error(`${ms}ms 后超时`)); }, ms); })]).finally(() => clearTimeout(timer));
 }
 
 export async function sha256Hex(value) {

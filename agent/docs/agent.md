@@ -49,7 +49,6 @@ The installer stores files in `C:\ProgramData\NStatus` and registers a startup S
 | TCP/UDP connections | `/proc/net/tcp*`, `/proc/net/udp*` on Linux | Every 1s |
 | Disk IO | `/proc/diskstats` on Linux | Every 1s |
 | TCP Ping | Configured ping targets | Every 20s |
-| Unlock status | IP.Check.Place script output | Every 300s |
 | VPS info | CPU, OS, kernel, memory, disk, virtualization | Cached at start |
 
 The Agent samples locally every 1 second and uploads batches every 300 seconds by default. Uploads run in the background so slow network requests do not pause sampling.

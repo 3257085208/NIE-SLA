@@ -1,32 +1,133 @@
-# 11 开发与发布
+# 11 开发、测试与发布
 
-## 目录结构
+## 仓库结构
 
 ```text
-agent/      Rust Agent、安装脚本、二进制
-frontend/   Pages 前端、后台、主题、安装资产
-worker/     Worker API、D1/R2/DO 逻辑
-docs/       中英文文档
-tests/      smoke tests
+agent/src/main.rs       Agent 主循环与采集
+agent/src/platform.rs   平台信息和路径
+agent/src/queue.rs      有界持久队列
+agent/src/updater.rs    更新策略、下载和替换
+worker/src/             Worker 模块
+worker/src/admin/       后台 CRUD、schema、设置、归档
+frontend/app.js         公开页面编排
+frontend/js/admin/      后台 API/认证模块
+frontend/js/shared/     纯函数和共享格式化
+tests/                  前端和仓库级测试
 ```
 
-## 本地验证
+新增功能优先进入职责明确的模块，不要继续扩大 `main.rs`、`app.js` 或 `admin.js`。
+
+## 本地检查
 
 ```bash
 ./test.sh
-node --check worker/src/index.js
-node --check frontend/js/admin.js
-cd agent && cargo fmt -- --check && cargo check
 ```
 
-## 发布顺序
+测试包含：
 
-1. 先部署 Worker schema/API。
-2. 再部署 Pages 前端。
-3. 更新 Agent 二进制和安装资产。
-4. 先在一台测试 VPS 验证。
-5. 再批量更新其他 VPS。
+- Worker 全部 JS 语法。
+- Worker utility 测试。
+- ESLint 未定义引用检查。
+- 前端模块语法、导入和 smoke test。
+- Rust `fmt`、`check`、`test`。
+- Linux amd64 release build。
+- Shell 语法。
+- 安装命令和仓库卫生约束。
+- 公共仓库 Token、私钥、Cloudflare ID、生产域名和本机路径扫描。
+- 并发与漏检配置检查。
 
-## 仓库卫生
+Windows：
 
-不要提交真实 IP、Token、私有域名、`.wrangler`、`.env`、`agent/target` 或 wrangler 日志。修改 API、Agent 字段或后台行为时同步更新文档。
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" test.sh
+```
+
+## Worker 开发
+
+本地开发使用独立 D1/R2 状态，避免误操作生产。所有远程数据库命令显式加 `--remote`；不加时 Wrangler 可能读取本地空数据库。
+
+修改 schema：
+
+1. 使用 `CREATE TABLE IF NOT EXISTS`。
+2. 新列迁移允许重复执行。
+3. 新旧 schema 读取提供合理回退。
+4. 为查询添加必要索引。
+5. 在远程部署前用临时数据库测试。
+
+## 前端开发
+
+- 保持原版和卡片主题状态语义一致。
+- 所有动态文本先 escape。
+- 不在前端写入真实 Token、API secret。
+- 变更模块路径时同步 `admin.html` cache key。
+- 验证桌面和 390px 手机宽度无横向溢出。
+- Web 目标不显示 Agent 专属字段。
+
+## Agent 开发
+
+```bash
+cd agent
+cargo fmt -- --check
+cargo check
+cargo test
+cargo build --release
+```
+
+并发原则：采样不能被上传、Ping 或更新阻塞；队列必须有上限；退出和更新要避免留下重复进程。
+
+## 版本发布
+
+公共仓库使用 Tag 驱动的 GitHub Actions Release，建议顺序：
+
+1. 更新 Cargo 版本和 Agent 版本常量。
+2. 运行完整测试。
+3. 提交源码并推送 `main`，等待验证 CI 成功。
+4. 创建并推送与 `agent/VERSION` 相同的 `v*` Tag。
+5. CI 构建 Linux 6 种架构与 Windows amd64。
+6. CI 生成 `SHA256SUMS` 和 `VERSION`，逐项校验后创建 GitHub Release。
+7. 使用 `worker/deploy.sh` 下载 Release 到本地 `frontend/bin/`。
+8. 部署 Pages 和 Worker。
+9. 从 Pages 域名重新下载 `VERSION`、manifest 和至少一个二进制校验。
+10. 观察少量节点滚动更新，再扩大。
+
+`agent/bin/` 和 `frontend/bin/` 被公共仓库忽略。不要为了方便把构建产物直接提交到 Git；Release 才是二进制发布面。
+
+## GitHub Actions 权限
+
+创建 Release 的 workflow 需要：
+
+```yaml
+permissions:
+  contents: write
+```
+
+其他 job 使用最小权限。不要为了修复 403 直接授予所有权限。
+
+## 发布校验
+
+```bash
+curl -fsSL https://YOUR-PAGES/bin/VERSION
+curl -fsSL https://YOUR-PAGES/bin/SHA256SUMS
+sha256sum nstatus-metrics-linux-amd64
+```
+
+检查 GitHub main、Release、Pages 和 Worker 四处版本一致。发布成功不等于所有 Agent 已升级；通过 `/api/status` 按 `agent_version` 统计滚动进度。
+
+## 提交规范
+
+- 一个提交解决一个清晰问题。
+- 不提交真实密钥、数据库导出、日志和构建缓存。
+- 二进制、manifest 与 VERSION 必须来自同一次 CI Release。
+- 文档写明行为和限制，不承诺平台无法保证的区域/实时性。
+- 发布前确认 `git status --short` 为空。
+
+## 回归检查重点
+
+- Cron 是否完成全部目标。
+- IPv6/AAAA TCP 探测。
+- Agent scoped token。
+- TOTP 登录和限流。
+- 自动更新开关动态生效。
+- Web 目标没有 Agent 状态。
+- 前端卡片视觉未被无关改动影响。
+- 旧 Agent 重装后不残留废弃进程或 IP 解锁任务。

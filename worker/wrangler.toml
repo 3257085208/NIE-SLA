@@ -1,15 +1,20 @@
 name = "nstatus"
 main = "src/index.js"
 compatibility_date = "2026-06-17"
+workers_dev = true
+
+# Custom domains are deployment-specific. Add routes only after replacing the
+# examples in docs/zh-CN/02-deployment.md with domains owned by your account.
 
 [triggers]
 crons = ["*/5 * * * *"]
 
 [vars]
-PUBLIC_SITE_NAME = "NStatus"
+PUBLIC_SITE_NAME = "NIE-SLA"
 PUBLIC_WORKER_URL = ""
-TIMEZONE_OFFSET_MINUTES = "480"  # UTC+8; change to your local timezone offset
-CONCURRENCY = "8"
+PUBLIC_AGENT_API_BASE = ""
+TIMEZONE_OFFSET_MINUTES = "480"
+CONCURRENCY = "40"
 MAX_TARGETS_PER_RUN = "60"
 CHECKS_DEFAULT_LIMIT = "864"
 CHECKS_WINDOW_HOURS = "72"
@@ -28,7 +33,7 @@ ALERT_MAX_MESSAGES_PER_RUN = "30"
 [[d1_databases]]
 binding = "DB"
 database_name = "nstatus-db"
-database_id = "YOUR_D1_DATABASE_ID"
+database_id = "00000000-0000-0000-0000-000000000000"
 
 [[r2_buckets]]
 binding = "ARCHIVE"

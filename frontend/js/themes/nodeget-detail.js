@@ -54,5 +54,5 @@ export function mountNodegetDetailChecksPanel(panel, slot) {
 function updateChecksToggle(panel, toggle) {
   const collapsed = panel.classList.contains('is-collapsed');
   toggle.setAttribute('aria-expanded', String(!collapsed));
-  toggle.textContent = collapsed ? 'Show' : 'Hide';
+    toggle.textContent = collapsed ? '显示' : '隐藏';
 }

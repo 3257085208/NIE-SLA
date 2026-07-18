@@ -8,13 +8,13 @@ export function nodegetAvatarHtml() {
 
 export function nodegetTopbarToolsHtml() {
   return `
-    <button type="button" class="card-tool sort-tool" aria-label="Default sort">⇅ <span>默认</span></button>
-    <span class="card-view-switch" aria-label="View mode">
+    <button type="button" class="card-tool sort-tool" aria-label="默认排序">⇅ <span>默认</span></button>
+    <span class="card-view-switch" aria-label="视图模式">
       <button type="button" class="card-tool active">▦ <span>卡片</span></button>
       <button type="button" class="card-tool">☷ <span>表格</span></button>
       <button type="button" class="card-tool">◎ <span>地图</span></button>
     </span>
-    <button type="button" class="card-tool moon-tool" aria-label="Theme">☾</button>
+    <button type="button" class="card-tool moon-tool" aria-label="主题">☾</button>
   `;
 }
 

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS targets (
   interval_sec INTEGER NOT NULL DEFAULT 300,
   probe_region TEXT NOT NULL DEFAULT 'auto',
   enabled INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   last_checked_at INTEGER,

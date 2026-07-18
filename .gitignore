@@ -1,31 +1,44 @@
-# Ignore build artifacts and binary files
-agent/bin/nstatus-metrics-*
-agent/target/
-agent/.cargo/
-agent/Cargo.lock
-frontend/bin/nstatus-metrics-*
-frontend/bin/SHA256SUMS
-frontend/vendor/
-frontend/config.js
-
-# Node
+# Dependencies
 node_modules/
-.npm/
+**/node_modules/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# Build output
+target/
+agent/target/
+agent/bin/
+frontend/bin/
+dist/
+build/
+coverage/
+*.tsbuildinfo
 
-# OS
+# Cloudflare/local runtime state
+.wrangler/
+**/.wrangler/
+.dev.vars*
+!.dev.vars.example
+worker/wrangler.local.toml
+
+# Secrets and local environment
+.env
+.env.*
+*.env
+!.env.example
+!agent/*.env.example
+*.pem
+*.key
+*.p12
+
+# Logs and temporary archives
+*.log
+*.tmp
+*.temp
+*.zip
+
+# OS/editor noise
 .DS_Store
 Thumbs.db
-
-# Wrangler
-.wrangler/
-
-# Env files with secrets
-*.env
-!*.env.example
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

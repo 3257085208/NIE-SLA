@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-BASE_URL="${NSTATUS_AGENT_BASE_URL:-https://your-domain.com}"
+BASE_URL="${NSTATUS_AGENT_BASE_URL:-https://status.example.com}"
 BASE_URL="${BASE_URL%/}"
 
 need_root() {
@@ -57,14 +57,12 @@ fi
 
 tmp="${TMPDIR:-/tmp}/nstatus-setup.$$"
 trap 'rm -f "$tmp"' EXIT INT TERM
-download_to "${BASE_URL}/setup.sh" "$tmp"
+cache_key="$(printf '%s' "${NSTATUS_SHA256SUMS_SHA256:-$(date +%s)}" | tr -cd 'A-Za-z0-9._-')"
+[ -n "$cache_key" ] || cache_key="$(date +%s)"
+download_to "${BASE_URL}/setup.sh?v=${cache_key}" "$tmp"
 
 export DOWNLOAD_BASE="${DOWNLOAD_BASE:-$BASE_URL}"
 export CFTZ_URL_BASE="${CFTZ_URL_BASE:-$BASE_URL}"
 export NSTATUS_PING_TARGETS="${NSTATUS_PING_TARGETS:-*}"
 export NSTATUS_PING_SEC="${NSTATUS_PING_SEC:-20}"
-export NSTATUS_UNLOCK_CHECK_ENABLED="${NSTATUS_UNLOCK_CHECK_ENABLED:-1}"
-export NSTATUS_UNLOCK_CHECK_SEC="${NSTATUS_UNLOCK_CHECK_SEC:-300}"
-export NSTATUS_UNLOCK_CHECK_URL="${NSTATUS_UNLOCK_CHECK_URL:-https://IP.Check.Place}"
-export NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC="${NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC:-90}"
 exec bash "$tmp" "$@"

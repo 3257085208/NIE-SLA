@@ -1,7 +1,7 @@
 import { connect } from 'cloudflare:sockets';
 import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatus, withTimeout, ALLOWED_REGIONS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC, BUCKET_SEC, isPrivateHost, buildMissedPoints } from './utils.js';
-import { readR2State, mergeR2StateUpdates, setDailySummary, dailySummaryFromPoints, statsFromDailySummaries } from './storage.js';
-import { applyProbeWriteBatch, readCheckBuckets } from './admin.js';
+import { readR2State, mergeR2StateUpdates, setDailySummary, cachedDailySummaryBefore, dailySummaryFromPoints, statsFromDailySummaries } from './storage.js';
+import { applyProbeWriteBatch, readCheckBucketDaySummary } from './admin.js';
 
 // ── HTTP/TCP probe ───────────────────────────────────────────────────────────
 
@@ -57,7 +57,11 @@ export async function probeAndSaveTargetViaRegion(env, target, checkedAt, previo
     const targetKey = sanitizeId(target.id || target.name || target.target_host || target.url || 'target');
     const id = env.REGION_PROXY.idFromName(`probe-region-${region}-${version}-${targetKey}`);
     const stub = env.REGION_PROXY.get(id, { locationHint: region });
-    const res = await stub.fetch('https://nstatus.internal/probe-and-save', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target, checked_at: checkedAt, previous: previousState }) });
+    const timeoutMs = clamp(Number(target.timeout_ms || DEFAULT_TIMEOUT_MS), 500, 30000) + clamp(Number(env.REGION_PROXY_EXTRA_TIMEOUT_MS || 1500), 250, 10000);
+    const res = await withTimeout(
+      stub.fetch('https://nstatus.internal/probe-and-save', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target, checked_at: checkedAt, previous: previousState }) }),
+      timeoutMs,
+    );
     if (!res.ok) { throw new Error(`Region proxy error: HTTP ${res.status}`); }
     return { ...(await res.json()), region_proxy_version: version };
   }
@@ -125,9 +129,18 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
   const point = { checked_at: bucketAt, ok: okInt, latency_ms: latency, status_code: statusCode, error, probe_region: probeRegion, cf_colo: cfColo, total: 1, ok_count: okInt };
   const missedPoints = buildMissedPoints(env, previous, bucketAt, okInt, probeRegion, missedBackfillWriteLimit(env));
   const bucketWrites = [...missedPoints, point].map(p => ({ day: dayFromSec(p.checked_at, env), point: p }));
-  const d1Points = await readCheckBuckets(env, target.id, 2);
-  const mergedPoints = mergeCheckPoints(d1Points, bucketWrites.map(item => item.point));
-  const daily = setDailySummary(previous?.daily || {}, day, dailySummaryFromPoints(mergedPoints.filter(p => dayFromSec(p.checked_at, env) === day)));
+  const incomingDayPoints = bucketWrites.map(item => item.point).filter(p => dayFromSec(p.checked_at, env) === day);
+  const firstIncomingAt = Math.min(...incomingDayPoints.map(point => Number(point.checked_at || bucketAt)));
+  const storedSummary = cachedDailySummaryBefore(previous, day, firstIncomingAt)
+    || await readCheckBucketDaySummary(env, target.id, day, firstIncomingAt);
+  const incomingSummary = dailySummaryFromPoints(incomingDayPoints);
+  const dailySummary = {
+    ...incomingSummary,
+    total: storedSummary.total + incomingSummary.total,
+    ok_count: storedSummary.ok_count + incomingSummary.ok_count,
+    sum_latency_ms: storedSummary.sum_latency_ms + incomingSummary.sum_latency_ms,
+  };
+  const daily = setDailySummary(previous?.daily || {}, day, dailySummary);
   const stats24 = statsFromDailySummaries(daily, day, 1);
   const stats7 = statsFromDailySummaries(daily, day, 7);
   const statusChangedAt = previous && Number(previous.ok) === okInt ? (previous.status_changed_at || checkedAt) : checkedAt;
@@ -140,17 +153,6 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
 function missedBackfillWriteLimit(env) {
   const raw = env.MISSED_WRITE_BACKFILL_MAX_BUCKETS ?? env.MISSED_BACKFILL_WRITE_MAX_BUCKETS ?? 6;
   return clamp(Number(raw), 0, 48);
-}
-
-function mergeCheckPoints(existing, incoming) {
-  const byBucket = new Map();
-  for (const point of existing || []) {
-    if (point?.checked_at) byBucket.set(Number(point.checked_at), point);
-  }
-  for (const point of incoming || []) {
-    if (point?.checked_at) byBucket.set(Number(point.checked_at), point);
-  }
-  return [...byBucket.values()].sort((a, b) => Number(a.checked_at) - Number(b.checked_at));
 }
 
 // ── Incident tracking ────────────────────────────────────────────────────────
@@ -187,7 +189,7 @@ export async function runDueTargets(env) {
 }
 
 export async function runTargetBatch(env, targets, previousById = null) {
-  const concurrency = clamp(Number(env.CONCURRENCY || 8), 1, 20);
+  const concurrency = clamp(Number(env.CONCURRENCY || 20), 1, 40);
   if (!previousById) {
     const state = await readR2State(env);
     previousById = buildPreviousStateMap(targets, state, await readLatestStatusMap(env, targets.map(target => target.id)));

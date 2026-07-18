@@ -1,4 +1,4 @@
-import { clamp, nowSec, sanitizeId, sanitizeAgentId, dayFromSec, dayStartSec, timezoneOffsetMin, normalizeHistoryPoint, publicCheckPoint, configuredAgents, agentSeriesEnabled, BUCKET_SEC, R2_STATE_SCHEMA, R2_HISTORY_SCHEMA } from './utils.js';
+import { clamp, nowSec, sanitizeId, sanitizeAgentId, dayFromSec, dayStartSec, timezoneOffsetMin, normalizeHistoryPoint, publicCheckPoint, configuredAgents, agentSeriesEnabled, BUCKET_SEC, R2_STATE_SCHEMA, R2_HISTORY_SCHEMA, isMissedMonitorPoint } from './utils.js';
 
 // ── R2 generic ───────────────────────────────────────────────────────────────
 
@@ -8,7 +8,7 @@ export async function readR2Json(env, key, fallback) {
 }
 
 export async function writeR2Json(env, key, value, metadata = {}) {
-  if (!env.ARCHIVE) throw new Error('R2 binding ARCHIVE is required');
+  if (!env.ARCHIVE) throw new Error('缺少 R2 的 ARCHIVE 绑定');
   await env.ARCHIVE.put(key, JSON.stringify(value), { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: metadata });
 }
 
@@ -27,44 +27,49 @@ export async function writeR2State(env, state) {
 
 export async function removeTargetFromR2State(env, targetId) {
   if (!env.ARCHIVE) return;
-  const state = await readR2State(env);
-  if (!state.targets?.[targetId]) return;
-  delete state.targets[targetId];
-  state.updated_at = new Date().toISOString();
-  await writeR2State(env, state);
-}
-
-// Simple lock mechanism to prevent R2 write race conditions
-async function acquireR2Lock(env, timeoutSec = 10) {
-  if (!env.DB) return null;
-  const lockKey = 'r2_state_lock';
-  const now = nowSec();
-  const expiresAt = now + timeoutSec;
-  
+  const lock = await acquireR2Lock(env, 10);
+  if (env.DB && !lock) throw new Error('R2 状态正在写入，请重试删除操作');
   try {
-    // Try to acquire lock
-    await env.DB.prepare(
-      `INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) 
-       ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at 
-       WHERE CAST(value AS INTEGER) < ?`
-    ).bind(lockKey, String(expiresAt), now, now).run();
-    
-    // Check if we got the lock
-    const row = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(lockKey).first();
-    if (row && Number(row.value) === expiresAt) {
-      return lockKey;
-    }
-    return null;
-  } catch (e) {
-    console.error('acquireR2Lock error:', e);
-    return null;
+    const state = await readR2State(env);
+    if (!state.targets?.[targetId]) return;
+    delete state.targets[targetId];
+    state.updated_at = new Date().toISOString();
+    await writeR2State(env, state);
+  } finally {
+    await releaseR2Lock(env, lock);
   }
 }
 
-async function releaseR2Lock(env, lockKey) {
-  if (!env.DB || !lockKey) return;
+// R2 objects do not support atomic read-modify-write, so serialize state updates in D1.
+async function acquireR2Lock(env, timeoutSec = 10, attempts = 8) {
+  if (!env.DB) return null;
+  const lockKey = 'r2_state_lock';
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const now = nowSec();
+    const token = `${now + timeoutSec}:${crypto.randomUUID()}`;
+    try {
+      await env.DB.prepare(
+        `INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+         WHERE CAST(app_meta.value AS INTEGER) < ?`
+      ).bind(lockKey, token, now, now).run();
+
+      const row = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(lockKey).first();
+      if (row?.value === token) return { key: lockKey, token };
+    } catch (e) {
+      console.error('acquireR2Lock error:', e);
+      return null;
+    }
+    if (attempt + 1 < attempts) await new Promise(resolve => setTimeout(resolve, 20 + Math.floor(Math.random() * 40)));
+  }
+  return null;
+}
+
+async function releaseR2Lock(env, lock) {
+  if (!env.DB || !lock) return;
   try {
-    await env.DB.prepare(`DELETE FROM app_meta WHERE key = ?`).bind(lockKey).run();
+    await env.DB.prepare(`DELETE FROM app_meta WHERE key = ? AND value = ?`).bind(lock.key, lock.token).run();
   } catch (e) {
     console.error('releaseR2Lock error:', e);
   }
@@ -209,6 +214,7 @@ export function getSummaryRowsFromState(state, startDay) {
 export function summaryRowsFromChecks(targetId, points, env) {
   const byDay = new Map();
   for (const point of points || []) {
+    if (isMissedMonitorPoint(point)) continue;
     const day = dayFromSec(Number(point.checked_at || 0), env);
     if (!day) continue;
     const entry = byDay.get(day) || { target_id: targetId, day, total: 0, ok_count: 0, sum_latency_ms: 0 };
@@ -239,10 +245,25 @@ export function setDailySummary(existingDaily, day, summary) {
   return daily;
 }
 
+export function cachedDailySummaryBefore(previous, day, beforeAt) {
+  const summary = previous?.daily?.[day];
+  const previousAt = Number(previous?.checked_at || 0);
+  const summaryAt = Number(summary?.updated_at || 0);
+  const cutoff = Number(beforeAt || 0);
+  if (!summary || !previousAt || !cutoff) return null;
+  if (previousAt >= cutoff || summaryAt < previousAt) return null;
+  return {
+    total: Number(summary.total || 0),
+    ok_count: Number(summary.ok_count || 0),
+    sum_latency_ms: Number(summary.sum_latency_ms || 0),
+  };
+}
+
 export function dailySummaryFromPoints(points) {
   const rows = Array.isArray(points) ? points : [];
   let total = 0, okCount = 0, sumLatency = 0, latest = null;
   for (const point of rows) {
+    if (isMissedMonitorPoint(point)) continue;
     const pointTotal = point.total == null ? 1 : Math.max(0, Number(point.total || 0));
     total += pointTotal;
     const pointOk = point.ok_count == null ? Number(point.ok ? 1 : 0) : Math.max(0, Number(point.ok_count || 0));
@@ -251,7 +272,7 @@ export function dailySummaryFromPoints(points) {
     if (pointOk && Number.isFinite(latency)) sumLatency += latency * pointOk;
     if (!latest || Number(point.checked_at || 0) >= Number(latest.checked_at || 0)) latest = point;
   }
-  const latestLatency = latest ? Number(latest.latency_ms) : null;
+  const latestLatency = latest?.latency_ms == null ? null : Number(latest.latency_ms);
   return { total, ok_count: okCount, sum_latency_ms: sumLatency, last_ok: Number(latest?.ok ? 1 : 0), last_latency_ms: Number.isFinite(latestLatency) ? latestLatency : null, last_status_code: latest?.status_code == null ? null : Number(latest.status_code), last_error: latest?.error || null, updated_at: Number(latest?.checked_at || nowSec()) };
 }
 

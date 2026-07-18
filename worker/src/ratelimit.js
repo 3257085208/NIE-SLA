@@ -53,10 +53,11 @@ export async function rateLimitD1(env, key, limit, windowSec = 60) {
   try {
     await ensureD1RateLimitTable(env);
     await env.DB.prepare(`DELETE FROM rate_limits WHERE key = ? AND ts < ?`).bind(key, windowStart).run();
-    const row = await env.DB.prepare(`SELECT COUNT(*) as cnt FROM rate_limits WHERE key = ? AND ts >= ?`).bind(key, windowStart).first();
-    if (row && row.cnt >= limit) return false;
-    await env.DB.prepare(`INSERT INTO rate_limits (key, ts) VALUES (?, ?)`).bind(key, now).run();
-    return true;
+    const result = await env.DB.prepare(`INSERT INTO rate_limits (key, ts)
+      SELECT ?, ?
+      WHERE (SELECT COUNT(*) FROM rate_limits WHERE key = ? AND ts >= ?) < ?`)
+      .bind(key, now, key, windowStart, limit).run();
+    return Number(result?.meta?.changes || 0) === 1;
   } catch (err) {
     console.error('rateLimitD1 failed:', String(err?.message || err));
     return false;

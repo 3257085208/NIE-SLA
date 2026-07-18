@@ -1,79 +1,52 @@
-# Contributing to NIE-SLA
+# Contributing to NStatus
 
-Thanks for your interest in contributing!
+## Project Structure
+
+```text
+NIE-SLA/
+|-- worker/          Cloudflare Worker backend API
+|   `-- src/         ES module sources
+|-- frontend/        Cloudflare Pages status dashboard
+|-- agent/           Rust metrics Agent and install scripts
+|   |-- src/         Rust Agent source
+|   |-- bin/         Release binaries served by Agent Pages
+|   |-- cftz         Agent manager CLI
+|   `-- setup.sh     One-line installer backend
+|-- docs/            Documentation
+`-- test.sh          Smoke test runner
+```
+
+## Quick Start
+
+```bash
+# Backend
+cd worker && npx wrangler deploy
+
+# Frontend
+cd frontend && npx wrangler pages deploy ./ --project-name=nstatus
+
+# Agent
+cd agent && cargo fmt -- --check && cargo check
+cd agent && make build-linux
+```
 
 ## Code Conventions
 
-### JavaScript (Worker / Frontend)
-
-- Use modern ES module syntax (`import`/`export`)
-- Prefer `async/await` over raw promises
-- Keep functions small and single-purpose
-- Use consistent 2-space indentation
-- No trailing semicolons (project convention)
-- Worker source uses CommonJS-like `export` but runs as ES modules
-
-### Rust (Agent)
-
-- Follow standard `cargo fmt` output
-- Keep `main.rs` organized with clear section comments
-- Use `ureq` for HTTP, `sysinfo` for system data
-- Avoid `unsafe` blocks
-
-### Shell Scripts
-
-- All install scripts must pass `bash -n` (syntax check)
-- Use `set -euo pipefail`
-- Support both `curl` and `wget` for downloads
-- Quote all variable expansions
+- **JS**: ES modules, no semicolons, 2-space indent.
+- **Rust**: `cargo fmt`, small std-first dependencies, no inbound listener in the Agent.
+- **Shell**: `set -euo pipefail`, Bash 4+ for management scripts, POSIX sh for `install.sh`.
 
 ## Testing
 
-Run the full test suite before submitting:
-
 ```bash
-./test.sh
+bash test.sh
 ```
 
-This checks: Worker JS syntax, frontend JS syntax, Rust fmt/check/build, shell script syntax, and repository hygiene.
-
-## Pull Request Process
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Make your changes
-4. Run `./test.sh` and ensure all tests pass
-5. Commit with a descriptive message
-6. Push and open a PR
+The smoke test checks Worker JS, frontend JS, Rust formatting/checks, a Linux amd64 Agent build, and shell syntax.
 
 ## Release Process
 
-### Agent Release
-
-1. Update `agent/Cargo.toml` version
-2. Update `agent/VERSION` file
-3. Update `worker/src/version.js`
-4. Push a tag: `git tag v1.x.x && git push --tags`
-5. GitHub Actions will build all platforms and create a Release
-
-### Worker Release
-
-```bash
-cd worker
-npx wrangler deploy
-```
-
-### Frontend Release
-
-```bash
-cd frontend
-npx wrangler pages deploy ./ --project-name=nstatus
-```
-
-## Security
-
-If you discover a security vulnerability, please do NOT open a public issue. Contact the maintainers directly.
-
-## Code of Conduct
-
-Be respectful. Be constructive. Help make this project better for everyone.
+1. Update Agent version in `agent/Cargo.toml` when the Agent protocol changes.
+2. Update Worker/frontend version files when the API/UI changes.
+3. Tag with `git tag v1.x.x && git push --tags`.
+4. CI builds Linux and Windows Agent binaries and attaches them to the GitHub Release.

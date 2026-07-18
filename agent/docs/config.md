@@ -25,11 +25,8 @@
 | `NSTATUS_INTERVAL_SEC` | `300` | Metrics report interval |
 | `NSTATUS_PING_TARGETS` | `*` | Comma-separated ping target IDs, `*` = all |
 | `NSTATUS_PING_SEC` | `20` | TCP ping interval |
+| `NSTATUS_PING_TARGET_REFRESH_SEC` | `600` | Refresh interval for managed ping targets (60-3600 seconds) |
 | `NSTATUS_SAMPLE_SEC` | `1` | System sampling interval |
-| `NSTATUS_UNLOCK_CHECK_ENABLED` | `1` on Linux | Run IP.Check.Place unlock detection |
-| `NSTATUS_UNLOCK_CHECK_SEC` | `300` | Unlock detection interval |
-| `NSTATUS_UNLOCK_CHECK_URL` | `https://IP.Check.Place` | Unlock detection script URL |
-| `NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC` | `90` | Unlock detection timeout |
 
 ## Secrets (wrangler secret put)
 

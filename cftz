@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# cftz - NStatus VPS Agent 管理工具
+# cftz - 聶.NET VPS Agent 管理工具
 # Usage: cftz {install|uninstall|update|log|set|status}
 
 set -euo pipefail
 
-DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://sla.niekaixiang.com}"
+DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 SERVICE_NAME="nstatus-metrics"
 INSTALL_DIR="/usr/local/bin"
 WORK_DIR="/opt/nstatus-metrics"
@@ -46,30 +46,31 @@ curl_api() {
     return $rc
 }
 
-
-install_unlock_deps() {
-    local enabled="${NSTATUS_UNLOCK_CHECK_ENABLED:-1}"
-    case "${enabled,,}" in 0|false|off) return 0 ;; esac
-    local need=0
-    for cmd in curl jq bc dig ip; do
-        command -v "$cmd" >/dev/null 2>&1 || need=1
-    done
-    command -v nc >/dev/null 2>&1 || command -v netcat >/dev/null 2>&1 || need=1
-    [[ "$need" -eq 0 ]] && return 0
-    info "installing unlock check dependencies"
-    if command -v apk >/dev/null 2>&1; then
-        apk add --no-cache curl jq bc bind-tools iproute2 netcat-openbsd >/dev/null 2>&1 || warn "failed to install some unlock dependencies"
-    elif command -v apt-get >/dev/null 2>&1; then
-        apt-get update -qq >/dev/null 2>&1 || true
-        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl jq bc dnsutils iproute2 netcat-openbsd >/dev/null 2>&1 || warn "failed to install some unlock dependencies"
-    elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y -q curl jq bc bind-utils iproute nmap-ncat >/dev/null 2>&1 || warn "failed to install some unlock dependencies"
-    elif command -v yum >/dev/null 2>&1; then
-        yum install -y -q curl jq bc bind-utils iproute nmap-ncat >/dev/null 2>&1 || warn "failed to install some unlock dependencies"
-    else
-        warn "package manager not found; install curl jq bc dig nc ip manually for unlock checks"
-    fi
+shell_quote() {
+    local s="${1-}"
+    s=${s//\'/\'\"\'\"\'}
+    printf "'%s'" "$s"
 }
+
+write_env_file() {
+    local api="$1" tok="$2" aid="$3" label="$4" interval="$5" ping_targets="${6:-}" ping_sec="${7:-}"
+    mkdir -p "$WORK_DIR"
+    {
+        printf 'NSTATUS_API_BASE=%s\n' "$(shell_quote "$api")"
+        printf 'NSTATUS_AGENT_TOKEN=%s\n' "$(shell_quote "$tok")"
+        printf 'NSTATUS_AGENT_ID=%s\n' "$(shell_quote "$aid")"
+        printf 'NSTATUS_AGENT_LABEL=%s\n' "$(shell_quote "$label")"
+        printf 'NSTATUS_INTERVAL_SEC=%s\n' "$(shell_quote "$interval")"
+        if [[ -n "${ping_targets}" ]]; then
+            printf 'NSTATUS_PING_TARGETS=%s\n' "$(shell_quote "$ping_targets")"
+        fi
+        if [[ -n "${ping_sec}" ]]; then
+            printf 'NSTATUS_PING_SEC=%s\n' "$(shell_quote "$ping_sec")"
+        fi
+    } > "$ENV_FILE"
+    chmod 0600 "$ENV_FILE"
+}
+
 
 detect_arch() {
     case "$(uname -m)" in
@@ -85,7 +86,7 @@ detect_arch() {
 
 download_binary() {
     local arch=$(detect_arch)
-    local url="${DOWNLOAD_BASE}/bin/${BIN_NAME}-linux-${arch}?v=$(date +%s)"
+    local url="${DOWNLOAD_BASE}/bin/${BIN_NAME}-linux-${arch}"
     local tmpbin=$(mktemp)
     if command -v curl &>/dev/null; then
         curl -fSL "$url" -o "$tmpbin" --progress-bar || { rm -f "$tmpbin"; err "下载失败"; exit 1; }
@@ -100,8 +101,99 @@ download_binary() {
 
 read_env() {
     if [[ -f "$ENV_FILE" ]]; then
-        source "$ENV_FILE"
+        if source "$ENV_FILE" 2>/dev/null; then
+            return 0
+        fi
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            line=${line%$'\r'}
+            [[ -z "$line" || "$line" == \#* ]] && continue
+            [[ "$line" == export\ * ]] && line=${line#export }
+            [[ "$line" == *"="* ]] || continue
+            local key="${line%%=*}"
+            local val="${line#*=}"
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
+            [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+            printf -v "$key" '%s' "$val"
+            export "$key"
+        done < "$ENV_FILE"
     fi
+}
+
+write_service_unit() {
+    local init
+    init=$(detect_init)
+    case "$init" in
+        systemd)
+            cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=聶.NET VPS Metrics Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${WORK_DIR}
+ExecStart=/bin/sh -c 'set -a; . "${ENV_FILE}"; set +a; exec "${WORK_DIR}/${BIN_NAME}"'
+Restart=always
+RestartSec=15
+User=${AGENT_USER}
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${WORK_DIR}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            ;;
+        openrc)
+            cat > "/etc/init.d/${SERVICE_NAME}" <<EOF
+#!/sbin/openrc-run
+name="${SERVICE_NAME}"
+description="聶.NET VPS Metrics Agent"
+
+start() {
+    ebegin "Starting ${SERVICE_NAME}"
+    touch "/var/log/${SERVICE_NAME}.log"
+    chown "${AGENT_USER}" "/var/log/${SERVICE_NAME}.log" 2>/dev/null || true
+    start-stop-daemon --start --background --make-pidfile \
+        --pidfile /run/${SERVICE_NAME}.pid \
+        --user ${AGENT_USER} \
+        --exec /bin/sh -- \
+        -c 'set -a; . "${ENV_FILE}"; set +a; exec "${WORK_DIR}/${BIN_NAME}" >>"/var/log/${SERVICE_NAME}.log" 2>&1'
+    eend \$?
+}
+
+stop() {
+    ebegin "Stopping ${SERVICE_NAME}"
+    start-stop-daemon --stop --pidfile /run/${SERVICE_NAME}.pid
+    eend \$?
+}
+
+depend() { need net; }
+EOF
+            chmod +x "/etc/init.d/${SERVICE_NAME}"
+            ;;
+    esac
+}
+
+start_service() {
+    case "$(detect_init)" in
+        systemd)
+            systemctl daemon-reload
+            systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+            systemctl restart "$SERVICE_NAME"
+            ;;
+        openrc)
+            rc-update add "$SERVICE_NAME" default 2>/dev/null || true
+            rc-service "$SERVICE_NAME" start 2>/dev/null || true
+            ;;
+        *)       "${WORK_DIR}/${BIN_NAME}" & ;;
+    esac
 }
 
 # ── 子命令 ────────────────────────────────────────────────────────
@@ -115,7 +207,7 @@ detect_init() {
 do_install() {
     [[ $EUID -ne 0 ]] && { err "请使用 root 权限: sudo cftz install"; exit 1; }
 
-    echo -e "\n${BOLD}正在安装 NStatus Metrics Agent${NC}\n"
+    echo -e "\n${BOLD}正在安装 聶.NET Metrics Agent${NC}\n"
 
     local arch=$(detect_arch)
     info "架构: ${arch}"
@@ -124,17 +216,13 @@ do_install() {
     local tok="${NSTATUS_AGENT_TOKEN:-}"
     local aid="${NSTATUS_AGENT_ID:-$(hostname)}"
     local interval="${NSTATUS_INTERVAL_SEC:-300}"
-    local unlock_enabled="${NSTATUS_UNLOCK_CHECK_ENABLED:-1}"
-    local unlock_sec="${NSTATUS_UNLOCK_CHECK_SEC:-300}"
-    local unlock_url="${NSTATUS_UNLOCK_CHECK_URL:-https://IP.Check.Place}"
-    local unlock_timeout="${NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC:-90}"
 
     [[ -z "$api" ]] && read -rp "  API URL: " api </dev/tty
     [[ -z "$tok" ]] && { read -rsp "  Token: " tok </dev/tty; echo; }
     [[ -z "$api" || -z "$tok" ]] && { err "API 和 Token 不能为空"; exit 1; }
 
-    local tmpbin=$(download_binary)
-    install_unlock_deps
+    local tmpbin
+    tmpbin="$(download_binary)"
 
     # 创建用户
     if id -u "$AGENT_USER" &>/dev/null 2>&1; then
@@ -156,71 +244,12 @@ do_install() {
     ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
     rm -f "$tmpbin"
 
-    printf '%s\n' \
-      "NSTATUS_API_BASE=${api}" \
-      "NSTATUS_AGENT_TOKEN=${tok}" \
-      "NSTATUS_AGENT_ID=${aid}" \
-      "NSTATUS_AGENT_LABEL=${aid}" \
-      "NSTATUS_INTERVAL_SEC=${interval}" \
-      "NSTATUS_UNLOCK_CHECK_ENABLED=${unlock_enabled}" \
-      "NSTATUS_UNLOCK_CHECK_SEC=${unlock_sec}" \
-      "NSTATUS_UNLOCK_CHECK_URL=${unlock_url}" \
-      "NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC=${unlock_timeout}" > "$ENV_FILE"
-    chmod 0600 "$ENV_FILE"
+    write_env_file "$api" "$tok" "$aid" "$aid" "$interval"
     chown -R "$AGENT_USER":"$AGENT_USER" "$WORK_DIR" 2>/dev/null || chown -R "$AGENT_USER" "$WORK_DIR" 2>/dev/null || true
 
-    local init=$(detect_init)
-    case "$init" in
-        systemd)
-            cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
-[Unit]
-Description=NStatus VPS Metrics Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=${WORK_DIR}
-EnvironmentFile=${ENV_FILE}
-ExecStart=${WORK_DIR}/${BIN_NAME}
-Restart=always
-RestartSec=15
-User=${AGENT_USER}
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=${WORK_DIR}
-
-[Install]
-WantedBy=multi-user.target
-EOF
-            systemctl daemon-reload
-            systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
-            systemctl restart "$SERVICE_NAME"
-            ok "systemd 服务已启动"
-            ;;
-        openrc)
-            cat > "/etc/init.d/${SERVICE_NAME}" <<EOF
-#!/sbin/openrc-run
-name="${SERVICE_NAME}"
-description="NStatus VPS Metrics Agent"
-command="${WORK_DIR}/${BIN_NAME}"
-command_args=""
-pidfile="/run/\${RC_SVCNAME}.pid"
-command_background=true
-depend() { need net; after firewall; }
-EOF
-            chmod +x "/etc/init.d/${SERVICE_NAME}"
-            rc-update add "$SERVICE_NAME" default 2>/dev/null || true
-            rc-service "$SERVICE_NAME" start 2>/dev/null
-            ok "OpenRC 服务已启动"
-            ;;
-        *)
-            "${WORK_DIR}/${BIN_NAME}" &
-            ok "已后台启动 (PID $!)"
-            ;;
-    esac
+    write_service_unit
+    start_service
+    ok "服务已启动"
 
     echo
     info "目标: ${aid}"
@@ -230,7 +259,7 @@ EOF
 do_uninstall() {
     [[ $EUID -ne 0 ]] && { err "请使用 root 权限: sudo cftz uninstall"; exit 1; }
 
-    echo -e "\n${BOLD}正在卸载 NStatus Metrics Agent${NC}\n"
+    echo -e "\n${BOLD}正在卸载 聶.NET Metrics Agent${NC}\n"
 
     local init=$(detect_init)
     case "$init" in
@@ -257,15 +286,16 @@ do_uninstall() {
 do_update() {
     [[ $EUID -ne 0 ]] && { err "请使用 root 权限: sudo cftz update"; exit 1; }
 
-    echo -e "\n${BOLD}正在更新 NStatus Metrics Agent${NC}\n"
+    echo -e "\n${BOLD}正在更新 聶.NET Metrics Agent${NC}\n"
 
     if [[ ! -f "${WORK_DIR}/${BIN_NAME}" && ! -f "${INSTALL_DIR}/${BIN_NAME}" ]]; then
         err "Agent 未安装，请先运行: cftz install"
         exit 1
     fi
 
-    local tmpbin=$(download_binary)
-    install_unlock_deps
+    read_env
+    local tmpbin
+    tmpbin="$(download_binary)"
     local init=$(detect_init)
     case "$init" in
         systemd) systemctl stop "$SERVICE_NAME" 2>/dev/null || true ;;
@@ -280,14 +310,11 @@ do_update() {
     ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
     chown "$AGENT_USER":"$AGENT_USER" "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || chown "$AGENT_USER" "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || true
     rm -f "$tmpbin"
-    case "$init" in
-        systemd) systemctl start "$SERVICE_NAME" ;;
-        openrc)  rc-service "$SERVICE_NAME" start 2>/dev/null ;;
-        *)       "${WORK_DIR}/${BIN_NAME}" & ;;
-    esac
+    write_service_unit
+    start_service
 
     # 同步更新 cftz 自身
-    local cftz_url="${DOWNLOAD_BASE}/cftz?v=$(date +%s)"
+    local cftz_url="${DOWNLOAD_BASE}/cftz"
     if command -v curl &>/dev/null; then
         curl -fSL "$cftz_url" -o "${INSTALL_DIR}/cftz" --silent && ok "cftz 脚本已更新" || warn "cftz 脚本更新失败"
     elif command -v wget &>/dev/null; then
@@ -300,7 +327,31 @@ do_update() {
 
 do_log() {
     local lines="${1:-30}"
-    journalctl -u "$SERVICE_NAME" -n "$lines" --no-pager
+    case "$(detect_init)" in
+        systemd)
+            journalctl -u "$SERVICE_NAME" -n "$lines" --no-pager
+            ;;
+        openrc)
+            if [[ -f "/var/log/${SERVICE_NAME}.log" ]]; then
+                tail -n "$lines" "/var/log/${SERVICE_NAME}.log"
+            elif [[ -f /var/log/messages ]]; then
+                grep "$SERVICE_NAME" /var/log/messages | tail -n "$lines" || true
+            else
+                warn "未找到 OpenRC 日志文件"
+            fi
+            ;;
+        *)
+            warn "未检测到 systemd/OpenRC，无法读取服务日志"
+            ;;
+    esac
+}
+
+restart_service() {
+    case "$(detect_init)" in
+        systemd) systemctl restart "$SERVICE_NAME" ;;
+        openrc)  rc-service "$SERVICE_NAME" restart ;;
+        *)       pkill -f "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || true; "${WORK_DIR}/${BIN_NAME}" & ;;
+    esac
 }
 
 do_set() {
@@ -318,10 +369,6 @@ do_set() {
     local interval="${NSTATUS_INTERVAL_SEC:-300}"
     local ping_targets="${NSTATUS_PING_TARGETS:-*}"
     local ping_sec="${NSTATUS_PING_SEC:-20}"
-    local unlock_enabled="${NSTATUS_UNLOCK_CHECK_ENABLED:-1}"
-    local unlock_sec="${NSTATUS_UNLOCK_CHECK_SEC:-300}"
-    local unlock_url="${NSTATUS_UNLOCK_CHECK_URL:-https://IP.Check.Place}"
-    local unlock_timeout="${NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC:-90}"
 
     while true; do
         echo -e "\n${BOLD}Agent 配置${NC}\n"
@@ -348,21 +395,10 @@ do_set() {
         esac
     done
 
-    printf '%s\n' \
-      "NSTATUS_API_BASE=${api}" \
-      "NSTATUS_AGENT_TOKEN=${tok}" \
-      "NSTATUS_AGENT_ID=${aid}" \
-      "NSTATUS_AGENT_LABEL=${aid}" \
-      "NSTATUS_INTERVAL_SEC=${interval}" \
-      "NSTATUS_PING_TARGETS=${ping_targets}" \
-      "NSTATUS_PING_SEC=${ping_sec}" \
-      "NSTATUS_UNLOCK_CHECK_ENABLED=${unlock_enabled}" \
-      "NSTATUS_UNLOCK_CHECK_SEC=${unlock_sec}" \
-      "NSTATUS_UNLOCK_CHECK_URL=${unlock_url}" \
-      "NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC=${unlock_timeout}" > "$ENV_FILE"
-    chmod 0600 "$ENV_FILE"
+    write_env_file "$api" "$tok" "$aid" "$aid" "$interval" "$ping_targets" "$ping_sec"
     chown -R "$AGENT_USER":"$AGENT_USER" "$WORK_DIR"
-    systemctl restart "$SERVICE_NAME"
+    write_service_unit
+    restart_service
 
     ok "配置已保存并重启"
     info "目标: ${aid}"
@@ -497,7 +533,11 @@ do_set_ping() {
 }
 
 do_status() {
-    systemctl status "$SERVICE_NAME" --no-pager 2>/dev/null || warn "服务未运行"
+    case "$(detect_init)" in
+        systemd) systemctl status "$SERVICE_NAME" --no-pager 2>/dev/null || warn "服务未运行" ;;
+        openrc)  rc-service "$SERVICE_NAME" status 2>/dev/null || warn "服务未运行" ;;
+        *)       pgrep -af "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || pgrep -af "${INSTALL_DIR}/${BIN_NAME}" 2>/dev/null || warn "服务未运行" ;;
+    esac
 }
 
 # ── 管理面板 ──────────────────────────────────────────────────────
@@ -793,7 +833,7 @@ do_totp_setup() {
 
     echo
     printf "  ${BOLD}密钥:${NC}  ${CYAN}%s${NC}\n" "$secret"
-    echo "  账号: NStatus:admin"
+    echo "  账号: 聶.NET:admin"
     echo "  位数: 6"
     echo
     read -rp "  输入当前验证码确认: " code </dev/tty
@@ -821,7 +861,7 @@ case "${1:-}" in
     admin)     do_admin ;;
     totp-setup) do_totp_setup ;;
     *)
-        echo -e "${BOLD}cftz${NC} - NStatus VPS Agent 管理工具"
+        echo -e "${BOLD}cftz${NC} - 聶.NET VPS Agent 管理工具"
         echo
         echo "  cftz install    安装 Agent"
         echo "  cftz uninstall  完全移除 Agent"

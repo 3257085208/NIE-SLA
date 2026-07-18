@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>聶.NET 管理后台</title>
+
+    <link rel="stylesheet" href="./admin.css?v=20260716-control-room" />
+  </head>
+  <body>
+    <div class="login-bg" id="loginPage">
+      <div class="login-box">
+        <div class="login-kicker">NIE NETWORK OPERATIONS</div>
+        <h2>聶.NET 管理后台</h2>
+        <p class="login-sub">状态、探针与基础设施配置中心</p>
+        <div class="err" id="loginErr"></div>
+        <div class="f">
+          <label>管理员 Token</label
+          ><input
+            type="password"
+            id="loginToken"
+            placeholder="输入 ADMIN_TOKEN"
+          />
+        </div>
+        <div class="f" id="totpRow" style="display: none">
+          <label>TOTP 验证码</label
+          ><input
+            type="text"
+            id="loginTotp"
+            placeholder="6 位数字"
+            maxlength="6"
+            inputmode="numeric"
+          />
+        </div>
+        <div
+          id="loginMsg"
+          class="hint"
+          style="display: none; text-align: center"
+        ></div>
+        <button
+          class="btn btn-primary"
+          style="width: 100%; padding: 10px"
+          id="loginBtn"
+        >
+          登录
+        </button>
+      </div>
+    </div>
+    <div id="app" style="display: none">
+      <header class="topbar">
+        <div class="wrap">
+          <a class="brand" href="./" aria-label="返回聶.NET前台">
+            <span class="brand-mark">N</span>
+            <span class="brand-copy"><strong>聶.NET</strong><small>CONTROL ROOM</small></span>
+          </a>
+          <div class="nav" id="nav">
+            <a href="#" class="on" data-p="dash">仪表盘</a
+            ><a href="#" data-p="targets">探针</a
+            ><a href="#" data-p="pings">Ping</a
+            ><a href="#" data-p="settings">设置</a>
+          </div>
+          <div class="right">
+            <span class="system-live"><i></i>系统在线</span>
+            <button class="btn btn-sm btn-danger" id="logoutBtn">退出</button>
+          </div>
+        </div>
+      </header>
+      <main class="wrap">
+        <section class="page on" id="pg-dash">
+          <div class="page-intro">
+            <span class="page-kicker">OVERVIEW / 01</span>
+            <h2>运行概览</h2>
+            <p>快速确认服务状态、Agent 资源与近期事件。</p>
+          </div>
+          <div class="stats" id="dStats"></div>
+          <div class="row">
+            <div class="col">
+              <div class="card">
+                <h3>系统指标</h3>
+                <div class="grid" id="dMetrics"></div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="card">
+                <h3>VPS 信息</h3>
+                <div class="vg" id="dVps" style="display: none"></div>
+                <div id="dVpsN" class="empty">暂无数据</div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <h3>事件日志</h3>
+            <div id="dIncidents"></div>
+          </div>
+        </section>
+        <section class="page" id="pg-targets">
+          <div class="top-actions">
+            <div class="page-intro">
+              <span class="page-kicker">INVENTORY / 02</span>
+              <h2>探针管理</h2>
+              <p>调整显示顺序、部署 Agent，并维护所有 Web 与 VPS 目标。</p>
+            </div>
+            <div class="action-cluster">
+              <button class="btn btn-blue btn-sm" id="probeBtn">
+                手动探测
+              </button>
+              <button class="btn btn-primary" id="addTargetBtn">+ 新增</button>
+            </div>
+          </div>
+          <div id="tTable"><div class="loading">加载中...</div></div>
+        </section>
+        <section class="page" id="pg-pings">
+          <div class="top-actions">
+            <div class="page-intro">
+              <span class="page-kicker">NETWORK / 03</span>
+              <h2>Ping 管理</h2>
+              <p>管理 Agent 侧网络质量检测目标。</p>
+            </div>
+            <button class="btn btn-primary" id="addPingBtn">+ 新增</button>
+          </div>
+          <div id="pTable"><div class="loading">加载中...</div></div>
+        </section>
+        <section class="page" id="pg-settings">
+          <div class="page-intro">
+            <span class="page-kicker">SYSTEM / 04</span>
+            <h2>系统设置</h2>
+            <p>集中管理显示策略、自动更新、报警与数据维护。</p>
+          </div>
+          <div class="row">
+            <div class="col">
+              <div class="card">
+                <h3>前端样式</h3>
+                <div id="sTheme">加载中...</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="card">
+                <h3>Agent 自动更新</h3>
+                <div id="sAgentUpdate">加载中...</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="card">
+                <h3>流量统计</h3>
+                <div id="sTraffic">加载中...</div>
+              </div>
+            </div>
+            <div class="col col-wide">
+              <div class="card">
+                <h3>Telegram 报警</h3>
+                <div id="sAlerts">加载中...</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="card">
+                <h3>TOTP</h3>
+                <div id="sTotp">检查中...</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="card">
+                <h3>归档</h3>
+                <p class="hint">手动触发昨日数据归档。</p>
+                <button class="btn btn-blue" id="archiveBtn">立即归档</button>
+              </div>
+            </div>
+            <div class="col">
+              <div class="card">
+                <h3>系统信息</h3>
+                <div id="sInfo">加载中...</div>
+              </div>
+            </div>
+            <div class="col">
+              <div class="card">
+                <h3>同步</h3>
+                <p class="hint">从 TARGETS_JSON 同步探针。</p>
+                <button class="btn" id="syncBtn">立即同步</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div class="overlay" id="overlay"><div class="modal" id="modal"></div></div>
+    <div class="toast" id="toast"></div>
+    <script src="./config.js?v=20260704-runtime-config2"></script>
+
+    <script
+      type="module"
+      src="./js/admin.js?v=20260716-admin-modules"
+    ></script>
+  </body>
+</html>

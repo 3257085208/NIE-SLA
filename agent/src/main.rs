@@ -1,22 +1,31 @@
 use anyhow::{anyhow, Context, Result};
-use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::net::{TcpStream, ToSocketAddrs};
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, System};
 
+mod platform;
+mod queue;
+mod updater;
+
+use queue::{default_queue_file, load_sample_queue, save_sample_queue, spawn_queue_writer};
+use updater::{restart_after_update, spawn_update_worker};
+
 const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_REPORT_SEC: u64 = 300;
 const DEFAULT_SAMPLE_SEC: u64 = 1;
 const DEFAULT_PING_SEC: u64 = 20;
-const DEFAULT_UNLOCK_CHECK_SEC: u64 = 300;
-const DEFAULT_UNLOCK_CHECK_TIMEOUT_SEC: u64 = 90;
-const DEFAULT_UNLOCK_CHECK_URL: &str = "https://IP.Check.Place";
-const MAX_SAMPLES: usize = 310;
+const DEFAULT_PING_TARGET_REFRESH_SEC: u64 = 600;
+const DEFAULT_UPDATE_CHECK_SEC: u64 = 3600;
+const INITIAL_UPDATE_CHECK_SEC: u64 = 60;
+const REPORT_MAX_SAMPLES: usize = 300;
+const DEFAULT_QUEUE_MAX_SAMPLES: usize = 86_400;
+const QUEUE_FLUSH_SEC: u64 = 10;
 
 #[derive(Clone, Debug)]
 struct Config {
@@ -27,11 +36,11 @@ struct Config {
     sample_sec: u64,
     report_sec: u64,
     ping_sec: u64,
+    ping_target_refresh_sec: u64,
     ping_targets: String,
-    unlock_check_enabled: bool,
-    unlock_check_sec: u64,
-    unlock_check_url: String,
-    unlock_check_timeout_sec: u64,
+    queue_file: PathBuf,
+    queue_max_samples: usize,
+    update_check_sec: u64,
     once: bool,
 }
 
@@ -119,23 +128,6 @@ struct VpsInfo {
     os: String,
     kernel: String,
     virtualization: String,
-    unlock: Option<UnlockInfo>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct UnlockInfo {
-    checked_at: i64,
-    source: String,
-    services: Vec<UnlockServiceResult>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct UnlockServiceResult {
-    id: String,
-    name: String,
-    status: String,
-    region: String,
-    method: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -181,8 +173,34 @@ struct UploadResult {
 }
 
 #[derive(Debug)]
-struct UnlockCheckResult {
-    result: Result<UnlockInfo>,
+struct UpdateCheckResult {
+    result: Result<UpdateOutcome>,
+    next_check_sec: u64,
+}
+
+#[derive(Debug)]
+enum UpdateOutcome {
+    Current(String),
+    AvailableManual(String),
+    Installed {
+        version: String,
+        executable: PathBuf,
+    },
+}
+
+#[derive(Debug)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+struct UpdatePolicy {
+    auto_update: bool,
+    latest_version: String,
+    download_base: String,
+    manifest_sha256: String,
+    check_interval_sec: u64,
+}
+
+enum QueueCommand {
+    Append(SamplePoint),
+    Acknowledge(i64),
 }
 
 #[derive(Clone, Debug)]
@@ -230,29 +248,47 @@ fn run() -> Result<()> {
     let http = HttpClient::new();
     let mut collector = Collector::new();
     let hostname = hostname_string();
-    let mut vps_info = collector.vps_info();
-    let mut samples: Vec<SamplePoint> = Vec::new();
+    let vps_info = collector.vps_info();
+    let mut samples = load_sample_queue(&cfg.queue_file).unwrap_or_default();
+    if samples.len() > cfg.queue_max_samples {
+        samples.drain(0..samples.len() - cfg.queue_max_samples);
+    }
     let mut pings: Vec<PingResult> = Vec::new();
-    let mut ping_targets: Vec<PingTarget> = Vec::new();
+    let queue_tx = spawn_queue_writer(
+        cfg.queue_file.clone(),
+        samples.clone(),
+        cfg.queue_max_samples,
+    );
+    let ping_rx = spawn_ping_worker(cfg.clone(), http.clone());
+    let update_rx = if cfg.once {
+        None
+    } else {
+        Some(spawn_update_worker(cfg.clone(), http.clone()))
+    };
     let mut last_report = Instant::now();
     let mut first_report = true;
     let mut uploading = false;
     let mut last_upload_failed = false;
     let retry_sec = cfg.report_sec.min(60).max(10);
     let (upload_tx, upload_rx) = mpsc::channel::<UploadResult>();
-    let mut last_ping = Instant::now() - Duration::from_secs(cfg.ping_sec);
-    let mut last_ping_refresh = Instant::now() - Duration::from_secs(60);
-    let (unlock_tx, unlock_rx) = mpsc::channel::<UnlockCheckResult>();
-    let mut unlock_running = false;
-    let mut last_unlock_check = Instant::now() - Duration::from_secs(cfg.unlock_check_sec);
+    let sample_period = Duration::from_secs(cfg.sample_sec);
+    let mut next_sample = Instant::now();
 
     loop {
+        let sample = collector.sample();
+        samples.push(sample.clone());
+        let _ = queue_tx.send(QueueCommand::Append(sample));
+        if samples.len() > cfg.queue_max_samples {
+            samples.remove(0);
+        }
+
         while let Ok(result) = upload_rx.try_recv() {
             uploading = false;
             match result.result {
                 Ok(()) => {
                     last_upload_failed = false;
                     drop_samples_through(&mut samples, result.last_sample_ts);
+                    let _ = queue_tx.send(QueueCommand::Acknowledge(result.last_sample_ts));
                     drop_pings_through(&mut pings, result.last_ping_ts);
                     println!(
                         "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
@@ -271,64 +307,62 @@ fn run() -> Result<()> {
             }
         }
 
-        while let Ok(result) = unlock_rx.try_recv() {
-            unlock_running = false;
-            match result.result {
-                Ok(info) => vps_info.unlock = Some(info),
-                Err(err) => eprintln!(
-                    "{{\"ok\":false,\"unlock_error\":{}}}",
-                    json_string(&err.to_string())
-                ),
+        while let Ok(results) = ping_rx.try_recv() {
+            pings.extend(results);
+        }
+        if pings.len() > 200 {
+            let keep_from = pings.len().saturating_sub(200);
+            pings.drain(0..keep_from);
+        }
+
+        if let Some(rx) = &update_rx {
+            while let Ok(check) = rx.try_recv() {
+                match check.result {
+                    Ok(UpdateOutcome::Current(version)) => println!(
+                        "{{\"ok\":true,\"update\":\"current\",\"version\":{}}}",
+                        json_string(&version)
+                    ),
+                    Ok(UpdateOutcome::AvailableManual(version)) => println!(
+                        "{{\"ok\":true,\"update\":\"available_manual\",\"version\":{},\"command\":\"cftz update\"}}",
+                        json_string(&version)
+                    ),
+                    Ok(UpdateOutcome::Installed {
+                        version,
+                        executable,
+                    }) => {
+                        save_sample_queue(&cfg.queue_file, &samples)?;
+                        println!(
+                            "{{\"ok\":true,\"update\":\"installed\",\"version\":{},\"restarting\":true}}",
+                            json_string(&version)
+                        );
+                        restart_after_update(&executable)?;
+                        return Ok(());
+                    }
+                    Err(err) => eprintln!(
+                        "{{\"ok\":false,\"update_error\":{},\"retry_sec\":{}}}",
+                        json_string(&err.to_string()),
+                        check.next_check_sec
+                    ),
+                }
             }
-        }
-
-        let sample = collector.sample();
-        samples.push(sample.clone());
-        if samples.len() > MAX_SAMPLES {
-            samples.remove(0);
-        }
-
-        if last_ping_refresh.elapsed() >= Duration::from_secs(60) {
-            ping_targets = fetch_ping_targets(&cfg, &http).unwrap_or_default();
-            last_ping_refresh = Instant::now();
-        }
-        if last_ping.elapsed() >= Duration::from_secs(cfg.ping_sec) {
-            pings.extend(run_pings(&ping_targets, &cfg.ping_targets));
-            if pings.len() > 200 {
-                let keep_from = pings.len().saturating_sub(200);
-                pings.drain(0..keep_from);
-            }
-            last_ping = Instant::now();
-        }
-
-        if cfg.unlock_check_enabled
-            && !unlock_running
-            && last_unlock_check.elapsed() >= Duration::from_secs(cfg.unlock_check_sec)
-        {
-            let cfg_for_unlock = cfg.clone();
-            let tx = unlock_tx.clone();
-            unlock_running = true;
-            last_unlock_check = Instant::now();
-            thread::spawn(move || {
-                let result = run_unlock_check(&cfg_for_unlock);
-                let _ = tx.send(UnlockCheckResult { result });
-            });
         }
 
         let report_due = first_report
             || cfg.once
+            || samples.len() > REPORT_MAX_SAMPLES
             || last_report.elapsed() >= Duration::from_secs(cfg.report_sec)
             || (last_upload_failed
                 && !samples.is_empty()
                 && last_report.elapsed() >= Duration::from_secs(retry_sec));
         if !uploading && report_due {
+            let upload_samples: Vec<_> = samples.iter().take(REPORT_MAX_SAMPLES).cloned().collect();
             let mut metrics =
-                collector.metrics(&hostname, Some(vps_info.clone()), &samples, &pings);
-            metrics.samples = samples.clone();
-            metrics.stats = Some(aggregate(&samples));
-            let last_sample_ts = samples.last().map(|s| s.ts).unwrap_or(0);
+                collector.metrics(&hostname, Some(vps_info.clone()), &upload_samples, &pings);
+            metrics.samples = upload_samples.clone();
+            metrics.stats = Some(aggregate(&upload_samples));
+            let last_sample_ts = upload_samples.last().map(|s| s.ts).unwrap_or(0);
             let last_ping_ts = pings.last().map(|p| p.ts).unwrap_or(0);
-            let sample_count = samples.len();
+            let sample_count = upload_samples.len();
             let ping_count = pings.len();
             let cfg_for_upload = cfg.clone();
             let http_for_upload = http.clone();
@@ -349,12 +383,15 @@ fn run() -> Result<()> {
             if cfg.once {
                 if let Ok(result) = upload_rx.recv() {
                     match result.result {
-                        Ok(()) => println!(
-                            "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
-                            now_sec(),
-                            result.sample_count,
-                            result.ping_count
-                        ),
+                        Ok(()) => {
+                            let _ = queue_tx.send(QueueCommand::Acknowledge(result.last_sample_ts));
+                            println!(
+                                "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
+                                now_sec(),
+                                result.sample_count,
+                                result.ping_count
+                            );
+                        }
                         Err(err) => return Err(err),
                     }
                 }
@@ -362,7 +399,9 @@ fn run() -> Result<()> {
             }
         }
 
-        thread::sleep(Duration::from_secs(cfg.sample_sec));
+        let now = Instant::now();
+        next_sample = advance_sample_deadline(next_sample, now, sample_period);
+        thread::sleep(next_sample.saturating_duration_since(now));
     }
     Ok(())
 }
@@ -377,17 +416,17 @@ impl Config {
             sample_sec: env_u64("NSTATUS_SAMPLE_SEC", DEFAULT_SAMPLE_SEC),
             report_sec: env_u64("NSTATUS_INTERVAL_SEC", DEFAULT_REPORT_SEC),
             ping_sec: env_u64("NSTATUS_PING_SEC", DEFAULT_PING_SEC),
+            ping_target_refresh_sec: env_u64(
+                "NSTATUS_PING_TARGET_REFRESH_SEC",
+                DEFAULT_PING_TARGET_REFRESH_SEC,
+            ),
             ping_targets: env_or("NSTATUS_PING_TARGETS", "*"),
-            unlock_check_enabled: env_bool(
-                "NSTATUS_UNLOCK_CHECK_ENABLED",
-                cfg!(target_os = "linux"),
-            ),
-            unlock_check_sec: env_u64("NSTATUS_UNLOCK_CHECK_SEC", DEFAULT_UNLOCK_CHECK_SEC),
-            unlock_check_url: env_or("NSTATUS_UNLOCK_CHECK_URL", DEFAULT_UNLOCK_CHECK_URL),
-            unlock_check_timeout_sec: env_u64(
-                "NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC",
-                DEFAULT_UNLOCK_CHECK_TIMEOUT_SEC,
-            ),
+            queue_file: PathBuf::from(env_or("NSTATUS_QUEUE_FILE", &default_queue_file())),
+            queue_max_samples: env_u64(
+                "NSTATUS_QUEUE_MAX_SAMPLES",
+                DEFAULT_QUEUE_MAX_SAMPLES as u64,
+            ) as usize,
+            update_check_sec: env_u64("NSTATUS_UPDATE_CHECK_SEC", DEFAULT_UPDATE_CHECK_SEC),
             once: false,
         };
 
@@ -403,22 +442,17 @@ impl Config {
                     cfg.report_sec = parse_u64(args.next(), cfg.report_sec)
                 }
                 "--ping-sec" => cfg.ping_sec = parse_u64(args.next(), cfg.ping_sec),
+                "--ping-target-refresh-sec" => {
+                    cfg.ping_target_refresh_sec =
+                        parse_u64(args.next(), cfg.ping_target_refresh_sec)
+                }
                 "--ping-targets" => {
                     cfg.ping_targets = args.next().unwrap_or_else(|| "*".to_string())
                 }
-                "--unlock-check" => cfg.unlock_check_enabled = true,
-                "--no-unlock-check" => cfg.unlock_check_enabled = false,
-                "--unlock-check-sec" => {
-                    cfg.unlock_check_sec = parse_u64(args.next(), cfg.unlock_check_sec)
-                }
-                "--unlock-check-url" => {
-                    cfg.unlock_check_url = args
-                        .next()
-                        .unwrap_or_else(|| DEFAULT_UNLOCK_CHECK_URL.to_string())
-                }
-                "--unlock-check-timeout" => {
-                    cfg.unlock_check_timeout_sec =
-                        parse_u64(args.next(), cfg.unlock_check_timeout_sec)
+                "--queue-file" => cfg.queue_file = PathBuf::from(args.next().unwrap_or_default()),
+                "--queue-max-samples" => {
+                    cfg.queue_max_samples =
+                        parse_u64(args.next(), cfg.queue_max_samples as u64) as usize
                 }
                 "--once" => cfg.once = true,
                 "--version" | "-V" => {
@@ -436,14 +470,19 @@ impl Config {
         cfg.sample_sec = cfg.sample_sec.clamp(1, 3600);
         cfg.report_sec = cfg.report_sec.clamp(30, 3600);
         cfg.ping_sec = cfg.ping_sec.clamp(5, 600);
-        cfg.unlock_check_sec = cfg.unlock_check_sec.clamp(60, 86_400);
-        cfg.unlock_check_timeout_sec = cfg.unlock_check_timeout_sec.clamp(15, 300);
+        cfg.ping_target_refresh_sec =
+            normalize_ping_target_refresh_sec(cfg.ping_target_refresh_sec);
+        cfg.queue_max_samples = cfg.queue_max_samples.clamp(REPORT_MAX_SAMPLES, 604_800);
+        cfg.update_check_sec = cfg.update_check_sec.clamp(900, 86_400);
         if cfg.agent_id.is_empty() {
             cfg.agent_id = hostname_string();
         }
         if cfg.agent_label.is_empty() {
             cfg.agent_label = cfg.agent_id.clone();
         }
+        cfg.api = normalize_api_base(&cfg.api, env_or("NSTATUS_ALLOW_INSECURE_HTTP", "") == "1")?;
+        cfg.agent_id = normalize_agent_id(&cfg.agent_id)?;
+        cfg.agent_label = cfg.agent_label.chars().take(128).collect();
         Ok(cfg)
     }
 }
@@ -597,7 +636,6 @@ impl Collector {
             os: os_label(),
             kernel: System::kernel_version().unwrap_or_default(),
             virtualization: platform::virtualization(),
-            unlock: None,
         }
     }
 }
@@ -743,7 +781,7 @@ fn sample_json(s: &SamplePoint) -> serde_json::Value {
 }
 
 fn vps_info_json(v: &VpsInfo) -> serde_json::Value {
-    let mut value = serde_json::json!({
+    serde_json::json!({
         "cpu_model": v.cpu_model,
         "cpu_cores": v.cpu_cores,
         "physical_cores": v.physical_cores,
@@ -754,27 +792,6 @@ fn vps_info_json(v: &VpsInfo) -> serde_json::Value {
         "os": v.os,
         "kernel": v.kernel,
         "virtualization": v.virtualization
-    });
-    if let Some(unlock) = &v.unlock {
-        value
-            .as_object_mut()
-            .unwrap()
-            .insert("unlock".to_string(), unlock_json(unlock));
-    }
-    value
-}
-
-fn unlock_json(unlock: &UnlockInfo) -> serde_json::Value {
-    serde_json::json!({
-        "checked_at": unlock.checked_at,
-        "source": unlock.source,
-        "services": unlock.services.iter().map(|service| serde_json::json!({
-            "id": service.id,
-            "name": service.name,
-            "status": service.status,
-            "region": service.region,
-            "method": service.method,
-        })).collect::<Vec<_>>()
     })
 }
 
@@ -821,6 +838,18 @@ impl HttpClient {
             .read_to_string()
             .with_context(|| format!("HTTP POST failed while reading {}", url))
     }
+
+    #[cfg(target_os = "linux")]
+    fn get_public_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        let mut res = self
+            .agent
+            .get(url)
+            .call()
+            .map_err(|err| http_error("GET", url, err))?;
+        res.body_mut()
+            .read_to_vec()
+            .with_context(|| format!("HTTP GET failed while reading {}", url))
+    }
 }
 
 fn auth_header(token: &str) -> String {
@@ -831,11 +860,52 @@ fn http_error(method: &str, url: &str, err: ureq::Error) -> anyhow::Error {
     anyhow!("HTTP {} failed for {}: {}", method, url, err)
 }
 
-fn run_pings(targets: &[PingTarget], selector: &str) -> Vec<PingResult> {
-    let selected = selected_targets(selector);
+fn spawn_ping_worker(cfg: Config, http: HttpClient) -> mpsc::Receiver<Vec<PingResult>> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut targets = Vec::new();
+        let refresh_period = Duration::from_secs(cfg.ping_target_refresh_sec);
+        let mut last_refresh = Instant::now() - refresh_period;
+        let mut last_ping = Instant::now() - Duration::from_secs(cfg.ping_sec);
+        loop {
+            if last_refresh.elapsed() >= refresh_period {
+                if let Ok(next) = fetch_ping_targets(&cfg, &http) {
+                    targets = next;
+                }
+                last_refresh = Instant::now();
+            }
+            if last_ping.elapsed() >= Duration::from_secs(cfg.ping_sec) {
+                if tx.send(run_pings(&targets, &cfg.ping_targets)).is_err() {
+                    break;
+                }
+                last_ping = Instant::now();
+            }
+            thread::sleep(next_ping_worker_sleep(
+                last_refresh.elapsed(),
+                refresh_period,
+                last_ping.elapsed(),
+                Duration::from_secs(cfg.ping_sec),
+            ));
+        }
+    });
+    rx
+}
+
+fn next_ping_worker_sleep(
+    refresh_elapsed: Duration,
+    refresh_period: Duration,
+    ping_elapsed: Duration,
+    ping_period: Duration,
+) -> Duration {
+    refresh_period
+        .saturating_sub(refresh_elapsed)
+        .min(ping_period.saturating_sub(ping_elapsed))
+        .max(Duration::from_millis(50))
+}
+
+fn run_pings(targets: &[PingTarget], _selector: &str) -> Vec<PingResult> {
     let handles: Vec<_> = targets
         .iter()
-        .filter(|t| selected.is_none() || selected.as_ref().unwrap().contains(&t.id))
         .cloned()
         .map(|target| thread::spawn(move || ping_target(&target)))
         .collect();
@@ -869,203 +939,6 @@ fn ping_target(target: &PingTarget) -> PingResult {
     }
 }
 
-fn selected_targets(selector: &str) -> Option<HashSet<String>> {
-    let text = selector.trim();
-    if text.is_empty() || text == "*" {
-        return None;
-    }
-    Some(
-        text.split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-    )
-}
-
-fn run_unlock_check(cfg: &Config) -> Result<UnlockInfo> {
-    if !cfg!(target_os = "linux") {
-        return Err(anyhow!("unlock check is only supported on Linux"));
-    }
-    let url = cfg.unlock_check_url.trim();
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err(anyhow!(
-            "NSTATUS_UNLOCK_CHECK_URL must start with http:// or https://"
-        ));
-    }
-
-    let timeout_sec = cfg.unlock_check_timeout_sec;
-    let curl_timeout_sec = timeout_sec.clamp(15, 60).to_string();
-    let output = Command::new("timeout")
-        .arg(format!("{}s", timeout_sec))
-        .arg("bash")
-        .arg("-lc")
-        .arg("bash <(curl -fsSL --max-time \"$NSTATUS_UNLOCK_CURL_TIMEOUT\" \"$NSTATUS_UNLOCK_CHECK_URL\")")
-        .env("NSTATUS_UNLOCK_CHECK_URL", url)
-        .env("NSTATUS_UNLOCK_CURL_TIMEOUT", curl_timeout_sec)
-        .output()
-        .with_context(|| "failed to start unlock check command")?;
-
-    let mut text = String::new();
-    text.push_str(&String::from_utf8_lossy(&output.stdout));
-    if !output.stderr.is_empty() {
-        text.push('\n');
-        text.push_str(&String::from_utf8_lossy(&output.stderr));
-    }
-    if text.len() > 256 * 1024 {
-        text.truncate(256 * 1024);
-    }
-
-    let services = parse_unlock_services(&text);
-    if services.is_empty() {
-        if !output.status.success() {
-            return Err(anyhow!(
-                "unlock check exited with {}; no supported services parsed",
-                output.status
-            ));
-        }
-        return Err(anyhow!("unlock check produced no supported service rows"));
-    }
-
-    Ok(UnlockInfo {
-        checked_at: now_sec(),
-        source: unlock_source_label(url),
-        services,
-    })
-}
-
-fn parse_unlock_services(output: &str) -> Vec<UnlockServiceResult> {
-    let clean = strip_ansi_codes(output);
-    let lines: Vec<String> = clean
-        .lines()
-        .map(|line| line.trim().to_string())
-        .filter(|line| !line.is_empty())
-        .collect();
-    let start = lines
-        .iter()
-        .position(|line| line.contains("服务商") && line.contains("TikTok"))
-        .or_else(|| {
-            lines
-                .iter()
-                .position(|line| line.contains("流媒体") && line.contains("解锁"))
-        })
-        .unwrap_or(0);
-    let section = &lines[start..lines.len().min(start + 12)];
-    let service_line = section
-        .iter()
-        .find(|line| line.contains("服务商"))
-        .map(String::as_str)
-        .unwrap_or_default();
-    let providers = unlock_row_values(service_line);
-    let statuses = unlock_section_row(section, "状态");
-    let regions = unlock_section_row(section, "地区");
-    let methods = unlock_section_row(section, "方式");
-
-    unlock_service_order()
-        .iter()
-        .enumerate()
-        .filter_map(|(default_index, (id, name))| {
-            let key = service_key(name);
-            let index = providers
-                .iter()
-                .position(|provider| service_key(provider) == key)
-                .unwrap_or(default_index);
-            let status = statuses.get(index).cloned().unwrap_or_default();
-            let region = regions.get(index).cloned().unwrap_or_default();
-            let method = methods.get(index).cloned().unwrap_or_default();
-            if status.is_empty() && region.is_empty() && method.is_empty() {
-                return None;
-            }
-            Some(UnlockServiceResult {
-                id: (*id).to_string(),
-                name: (*name).to_string(),
-                status,
-                region,
-                method,
-            })
-        })
-        .collect()
-}
-
-fn unlock_service_order() -> [(&'static str, &'static str); 7] {
-    [
-        ("tiktok", "TikTok"),
-        ("disney_plus", "Disney+"),
-        ("netflix", "Netflix"),
-        ("youtube", "Youtube"),
-        ("amazon_pv", "AmazonPV"),
-        ("reddit", "Reddit"),
-        ("chatgpt", "ChatGPT"),
-    ]
-}
-
-fn unlock_section_row(lines: &[String], label: &str) -> Vec<String> {
-    lines
-        .iter()
-        .find(|line| {
-            line.starts_with(label)
-                || line.contains(&format!("{}:", label))
-                || line.contains(&format!("{}：", label))
-        })
-        .map(|line| unlock_row_values(line))
-        .unwrap_or_default()
-}
-
-fn unlock_row_values(line: &str) -> Vec<String> {
-    let after = line
-        .split_once(':')
-        .map(|(_, value)| value)
-        .or_else(|| line.split_once('：').map(|(_, value)| value))
-        .unwrap_or(line);
-    after
-        .split_whitespace()
-        .map(|part| part.trim().trim_matches('\u{feff}').to_string())
-        .filter(|part| !part.is_empty())
-        .collect()
-}
-
-fn service_key(value: &str) -> String {
-    value
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .collect::<String>()
-        .to_ascii_lowercase()
-}
-
-fn strip_ansi_codes(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            if matches!(chars.peek(), Some('[')) {
-                let _ = chars.next();
-                while let Some(next) = chars.next() {
-                    if ('@'..='~').contains(&next) {
-                        break;
-                    }
-                }
-            } else {
-                let _ = chars.next();
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-fn unlock_source_label(url: &str) -> String {
-    let without_scheme = url
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(url)
-        .trim_end_matches('/');
-    without_scheme
-        .split('/')
-        .next()
-        .unwrap_or(DEFAULT_UNLOCK_CHECK_URL)
-        .to_string()
-}
-
 fn aggregate(samples: &[SamplePoint]) -> AggStats {
     AggStats {
         cpu: stats(samples.iter().map(|s| s.cpu)),
@@ -1095,8 +968,148 @@ fn drop_pings_through(pings: &mut Vec<PingResult>, ts: i64) {
     pings.retain(|ping| ping.ts > ts);
 }
 
+fn advance_sample_deadline(previous_deadline: Instant, now: Instant, period: Duration) -> Instant {
+    let mut next = previous_deadline + period;
+    while next <= now {
+        next += period;
+    }
+    next
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sample_deadline_does_not_add_work_time_to_the_period() {
+        let start = Instant::now();
+        let next = advance_sample_deadline(
+            start,
+            start + Duration::from_millis(3_500),
+            Duration::from_secs(1),
+        );
+        assert_eq!(next.duration_since(start), Duration::from_secs(4));
+    }
+
+    #[test]
+    fn api_base_rejects_cleartext_remote_credentials() {
+        assert_eq!(
+            normalize_api_base("https://sla.example.com/", false).unwrap(),
+            "https://sla.example.com"
+        );
+        assert!(normalize_api_base("http://sla.example.com", false).is_err());
+        assert!(normalize_api_base("http://sla.example.com", true).is_ok());
+        assert!(normalize_api_base("http://127.0.0.1:8787", false).is_ok());
+        assert!(normalize_api_base("https://user:pass@sla.example.com", false).is_err());
+    }
+
+    #[test]
+    fn agent_id_matches_worker_normalization() {
+        assert_eq!(normalize_agent_id(" VPS HK / 01 ").unwrap(), "vps-hk-01");
+        assert_eq!(normalize_agent_id("NODE_A:01").unwrap(), "node_a:01");
+        assert!(normalize_agent_id("中文").is_err());
+    }
+
+    #[test]
+    fn ping_target_refresh_defaults_to_ten_minutes_and_is_bounded() {
+        assert_eq!(DEFAULT_PING_TARGET_REFRESH_SEC, 600);
+        assert_eq!(normalize_ping_target_refresh_sec(1), 60);
+        assert_eq!(normalize_ping_target_refresh_sec(600), 600);
+        assert_eq!(normalize_ping_target_refresh_sec(86_400), 3_600);
+        assert_eq!(DEFAULT_PING_SEC, 20);
+    }
+
+    #[test]
+    fn ping_worker_sleeps_until_the_next_real_deadline() {
+        assert_eq!(
+            next_ping_worker_sleep(
+                Duration::from_secs(100),
+                Duration::from_secs(600),
+                Duration::from_secs(5),
+                Duration::from_secs(20),
+            ),
+            Duration::from_secs(15),
+        );
+        assert_eq!(
+            next_ping_worker_sleep(
+                Duration::from_secs(600),
+                Duration::from_secs(600),
+                Duration::from_secs(20),
+                Duration::from_secs(20),
+            ),
+            Duration::from_millis(50),
+        );
+    }
+}
+
+fn normalize_ping_target_refresh_sec(value: u64) -> u64 {
+    value.clamp(60, 3_600)
+}
+
 fn trim_ascii(value: impl AsRef<str>) -> String {
     value.as_ref().trim().to_string()
+}
+
+fn normalize_api_base(value: &str, allow_insecure_http: bool) -> Result<String> {
+    let base = value.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Err(anyhow!("NSTATUS_API_BASE or --api is required"));
+    }
+    if base.chars().any(char::is_whitespace) || base.contains('?') || base.contains('#') {
+        return Err(anyhow!(
+            "Agent API base must be an origin without query or fragment"
+        ));
+    }
+    let (scheme, authority) = base
+        .split_once("://")
+        .ok_or_else(|| anyhow!("Agent API base must include http:// or https://"))?;
+    let authority = authority.split('/').next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') {
+        return Err(anyhow!("Agent API base has an invalid authority"));
+    }
+    if scheme.eq_ignore_ascii_case("https") {
+        return Ok(base.to_string());
+    }
+    if !scheme.eq_ignore_ascii_case("http") {
+        return Err(anyhow!("Agent API base must use HTTPS"));
+    }
+    let authority = authority.to_ascii_lowercase();
+    let local = authority == "localhost"
+        || authority.starts_with("localhost:")
+        || authority == "127.0.0.1"
+        || authority.starts_with("127.0.0.1:")
+        || authority == "[::1]"
+        || authority.starts_with("[::1]:");
+    if allow_insecure_http || local {
+        return Ok(base.to_string());
+    }
+    Err(anyhow!(
+        "Agent API base must use HTTPS; set NSTATUS_ALLOW_INSECURE_HTTP=1 only for trusted private networks"
+    ))
+}
+
+fn normalize_agent_id(value: &str) -> Result<String> {
+    let mut normalized = String::with_capacity(value.len().min(64));
+    let mut previous_dash = false;
+    for ch in value.trim().to_ascii_lowercase().chars() {
+        if normalized.len() >= 64 {
+            break;
+        }
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | ':' | '-') {
+            normalized.push(ch);
+            previous_dash = ch == '-';
+        } else if !previous_dash && !normalized.is_empty() {
+            normalized.push('-');
+            previous_dash = true;
+        }
+    }
+    let normalized = normalized.trim_matches('-').to_string();
+    if normalized.is_empty() {
+        return Err(anyhow!(
+            "NSTATUS_AGENT_ID must contain an ASCII letter or number"
+        ));
+    }
+    Ok(normalized)
 }
 
 fn stats<I>(values: I) -> Stats
@@ -1201,17 +1214,6 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-fn env_bool(key: &str, default: bool) -> bool {
-    match env::var(key) {
-        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
-            "1" | "true" | "on" => true,
-            "0" | "false" | "off" => false,
-            _ => default,
-        },
-        Err(_) => default,
-    }
-}
-
 fn parse_u64(value: Option<String>, default: u64) -> u64 {
     value.and_then(|s| s.parse().ok()).unwrap_or(default)
 }
@@ -1251,122 +1253,6 @@ fn print_help() {
     println!("NStatus Agent v{}", AGENT_VERSION);
     println!("Usage: nstatus-metrics --api URL --token TOKEN [--once]");
     println!(
-        "Environment: NSTATUS_API_BASE, NSTATUS_AGENT_TOKEN, NSTATUS_AGENT_ID, NSTATUS_AGENT_LABEL"
+        "Environment: NSTATUS_API_BASE, NSTATUS_AGENT_TOKEN, NSTATUS_AGENT_ID, NSTATUS_AGENT_LABEL, NSTATUS_PING_TARGET_REFRESH_SEC"
     );
-    println!(
-        "Unlock check: NSTATUS_UNLOCK_CHECK_ENABLED=0|1, NSTATUS_UNLOCK_CHECK_SEC=300, NSTATUS_UNLOCK_CHECK_URL=https://IP.Check.Place"
-    );
-}
-
-mod platform {
-    #[cfg(target_os = "linux")]
-    pub fn net_bytes() -> (u64, u64) {
-        let Ok(text) = std::fs::read_to_string("/proc/net/dev") else {
-            return (0, 0);
-        };
-        let mut rx = 0_u64;
-        let mut tx = 0_u64;
-        for line in text.lines().skip(2) {
-            let Some((iface, data)) = line.split_once(':') else {
-                continue;
-            };
-            let iface = iface.trim();
-            if iface == "lo" {
-                continue;
-            }
-            let fields: Vec<&str> = data.split_whitespace().collect();
-            if fields.len() >= 16 {
-                rx = rx.saturating_add(fields[0].parse::<u64>().unwrap_or(0));
-                tx = tx.saturating_add(fields[8].parse::<u64>().unwrap_or(0));
-            }
-        }
-        (rx, tx)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    pub fn net_bytes() -> (u64, u64) {
-        (0, 0)
-    }
-
-    #[cfg(target_os = "linux")]
-    pub fn disk_io_bytes() -> (u64, u64) {
-        let Ok(text) = std::fs::read_to_string("/proc/diskstats") else {
-            return (0, 0);
-        };
-        let mut read = 0_u64;
-        let mut write = 0_u64;
-        for line in text.lines() {
-            let fields: Vec<&str> = line.split_whitespace().collect();
-            if fields.len() < 14 {
-                continue;
-            }
-            let name = fields[2];
-            if name.starts_with("loop") || name.starts_with("ram") {
-                continue;
-            }
-            let sectors_read = fields[5].parse::<u64>().unwrap_or(0);
-            let sectors_written = fields[9].parse::<u64>().unwrap_or(0);
-            read = read.saturating_add(sectors_read.saturating_mul(512));
-            write = write.saturating_add(sectors_written.saturating_mul(512));
-        }
-        (read, write)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    pub fn disk_io_bytes() -> (u64, u64) {
-        (0, 0)
-    }
-
-    #[cfg(target_os = "linux")]
-    pub fn connection_counts() -> (u64, u64) {
-        let tcp = count_conn_file("/proc/net/tcp") + count_conn_file("/proc/net/tcp6");
-        let udp = count_conn_file("/proc/net/udp") + count_conn_file("/proc/net/udp6");
-        (tcp, udp)
-    }
-
-    #[cfg(target_os = "linux")]
-    fn count_conn_file(path: &str) -> u64 {
-        std::fs::read_to_string(path)
-            .map(|s| s.lines().skip(1).count() as u64)
-            .unwrap_or(0)
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    pub fn connection_counts() -> (u64, u64) {
-        (0, 0)
-    }
-
-    pub fn virtualization() -> String {
-        #[cfg(target_os = "linux")]
-        {
-            if std::path::Path::new("/proc/xen").exists() {
-                return "xen".to_string();
-            }
-            if let Ok(product) = std::fs::read_to_string("/sys/class/dmi/id/product_name") {
-                let p = product.trim().to_lowercase();
-                if p.contains("kvm") {
-                    return "kvm".to_string();
-                }
-                if p.contains("vmware") {
-                    return "vmware".to_string();
-                }
-                if p.contains("virtualbox") {
-                    return "virtualbox".to_string();
-                }
-                if p.contains("hyper-v") || p.contains("hyperv") {
-                    return "hyper-v".to_string();
-                }
-            }
-            if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
-                let c = cgroup.to_lowercase();
-                if c.contains("docker") {
-                    return "docker".to_string();
-                }
-                if c.contains("lxc") {
-                    return "lxc".to_string();
-                }
-            }
-        }
-        String::new()
-    }
 }

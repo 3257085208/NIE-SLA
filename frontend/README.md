@@ -1,128 +1,117 @@
-# NStatus Frontend — Status Dashboard
+# CloudflareStatus / 聶.NET 前端
 
-The public-facing status page and admin panel, hosted on Cloudflare Pages.
+本目录是 NIE-SLA 的 Cloudflare Pages 前端，同时包含公开状态页、管理后台、Pages Functions API 代理、Agent 安装脚本和发布二进制。
 
-## Features
+完整系统文档见 [NIE-SLA 中文主手册](https://github.com/3257085208/NIE-SLA/blob/main/README.zh-CN.md)。Worker/Agent 源码也位于该仓库。
 
-- **Dual Theme**: Cards theme (NodeGet-style) and Classic theme (traditional list)
-- **Responsive**: Mobile-polished layout adapts from desktop to phone
-- **Charts**: Interactive time-series charts for latency, CPU, memory, disk, network, connections, disk I/O, and TCP ping
-- **Filtering**: Text search across node names, IPs, domains, and groups
-- **Admin Panel**: Full CRUD for targets, ping targets, alerts, and settings (served via Worker)
-- **Agent Installers**: Self-contained install scripts served from Pages
+## 目录
 
-## Quick Deploy
+| 路径 | 说明 |
+| --- | --- |
+| `index.html` | 公开状态页入口 |
+| `app.js` | 公开页面状态与交互编排 |
+| `style.css` | 公开页面样式和主题 |
+| `admin.html` | 管理后台入口 |
+| `js/admin.js` | 后台 UI 编排 |
+| `js/admin/api.js` | Token、TOTP session 与 API 客户端 |
+| `js/shared/` | 共享纯函数 |
+| `functions/api/[[path]].js` | Pages 到 Worker 的 API 代理 |
+| `config.js` | API Base 配置 |
+| `bin/` | Agent VERSION、SHA256SUMS 和二进制 |
+| `install.sh`/`install.ps1` | Linux/Windows 安装入口 |
 
-```bash
-cd frontend
+## 配置 API
 
-# Create config pointing to your Worker
-echo 'window.NSTATUS_CONFIG = { apiBase: "https://your-worker.your-subdomain.workers.dev" };' > config.js
-
-# Deploy
-npx wrangler pages deploy ./ --project-name=nstatus
-```
-
-## Structure
-
-```
-frontend/
-├── index.html           # Status page SPA
-├── app.js               # Main dashboard logic (2737 lines)
-├── config.js            # Runtime API base URL configuration
-├── style.css            # Stylesheet (cards + classic themes)
-├── 404.html             # Custom 404
-├── _redirects            # Pages routing rules
-├── functions/           # Pages Functions (API proxy)
-│   ├── api/[[path]].js  # Proxies /api/* → Worker
-│   └── admin/[[path]].js # Proxies /admin/* → Worker
-├── js/
-│   ├── shared/          # Billing, format, HTML, traffic utilities
-│   ├── themes/          # Card and detail theme modules
-│   └── install-command.js  # Clipboard utility
-├── assets/              # Static assets (logos, flags, OS icons)
-├── bin/
-│   └── SHA256SUMS       # Agent binary checksum manifest
-├── install.sh           # Linux installer entry
-├── install.ps1          # Windows PowerShell installer
-├── setup.sh             # Interactive Linux setup
-├── quick-install.sh     # Non-interactive installer
-├── update.sh            # Agent update script
-└── cftz                 # Agent management CLI
-```
-
-## Configuration
-
-### `config.js`
-
-The frontend reads its API URL from `config.js` at runtime:
+`config.js`：
 
 ```js
-window.NSTATUS_CONFIG = {
-  apiBase: "https://your-worker.your-subdomain.workers.dev"
-};
+window.NSTATUS_API_BASE = "https://YOUR-WORKER.example";
 ```
 
-This can also be set via:
-- URL query: `?api=https://your-worker.your-subdomain.workers.dev`
-- LocalStorage: `localStorage.setItem('nstatus.apiBase', '...')`
+不要在该文件放 Admin Token 或 Agent Token。它会公开下载到每个访客浏览器。
 
-### Pages Functions
+## 部署
 
-The `functions/api/[[path]].js` and `functions/admin/[[path]].js` files proxy requests from Pages to the Worker. This is needed because the status page and the Worker API may be on different domains.
+```bash
+npx wrangler login
+npx wrangler pages deploy . --project-name nstatus
+```
 
-Configure the proxied Worker URL in Pages environment variables:
-- Set `NSTATUS_API_BASE` in your Pages project dashboard
+也可使用 Pages GitHub 集成。部署后检查 Deployment 对应 commit，并访问：
 
-## Themes
+```text
+https://YOUR-PAGES/
+https://YOUR-PAGES/admin.html
+https://YOUR-PAGES/bin/VERSION
+https://YOUR-PAGES/bin/SHA256SUMS
+```
 
-### Cards Theme (Default)
+## 两种状态不要混淆
 
-NodeGet-inspired card layout with:
-- VPS resource rings (CPU, memory, disk)
-- Region flags and OS logos
-- Traffic progress bars
-- Expandable detail views with full time-series charts
+- Agent 在线：VPS 最近仍在主动上传。
+- CF 状态/Latency：Cloudflare 是否能主动连接目标。
+- 日色块：当前表示 CF 每日探测成功率。
 
-### Classic Theme
+因此 Agent 在线但 CF Latency 为 `-` 并不矛盾。
 
-Traditional list-based layout with:
-- Grouped service cards
-- Uptime strips
-- Inline latency charts
+## IPv6-only TCP 目标
 
-Users can switch themes via the topbar toggle (preference saved to localStorage).
+推荐使用 DNS-only AAAA 域名：
 
-## Agent Installer Files
+```text
+probe-vps.example.com AAAA 2001:db8::10
+Cloudflare Proxy: DNS only
+```
 
-The frontend directory also serves as the distribution point for agent installers. These files are designed to be downloaded directly by VPS operators:
+不要开启橙云。Cloudflare Workers TCP Sockets 可能拒绝直接 IPv6 字面地址；连接 Cloudflare 自己的代理 IP 也被禁止。
 
-| File | Purpose |
-|---|---|
-| `install.sh` | POSIX sh entry — downloads `setup.sh` and passes env vars |
-| `setup.sh` | Full interactive/non-interactive installer |
-| `quick-install.sh` | One-liner wrapper for env-based install |
-| `update.sh` | In-place agent binary update |
-| `install.ps1` | Windows PowerShell installer |
-| `cftz` | Agent management CLI |
-| `bin/SHA256SUMS` | Binary integrity manifest |
+完整教程见 [IPv6、AAAA 与 CF TCP 探测](https://github.com/3257085208/NIE-SLA/blob/main/docs/zh-CN/12-ipv6-cloudflare-probe.md)。
 
-All installers verify binary SHA-256 checksums against the manifest before installation. The manifest hash is pinned to prevent tampering.
+## Agent 发布文件
 
-## Development
+`bin/` 必须整体来自同一次 release：
 
-The frontend is vanilla JavaScript — no build step required. Edit files directly and deploy.
+```text
+VERSION
+SHA256SUMS
+nstatus-metrics-linux-*
+nstatus-metrics-windows-amd64.exe
+```
 
-### Testing
+更新流程：
 
-Tests are in the root `test.sh` — the frontend checks verify:
-- `app.js` and `config.js` syntax
-- Shared module imports resolve correctly
-- Theme modules load without errors
+1. 构建并验证全部架构。
+2. 生成 `SHA256SUMS`。
+3. 计算 manifest 文件自身 SHA-256。
+4. 同步全部文件到 `bin/`。
+5. 更新安装器默认版本/manifest 哈希。
+6. 部署 Pages。
+7. 从生产域名重新下载并校验。
 
-## Browser Support
+只替换二进制或只替换 VERSION 都会造成安装校验失败。
 
-- Chrome/Edge 90+
-- Firefox 90+
-- Safari 15+
-- Mobile browsers supported
+## 后台认证
+
+后台不会把凭据写进源码。Admin Token 与 TOTP session 保存在当前标签页 `sessionStorage`，关闭标签页后失效。启用 TOTP 后，管理 API 同时要求 Token 和有效 session。
+
+## 本地检查
+
+从完整仓库根目录运行：
+
+```bash
+./test.sh
+```
+
+会检查前端语法、模块导入、共享函数和 smoke test。手动还应验证桌面和移动端、两种主题、登录/TOTP、目标排序、Web 目标不显示 Agent 字段。
+
+## 安全
+
+- 动态 HTML 必须转义。
+- 不在 localStorage 长期保存 Admin Token。
+- 不在静态文件中放 secret。
+- 完整 Agent 安装命令包含 scoped Token，禁止公开。
+- Pages 自定义域名和 Worker API 都使用 HTTPS。
+
+## License
+
+MIT

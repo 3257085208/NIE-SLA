@@ -27,6 +27,16 @@ import {
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
 import {
+  buildLinePoints,
+  chartColorToRgb,
+  clampChartRange,
+  countChartGaps,
+  countMissedChecks,
+  filterChecksByRange,
+  hexToRgba,
+  normalizeChartRows,
+} from './js/shared/chart-data.js';
+import {
   mountNodegetDetailChecksPanel,
   nodegetDetailPageHtml,
 } from './js/themes/nodeget-detail.js';
@@ -277,16 +287,16 @@ async function loadStatus() {
   } catch (err) {
     if (err.name === 'AbortError' || requestSeq !== state.statusRequestSeq) return;
     if (els.subline) {
-      els.subline.textContent = `API connection failed: ${err.message}`;
+      els.subline.textContent = `API 连接失败：${err.message}`;
     }
 
     if (els.globalBanner) {
       els.globalBanner.className = 'system-banner down';
-      els.globalBanner.innerHTML = '<strong>API connection failed</strong>';
+      els.globalBanner.innerHTML = '<strong>API 连接失败</strong>';
     }
 
     if (els.summaryLine) {
-      els.summaryLine.innerHTML = '<span>Check config.js, Worker route, D1 and R2 bindings.</span>';
+      els.summaryLine.innerHTML = '<span>请检查 config.js、Worker 路由以及 D1、R2 绑定。</span>';
     }
   } finally {
     clearTimeout(timer);
@@ -298,30 +308,30 @@ function render(data) {
   applyFrontendTheme(data);
 
   if (els.brandName) {
-    els.brandName.textContent = data.name || 'NStatus';
+    els.brandName.textContent = data.name || '聶.NET';
   }
 
   const targets = data.targets || [];
-  const checked = targets.filter(t => t.checked_at);
+  const checked = targets.filter(targetHasStatus);
   const stale = checked.filter(t => isTargetStale(t));
   const fresh = checked.filter(t => !isTargetStale(t));
-  const up = fresh.filter(t => Number(t.ok) === 1).length;
-  const down = checked.filter(t => Number(t.ok) === 0).length;
+  const up = fresh.filter(targetIsUp).length;
+  const down = checked.filter(t => !targetIsUp(t)).length;
   const unknown = targets.length - checked.length;
-  const delayed = stale.filter(t => Number(t.ok) === 1).length;
+  const delayed = stale.filter(targetIsUp).length;
   const avg = avgLatency(fresh);
 
-  let bannerText = 'All systems operational';
+  let bannerText = '所有系统运行正常';
   let bannerClass = 'system-banner';
 
   if (down > 0) {
-    bannerText = `${down} service${down > 1 ? 's' : ''} down`;
+    bannerText = `${down} 个服务离线`;
     bannerClass += ' down';
   } else if (delayed > 0) {
-    bannerText = `${delayed} service${delayed > 1 ? 's' : ''} delayed`;
+    bannerText = `${delayed} 个服务数据延迟`;
     bannerClass += ' degraded';
   } else if (unknown > 0) {
-    bannerText = `${unknown} service${unknown > 1 ? 's' : ''} pending`;
+    bannerText = `${unknown} 个服务等待检查`;
     bannerClass += ' degraded';
   }
 
@@ -336,13 +346,13 @@ function render(data) {
 
   if (els.summaryLine) {
     els.summaryLine.innerHTML = [
-      `<span>${targets.length} services</span>`,
-      `<span>${up} operational</span>`,
-      `<span>${down} down</span>`,
-      `<span>${delayed} delayed</span>`,
-      `<span>${unknown} pending</span>`,
-      `<span>Avg. ${avg == null ? '-' : avg + ' ms'}</span>`,
-      `<span>Updated ${fmtTime(Date.now() / 1000, 'short')}</span>`,
+      `<span>${targets.length} 个服务</span>`,
+      `<span>${up} 个正常</span>`,
+      `<span>${down} 个离线</span>`,
+      `<span>${delayed} 个延迟</span>`,
+      `<span>${unknown} 个待检查</span>`,
+      `<span>平均延迟 ${avg == null ? '-' : avg + ' ms'}</span>`,
+      `<span>更新于 ${fmtTime(Date.now() / 1000, 'short')}</span>`,
     ].join('');
   }
 
@@ -401,7 +411,7 @@ function syncCardTopbar(enabled) {
     }
     avatar?.remove();
     tools?.remove();
-    if (els.serviceSearch) els.serviceSearch.placeholder = 'Search services, IP, domain or group...';
+  if (els.serviceSearch) els.serviceSearch.placeholder = '搜索服务、IP、域名或分组...';
     return;
   }
 
@@ -535,8 +545,8 @@ function regionMeta(code) {
 
 function renderCardSidebar(data) {
   const targets = data.targets || [];
-  const checked = targets.filter(t => t.checked_at);
-  const online = checked.filter(t => Number(t.ok) === 1 && !isTargetStale(t)).length;
+  const checked = targets.filter(targetHasStatus);
+  const online = checked.filter(t => targetIsUp(t) && !isTargetStale(t)).length;
   const expiring = targets.filter(t => {
     const days = daysUntil(t.expires_at);
     return days != null && days >= 0 && days <= 30;
@@ -589,11 +599,11 @@ function renderIncidentLog(data) {
   const currentDown = rows.filter(t => t.active).length;
 
   els.incidentSummary.textContent = rows.length
-    ? `${rows.length} event${rows.length > 1 ? 's' : ''}${currentDown ? ` · ${currentDown} active` : ''}`
-    : 'No incidents';
+    ? `${rows.length} 条记录${currentDown ? ` · ${currentDown} 个进行中` : ''}`
+    : '暂无故障';
 
   if (!rows.length) {
-    els.incidentBody.innerHTML = '<div class="empty">No offline events yet.</div>';
+    els.incidentBody.innerHTML = '<div class="empty">暂无离线事件。</div>';
     updateIncidentToggle();
     return;
   }
@@ -611,25 +621,25 @@ function renderIncidentLog(data) {
     const recoveredAt = Number(t.recovered_at || 0);
     const lastCheckedAt = Number(t.last_checked_at || t.checked_at || 0);
     const durationSec = incidentDurationSec(t);
-    const statusText = t.active ? 'Active outage' : 'Recovered';
+    const statusText = t.active ? '故障中' : '已恢复';
 
     const statusLine = t.active
-      ? `Still offline · Down for ${escapeHtml(formatDuration(durationSec))}${lastCheckedAt ? ` · Last check ${escapeHtml(fmtTime(lastCheckedAt))}` : ''}`
-      : `Recovered ${escapeHtml(fmtTime(recoveredAt))} · Duration ${escapeHtml(formatDuration(durationSec))}`;
+      ? `仍处于离线状态 · 已持续 ${escapeHtml(formatDuration(durationSec))}${lastCheckedAt ? ` · 最后检查 ${escapeHtml(fmtTime(lastCheckedAt))}` : ''}`
+      : `恢复于 ${escapeHtml(fmtTime(recoveredAt))} · 持续 ${escapeHtml(formatDuration(durationSec))}`;
 
     const reason = t.last_error || t.error
-      ? `<span class="incident-reason">Reason: ${escapeHtml(t.last_error || t.error)}</span>`
+      ? `<span class="incident-reason">原因：${escapeHtml(t.last_error || t.error)}</span>`
       : '';
 
     return `
       <div class="incident-row ${t.active ? 'active' : ''}">
         <div class="incident-main">
-          <strong>${escapeHtml(t.name || t.target_id || 'Unknown service')}</strong>
+          <strong>${escapeHtml(t.name || t.target_id || '未知服务')}</strong>
           <span>${meta || '-'}</span>
           ${reason}
         </div>
         <div class="incident-timeline">
-          <time>Started ${escapeHtml(fmtTime(startedAt))}</time>
+          <time>开始于 ${escapeHtml(fmtTime(startedAt))}</time>
           <small>${statusLine}</small>
         </div>
         <em>${statusText}</em>
@@ -738,7 +748,7 @@ function renderGroups(data) {
   }
 
   if (!targets.length) {
-    els.groups.innerHTML = '<div class="empty">No matching services.</div>';
+    els.groups.innerHTML = '<div class="empty">没有匹配的服务。</div>';
 
     if (els.inlineChartPanel) {
       els.inlineChartPanel.hidden = true;
@@ -748,8 +758,8 @@ function renderGroups(data) {
   }
 
   const groups = state.frontendTheme === 'cards'
-    ? { Nodes: targets }
-    : groupBy(targets, t => t.group_name || 'Default');
+    ? { 节点: targets }
+    : groupBy(targets, t => t.group_name || '默认分组');
 
   els.groups.innerHTML = Object.entries(groups)
     .map(([name, list], index) => renderGroup(name, list, days, summaries, index))
@@ -792,26 +802,26 @@ function renderGroups(data) {
 }
 
 function renderGroup(name, list, days, summaries, index = 0) {
-  const checked = list.filter(t => t.checked_at);
-  const down = checked.filter(t => Number(t.ok) === 0).length;
+  const checked = list.filter(targetHasStatus);
+  const down = checked.filter(t => !targetIsUp(t)).length;
   const unknown = list.length - checked.length;
-  const delayed = checked.filter(t => Number(t.ok) === 1 && isTargetStale(t)).length;
-  const up = checked.filter(t => Number(t.ok) === 1 && !isTargetStale(t)).length;
+  const delayed = checked.filter(t => targetIsUp(t) && isTargetStale(t)).length;
+  const up = checked.filter(t => targetIsUp(t) && !isTargetStale(t)).length;
 
-  let statusText = 'Operational';
+  let statusText = '运行正常';
   let className = 'group';
   let okIcon = '✓';
 
   if (down > 0) {
-    statusText = `${down} Down`;
+    statusText = `${down} 个离线`;
     className += ' down';
     okIcon = '!';
   } else if (delayed > 0) {
-    statusText = `${delayed} Delayed`;
+    statusText = `${delayed} 个延迟`;
     className += ' degraded';
     okIcon = '?';
   } else if (unknown > 0) {
-    statusText = `${unknown} Pending`;
+    statusText = `${unknown} 个待检查`;
     className += ' degraded';
     okIcon = '?';
   }
@@ -821,7 +831,7 @@ function renderGroup(name, list, days, summaries, index = 0) {
       <div class="group-head" role="button" tabindex="0">
         <span class="group-toggle">−</span>
         <div class="group-title">
-          <strong>${escapeHtml(name)}</strong>
+          <strong>${escapeHtml(displayGroupName(name))}</strong>
           <span>${describeGroup(name, list.length, up)}</span>
         </div>
         <span class="group-status">${escapeHtml(statusText)}</span>
@@ -839,21 +849,22 @@ function renderService(t, days, summaries) {
     return renderServiceCard(t, days, summaries);
   }
 
-  const checked = Boolean(t.checked_at);
-  const isUp = Number(t.ok) === 1;
+  const checked = targetHasStatus(t);
+  const isUp = targetIsUp(t);
   const stale = checked && isUp && isTargetStale(t);
-  const status = checked ? (isUp ? (stale ? 'Delayed' : 'Operational') : 'Down') : 'Pending';
+  const status = checked ? (isUp ? (stale ? '数据延迟' : '运行正常') : '离线') : '待检查';
   const statusClass = checked ? (isUp ? (stale ? 'degraded' : '') : 'down') : 'unknown';
   const selectedClass = t.id === state.selectedId ? ' selected' : '';
   const metaHtml = serviceMetaHtml(t);
-  const uptime = t.uptime_24h == null ? '-' : `${Number(t.uptime_24h).toFixed(2)}%`;
-  const latency = !isUp || t.latency_ms == null ? '-' : `${t.latency_ms} ms`;
+  const uptime = t.status_source === 'agent'
+    ? (t.agent_online ? 'Agent 在线' : 'Agent 离线')
+    : (t.uptime_24h == null ? '-' : `${Number(t.uptime_24h).toFixed(2)}%`);
+  const latency = Number(t.ok) !== 1 || t.latency_ms == null ? '-' : `${t.latency_ms} ms`;
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'service-traffic-progress');
-  const unlockStrip = unlockCompactHtml(t.agent_metrics?.vps_info, 'service-unlock-strip');
   // Metadata badges
   let metaBadges = '';
   if (t.location) metaBadges += `<span class="meta-badge meta-loc">📍 ${escapeHtml(t.location)}</span>`;
-  if (t.machine_uptime_sec) metaBadges += `<span class="meta-badge meta-uptime">Uptime ${escapeHtml(formatMachineUptime(t.machine_uptime_sec))}</span>`;
+  if (t.machine_uptime_sec) metaBadges += `<span class="meta-badge meta-uptime">运行时长 ${escapeHtml(formatMachineUptime(t.machine_uptime_sec))}</span>`;
   if (t.tags) {
     const tags = t.tags.split(',').map(s => s.trim()).filter(Boolean).slice(0, 5);
     metaBadges += tags.map(tg => `<span class="meta-badge meta-tag">${escapeHtml(tg)}</span>`).join('');
@@ -885,9 +896,8 @@ function renderService(t, days, summaries) {
       <div class="service-status">${status}</div>
       <div class="service-latency">${latency}</div>
       <div class="service-uptime">${uptime}</div>
-      ${unlockStrip}
       <div class="service-bottom-row${trafficProgress ? ' has-traffic' : ''}">
-        <div class="uptime-strip" title="30 days uptime">
+        <div class="uptime-strip" title="${t.status_source === 'agent' ? 'Cloudflare 探测记录' : '最近 30 天可用率'}">
           ${renderBars(t.id, days, summaries)}
         </div>
         ${trafficProgress}
@@ -897,8 +907,8 @@ function renderService(t, days, summaries) {
 }
 
 function renderServiceCard(t, days, summaries) {
-  const checked = Boolean(t.checked_at);
-  const isUp = Number(t.ok) === 1;
+  const checked = targetHasStatus(t);
+  const isUp = targetIsUp(t);
   const stale = checked && isUp && isTargetStale(t);
   const status = checked ? (isUp ? (stale ? '延迟' : '在线') : '离线') : '待定';
   const statusClass = checked ? (isUp ? (stale ? 'degraded' : '') : 'down') : 'unknown';
@@ -908,13 +918,11 @@ function renderServiceCard(t, days, summaries) {
   const region = targetRegionCode(t);
   const regionFlag = nodegetFlagHtml(region, 'node-region-flag');
   const osLine = cardOsLine(info);
-  const latency = !isUp || t.latency_ms == null ? '-' : `${t.latency_ms}ms`;
-  const uptime = t.uptime_24h == null ? '-' : `${Number(t.uptime_24h).toFixed(2)}%`;
+  const latency = Number(t.ok) !== 1 || t.latency_ms == null ? '-' : `${t.latency_ms}ms`;
   const titleMeta = nodegetCardMetaLine([region !== 'OTHER' ? regionMeta(region).label : regionShort(t)]);
   const age = m.updated_at || t.last_metrics_at ? timeAgoSec(Math.floor(new Date(m.updated_at || t.last_metrics_at).getTime() / 1000)) : '-';
   const latencySamples = cardLatencySamples(t, days);
   const pingRows = cardPingRows(t);
-  const unlockStrip = unlockCompactHtml(info, 'node-unlock-strip');
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'node-traffic-progress');
   const slaBars = trafficProgress ? 20 : 30;
 
@@ -941,9 +949,8 @@ function renderServiceCard(t, days, summaries) {
         <small>${pingRows ? 'IPV4 TCPING' : '真实探测历史'}</small>
         ${pingRows || cardLatencyRow(regionShort(t) || '当前探测', t.latency_ms, latencySamples)}
       </div>
-      ${unlockStrip}
       <div class="node-sla-row${trafficProgress ? ' has-traffic' : ''}">
-        <div class="node-uptime-strip" style="--sla-bars:${slaBars}" title="${slaBars} days uptime">
+        <div class="node-uptime-strip" style="--sla-bars:${slaBars}" title="${t.status_source === 'agent' ? 'Cloudflare 探测记录' : `最近 ${slaBars} 天可用率`}">
           ${renderBars(t.id, days, summaries, slaBars)}
         </div>
         ${trafficProgress}
@@ -1081,7 +1088,7 @@ function renderLatencyDots(samples = []) {
   return values.map((value) => {
     const color = latencyBarColor(value);
     const height = latencyBarHeight(value);
-    const title = value === undefined ? 'No data' : value === null ? 'Packet loss' : `${Math.round(value)}ms`;
+    const title = value === undefined ? '无数据' : value === null ? '丢包' : `${Math.round(value)}ms`;
     return `<i style="height:${escapeAttr(height)};background-color:${escapeAttr(color)}" title="${escapeAttr(title)}"></i>`;
   }).join('');
 }
@@ -1142,6 +1149,7 @@ function cardLoadSub(load = {}, info = {}) {
 }
 
 function isTargetStale(t) {
+  if (t?.status_source === 'agent') return false;
   const checkedAt = Number(t.checked_at || 0);
   const metricsAt = t.last_metrics_at ? Math.floor(new Date(t.last_metrics_at).getTime() / 1000) : 0;
   const latest = Math.max(checkedAt, metricsAt);
@@ -1170,12 +1178,12 @@ function renderBars(targetId, days, summaries, count = 30) {
     const s = summaries.get(`${targetId}:${day}`);
 
     if (!s || !s.total) {
-      return `<span class="daybar none" style="--i:${index}" title="${day}: no data"></span>`;
+    return `<span class="daybar none" style="--i:${index}" title="${day}：无数据"></span>`;
     }
 
     const pct = Number(s.ok_count || 0) / Number(s.total || 1) * 100;
     const cls = daybarClassFromPct(pct);
-    const todaySuffix = day === today ? ' · today so far' : '';
+  const todaySuffix = day === today ? ' · 今日截至目前' : '';
     const title = `${day}: ${pct.toFixed(2)}% (${s.ok_count}/${s.total})${todaySuffix}`;
 
     return `<span class="daybar ${cls}" style="--i:${index}" title="${title}"></span>`;
@@ -1266,15 +1274,15 @@ async function loadChecks(id, name, target = null, options = {}) {
   const requestedHours = Math.max(rangeHours('day'), Number(options.hours || rangeHours('day')));
   const quiet = Boolean(options.quiet);
   if (!quiet) {
-    els.chartTitle.textContent = 'Response time';
-    els.chartMeta.textContent = 'Loading check records...';
-    els.chartServiceName.textContent = `${name} Response time`;
-    els.chartAvg.textContent = 'Avg.: -';
+    els.chartTitle.textContent = '响应时间';
+    els.chartMeta.textContent = '正在加载检查记录...';
+    els.chartServiceName.textContent = `${name} 响应时间`;
+    els.chartAvg.textContent = '平均值：-';
     els.checksHint.textContent = name;
-    els.checks.textContent = 'Loading...';
+    els.checks.textContent = '正在加载...';
     els.checks.classList.add('muted');
   } else if (state.selectedMetric === 'latency') {
-    els.chartMeta.textContent = `Loading ${rangeLabel(state.selectedRange).toLowerCase()}...`;
+    els.chartMeta.textContent = `正在加载${rangeLabel(state.selectedRange)}数据...`;
   }
 
   try {
@@ -1311,7 +1319,7 @@ async function loadChecks(id, name, target = null, options = {}) {
     state.targetMetrics = null;
     state.pingData = null;
 
-    els.chartMeta.textContent = `Failed to load check records: ${err.message}`;
+    els.chartMeta.textContent = `检查记录加载失败：${err.message}`;
     els.checks.innerHTML = `<div class="empty fail-text">${escapeHtml(err.message)}</div>`;
 
     updateChart([], name);
@@ -1333,7 +1341,7 @@ function ensureChecksForSelectedRange() {
   if (!state.selectedId || state.selectedMetric !== 'latency') return;
   const needed = rangeHours(state.selectedRange);
   if (state.checksLoadedHours >= needed) return;
-  loadChecks(state.selectedId, state.selectedName || 'Service', null, { hours: needed, quiet: true }).catch(() => {});
+  loadChecks(state.selectedId, state.selectedName || '服务', null, { hours: needed, quiet: true }).catch(() => {});
 }
 
 async function ensureTargetMetricsLoaded() {
@@ -1440,74 +1448,12 @@ function renderVPSInfo() {
   bar.innerHTML = `
     <section class="vps-info-section"><h4>系统信息</h4>${systemItems.join('')}</section>
     <section class="vps-info-section"><h4>网络与负载</h4>${networkItems.join('')}</section>
-    ${unlockDetailSection(info)}
   `;
   bar.hidden = false;
 }
 
 function vpsItem(label, value) {
   return `<span class="vps-info-item"><span class="vps-info-label">${escapeHtml(label)}</span><span class="vps-info-value">${escapeHtml(value)}</span></span>`;
-}
-
-function unlockServicesFromInfo(info) {
-  const unlock = info?.unlock || null;
-  const services = Array.isArray(unlock?.services) ? unlock.services : [];
-  return services
-    .map((service) => ({
-      id: String(service?.id || service?.name || '').trim(),
-      name: String(service?.name || service?.id || '').trim(),
-      status: String(service?.status || '').trim(),
-      region: String(service?.region || '').trim(),
-      method: String(service?.method || '').trim(),
-    }))
-    .filter((service) => service.name && (service.status || service.region || service.method));
-}
-
-function unlockStatusClass(status) {
-  const text = String(status || '').toLowerCase();
-  if (/\u89e3\u9501|unlocked|native|\u539f\u751f|ok|yes/.test(text)) return 'good';
-  if (/\u5931\u8d25|\u4e0d\u652f\u6301|\u5c01\u9501|blocked|failed|no/.test(text)) return 'bad';
-  return 'unknown';
-}
-
-function unlockCompactHtml(info, className = '') {
-  const services = unlockServicesFromInfo(info);
-  if (!services.length) return '';
-  const extraClass = className ? ` ${escapeAttr(className)}` : '';
-  return `<div class="unlock-strip${extraClass}" title="\u6d41\u5a92\u4f53 / AI \u89e3\u9501\u68c0\u6d4b">
-    ${services.map(unlockPillHtml).join('')}
-  </div>`;
-}
-
-function unlockDetailSection(info) {
-  const services = unlockServicesFromInfo(info);
-  if (!services.length) return '';
-  const checkedAt = Number(info?.unlock?.checked_at || 0);
-  const meta = [
-    info?.unlock?.source ? `\u6765\u6e90 ${info.unlock.source}` : '',
-    checkedAt ? `${timeAgoSec(checkedAt)}\u524d` : '',
-  ].filter(Boolean).join(' \u00b7 ');
-  return `<section class="vps-info-section vps-unlock-section">
-    <h4>\u6d41\u5a92\u4f53 / AI \u89e3\u9501${meta ? `<span>${escapeHtml(meta)}</span>` : ''}</h4>
-    ${services.map(unlockPillHtml).join('')}
-  </section>`;
-}
-
-function unlockPillHtml(service) {
-  const statusClass = unlockStatusClass(service.status || service.method);
-  const region = service.region || '-';
-  const method = service.method || '-';
-  const title = `${service.name} \u00b7 ${service.status || '-'} \u00b7 ${region} \u00b7 ${method}`;
-  const regionText = unlockRegionLabel(region);
-  return `<span class="unlock-pill ${statusClass}" title="${escapeAttr(title)}">
-    <b>${escapeHtml(service.name)}</b>
-    <small>${escapeHtml(regionText)}</small>
-  </span>`;
-}
-
-function unlockRegionLabel(region) {
-  const text = String(region || '').replace(/^\[|\]$/g, '').trim();
-  return text || '-';
 }
 
 // TCP Ping
@@ -1535,13 +1481,13 @@ async function updatePingChart() {
       });
       const res = await fetch(api(`/api/agent/pings?${params}`), { cache: 'no-store' });
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Failed to load pings');
+      if (!data.ok) throw new Error(data.error || 'Ping 数据加载失败');
       state.pingData = normalizePingPayload(data);
       state.pingsCache.set(cacheKey, { at: Date.now(), data: state.pingData });
     }
   } catch (err) {
     state.pingData = { pings: [] };
-    els.chartMeta.textContent = 'No ping data';
+    els.chartMeta.textContent = '暂无 Ping 数据';
     if (state.chart) { state.chart.data.datasets = []; state.chart.update(); }
     return;
   }
@@ -1595,8 +1541,8 @@ async function updatePingChart() {
   updateChartZoomButton();
 
   const okPings = pings.filter(p => p.ok === undefined ? Number(p.latency_ms) >= 0 : Number(p.ok) === 1).length;
-  els.chartAvg.textContent = `Pings: ${totalPings} · OK: ${okPings}`;
-  els.chartMeta.textContent = `Last ${hours}h · ${byTarget.size} target${byTarget.size > 1 ? 's' : ''}`;
+  els.chartAvg.textContent = `Ping 总数：${totalPings} · 成功：${okPings}`;
+  els.chartMeta.textContent = `最近 ${hours} 小时 · ${byTarget.size} 个目标`;
 }
 
 function normalizePingPayload(data) {
@@ -1621,8 +1567,8 @@ function normalizePingPayload(data) {
 function renderChecksPage() {
   if (!state.selectedId) {
     els.checks.classList.add('muted');
-    els.checks.innerHTML = '<div class="empty">Select a service to view recent checks.</div>';
-    els.checksHint.textContent = 'No service selected';
+    els.checks.innerHTML = '<div class="empty">请选择服务以查看最近检查记录。</div>';
+    els.checksHint.textContent = '未选择服务';
     updatePageInfo();
     return;
   }
@@ -1645,16 +1591,23 @@ function renderChecksPage() {
       <div>${c.status_code || '-'}</div>
       <div class="small check-extra">${formatCheckExtraHtml(c)}</div>
     </div>
-  `).join('') || '<div class="empty">No check records yet.</div>';
+  `).join('') || '<div class="empty">暂无检查记录。</div>';
 
-  els.checksHint.textContent = `${state.selectedName} · ${total} recent records${state.checksSource ? ' · ' + state.checksSource : ''}`;
+  els.checksHint.textContent = `${state.selectedName} · 最近 ${total} 条记录${state.checksSource ? ' · ' + state.checksSource : ''}`;
 
   updatePageInfo();
 }
 
 function checkStatusLabel(c) {
-  if (c.missed) return 'MISSED';
-  return Number(c.ok) ? 'OK' : 'FAIL';
+  if (c.missed) return '漏检';
+  return Number(c.ok) ? '成功' : '失败';
+}
+function targetHasStatus(target) {
+  return target?.status_source === 'agent' ? Boolean(target.last_metrics_at) : Boolean(target?.checked_at);
+}
+
+function targetIsUp(target) {
+  return target?.status_source === 'agent' ? target.agent_online === true : Number(target?.ok) === 1;
 }
 
 function checkStatusClass(c) {
@@ -1686,11 +1639,11 @@ function initChart() {
   if (state.chart) return;
 
   if (!window.Chart || !ctx) {
-    console.warn('Chart.js not loaded; response time chart disabled.');
+    console.warn('Chart.js 未加载，响应时间图表已停用。');
     state.chart = null;
 
     if (els.chartMeta) {
-      els.chartMeta.textContent = 'Chart.js failed to load. Service status is still available.';
+      els.chartMeta.textContent = 'Chart.js 加载失败，服务状态仍可正常查看。';
     }
 
     return;
@@ -1839,17 +1792,17 @@ function updateChartForCurrentRange() {
     return;
   }
 
-  els.chartTitle.textContent = 'Response time';
+  els.chartTitle.textContent = '响应时间';
   const rangeChecks = getChartPointsForRange();
 
-  updateChart(rangeChecks, state.selectedName || 'Service');
+  updateChart(rangeChecks, state.selectedName || '服务');
 
   const expected = expectedChartGapSec(state.selectedRange);
   const gapCount = countChartGaps(rangeChecks, expected);
   const missedCount = countMissedChecks(rangeChecks);
   const mode = rangeChecks.length
-    ? `5-minute checks${gapCount ? ', ' + gapCount + ' gap' + (gapCount > 1 ? 's' : '') : ''}${missedCount ? ', ' + missedCount + ' missed' : ''}`
-    : 'no raw checks';
+    ? `每 5 分钟检查${gapCount ? `，${gapCount} 个数据间断` : ''}${missedCount ? `，${missedCount} 次漏检` : ''}`
+    : '无原始检查数据';
   els.chartMeta.innerHTML = chartMetaHtml(state.selectedRange, rangeChecks.length, '', mode);
 }
 
@@ -1857,15 +1810,15 @@ function updateMetricsChart() {
   const m = state.targetMetrics;
   const metric = state.selectedMetric;
   const range = state.selectedMetricRange;
-  const labels = { cpu: 'CPU Usage', mem: 'Memory Usage', disk: 'Disk Usage', load: 'Load Average', net: 'Network Speed', conns: 'Connections', diskio: 'Disk I/O' };
+  const labels = { cpu: 'CPU 使用率', mem: '内存使用率', disk: '磁盘使用率', load: '平均负载', net: '网络速度', conns: '连接数', diskio: '磁盘 I/O' };
   const units = { cpu: '%', mem: '%', disk: '%', load: '', net: '', conns: '', diskio: '' };
   const fields = { cpu: 'cpu', mem: 'mem', disk: 'disk', load: 'load1', net_rx: 'net_rx', net_tx: 'net_tx', tcp_conns: 'tcp_conns', udp_conns: 'udp_conns', disk_read: 'disk_read', disk_write: 'disk_write' };
 
   els.chartTitle.textContent = labels[metric] || metric;
 
   if (!m || !m.latest) {
-    els.chartMeta.textContent = 'No metrics data. Install nstatus-metrics agent on this VPS.';
-    updateChart([], state.selectedName || 'Service');
+    els.chartMeta.textContent = '暂无监控数据，请在此 VPS 上安装 nstatus-metrics Agent。';
+    updateChart([], state.selectedName || '服务');
     return;
   }
   // If history is empty, create a synthetic point from latest state
@@ -1887,9 +1840,9 @@ function updateMetricsChart() {
   const latest = m.latest || {};
   if (!history.length) {
     const latestTs = Math.floor(new Date(latest.updated_at || 0).getTime() / 1000);
-    const latestText = latestTs ? `Latest report: ${timeAgoSec(latestTs)}` : 'No Agent report yet';
-    els.chartMeta.textContent = `No samples in the last ${range}. ${latestText}.`;
-    els.chartAvg.textContent = latestTs ? `Latest: ${new Date(latest.updated_at).toLocaleString('zh-CN', { hour12: false })}` : '-';
+    const latestText = latestTs ? `最后上报：${timeAgoSec(latestTs)}` : 'Agent 尚未上报';
+    els.chartMeta.textContent = `${range}内暂无采样点。${latestText}。`;
+    els.chartAvg.textContent = latestTs ? `最近：${new Date(latest.updated_at).toLocaleString('zh-CN', { hour12: false })}` : '-';
     if (state.chart) {
       state.chart.data.datasets = [];
       delete state.chart.options.scales.x.min;
@@ -1924,13 +1877,13 @@ function updateMetricsChart() {
     const netRx = latest.net?.rx_bytes_sec || 0;
     const netTx = latest.net?.tx_bytes_sec || 0;
 
-    els.chartMeta.textContent = `rx avg ${fmtNet(rxAvg)} · tx avg ${fmtNet(txAvg)} · ${history.length} samples`;
-    els.chartAvg.textContent = `rx ${fmtNet(netRx)} · tx ${fmtNet(netTx)}`;
+    els.chartMeta.textContent = `接收平均 ${fmtNet(rxAvg)} · 发送平均 ${fmtNet(txAvg)} · ${history.length} 个采样点`;
+    els.chartAvg.textContent = `接收 ${fmtNet(netRx)} · 发送 ${fmtNet(netTx)}`;
 
     if (!state.chart) return;
     state.chart.data.datasets = [
-      netDataset('Download', rxPoints, '#159754'),
-      netDataset('Upload', txPoints, '#2ea3ff'),
+      netDataset('下载', rxPoints, '#159754'),
+      netDataset('上传', txPoints, '#2ea3ff'),
     ];
   } else if (metric === 'diskio') {
     const readPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.disk_read) || 0 }));
@@ -1940,13 +1893,13 @@ function updateMetricsChart() {
     const readAvg = readVals.reduce((a, b) => a + b, 0) / readVals.length;
     const writeAvg = writeVals.reduce((a, b) => a + b, 0) / writeVals.length;
 
-    els.chartMeta.textContent = `read avg ${fmtBytes(readAvg)} · write avg ${fmtBytes(writeAvg)} · ${history.length} samples`;
-    els.chartAvg.textContent = `read ${fmtBytes(latest.diskio?.read_bytes_sec || 0)} · write ${fmtBytes(latest.diskio?.write_bytes_sec || 0)}`;
+    els.chartMeta.textContent = `读取平均 ${fmtBytes(readAvg)} · 写入平均 ${fmtBytes(writeAvg)} · ${history.length} 个采样点`;
+    els.chartAvg.textContent = `读取 ${fmtBytes(latest.diskio?.read_bytes_sec || 0)} · 写入 ${fmtBytes(latest.diskio?.write_bytes_sec || 0)}`;
 
     if (!state.chart) return;
     state.chart.data.datasets = [
-      netDataset('Read', readPoints, '#159754'),
-      netDataset('Write', writePoints, '#e74c3c'),
+      netDataset('读取', readPoints, '#159754'),
+      netDataset('写入', writePoints, '#e74c3c'),
     ];
   } else if (metric === 'conns') {
     const tcpPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.tcp_conns) || 0 }));
@@ -1958,7 +1911,7 @@ function updateMetricsChart() {
     const tcpNow = latest.net?.tcp_conns || 0;
     const udpNow = latest.net?.udp_conns || 0;
 
-    els.chartMeta.textContent = `TCP avg ${tcpAvg.toFixed(0)} · UDP avg ${udpAvg.toFixed(0)} · ${history.length} samples`;
+    els.chartMeta.textContent = `TCP 平均 ${tcpAvg.toFixed(0)} · UDP 平均 ${udpAvg.toFixed(0)} · ${history.length} 个采样点`;
     els.chartAvg.textContent = `TCP ${tcpNow} · UDP ${udpNow}`;
 
     if (!state.chart) return;
@@ -1980,9 +1933,9 @@ function updateMetricsChart() {
     const s = statsKey ? stats?.[statsKey] : null;
 
     els.chartMeta.textContent = s
-      ? `avg ${s.avg}${unit} · max ${s.max}${unit} · min ${s.min}${unit} · ${history.length} samples`
-      : `avg ${avg.toFixed(1)}${unit} · min ${min.toFixed(1)}${unit} · max ${max.toFixed(1)}${unit} · ${history.length} samples`;
-    els.chartAvg.textContent = `Current: ${currentVal != null ? Number(currentVal).toFixed(1) + unit : '-'}`;
+      ? `平均 ${s.avg}${unit} · 最大 ${s.max}${unit} · 最小 ${s.min}${unit} · ${history.length} 个采样点`
+      : `平均 ${avg.toFixed(1)}${unit} · 最小 ${min.toFixed(1)}${unit} · 最大 ${max.toFixed(1)}${unit} · ${history.length} 个采样点`;
+    els.chartAvg.textContent = `当前：${currentVal != null ? Number(currentVal).toFixed(1) + unit : '-'}`;
 
     const points = history.map(p => ({ x: Number(p.ts), y: Number(p[field]) || 0 }));
     const color = metric === 'load' ? '#2ea3ff' : '#159754';
@@ -2046,41 +1999,6 @@ function getChartPointsForRange() {
   return filterChecksByRange(checks, state.selectedRange);
 }
 
-function normalizeChartRows(checks) {
-  return (checks || [])
-    .map(c => ({
-      x: Number(c.checked_at),
-      ok: Number(c.ok) === 1,
-      latency: Number(c.latency_ms),
-      missed: Boolean(c.missed),
-    }))
-    .filter(p => Number.isFinite(p.x))
-    .sort((a, b) => a.x - b.x);
-}
-
-function buildLinePoints(rows) {
-  const breakGapSec = chartLineBreakGapSec(state.selectedRange);
-  const points = [];
-  let previousX = null;
-  for (const c of rows) {
-    if (c.missed) continue;
-
-    if (previousX != null && c.x - previousX > breakGapSec) {
-      points.push({ x: previousX + 1, y: null });
-      points.push({ x: c.x - 1, y: null });
-    }
-
-    points.push({
-      x: c.x,
-      y: c.ok && !c.missed && Number.isFinite(c.latency)
-        ? c.latency
-        : null,
-    });
-    previousX = c.x;
-  }
-  return points;
-}
-
 function updateChart(checks, name) {
   const rows = normalizeChartRows(checks);
   const points = buildLinePoints(rows);
@@ -2088,11 +2006,11 @@ function updateChart(checks, name) {
   const nums = points.map(p => p.y).filter(Number.isFinite);
   const avg = nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
 
-  els.chartServiceName.textContent = `${name} Response time`;
-  els.chartAvg.textContent = `Avg.: ${avg == null ? '-' : avg.toFixed(2) + ' ms'}`;
+  els.chartServiceName.textContent = `${name} 响应时间`;
+  els.chartAvg.textContent = `平均值：${avg == null ? '-' : avg.toFixed(2) + ' ms'}`;
 
   if (!state.chart) {
-    els.chartMeta.textContent = 'Chart.js is unavailable. Recent checks are still listed below.';
+    els.chartMeta.textContent = 'Chart.js 不可用，仍可在下方查看最近检查记录。';
     return;
   }
 
@@ -2193,31 +2111,6 @@ function chartHoverLinePlugin() {
       ctx.restore();
     },
   };
-}
-
-function chartColorToRgb(color) {
-  const value = String(color || '').trim();
-  const hex = value.match(/^#?([0-9a-f]{6})$/i);
-  if (hex) {
-    const n = Number.parseInt(hex[1], 16);
-    return {
-      r: (n >> 16) & 255,
-      g: (n >> 8) & 255,
-      b: n & 255,
-    };
-  }
-
-  const rgb = value.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-  if (rgb) {
-    return { r: Number(rgb[1]), g: Number(rgb[2]), b: Number(rgb[3]) };
-  }
-
-  return { r: 47, g: 125, b: 246 };
-}
-
-function hexToRgba(color, alpha) {
-  const { r, g, b } = chartColorToRgb(color);
-  return `rgba(${r},${g},${b},${alpha})`;
 }
 
 function registerChartNearestTimeMode() {
@@ -2445,27 +2338,6 @@ function currentChartRange() {
   return { min, max };
 }
 
-function clampChartRange(min, max, fullMin, fullMax) {
-  const span = Math.max(1, max - min);
-  let nextMin = min;
-  let nextMax = max;
-
-  if (nextMin < fullMin) {
-    nextMin = fullMin;
-    nextMax = nextMin + span;
-  }
-
-  if (nextMax > fullMax) {
-    nextMax = fullMax;
-    nextMin = nextMax - span;
-  }
-
-  return {
-    min: Math.max(fullMin, nextMin),
-    max: Math.min(fullMax, nextMax),
-  };
-}
-
 function resetChartZoom() {
   if (!state.chart) return;
   state.chartPan = null;
@@ -2504,42 +2376,11 @@ function chartLineBreakGapSec(range) {
   return Math.max(expectedChartGapSec(range), Math.round(intervalSec * 6));
 }
 
-function countChartGaps(checks, gapSec) {
-  const rows = (checks || [])
-    .map(c => Number(c.checked_at))
-    .filter(Number.isFinite)
-    .sort((a, b) => a - b);
-
-  let gaps = 0;
-  for (let i = 1; i < rows.length; i += 1) {
-    if (rows[i] - rows[i - 1] > gapSec) gaps += 1;
-  }
-  return gaps;
-}
-
-function countMissedChecks(checks) {
-  return (checks || []).filter(c => c?.missed).length;
-}
-
-function filterChecksByRange(checks, range) {
-  const now = Date.now() / 1000;
-
-  const seconds =
-    range === 'month' ? 30 * 86400 :
-    range === 'week' ? 7 * 86400 :
-    24 * 3600;
-
-  return (checks || []).filter(c => {
-    const ts = Number(c.checked_at);
-    return Number.isFinite(ts) && ts >= now - seconds;
-  });
-}
-
 function rangeLabel(range) {
-  if (range === 'month') return 'Last 30 days';
-  if (range === 'week') return 'Last 7 days';
+  if (range === 'month') return '最近 30 天';
+  if (range === 'week') return '最近 7 天';
 
-  return 'Last 24 hours';
+  return '最近 24 小时';
 }
 
 function formatAxisChartTime(sec, range) {
@@ -2603,26 +2444,26 @@ function regionShort(t) {
 
   const map = {
     apac: 'APAC',
-    weur: 'EU West',
-    eeur: 'EU East',
-    enam: 'US East',
-    wnam: 'US West',
-    sam: 'South America',
-    oc: 'Oceania',
-    afr: 'Africa',
-    me: 'Middle East',
+    weur: '西欧',
+    eeur: '东欧',
+    enam: '美国东部',
+    wnam: '美国西部',
+    sam: '南美洲',
+    oc: '大洋洲',
+    afr: '非洲',
+    me: '中东',
   };
 
   const label = map[code] || t.region_label || code.toUpperCase();
   const enabled = Boolean(state.data?.region_proxy_enabled);
 
-  return enabled ? label : `${label} · proxy off`;
+  return enabled ? label : `${label} · 区域代理未开启`;
 }
 
 function chartMetaHtml(range, samples, latestColo, mode = '') {
   const parts = [
     escapeHtml(rangeLabel(range)),
-    `${Number(samples || 0)} samples`,
+    `${Number(samples || 0)} 个采样点`,
   ];
 
   if (mode) {
@@ -2663,11 +2504,11 @@ function formatCheckExtraHtml(c) {
   const parts = [];
 
   if (c?.missed) {
-    parts.push('<span class="warn-text">Monitor missed this 5-minute check</span>');
+    parts.push('<span class="warn-text">监控器漏掉了本次 5 分钟检查</span>');
   }
 
   if (c?.probe_region) {
-    parts.push(`<span>Region <strong>${escapeHtml(regionShort(c) || c.probe_region)}</strong></span>`);
+    parts.push(`<span>区域 <strong>${escapeHtml(regionShort(c) || c.probe_region)}</strong></span>`);
   }
 
   if (c?.error) {
@@ -2680,12 +2521,18 @@ function formatCheckExtraHtml(c) {
 function describeGroup(name, total, up) {
   const lower = String(name || '').toLowerCase();
 
-  if (lower.includes('web')) return `${total} Website Services`;
-  if (lower.includes('vps')) return `${total} Virtual Private Server Nodes`;
-  if (lower.includes('api')) return `${total} API Services`;
-  if (lower.includes('panel')) return `${total} Control Panel Services`;
+  if (lower.includes('web')) return `${total} 个网站服务`;
+  if (lower.includes('vps')) return `${total} 个 VPS 节点`;
+  if (lower.includes('api')) return `${total} 个 API 服务`;
+  if (lower.includes('panel')) return `${total} 个控制面板服务`;
 
-  return `${up}/${total} services operational`;
+  return `${up}/${total} 个服务运行正常`;
+}
+
+function displayGroupName(name) {
+  const value = String(name || '').trim();
+  if (/^(default|nodes?)$/i.test(value)) return value.toLowerCase() === 'default' ? '默认分组' : '节点';
+  return value || '默认分组';
 }
 
 function targetSearchText(t) {
@@ -2731,7 +2578,3 @@ function avgLatency(rows) {
 
   return Math.round(nums.reduce((a, b) => a + b, 0) / nums.length);
 }
-
-// ── Admin Panel ───────────────────────────────────────────────────────────────
-
-// Average every step points to target maxPoints (e.g. 24h 1152pts → 300pts)

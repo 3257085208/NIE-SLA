@@ -5,13 +5,14 @@ set -euo pipefail
 
 GREEN='\033[0;32m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 ok()  { echo -e "  ${GREEN}[OK]${NC} $*"; }
+WRANGLER_CONFIG="${WRANGLER_CONFIG:-wrangler.local.toml}"
 
 echo -e "\n${BOLD}NStatus Deployment${NC}\n"
 
 # 1. Prerequisites
 command -v node &>/dev/null || { echo "Need Node.js 18+"; exit 1; }
 npx wrangler --version &>/dev/null || { echo "Need wrangler: npm i -g wrangler"; exit 1; }
-put_secret() { local name="$1" value="$2"; printf '%s' "$value" | npx wrangler secret put "$name" >/dev/null 2>&1; }
+put_secret() { local name="$1" value="$2"; printf '%s' "$value" | npx wrangler secret put "$name" --config "$WRANGLER_CONFIG" >/dev/null 2>&1; }
 curl_config_escape() {
   local s="${1-}"
   s=${s//\\/\\\\}
@@ -44,6 +45,11 @@ read -rp "  Site name [NStatus]: " SITE_NAME
 SITE_NAME="${SITE_NAME:-NStatus}"
 read -rp "  Timezone offset minutes [480]: " TZ
 TZ="${TZ:-480}"
+read -rp "  Pages project name [nstatus]: " PAGES_NAME
+PAGES_NAME="${PAGES_NAME:-nstatus}"
+read -rp "  Pages public URL [https://${PAGES_NAME}.pages.dev]: " PAGES_URL
+PAGES_URL="${PAGES_URL:-https://${PAGES_NAME}.pages.dev}"
+PAGES_URL="${PAGES_URL%/}"
 
 # 4. D1 database
 echo ""
@@ -69,7 +75,95 @@ else
   ok "R2 bucket created: $BUCKET_NAME"
 fi
 
-# 6. Secrets
+# Download signed Agent release assets into the Pages deployment directory.
+AGENT_VERSION="$(tr -d '\r\n' < ../agent/VERSION)"
+RELEASE_BASE="${AGENT_RELEASE_BASE:-https://github.com/3257085208/NIE-SLA/releases/download/${AGENT_VERSION}}"
+FRONTEND_BIN="../frontend/bin"
+mkdir -p "$FRONTEND_BIN"
+AGENT_ASSETS=(
+  nstatus-metrics-linux-amd64
+  nstatus-metrics-linux-arm64
+  nstatus-metrics-linux-arm
+  nstatus-metrics-linux-armv5
+  nstatus-metrics-linux-armv6
+  nstatus-metrics-linux-386
+  nstatus-metrics-windows-amd64.exe
+  SHA256SUMS
+  VERSION
+)
+echo "  Downloading Agent ${AGENT_VERSION} release assets..."
+for asset in "${AGENT_ASSETS[@]}"; do
+  curl -fsSL "${RELEASE_BASE}/${asset}" -o "${FRONTEND_BIN}/${asset}"
+done
+(cd "$FRONTEND_BIN" && sha256sum -c SHA256SUMS)
+MANIFEST_SHA256="$(sha256sum "${FRONTEND_BIN}/SHA256SUMS" | awk '{print $1}')"
+ok "Agent release assets verified"
+
+# 7. Worker domain
+echo ""
+read -rp "  Worker URL (required, e.g. https://nstatus.example.workers.dev): " WORKER_DOMAIN
+WORKER_DOMAIN="${WORKER_DOMAIN%/}"
+if [[ -z "$WORKER_DOMAIN" ]]; then
+  echo "Worker URL is required so frontend and colo echo point to this deployment." >&2
+  exit 1
+fi
+
+# 8. Write local Wrangler config. This file is intentionally gitignored.
+cat > "$WRANGLER_CONFIG" <<TOML
+name = "nstatus"
+main = "src/index.js"
+compatibility_date = "2026-06-17"
+workers_dev = true
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+PUBLIC_SITE_NAME = "$SITE_NAME"
+PUBLIC_WORKER_URL = "$WORKER_DOMAIN"
+PUBLIC_AGENT_API_BASE = "$WORKER_DOMAIN"
+PUBLIC_AGENT_INSTALL_BASE = "$PAGES_URL"
+AGENT_DOWNLOAD_BASE = "$PAGES_URL"
+AGENT_LATEST_VERSION = "$AGENT_VERSION"
+NSTATUS_SHA256SUMS_SHA256 = "$MANIFEST_SHA256"
+TIMEZONE_OFFSET_MINUTES = "$TZ"
+CONCURRENCY = "40"
+MAX_TARGETS_PER_RUN = "60"
+CHECKS_DEFAULT_LIMIT = "864"
+CHECKS_WINDOW_HOURS = "72"
+INCIDENTS_TO_D1 = "true"
+PUBLIC_MASK_IPS = "true"
+AGENT_METRICS_RETENTION_HOURS = "6"
+AGENT_METRICS_POINTS_PER_REPORT = "6"
+AGENT_METRICS_R2_RETENTION_HOURS = "72"
+AGENT_METRICS_TO_D1 = "false"
+AGENT_PINGS_TO_D1 = "false"
+PING_HISTORY_RETENTION_HOURS = "6"
+RATE_LIMIT_D1 = "true"
+MISSED_WRITE_BACKFILL_MAX_BUCKETS = "6"
+ALERT_MAX_MESSAGES_PER_RUN = "30"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "$DB_NAME"
+database_id = "$DB_ID"
+
+[[r2_buckets]]
+binding = "ARCHIVE"
+bucket_name = "$BUCKET_NAME"
+
+[[durable_objects.bindings]]
+name = "REGION_PROXY"
+class_name = "ProbeRegion"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ProbeRegion"]
+TOML
+chmod 0600 "$WRANGLER_CONFIG" 2>/dev/null || true
+ok "$WRANGLER_CONFIG written"
+
+# 9. Secrets
 echo ""
 read -rsp "  Admin token (leave empty to keep existing): " ADMIN_TOK
 echo
@@ -98,69 +192,18 @@ else
   ok "TOTP_ENCRYPTION_KEY skipped"
 fi
 
-# 7. Worker domain
-echo ""
-read -rp "  Worker URL (required, e.g. https://nstatus.example.workers.dev): " WORKER_DOMAIN
-WORKER_DOMAIN="${WORKER_DOMAIN%/}"
-if [[ -z "$WORKER_DOMAIN" ]]; then
-  echo "Worker URL is required so frontend and colo echo point to this deployment." >&2
-  exit 1
-fi
-
-# 8. Write wrangler.toml
-cat > wrangler.toml <<TOML
-name = "nstatus"
-main = "src/index.js"
-compatibility_date = "2026-06-17"
-
-[triggers]
-crons = ["*/5 * * * *"]
-
-[vars]
-PUBLIC_SITE_NAME = "$SITE_NAME"
-PUBLIC_WORKER_URL = "$WORKER_DOMAIN"
-TIMEZONE_OFFSET_MINUTES = "$TZ"
-CONCURRENCY = "8"
-MAX_TARGETS_PER_RUN = "60"
-CHECKS_DEFAULT_LIMIT = "864"
-CHECKS_WINDOW_HOURS = "72"
-INCIDENTS_TO_D1 = "true"
-PUBLIC_MASK_IPS = "true"
-RATE_LIMIT_D1 = "true"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "$DB_NAME"
-database_id = "$DB_ID"
-
-[[r2_buckets]]
-binding = "ARCHIVE"
-bucket_name = "$BUCKET_NAME"
-
-[[durable_objects.bindings]]
-name = "REGION_PROXY"
-class_name = "ProbeRegion"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["ProbeRegion"]
-TOML
-ok "wrangler.toml written"
-
-# 9. Deploy Worker
+# 10. Deploy Worker
 echo -e "\n${BOLD}Deploying Worker...${NC}"
-npx wrangler deploy
+npx wrangler deploy --config "$WRANGLER_CONFIG"
 ok "Worker deployed"
 
-# 10. Frontend config
+# 11. Frontend config
 cd ../frontend 2>/dev/null || { echo "  Run from worker/ directory"; exit 1; }
-echo "window.NSTATUS_API_BASE = '$WORKER_DOMAIN';" > config.js
+echo "window.NSTATUS_CONFIG = { apiBase: '$WORKER_DOMAIN' };" > config.js
 ok "Frontend config written"
 
-# 11. Deploy Frontend
+# 12. Deploy Frontend
 echo -e "\n${BOLD}Deploying Frontend...${NC}"
-read -rp "  Pages project name [nstatus]: " PAGES_NAME
-PAGES_NAME="${PAGES_NAME:-nstatus}"
 npx wrangler pages deploy ./ --project-name="$PAGES_NAME"
 ok "Frontend deployed"
 
@@ -179,7 +222,7 @@ if [[ "${SEED,,}" != "n" ]]; then
 fi
 
 echo -e "\n${GREEN}${BOLD}Deployment complete!${NC}"
-echo "  Status page: https://${PAGES_NAME}.pages.dev"
+echo "  Status page: $PAGES_URL"
 echo "  API:         $WORKER_DOMAIN"
 echo ""
 echo "  Next steps:"

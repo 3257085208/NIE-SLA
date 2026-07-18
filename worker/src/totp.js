@@ -9,11 +9,11 @@ const ENCRYPTED_SECRET_PREFIX = 'enc:v1:';
 const HASHED_SESSION_PREFIX = 'sha256:';
 
 export async function setupTOTP(env) {
-  if (!env.DB) return json({ ok: false, error: 'D1 required' }, 500, env);
+  if (!env.DB) return json({ ok: false, error: '需要 D1 数据库' }, 500, env);
 
   const activeSecret = await getMeta(env, ACTIVE_SECRET_KEY);
   if (activeSecret) {
-    return json({ ok: false, error: 'TOTP already configured. Disable first.' }, 400, env);
+    return json({ ok: false, error: 'TOTP 已配置，请先关闭现有配置。' }, 400, env);
   }
 
   const secret = generateSecret();
@@ -22,23 +22,23 @@ export async function setupTOTP(env) {
 }
 
 export async function verifyTOTP(request, env) {
-  if (!env.DB) return json({ ok: false, error: 'D1 required' }, 500, env);
+  if (!env.DB) return json({ ok: false, error: '需要 D1 数据库' }, 500, env);
 
   const activeStored = await getMeta(env, ACTIVE_SECRET_KEY);
   const pendingStored = activeStored ? null : await getMeta(env, PENDING_SECRET_KEY);
   const storedSecret = activeStored || pendingStored;
-  if (!storedSecret) return json({ ok: false, error: 'TOTP not configured' }, 400, env);
+  if (!storedSecret) return json({ ok: false, error: '尚未配置 TOTP' }, 400, env);
 
   const code = await readCode(request);
   if (!/^\d{6}$/.test(code)) {
-    return json({ ok: false, error: 'TOTP code must be 6 digits' }, 400, env);
+    return json({ ok: false, error: 'TOTP 验证码必须是 6 位数字' }, 400, env);
   }
 
   try {
     const stored = await readStoredSecret(storedSecret, env);
     const secret = stored.secret;
     const valid = await verifyCode(secret, code);
-    if (!valid) return json({ ok: false, error: 'TOTP code is invalid' }, 401, env);
+    if (!valid) return json({ ok: false, error: 'TOTP 验证码无效' }, 401, env);
 
     if (pendingStored || stored.needsMigration) {
       await setMeta(env, ACTIVE_SECRET_KEY, await encryptSecret(secret, env));
@@ -49,12 +49,12 @@ export async function verifyTOTP(request, env) {
     return json({ ok: true, totp_enabled: true, session_id: session.session_id, expires_at: session.expires_at }, 200, env);
   } catch (err) {
     console.error('verifyTOTP error:', String(err?.message || err));
-    return json({ ok: false, error: 'TOTP verification failed' }, 400, env);
+    return json({ ok: false, error: 'TOTP 验证失败' }, 400, env);
   }
 }
 
 export async function disableTOTP(env) {
-  if (!env.DB) return json({ ok: false, error: 'D1 required' }, 500, env);
+  if (!env.DB) return json({ ok: false, error: '需要 D1 数据库' }, 500, env);
 
   const activeSecret = await getMeta(env, ACTIVE_SECRET_KEY);
   const pendingSecret = await getMeta(env, PENDING_SECRET_KEY);
@@ -71,22 +71,6 @@ export async function checkTOTP(env) {
   if (!env.DB) return { ok: false, totp_enabled: false };
   const secret = await getMeta(env, ACTIVE_SECRET_KEY);
   return { ok: true, totp_enabled: !!secret };
-}
-
-export async function isTOTPEnabled(env) {
-  if (!env.DB) return false;
-  return Boolean(await getMeta(env, ACTIVE_SECRET_KEY));
-}
-
-export async function validateTOTPCode(env, code) {
-  if (!env.DB) return { ok: false, error: 'D1 required' };
-  if (!/^\d{6}$/.test(String(code || '').trim())) return { ok: false, error: 'TOTP code must be 6 digits' };
-  const activeStored = await getMeta(env, ACTIVE_SECRET_KEY);
-  if (!activeStored) return { ok: true, totp_enabled: false };
-  const stored = await readStoredSecret(activeStored, env);
-  const valid = await verifyCode(stored.secret, String(code).trim());
-  if (valid && stored.needsMigration) await setMeta(env, ACTIVE_SECRET_KEY, await encryptSecret(stored.secret, env));
-  return valid ? { ok: true, totp_enabled: true } : { ok: false, totp_enabled: true, error: 'TOTP code is invalid' };
 }
 
 async function createSession(env) {
@@ -109,7 +93,7 @@ function totpUri(secret, env) {
 
 async function readStoredSecret(value, env) {
   const stored = String(value || '').trim();
-  if (!stored) throw new Error('Missing TOTP secret');
+  if (!stored) throw new Error('缺少 TOTP 密钥');
   if (isEncryptedSecret(stored)) return decryptSecret(stored.slice(ENCRYPTED_SECRET_PREFIX.length), env);
   if (looksLikePlainSecret(stored)) return { secret: stored.toUpperCase(), needsMigration: true };
 
@@ -142,7 +126,7 @@ async function encryptSecret(secret, env) {
 
 async function decryptSecret(payload, env) {
   const combined = base64ToBytes(payload);
-  if (combined.length <= 12) throw new Error('Invalid encrypted TOTP secret');
+  if (combined.length <= 12) throw new Error('加密的 TOTP 密钥无效');
   const iv = combined.slice(0, 12);
   const encrypted = combined.slice(12);
   const candidates = encryptionKeyMaterials(env);
@@ -177,7 +161,7 @@ function primaryEncryptionMaterial(env) {
     const legacy = String(env.ADMIN_TOKEN || '').trim();
     if (legacy) return { material: legacy, source: 'legacy-admin-token' };
   }
-  throw new Error('TOTP_ENCRYPTION_KEY is required for TOTP secret encryption');
+  throw new Error('加密 TOTP 密钥需要配置 TOTP_ENCRYPTION_KEY');
 }
 
 function encryptionKeyMaterials(env) {

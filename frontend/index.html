@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light" />
-  <title>NStatus</title>
+  <title>聶.NET</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,11 +23,11 @@
   </script>
   <header class="topbar">
     <div class="wrap topbar-inner">
-      <a class="brand" href="./" aria-label="NStatus Home">
-        <span class="brand-main" id="brandName">NStatus</span>
+      <a class="brand" href="./" aria-label="聶.NET 首页">
+        <span class="brand-main" id="brandName">聶.NET</span>
       </a>
       <div class="footer-right" style="margin-left:auto;">
-        <span>Powered by</span>
+        <span>由</span>
         <span class="cf-logo" aria-hidden="true"><img class="cf-logo-img" src="https://upload.wikimedia.org/wikipedia/commons/4/4b/Cloudflare_Logo.svg" alt="Cloudflare"></span>
       </div>
     </div>
@@ -36,21 +36,21 @@
   <main class="wrap main">
     <section class="hero">
       <div class="system-banner" id="globalBanner">
-        <strong>Loading status</strong>
+        <strong>正在加载状态</strong>
       </div>
 
-      <p class="intro" id="subline">Loading service status...</p>
+      <p class="intro" id="subline">正在加载服务状态...</p>
 
       <div class="summary-line" id="summaryLine">
-        <span>Services -</span>
-        <span>Operational -</span>
-        <span>Avg. -</span>
-        <span>Updated -</span>
+        <span>服务 -</span>
+        <span>正常 -</span>
+        <span>平均延迟 -</span>
+        <span>更新时间 -</span>
       </div>
     </section>
 
     <section class="search-row">
-      <input id="serviceSearch" class="search-input" placeholder="Search services, IP, domain or group..." autocomplete="off" />
+      <input id="serviceSearch" class="search-input" placeholder="搜索服务、IP、域名或分组..." autocomplete="off" />
     </section>
 
 
@@ -58,12 +58,12 @@
 
     <section class="incident-log collapsed" id="incidentLogPanel">
       <button class="incident-toggle" id="incidentToggle" type="button" aria-expanded="false">
-        <span>Incident log</span>
-        <small id="incidentSummary">No incidents</small>
+        <span>故障记录</span>
+        <small id="incidentSummary">暂无故障</small>
         <span class="incident-caret" aria-hidden="true">+</span>
       </button>
       <div class="incident-body" id="incidentBody" hidden>
-        <div class="empty">No offline events yet.</div>
+        <div class="empty">暂无离线事件。</div>
       </div>
     </section>
 
@@ -72,12 +72,12 @@
     <section class="inline-chart-panel" id="inlineChartPanel" hidden>
       <div class="chart-toolbar">
         <div>
-          <h2 id="chartTitle">Response time</h2>
-          <p id="chartMeta">Last 24 hours</p>
+          <h2 id="chartTitle">响应时间</h2>
+          <p id="chartMeta">最近 24 小时</p>
         </div>
         <div class="chart-actions">
           <div class="chart-tabs-wrap">
-            <div class="metric-tabs" role="tablist" aria-label="Metric type">
+            <div class="metric-tabs" role="tablist" aria-label="指标类型">
               <button type="button" class="metric-tab active" data-metric="latency">Latency</button>
               <button type="button" class="metric-tab" data-metric="cpu">CPU</button>
               <button type="button" class="metric-tab" data-metric="mem">Mem</button>
@@ -90,16 +90,16 @@
             </div>
             <div class="chart-range-row">
               <div class="range-tabs" id="rangeTabs" role="tablist">
-                <button type="button" class="range-tab active" data-range="day">Day</button>
-                <button type="button" class="range-tab" data-range="week">Week</button>
-                <button type="button" class="range-tab" data-range="month">Month</button>
+                <button type="button" class="range-tab active" data-range="day">天</button>
+                <button type="button" class="range-tab" data-range="week">周</button>
+                <button type="button" class="range-tab" data-range="month">月</button>
               </div>
               <div class="metric-range-tabs" id="metricRangeTabs" role="tablist" style="display:none">
                 <button type="button" class="metric-range-tab active" data-range="1h">1h</button>
                 <button type="button" class="metric-range-tab" data-range="6h">6h</button>
                 <button type="button" class="metric-range-tab" data-range="24h">24h</button>
               </div>
-              <button type="button" class="chart-reset" id="chartReset" disabled>Reset</button>
+              <button type="button" class="chart-reset" id="chartReset" disabled>重置</button>
             </div>
           </div>
         </div>
@@ -107,8 +107,8 @@
 
       <div class="chart-card">
         <div class="chart-title-row">
-          <span id="chartServiceName">No service selected</span>
-          <strong id="chartAvg">Avg.: -</strong>
+          <span id="chartServiceName">未选择服务</span>
+          <strong id="chartAvg">平均值：-</strong>
         </div>
         <div class="chart-canvas-wrap" id="chartCanvasWrap">
           <canvas id="latencyChart"></canvas>
@@ -120,12 +120,12 @@
     <section class="checks-panel">
       <div class="checks-head">
         <div>
-          <h2>Recent checks</h2>
-          <p id="checksHint">Select a service to view recent check records.</p>
+          <h2>最近检查</h2>
+          <p id="checksHint">请选择服务以查看最近检查记录。</p>
         </div>
         <div class="checks-controls">
           <label>
-            <span>Per page</span>
+            <span>每页</span>
             <select id="pageSize">
               <option value="5" selected>5</option>
               <option value="10">10</option>
@@ -133,24 +133,24 @@
               <option value="50">50</option>
             </select>
           </label>
-          <button class="small-btn" id="prevPage" type="button">Prev</button>
+          <button class="small-btn" id="prevPage" type="button">上一页</button>
           <span id="pageInfo">-</span>
-          <button class="small-btn" id="nextPage" type="button">Next</button>
+          <button class="small-btn" id="nextPage" type="button">下一页</button>
         </div>
       </div>
-      <div id="checks" class="checks muted">No data yet.</div>
+      <div id="checks" class="checks muted">暂无数据。</div>
     </section>
   </main>
 
   <footer class="footer">
     <div class="wrap footer-inner">
-      <div class="footer-left">Copyright © NStatus 2026</div>
+      <div class="footer-left">版权所有 © 聶.NET 2026</div>
       <div class="footer-right"></div>
     </div>
   </footer>
 
   <script src="./config.js?v=20260704-runtime-config2"></script>
-  <script type="module" src="./app.js?v=20260708-unlock-compact"></script>
+  <script type="module" src="./app.js?v=20260716-agent-status-modules"></script>
   <script src="./vendor/chart.umd.min.js?v=4.4.9" async onload="window.dispatchEvent(new Event('nstatus:chartjs-ready'))"></script>
 </body>
 </html>

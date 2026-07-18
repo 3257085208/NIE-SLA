@@ -2,21 +2,25 @@ import { sanitizeAgentId, clamp, nowSec, retentionSeconds, parseBoolean } from '
 import { summarizeTraffic, trafficSettingsFromTarget } from './traffic.js';
 import { requireAgentForId, safeJson, json } from './auth.js';
 import { readR2Json, writeR2Json } from './storage.js';
+import { rateLimitByIp } from './ratelimit.js';
 
 export async function submitAgentMetrics(request, env, ctx = null) {
-  if (!env.DB) return json({ ok: false, error: 'D1 binding DB is required' }, 500, env);
+  if (!env.DB) return json({ ok: false, error: '缺少 D1 的 DB 绑定' }, 500, env);
 
   const body = await safeJson(request);
   const agentId = sanitizeAgentId(body?.agent_id || env.DEFAULT_AGENT_ID || 'vps');
   await requireAgentForId(request, env, agentId);
+  if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) {
+    return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429, env);
+  }
   const agentLabel = String(body?.agent_label || agentId).trim().slice(0, 64) || agentId;
   const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
   const metrics = body?.metrics;
-  if (!metrics || typeof metrics !== 'object') return json({ ok: false, error: 'metrics object is required' }, 400, env);
+  if (!metrics || typeof metrics !== 'object') return json({ ok: false, error: '必须提供 metrics 对象' }, 400, env);
   const rawSamples = Array.isArray(metrics.samples) ? metrics.samples : [];
   if (rawSamples.length > 310) return json({ ok: false, error: 'too many samples; max 310' }, 400, env);
   const serialized = JSON.stringify(metrics);
-  if (serialized.length > 200_000) return json({ ok: false, error: 'metrics payload too large' }, 400, env);
+  if (serialized.length > 200_000) return json({ ok: false, error: 'metrics 数据过大' }, 400, env);
 
   const ts = nowSec();
 
@@ -40,7 +44,7 @@ export async function submitAgentMetrics(request, env, ctx = null) {
     await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, metrics, state, vpsInfo, rawSamples, pings, ts });
   } catch (err) {
     console.error('persistAgentMetrics failed:', String(err?.message || err));
-    return json({ ok: false, error: 'failed to persist agent metrics' }, 500, env, { 'cache-control': 'no-store' });
+    return json({ ok: false, error: '保存 Agent 监控数据失败' }, 500, env, { 'cache-control': 'no-store' });
   }
 
   const trafficTask = persistAgentTraffic(env, agentId, metrics, ts)
@@ -212,8 +216,9 @@ async function loadAgentMetricsR2History(env, agentId, since, until, historyByTs
   if (!env.ARCHIVE) return { loaded: false, count: 0 };
   const counts = await mapWithConcurrency(historyHours(since, until), 24, async (hour) => {
     let localCount = 0;
-    const payload = await readR2Json(env, agentMetricsHourKey(env, agentId, hour), null);
-    scheduleMetricPayloadUpgrade(env, agentId, hour, payload, ctx);
+    const telemetry = await readR2Json(env, agentTelemetryHourKey(env, agentId, hour), null);
+    const payload = telemetry?.metrics || await readR2Json(env, agentMetricsHourKey(env, agentId, hour), null);
+    if (!telemetry) scheduleMetricPayloadUpgrade(env, agentId, hour, payload, ctx);
     const points = metricPointsFromPayload(payload, fields);
     for (const point of points) {
       const ts = Number(point?.ts || 0);
@@ -230,6 +235,9 @@ async function loadAgentMetricsR2History(env, agentId, since, until, historyByTs
 
 export async function writeAgentTelemetryR2History(env, agentId, points = [], pings = []) {
   if (!env.ARCHIVE || (!points?.length && !pings?.length)) return { ok: true, skipped: true };
+  const lock = await acquireAgentHistoryLock(env, agentId);
+  if (env.DB && !lock) throw new Error('Agent 历史数据正在写入，请重试本次上报');
+  try {
   const byHour = new Map();
   const ensureHour = (hour) => {
     const bucket = byHour.get(hour) || { points: [], pings: [] };
@@ -253,9 +261,13 @@ export async function writeAgentTelemetryR2History(env, agentId, points = [], pi
   let written = 0;
   let pingWritten = 0;
   for (const [hour, hourData] of byHour.entries()) {
-    const metricsKey = agentMetricsHourKey(env, agentId, hour);
-    const pingsKey = agentPingsHourKey(env, agentId, hour);
-    const existingMetrics = await readR2Json(env, metricsKey, null);
+    const telemetryKey = agentTelemetryHourKey(env, agentId, hour);
+    const existingTelemetry = await readR2Json(env, telemetryKey, null);
+    const [legacyMetrics, legacyPings] = existingTelemetry ? [null, null] : await Promise.all([
+      readR2Json(env, agentMetricsHourKey(env, agentId, hour), null),
+      readR2Json(env, agentPingsHourKey(env, agentId, hour), null),
+    ]);
+    const existingMetrics = existingTelemetry?.metrics || legacyMetrics;
     const existingMetricPoints = metricPointsFromPayload(existingMetrics);
     const byTs = new Map();
     for (const point of existingMetricPoints) {
@@ -265,7 +277,7 @@ export async function writeAgentTelemetryR2History(env, agentId, points = [], pi
     for (const point of hourData.points) byTs.set(Number(point.ts), point);
     const merged = [...byTs.entries()].sort((a, b) => a[0] - b[0]).map(([, point]) => point);
     const byPing = new Map();
-    const existingPings = await readR2Json(env, pingsKey, null);
+    const existingPings = existingTelemetry?.pings || legacyPings;
     const existingPingPoints = pingPointsFromPayload(existingPings);
     for (const ping of existingPingPoints) {
       const normalized = normalizePingPoint(ping);
@@ -275,26 +287,63 @@ export async function writeAgentTelemetryR2History(env, agentId, points = [], pi
     for (const ping of hourData.pings) byPing.set(pingKey(ping), ping);
     const mergedPings = [...byPing.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
     const dayHour = utcDayHour(hour);
-    if (hourData.points.length || existingMetricPoints.length) await writeR2Json(env, metricsKey, {
-      schema: 'nstatus-agent-metrics-hour-v2',
+    await writeR2Json(env, telemetryKey, {
+      schema: 'nstatus-agent-telemetry-hour-v1',
       agent_id: sanitizeAgentId(agentId),
       day: dayHour.day,
       hour: dayHour.hour,
       updated_at: new Date().toISOString(),
-      series: metricPointsToColumns(merged),
-    }, { schema: 'nstatus-agent-metrics-hour-v2', agent_id: sanitizeAgentId(agentId), day: dayHour.day, hour: dayHour.hour });
-    if (hourData.pings.length || existingPingPoints.length) await writeR2Json(env, pingsKey, {
-      schema: 'nstatus-agent-pings-hour-v2',
-      agent_id: sanitizeAgentId(agentId),
-      day: dayHour.day,
-      hour: dayHour.hour,
-      updated_at: new Date().toISOString(),
-      series: pingPointsToSeries(mergedPings),
-    }, { schema: 'nstatus-agent-pings-hour-v2', agent_id: sanitizeAgentId(agentId), day: dayHour.day, hour: dayHour.hour });
+      metrics: { schema: 'nstatus-agent-metrics-hour-v2', series: metricPointsToColumns(merged) },
+      pings: { schema: 'nstatus-agent-pings-hour-v2', series: pingPointsToSeries(mergedPings) },
+    }, { schema: 'nstatus-agent-telemetry-hour-v1', agent_id: sanitizeAgentId(agentId), day: dayHour.day, hour: dayHour.hour });
     written += merged.length;
     pingWritten += mergedPings.length;
   }
   return { ok: true, hours: byHour.size, points: written, pings: pingWritten };
+  } finally {
+    await releaseAgentHistoryLock(env, lock);
+  }
+}
+
+async function acquireAgentHistoryLock(env, agentId, ttlSec = 90) {
+  if (!env.DB) return null;
+  const key = `agent_history_lock:${sanitizeAgentId(agentId)}`;
+  const now = nowSec();
+  const token = `${now + ttlSec}:${crypto.randomUUID()}`;
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+    WHERE CAST(substr(app_meta.value, 1, instr(app_meta.value, ':') - 1) AS INTEGER) < ?`)
+    .bind(key, token, now, now).run();
+  const row = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(key).first();
+  return row?.value === token ? { key, token } : null;
+}
+
+async function releaseAgentHistoryLock(env, lock) {
+  if (!env.DB || !lock) return;
+  await env.DB.prepare(`DELETE FROM app_meta WHERE key = ? AND value = ?`).bind(lock.key, lock.token).run().catch(() => {});
+}
+
+export async function deleteAgentTelemetry(env, agentId) {
+  const id = sanitizeAgentId(agentId);
+  if (!id) return { d1: 0, r2: 0 };
+  let d1 = 0;
+  for (const table of ['agent_metrics_state', 'agent_metrics_history', 'agent_traffic_monthly', 'ping_history']) {
+    const result = await env.DB.prepare(`DELETE FROM ${table} WHERE agent_id = ?`).bind(id).run().catch(() => null);
+    d1 += Number(result?.meta?.changes || 0);
+  }
+  let r2 = 0;
+  if (env.ARCHIVE) {
+    let cursor;
+    const prefix = `${agentMetricsR2Prefix(env)}/${id}/`;
+    do {
+      const listed = await env.ARCHIVE.list({ prefix, cursor, limit: 1000 });
+      const keys = (listed.objects || []).map(item => item.key);
+      for (let i = 0; i < keys.length; i += 100) await env.ARCHIVE.delete(keys.slice(i, i + 100));
+      r2 += keys.length;
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor);
+  }
+  return { d1, r2 };
 }
 
 export async function cleanupAgentMetricsR2(env, options = {}) {
@@ -349,8 +398,13 @@ function agentPingsHourKey(env, agentId, hourStart) {
   return `${agentMetricsR2Prefix(env)}/${sanitizeAgentId(agentId)}/${dh.day}/${dh.hour}/pings.json`;
 }
 
+function agentTelemetryHourKey(env, agentId, hourStart) {
+  const dh = utcDayHour(hourStart);
+  return `${agentMetricsR2Prefix(env)}/${sanitizeAgentId(agentId)}/${dh.day}/${dh.hour}/telemetry.json`;
+}
+
 function hourFromAgentMetricsKey(key) {
-  const match = String(key || '').match(/\/(\d{4}-\d{2}-\d{2})\/(\d{2})(?:\/(?:metrics|pings))?\.json$/);
+  const match = String(key || '').match(/\/(\d{4}-\d{2}-\d{2})\/(\d{2})(?:\/(?:metrics|pings|telemetry))?\.json$/);
   if (!match) return 0;
   const ts = Math.floor(Date.parse(`${match[1]}T${match[2]}:00:00.000Z`) / 1000);
   return Number.isFinite(ts) ? ts : 0;
@@ -534,8 +588,9 @@ export async function loadAgentPingsR2History(env, agentId, since, until, out = 
   const id = sanitizeAgentId(agentId);
   const counts = await mapWithConcurrency(historyHours(since, until), 24, async (hour) => {
     let localCount = 0;
-    const payload = await readR2Json(env, agentPingsHourKey(env, id, hour), null);
-    schedulePingPayloadUpgrade(env, id, hour, payload, ctx);
+    const telemetry = await readR2Json(env, agentTelemetryHourKey(env, id, hour), null);
+    const payload = telemetry?.pings || await readR2Json(env, agentPingsHourKey(env, id, hour), null);
+    if (!telemetry) schedulePingPayloadUpgrade(env, id, hour, payload, ctx);
     for (const ping of pingPointsFromPayload(payload)) {
       const normalized = normalizePingPoint(ping);
       if (normalized.target_id && normalized.ts >= since && normalized.ts <= until) {
@@ -680,7 +735,6 @@ function normalizeOkInt(value) {
 
 async function persistAgentMetrics(env, data) {
   const { agentId, agentLabel, agentVersion, metrics, state, vpsInfo, rawSamples, pings, ts } = data;
-  await ensureAgentMetricsStateExtensions(env);
   const rawPings = mapPings(pings, ts);
   const statePings = await mergeStatePings(env, agentId, rawPings);
   await env.DB.prepare(`
@@ -707,7 +761,11 @@ async function persistAgentMetrics(env, data) {
 
   const rawPoints = mapSamples(rawSamples);
   if (!rawPoints.length) rawPoints.push(toPoint(state));
-  try { await writeAgentTelemetryR2History(env, agentId, rawPoints, rawPings); } catch (_) {}
+  if (env.ARCHIVE) {
+    // Do not acknowledge the report until its high-frequency history is durable.
+    // The Agent keeps unacknowledged samples and retries them on the next upload.
+    await writeAgentTelemetryR2History(env, agentId, rawPoints, rawPings);
+  }
 
   if (rawPings.length > 0 && parseBoolean(env.AGENT_PINGS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE)) await writePingHistory(env, agentId, rawPings, ts);
 
@@ -719,12 +777,6 @@ async function persistAgentMetrics(env, data) {
     } catch (_) {}
     try { await env.DB.prepare(`DELETE FROM agent_metrics_history WHERE agent_id = ? AND ts < ?`).bind(agentId, ts - retentionSeconds(env, 'AGENT_METRICS_RETENTION_HOURS', 6, 1, 72)).run(); } catch (_) {}
   }
-}
-
-async function ensureAgentMetricsStateExtensions(env) {
-  try { await env.DB.prepare(`ALTER TABLE agent_metrics_state ADD COLUMN process_count INTEGER`).run(); } catch (_) {}
-  try { await env.DB.prepare(`ALTER TABLE agent_metrics_state ADD COLUMN thread_count INTEGER`).run(); } catch (_) {}
-  try { await env.DB.prepare(`ALTER TABLE agent_metrics_state ADD COLUMN pings TEXT`).run(); } catch (_) {}
 }
 
 async function mergeStatePings(env, agentId, incoming, maxPerTarget = 60, maxTotal = 600) {

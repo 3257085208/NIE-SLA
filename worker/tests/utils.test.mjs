@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { buildMissedPoints, parseBoolean, sanitizeId, trafficPeriodFromExpiry } from '../src/utils.js';
-import { agentScopedToken, requireAgentForId, requireAnyAgent } from '../src/auth.js';
+import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, parseBoolean, sanitizeId, trafficPeriodFromExpiry } from '../src/utils.js';
+import { agentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, safeJson } from '../src/auth.js';
 import { rateLimitD1 } from '../src/ratelimit.js';
-import { compactMetricPoints, compactPingPointsByTarget, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries } from '../src/metrics.js';
+import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
+import { getAgentUpdatePolicy, getPublicSettings, updatePublicSettings } from '../src/admin/settings.js';
+import { normalizeTargetOrder } from '../src/admin/target-order.js';
+import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates } from '../src/storage.js';
+import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
+import { isAgentApiPath } from '../src/route-policy.js';
 
 globalThis.crypto ||= webcrypto;
+const originalFetch = globalThis.fetch;
 
 assert.equal(parseBoolean(true, false), true);
 assert.equal(parseBoolean('true', false), true);
@@ -50,17 +56,102 @@ assert.equal(
   buildMissedPoints(env, { checked_at: 1783330800, ok: 1 }, 1783330800 + 4 * 300, 1, 'auto', 6).length,
   3,
 );
+const missedWhileDown = buildMissedPoints(env, { checked_at: 1783330800, ok: 0 }, 1783330800 + 4 * 300, 0, 'auto', 6);
+assert.equal(missedWhileDown.length, 3);
+assert.ok(missedWhileDown.every(point => point.missed && point.latency_ms === null));
+assert.equal(buildOpenMissedPoints(env, { checked_at: 1783330800, ok: 0 }, 1783330800 + 4 * 300, 'auto').length, 3);
+assert.deepEqual(dailySummaryFromPoints([
+  { checked_at: 1783330800, ok: 0, total: 1, ok_count: 0, latency_ms: null },
+  ...missedWhileDown,
+]), {
+  total: 1,
+  ok_count: 0,
+  sum_latency_ms: 0,
+  last_ok: 0,
+  last_latency_ms: null,
+  last_status_code: null,
+  last_error: null,
+  updated_at: 1783330800,
+});
+
+const cachedDaily = { total: 10, ok_count: 9, sum_latency_ms: 180, updated_at: 1200 };
+assert.deepEqual(cachedDailySummaryBefore({ checked_at: 1200, daily: { '2026-07-18': cachedDaily } }, '2026-07-18', 1500), {
+  total: 10,
+  ok_count: 9,
+  sum_latency_ms: 180,
+});
+assert.equal(cachedDailySummaryBefore({ checked_at: 1500, daily: { '2026-07-18': cachedDaily } }, '2026-07-18', 1500), null);
+assert.equal(cachedDailySummaryBefore({ checked_at: 1500, daily: { '2026-07-18': cachedDaily } }, '2026-07-18', 1800), null);
+assert.deepEqual(checkBucketSummaryQueryPlan('2026-06-19', {
+  recentFromDay: '2026-07-17',
+  historicalTargetIds: ['vps-a', 'vps-a', 'vps-b'],
+}), [
+  { where: 'day >= ?', params: ['2026-07-17'] },
+  { where: 'day >= ? AND day < ? AND target_id IN (?,?)', params: ['2026-06-19', '2026-07-17', 'vps-a', 'vps-b'] },
+]);
 
 assert.equal(await rateLimitD1({}, 'missing-db', 1, 60), false);
+const rateEnv = fakeRateLimitEnv();
+assert.deepEqual(await Promise.all(Array.from({ length: 8 }, () => rateLimitD1(rateEnv, 'login:1', 3, 60))), [true, true, true, false, false, false, false, false]);
+assert.equal(isAgentApiPath('/api/agent/metrics'), true);
+assert.equal(isAgentApiPath('/api/agent/ping-targets'), true);
+assert.equal(isAgentApiPath('/api/agent/install-command'), false);
+assert.equal(isAgentApiPath('/api/login'), false);
 
-const authEnv = { AGENT_TOKEN: 'global-secret' };
+assert.deepEqual(await safeJson(new Request('https://example.com', { method: 'POST', body: '{"ok":true}' }), 64), { ok: true });
+await assert.rejects(
+  () => safeJson(new Request('https://example.com', { method: 'POST', body: JSON.stringify({ value: 'x'.repeat(100) }) }), 32),
+  err => err?.status === 413,
+);
+
+const authEnv = authEnvWithTargets(['vps-a', 'vps-b']);
 const scopedToken = await agentScopedToken(authEnv, 'vps-a');
 assert.match(scopedToken, /^nst_[a-f0-9]{48}$/);
 assert.deepEqual(await requireAgentForId(agentRequest('global-secret'), authEnv, 'vps-a'), { type: 'global' });
 assert.deepEqual(await requireAgentForId(agentRequest(scopedToken), authEnv, 'vps-a'), { type: 'scoped', agent_id: 'vps-a' });
-await assert.rejects(() => requireAgentForId(agentRequest(scopedToken), authEnv, 'vps-b'), /Unauthorized/);
+assert.deepEqual(await requireAgentIdentity(agentRequest(scopedToken), authEnv, 'vps-a'), { type: 'scoped', agent_id: 'vps-a' });
+const externalScopedToken = await agentScopedToken(authEnv, 'external-probe');
+assert.deepEqual(await requireAgentIdentity(agentRequest(externalScopedToken), authEnv, 'external-probe'), { type: 'scoped', agent_id: 'external-probe' });
+await assert.rejects(() => requireAgentForId(agentRequest(scopedToken), authEnv, 'vps-b'), /未授权/);
+await assert.rejects(() => requireAgentForId(agentRequest(scopedToken), authEnv, 'deleted-vps'), /不存在或已禁用/);
 assert.deepEqual(await requireAnyAgent(agentRequest(scopedToken), authEnvWithTargets(['vps-a'])), { type: 'scoped', agent_id: 'vps-a' });
-await assert.rejects(() => requireAnyAgent(agentRequest(scopedToken), authEnvWithTargets(['vps-b'])), /Unauthorized/);
+await assert.rejects(() => requireAnyAgent(agentRequest(scopedToken), authEnvWithTargets(['vps-b'])), /未授权/);
+
+const settingsEnv = fakeD1Env();
+assert.equal((await getPublicSettings(settingsEnv)).agent_auto_update, false);
+await updatePublicSettings(new Request('https://example.com', {
+  method: 'PATCH',
+  body: JSON.stringify({ agent_auto_update: true }),
+}), settingsEnv);
+assert.equal((await getPublicSettings(settingsEnv)).agent_auto_update, true);
+globalThis.fetch = async (url) => String(url).endsWith('/bin/VERSION')
+  ? new Response('v1.0.9\n')
+  : new Response('abc  nstatus-metrics-linux-amd64\n');
+const updatePolicy = await getAgentUpdatePolicy({ ...settingsEnv, AGENT_DOWNLOAD_BASE: 'https://downloads.example' });
+assert.equal(updatePolicy.auto_update, true);
+assert.equal(updatePolicy.latest_version, 'v1.0.9');
+assert.match(updatePolicy.manifest_sha256, /^[a-f0-9]{64}$/);
+globalThis.fetch = originalFetch;
+
+const reordered = normalizeTargetOrder(['web-c', 'vps-a'], ['vps-a', 'vps-b', 'web-c']);
+assert.equal(reordered.ok, true);
+assert.deepEqual(reordered.ids, ['web-c', 'vps-a', 'vps-b']);
+const duplicateOrder = normalizeTargetOrder(['vps-a', 'vps-a'], ['vps-a', 'vps-b']);
+assert.equal(duplicateOrder.ok, false);
+assert.equal(normalizeTargetOrder(['missing'], ['vps-a']).ok, false);
+
+const liveAgent = agentStatusFields({ updated_at: new Date().toISOString() }, {});
+assert.equal(liveAgent.status_source, 'agent');
+assert.equal(liveAgent.agent_online, true);
+assert.equal(agentStatusFields({ updated_at: '2020-01-01T00:00:00.000Z' }, {}).agent_online, false);
+
+const lockedR2Env = fakeLockedR2Env();
+const mergedStates = await Promise.all([
+  mergeR2StateUpdates(lockedR2Env, [{ target_id: 'a', checked_at: 1, ok: 1 }]),
+  mergeR2StateUpdates(lockedR2Env, [{ target_id: 'b', checked_at: 2, ok: 1 }]),
+]);
+assert.ok(mergedStates.every(result => result.ok));
+assert.deepEqual(Object.keys((await lockedR2Env.ARCHIVE.get('state/status.json')).value.targets).sort(), ['a', 'b']);
 
 const metricPoints = Array.from({ length: 1000 }, (_, i) => ({
   ts: 1000 + i,
@@ -86,6 +177,17 @@ assert.deepEqual(metricColumns.dt, [0, 1, 2]);
 assert.deepEqual(metricColumns.values.cpu, [0, 1, 2]);
 assert.deepEqual(metricPointsFromPayload({ series: metricColumns }, ['cpu']).map(p => p.cpu), [0, 1, 2]);
 
+const r2Env = fakeR2Env();
+const hourStart = Math.floor(Date.now() / 3_600_000) * 3600;
+const firstBatch = Array.from({ length: 300 }, (_, i) => ({ ...metricPoints[i], ts: hourStart + i }));
+const secondBatch = Array.from({ length: 300 }, (_, i) => ({ ...metricPoints[i], ts: hourStart + 300 + i }));
+await writeAgentTelemetryR2History(r2Env, 'vps-a', firstBatch);
+await writeAgentTelemetryR2History(r2Env, 'vps-a', secondBatch);
+const telemetryObject = [...r2Env._objects.values()].find(item => item.key.endsWith('/telemetry.json'));
+assert.ok(telemetryObject, 'combined telemetry history should be written to R2');
+assert.equal(metricPointsFromPayload(telemetryObject.value.metrics).length, 600, 'successive reports must retain every raw sample');
+assert.equal(r2Env._puts, 2, 'each report should use one R2 write');
+
 const pingPoints = Array.from({ length: 500 }, (_, i) => ({ target_id: 'a', ts: 2000 + i, latency_ms: 10 + i, ok: 1 }))
   .concat(Array.from({ length: 20 }, (_, i) => ({ target_id: 'b', ts: 3000 + i, latency_ms: 20, ok: 1 })));
 const compactPings = compactPingPointsByTarget(pingPoints, 50);
@@ -96,8 +198,24 @@ const pingSeries = pingPointsToSeries(pingPoints.slice(0, 3));
 assert.deepEqual(pingSeries[0].dt, [0, 1, 2]);
 assert.deepEqual(pingSeries[0].latency_ms, [10, 11, 12]);
 assert.deepEqual(pingPointsFromPayload({ series: pingSeries }).map(p => p.latency_ms), [10, 11, 12]);
+const currentHourPings = pingPoints.slice(0, 3).map((point, index) => ({ ...point, ts: hourStart + index }));
+await writeAgentTelemetryR2History(r2Env, 'vps-a', [], currentHourPings);
+const telemetryWithPings = [...r2Env._objects.values()].find(item => item.key.endsWith('/telemetry.json'));
+assert.equal(pingPointsFromPayload(telemetryWithPings.value.pings).length, 3, 'ping history should share the telemetry object');
+assert.equal(metricPointsFromPayload(telemetryWithPings.value.metrics).length, 600, 'ping-only reports must preserve metric history');
+const loadedCombinedPings = await loadAgentPingsR2History(r2Env, 'vps-a', hourStart, hourStart + 10);
+assert.equal(loadedCombinedPings.pings.length, 3, 'combined telemetry pings should remain readable through the public loader');
 
-const originalFetch = globalThis.fetch;
+const legacyR2Env = fakeR2Env();
+const legacyIso = new Date(hourStart * 1000).toISOString();
+const legacyBase = `agent-metrics-v1/vps-a/${legacyIso.slice(0, 10)}/${legacyIso.slice(11, 13)}`;
+await legacyR2Env.ARCHIVE.put(`${legacyBase}/metrics.json`, JSON.stringify({ series: metricPointsToColumns(firstBatch.slice(0, 2)) }));
+await legacyR2Env.ARCHIVE.put(`${legacyBase}/pings.json`, JSON.stringify({ series: pingPointsToSeries(pingPoints.slice(0, 2).map((point, index) => ({ ...point, ts: hourStart + index }))) }));
+await writeAgentTelemetryR2History(legacyR2Env, 'vps-a', [{ ...metricPoints[2], ts: hourStart + 2 }]);
+const migratedTelemetry = [...legacyR2Env._objects.values()].find(item => item.key.endsWith('/telemetry.json'));
+assert.equal(metricPointsFromPayload(migratedTelemetry.value.metrics).length, 3, 'legacy metric objects should migrate without data loss');
+assert.equal(pingPointsFromPayload(migratedTelemetry.value.pings).length, 2, 'legacy ping objects should migrate without data loss');
+
 globalThis.fetch = async () => ({ ok: true, text: async () => '' });
 const fakeAlertEnv = fakeD1Env();
 const alertResult = await runAlertChecks(fakeAlertEnv, { max_messages: 5 });
@@ -107,6 +225,74 @@ assert.equal(fakeAlertEnv._tables.alert_state.length, 1);
 globalThis.fetch = originalFetch;
 
 console.log('worker utility tests passed');
+
+function fakeRateLimitEnv() {
+  const rows = [];
+  return {
+    DB: {
+      prepare(sql) {
+        let params = [];
+        return {
+          bind(...values) { params = values; return this; },
+          async run() {
+            if (sql.startsWith('DELETE FROM rate_limits WHERE key')) {
+              const [key, cutoff] = params;
+              for (let i = rows.length - 1; i >= 0; i--) if (rows[i].key === key && rows[i].ts < cutoff) rows.splice(i, 1);
+              return { meta: { changes: 0 } };
+            }
+            if (sql.startsWith('INSERT INTO rate_limits')) {
+              const [key, ts, countKey, cutoff, limit] = params;
+              const count = rows.filter(row => row.key === countKey && row.ts >= cutoff).length;
+              if (count >= limit) return { meta: { changes: 0 } };
+              rows.push({ key, ts });
+              return { meta: { changes: 1 } };
+            }
+            return { meta: { changes: 0 } };
+          },
+        };
+      },
+    },
+  };
+}
+
+function fakeLockedR2Env() {
+  const objects = new Map();
+  let lock = null;
+  return {
+    DB: {
+      prepare(sql) {
+        let params = [];
+        return {
+          bind(...values) { params = values; return this; },
+          async run() {
+            if (sql.startsWith('INSERT INTO app_meta')) {
+              const [key, token, updatedAt, now] = params;
+              if (!lock || Number.parseInt(lock.value, 10) < now) lock = { key, value: token, updated_at: updatedAt };
+              return { meta: { changes: lock?.value === token ? 1 : 0 } };
+            }
+            if (sql.startsWith('DELETE FROM app_meta') && lock?.key === params[0] && lock?.value === params[1]) lock = null;
+            return { meta: { changes: 1 } };
+          },
+          async first() {
+            return sql.includes('FROM app_meta') && lock?.key === params[0] ? { value: lock.value } : null;
+          },
+        };
+      },
+    },
+    ARCHIVE: {
+      async get(key) {
+        const value = objects.get(key);
+        if (!value) return null;
+        const copy = () => JSON.parse(JSON.stringify(value));
+        return { value: copy(), json: async () => copy() };
+      },
+      async put(key, body) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        objects.set(key, JSON.parse(body));
+      },
+    },
+  };
+}
 
 function fakeD1Env() {
   const nowIso = new Date().toISOString();
@@ -143,6 +329,25 @@ function fakeD1Env() {
   return env;
 }
 
+function fakeR2Env() {
+  const objects = new Map();
+  let puts = 0;
+  return {
+    ARCHIVE: {
+      async get(key) {
+        const item = objects.get(key);
+        return item ? { json: async () => JSON.parse(JSON.stringify(item.value)) } : null;
+      },
+      async put(key, body) {
+        puts++;
+        objects.set(key, { key, value: JSON.parse(body) });
+      },
+    },
+    _objects: objects,
+    get _puts() { return puts; },
+  };
+}
+
 function agentRequest(token) {
   return new Request('https://example.com', {
     headers: { authorization: `Bearer ${token}` },
@@ -154,7 +359,12 @@ function authEnvWithTargets(ids) {
     AGENT_TOKEN: 'global-secret',
     DB: {
       prepare() {
-        return { all: async () => ({ results: ids.map(id => ({ id })) }) };
+        let values = [];
+        return {
+          bind(...params) { values = params; return this; },
+          all: async () => ({ results: ids.map(id => ({ id })) }),
+          first: async () => ids.includes(String(values[0] || '')) ? { id: values[0] } : null,
+        };
       },
     },
   };

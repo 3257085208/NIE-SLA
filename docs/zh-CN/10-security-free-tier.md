@@ -1,22 +1,92 @@
-# 10 安全与免费额度
+# 10 安全、隐私和免费额度
 
-## 安全建议
+## 威胁模型
 
-- `ADMIN_TOKEN` 和 `AGENT_TOKEN` 必须足够长。
-- 启用 TOTP，保存好 `TOTP_ENCRYPTION_KEY`。
-- 不公开后台生成的一键安装命令。
-- 保持 `PUBLIC_MASK_IPS=true` 隐藏公开 IP。
-- 写接口和后台接口使用 D1 限速，不依赖 Worker 内存限速。
-- Chart.js 使用本地 vendor 文件，不从 CDN 动态加载。
+需要保护：Admin Token、Agent 主 Token、节点 scoped Token、TOTP secret/session、Telegram Bot Token、VPS 地址和历史指标。
 
-## 50 台 VPS 估算
+主要风险：
 
-50 台 Agent 每 300 秒上报一次，R2-primary 历史模式下，Worker 请求约 28.8k/天，低于免费 100k/天。D1 主要写最新状态、流量和报警状态，通常明显低于 100k/天。R2 Class A 约 432k/月级别。
+- 仓库或日志泄露 Token。
+- XSS/恶意扩展读取后台凭据。
+- 节点失陷后冒充其他节点。
+- 暴力猜测 Admin Token/TOTP。
+- 安装下载被替换。
+- 高频指标耗尽 D1/R2/Worker 额度。
 
-## 报警成本
+## 已采用的控制
 
-报警主要增加 cron 时的少量 D1 读取和状态写入，只有真正发送消息时才调用 Telegram API，不会让 R2 用量翻倍。
+- Token 常量时间比较。
+- 每节点 scoped Token，绑定 Agent ID。
+- Admin 可启用 TOTP。
+- TOTP secret 使用 AES-GCM 加密。
+- TOTP session 在 D1 中保存哈希。
+- 后台凭据使用标签页 `sessionStorage`，不长期放 localStorage。
+- D1 持久限流。
+- 请求体大小限制和字段规范化。
+- 公开状态脱敏 IP、端口、URL 凭据。
+- 安装器验证 manifest 和二进制 SHA-256，再验证版本。
+- Agent 默认要求 HTTPS。
 
-## WebSocket 取舍
+## 部署者必须做的事
 
-WebSocket 可提高实时性，但会增加长连接和 Durable Object 状态管理。当前 HTTP 周期上报更适合免费额度和分钟级离线报警。
+1. 使用不同的随机 Secret。
+2. 启用 TOTP。
+3. 真实资源只写入被忽略的 `wrangler.local.toml`，不修改并提交公共 `wrangler.toml` 模板。
+4. 不分享完整 Agent 安装命令。
+5. 最小化 GitHub Actions `permissions`。
+6. 定期轮换泄露密钥。
+7. 使用 Cloudflare 账号 MFA。
+8. 审核自定义域名 DNS 和 Pages/Worker 路由。
+9. 对管理操作保留日志但不记录 Authorization Header。
+10. 提交前运行 `node tests/public-repo-safety.test.mjs`，并在 GitHub 启用 Secret Scanning。
+
+## 节点失陷影响
+
+scoped Token 只能以对应 Agent ID 上报，不能直接获得 Admin 权限或其他节点 Token。仍应在节点失陷后重新生成/轮换主 Agent Token或提供节点撤销机制，并检查伪造历史。
+
+## TOTP 的边界
+
+TOTP 保护登录和管理 API，不防止同源 XSS、已控制浏览器、恶意扩展或设备本身失陷。前端仍必须坚持输出转义和依赖审计。
+
+## 免费额度思路
+
+成本主要来自：
+
+- Worker 请求与 CPU 时间。
+- D1 读取/写入和存储。
+- R2 Class A/B 操作和存储。
+- Durable Object 请求/时长。
+- Pages 构建/请求。
+
+系统通过以下方式降成本：
+
+- CF 探测固定 5 分钟，而不是每秒。
+- Agent 1 秒采样但批量上传。
+- 高频历史进入 R2，不逐点写 D1。
+- Metrics 与 Ping 合并成同一小时 telemetry 对象，每批最多一次 R2 PUT。
+- D1 保存最新状态和聚合，长期日汇总优先从 R2 状态读取。
+- 清理任务每小时而不是每次 Cron。
+- 状态与检查接口短缓存。
+- 可把 Pages 域名的 `/api/*` 直接路由到 Worker，避免 Pages Function 二次转发。
+
+## 规模估算方法
+
+不要只看 VPS 数量。估算：
+
+```text
+Agent 上传请求/天 ≈ 节点数 × 86400 / 上报秒数
+CF 探测次数/天 ≈ 目标数 × 288
+Ping 样本/天 ≈ 节点数 × Ping目标数 × 86400 / Ping秒数
+```
+
+例如 50 节点、300 秒上传：约 14,400 次 Agent 上传/天。若每秒直接请求，则会变成 4,320,000 次/天，所以批量设计非常重要。
+
+## 调参原则
+
+- 缩短 `NSTATUS_INTERVAL_SEC` 会增加请求量。
+- 增加 R2 保留小时会增加存储和读取范围。
+- 开启 `AGENT_METRICS_TO_D1` 可能迅速增加 D1 写入。
+- 过高 `CONCURRENCY` 可能触发目标网络或 Worker 资源压力。
+- 大图表窗口增加 R2 读取和浏览器内存。
+
+上线后在 Cloudflare Dashboard 观察实际用量，不要把估算当保证。

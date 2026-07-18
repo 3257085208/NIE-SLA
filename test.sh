@@ -9,6 +9,8 @@ PASS=0
 FAIL=0
 CARGO_BIN="${CARGO_BIN:-cargo}"
 TMP_DIR="${TMPDIR:-/tmp}"
+# Keep linker intermediates out of Unicode/OneDrive paths on Windows Git Bash.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$TMP_DIR/nstatus-cargo-target}"
 
 run_check() {
   local name="$1"; shift
@@ -51,25 +53,33 @@ run_shell "frontend modules" "python - <<'PY'
 from pathlib import Path
 import os, subprocess
 root = Path(os.environ['ROOT_WIN'])
+html = (root / 'frontend' / 'admin.html').read_text(encoding='utf-8')
+assert 'type=\"module\"' in html, 'admin.html should load module script'
 for rel in [
+    'frontend/js/admin.js',
+    'frontend/js/admin/api.js',
     'frontend/js/install-command.js',
     'frontend/js/shared/billing.js',
+    'frontend/js/shared/chart-data.js',
     'frontend/js/shared/format.js',
     'frontend/js/shared/html.js',
     'frontend/js/shared/traffic.js',
     'frontend/js/themes/nodeget-detail.js',
     'frontend/functions/api/[[path]].js',
-    'frontend/functions/admin/[[path]].js',
 ]:
     subprocess.check_call(['node', '--check', str(root / rel)])
 PY"
-run_check "frontend shared imports" node --input-type=module -e "await import('./frontend/js/shared/html.js'); await import('./frontend/js/shared/format.js'); await import('./frontend/js/shared/billing.js'); await import('./frontend/js/shared/traffic.js')"
+run_check "frontend shared imports" node --input-type=module -e "await import('./frontend/js/shared/html.js'); await import('./frontend/js/shared/format.js'); await import('./frontend/js/shared/billing.js'); await import('./frontend/js/shared/chart-data.js'); await import('./frontend/js/shared/traffic.js')"
 run_check "frontend app import smoke" node "$ROOT/tests/frontend-app-import-smoke.mjs"
+run_check "frontend module tests" node "$ROOT/tests/frontend-modules.test.mjs"
+run_check "installer manifest tests" node "$ROOT/tests/installer-manifest.test.mjs"
+run_check "public repository safety scan" node "$ROOT/tests/public-repo-safety.test.mjs"
 
 echo ""
 echo "=== Rust Agent ==="
 run_shell "cargo fmt" "cd '$ROOT/agent' && $CARGO_BIN fmt -- --check"
 run_shell "cargo check" "cd '$ROOT/agent' && $CARGO_BIN check"
+run_shell "cargo test" "cd '$ROOT/agent' && $CARGO_BIN test"
 run_shell "linux amd64 build" "cd '$ROOT/agent' && $CARGO_BIN build --release --target x86_64-unknown-linux-musl"
 
 echo ""
@@ -84,11 +94,17 @@ run_check "worker/deploy.sh" bash -n "$ROOT/worker/deploy.sh"
 echo ""
 echo "=== Repository Hygiene ==="
 run_shell "no real target seed data" "cd '$ROOT' && ! grep -E \"INSERT INTO targets|[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+|niekaixiang|as6\\.org\" worker/targets-web-d1.sql"
-run_shell "safe generated install command" "cd '$ROOT' && ! grep -E \"ExecutionPolicy Bypass|sudo env\" worker/src/admin.js"
-run_shell "generated install command carries ping env" "cd '$ROOT' && grep -q \"NSTATUS_PING_TARGETS\" worker/src/admin.js && grep -q \"NSTATUS_PING_SEC\" worker/src/admin.js"
+run_shell "safe generated install command" "cd '$ROOT' && ! grep -E \"ExecutionPolicy Bypass|sudo env\" worker/src/admin/install-command.js && ! grep -E \"ExecutionPolicy Bypass|sudo env\" worker/src/admin.js"
+run_shell "generated install command carries ping env" "cd '$ROOT' && (grep -q \"NSTATUS_PING_SEC\" worker/src/admin/install-command.js || grep -q \"NSTATUS_PING_SEC\" worker/src/admin.js)"
+run_shell "generated install command pins installer and version" "cd '$ROOT' && grep -q 'install.sh?v=' worker/src/admin/install-command.js && grep -q 'NSTATUS_EXPECTED_VERSION' worker/src/admin/install-command.js"
+run_shell "linux reinstall replaces legacy agent" "cd '$ROOT' && grep -q 'stop_existing_agent' agent/setup.sh && grep -q 'verify_agent_version' agent/setup.sh && grep -q 'setup.sh?v=' agent/install.sh"
 run_shell "cftz hides auth header args" "cd '$ROOT' && ! grep -R \"Authorization: Bearer \\\${tok}\" cftz agent/cftz frontend/cftz"
 run_shell "no stale pages install host" "cd '$ROOT' && ! git grep -n \"nstatus-5fi.pages.dev\" -- agent frontend cftz docs README.md"
 run_shell "single audit status source" "cd '$ROOT' && test -f docs/audit-status.md && test ! -e BUG_REPORT.md && test ! -e FINAL_STATUS.md && test ! -e DEEP_SECURITY_AUDIT.md && test ! -e ONE_CLICK_DEPLOY.md"
+run_shell "missed write backfill enabled" "cd '$ROOT' && grep -q 'MISSED_WRITE_BACKFILL_MAX_BUCKETS = \"6\"' worker/wrangler.toml && ! grep -q 'MISSED_WRITE_BACKFILL_MAX_BUCKETS = \"0\"' worker/wrangler.toml"
+run_shell "probe cron uses full target concurrency" "cd '$ROOT' && grep -q 'CONCURRENCY = \"40\"' worker/wrangler.toml && grep -q \"scheduled:probe:last\" worker/src/index.js"
+run_shell "deploy script keeps full target concurrency" "cd '$ROOT' && grep -q 'CONCURRENCY = \"40\"' worker/deploy.sh && ! grep -q 'CONCURRENCY = \"8\"' worker/deploy.sh"
+run_shell "no legacy IP unlock checks" "cd '$ROOT' && ! grep -R -E 'NSTATUS_UNLOCK_CHECK|IP\.Check\.Place|install_unlock_deps' cftz agent/cftz frontend/cftz"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

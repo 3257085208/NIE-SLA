@@ -51,12 +51,21 @@ globalThis.localStorage = {
 globalThis.fetch = async () => ({
   ok: true,
   status: 200,
-  json: async () => ({ ok: true, name: 'NStatus', days: [], targets: [], summaries: [], incidents: [] }),
+  json: async () => ({ ok: true, name: '聶.NET', days: [], targets: [], summaries: [], incidents: [] }),
 });
 globalThis.CSS = { escape: (value) => String(value) };
 
 await import('../frontend/app.js');
 await new Promise((resolve) => setTimeout(resolve, 0));
 
-console.log('frontend app import smoke test passed');
+const adminSource = readFileSync(new URL('../frontend/js/admin.js', import.meta.url), 'utf8');
+assert.match(adminSource, /if \(t\.type === "http"\) return '<span class="hint">不适用<\/span>'/);
+assert.match(adminSource, /const agentTag = isWeb\s+\? notApplicable/);
+assert.match(adminSource, /isWeb \? "" : '<button class="btn btn-xs" data-a="deploy">部署 Agent<\/button>'/);
+assert.match(adminSource, /apiAdmin\("\/api\/targets\/order"/);
+assert.match(adminSource, /data-sort-handle/);
+assert.match(adminSource, /function bindTargetSorting\(\)/);
 
+console.log('frontend app import smoke test passed');
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';

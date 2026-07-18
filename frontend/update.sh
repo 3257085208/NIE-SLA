@@ -7,7 +7,7 @@ CYAN='\033[0;36m'
 RED='\033[0;31m'
 BOLD='\033[1m'
 NC='\033[0m'
-DEFAULT_SHA256SUMS_SHA256="e9ca6fa4a31f91efaacfc8e3dfcf65c524f1a2e8c5024babc6b67883b46a58be"
+DEFAULT_SHA256SUMS_SHA256=""
 
 ok()   { echo -e "  ${GREEN}✓${NC} $*"; }
 info() { echo -e "  ${CYAN}→${NC} $*"; }
@@ -35,13 +35,13 @@ verify_binary_checksum() {
         download_to "$CHECKSUM_URL" "$sums"
         local sums_expected="${NSTATUS_SHA256SUMS_SHA256:-$DEFAULT_SHA256SUMS_SHA256}" sums_actual
         sums_actual="$(sha256_file "$sums")"
-        if [[ "${sums_actual,,}" != "${sums_expected,,}" ]]; then
+        if [[ -n "$sums_expected" && "${sums_actual,,}" != "${sums_expected,,}" ]]; then
             err "校验清单验证失败"
             err "期望: $sums_expected"
             err "实际: $sums_actual"
             exit 1
         fi
-        expected="$(awk -v name="bin/${name}" '$2 == name { print $1; exit }' "$sums")"
+        expected="$(awk -v name="${name}" '$2 == name || $2 == "bin/" name { print $1; exit }' "$sums")"
     fi
     if [[ -z "$expected" ]]; then err "未找到 ${name} 的校验值"; exit 1; fi
     local actual
@@ -74,7 +74,7 @@ case "$(uname -m)" in
     *) err "unsupported architecture: $(uname -m)"; exit 1 ;;
 esac
 
-DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://your-domain.com}"
+DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 DOWNLOAD_URL="${DOWNLOAD_URL:-${DOWNLOAD_BASE%/}/bin/nstatus-metrics-linux-${ARCH}}"
 CHECKSUM_URL="${CHECKSUM_URL:-${DOWNLOAD_BASE%/}/bin/SHA256SUMS}"
 BINARY_NAME="nstatus-metrics-linux-${ARCH}"

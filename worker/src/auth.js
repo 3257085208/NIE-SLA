@@ -1,43 +1,64 @@
-import { sha256Hex } from './utils.js';
+import { sanitizeAgentId, sha256Hex } from './utils.js';
 
 export function requireAdmin(request, env) {
   const configured = env.ADMIN_TOKEN;
-  if (!configured) throw new ApiError(500, 'Authentication not configured');
+  if (!configured) throw new ApiError(500, '未配置身份验证');
   const token = bearerToken(request);
-  if (!token || !constantTimeEqual(token, configured)) throw new ApiError(401, 'Unauthorized');
+  if (!token || !constantTimeEqual(token, configured)) throw new ApiError(401, '未授权');
 }
 
 export function requireAgent(request, env) {
   const configured = env.AGENT_TOKEN;
-  if (!configured) throw new ApiError(500, 'Authentication not configured');
+  if (!configured) throw new ApiError(500, '未配置身份验证');
   const token = bearerToken(request);
-  if (!token || !constantTimeEqual(token, configured)) throw new ApiError(401, 'Unauthorized');
+  if (!token || !constantTimeEqual(token, configured)) throw new ApiError(401, '未授权');
 }
 
 export async function requireAgentForId(request, env, agentId) {
   const configured = String(env.AGENT_TOKEN || '').trim();
-  if (!configured) throw new ApiError(500, 'Authentication not configured');
+  if (!configured) throw new ApiError(500, '未配置身份验证');
+  const id = String(agentId || '').trim();
+  if (!id || !env.DB) throw new ApiError(401, '未授权');
+  let target = await env.DB.prepare(`SELECT id FROM targets WHERE id = ? AND enabled = 1`).bind(id).first().catch(() => null);
+  if (!target) {
+    const rows = await env.DB.prepare(`SELECT id FROM targets WHERE enabled = 1`).all().catch(() => ({ results: [] }));
+    target = (rows.results || []).find(row => sanitizeAgentId(row.id) === id) || null;
+  }
+  if (!target) throw new ApiError(401, 'Agent 目标不存在或已禁用');
   const token = bearerToken(request);
-  if (!token) throw new ApiError(401, 'Unauthorized');
+  if (!token) throw new ApiError(401, '未授权');
   if (constantTimeEqual(token, configured)) return { type: 'global' };
-  const scoped = await agentScopedToken(env, agentId);
-  if (scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', agent_id: String(agentId || '') };
-  throw new ApiError(401, 'Unauthorized');
+  const scoped = await agentScopedToken(env, id);
+  if (scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', agent_id: id };
+  throw new ApiError(401, '未授权');
 }
 
 export async function requireAnyAgent(request, env) {
   const configured = String(env.AGENT_TOKEN || '').trim();
-  if (!configured) throw new ApiError(500, 'Authentication not configured');
+  if (!configured) throw new ApiError(500, '未配置身份验证');
   const token = bearerToken(request);
-  if (!token) throw new ApiError(401, 'Unauthorized');
+  if (!token) throw new ApiError(401, '未授权');
   if (constantTimeEqual(token, configured)) return { type: 'global' };
-  if (!env.DB) throw new ApiError(401, 'Unauthorized');
+  if (!env.DB) throw new ApiError(401, '未授权');
   const rows = await env.DB.prepare(`SELECT id FROM targets WHERE enabled = 1`).all().catch(() => ({ results: [] }));
   for (const row of rows.results || []) {
     const scoped = await agentScopedToken(env, row.id);
     if (scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', agent_id: String(row.id || '') };
   }
-  throw new ApiError(401, 'Unauthorized');
+  throw new ApiError(401, '未授权');
+}
+
+export async function requireAgentIdentity(request, env, agentId) {
+  const configured = String(env.AGENT_TOKEN || '').trim();
+  if (!configured) throw new ApiError(500, '未配置身份验证');
+  const id = sanitizeAgentId(String(agentId || '').trim());
+  if (!String(agentId || '').trim() || !id) throw new ApiError(401, '缺少有效的 Agent ID');
+  const token = bearerToken(request);
+  if (!token) throw new ApiError(401, '未授权');
+  if (constantTimeEqual(token, configured)) return { type: 'global', agent_id: id };
+  const scoped = await agentScopedToken(env, id);
+  if (scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', agent_id: id };
+  throw new ApiError(401, '未授权');
 }
 
 export async function agentScopedToken(env, agentId) {
@@ -66,16 +87,36 @@ export class ApiError extends Error {
 
 export async function safeJson(request, maxBytes = 256_000) {
   const contentLength = Number(request.headers.get('content-length') || 0);
-  if (contentLength > maxBytes) throw new ApiError(413, 'Request body too large');
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) throw new ApiError(413, '请求内容过大');
   try {
-    const text = await request.text();
+    let text = '';
+    if (request.body) {
+      const reader = request.body.getReader();
+      const decoder = new TextDecoder();
+      let bytes = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          bytes += value.byteLength;
+          if (bytes > maxBytes) {
+            await reader.cancel().catch(() => {});
+            throw new ApiError(413, '请求内容过大');
+          }
+          text += decoder.decode(value, { stream: true });
+        }
+        text += decoder.decode();
+      } finally {
+        reader.releaseLock();
+      }
+    }
     if (!text.trim()) return {};
     const data = JSON.parse(text);
-    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Body must be a JSON object');
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('请求内容必须是 JSON 对象');
     return data;
   } catch (err) {
     if (err instanceof ApiError) throw err;
-    throw new ApiError(400, `Invalid JSON body: ${err.message}`);
+    throw new ApiError(400, `JSON 请求内容无效：${err.message}`);
   }
 }
 

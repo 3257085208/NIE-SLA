@@ -39,4 +39,5 @@
 | `NSTATUS_INTERVAL_SEC` | Upload interval |
 | `NSTATUS_SAMPLE_SEC` | Local sample interval |
 | `NSTATUS_PING_SEC` | Ping interval |
+| `NSTATUS_PING_TARGET_REFRESH_SEC` | Managed Ping target refresh interval; default 600 seconds |
 | `NSTATUS_PING_TARGETS` | Ping target ids or `*` |

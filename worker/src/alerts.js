@@ -63,7 +63,7 @@ export async function getAlertSettings(env, options = {}) {
 }
 
 export async function updateAlertSettings(request, env) {
-  if (!env.DB) return { ok: false, error: 'D1 binding DB is required' };
+  if (!env.DB) return { ok: false, error: '缺少 D1 的 DB 绑定' };
   const body = await safeJson(request);
   const previous = await readStoredSettings(env);
   const next = normalizeAlertSettings({ ...previous, ...pickSettings(body) });
@@ -453,7 +453,7 @@ async function markResolved(env, targetId, ruleKey, now) {
 async function sendTelegram(env, settings, text) {
   const token = settings.telegram_bot_token || await telegramToken(env);
   const chatId = telegramChatId(env, settings);
-  if (!token || !chatId) return { ok: false, error: 'Telegram bot token or chat id is missing' };
+  if (!token || !chatId) return { ok: false, error: '缺少 Telegram Bot Token 或 Chat ID' };
   try {
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
@@ -719,7 +719,7 @@ async function encryptSecret(secret, env) {
 
 async function decryptSecret(payload, env) {
   const combined = base64ToBytes(payload);
-  if (combined.length <= 12) throw new Error('Invalid encrypted Telegram token');
+  if (combined.length <= 12) throw new Error('加密的 Telegram Token 无效');
   const iv = combined.slice(0, 12);
   const encrypted = combined.slice(12);
   const decrypted = await crypto.subtle.decrypt(
@@ -732,7 +732,7 @@ async function decryptSecret(payload, env) {
 
 async function secretKey(env, usages) {
   const material = String(env.ALERT_ENCRYPTION_KEY || env.TOTP_ENCRYPTION_KEY || '').trim();
-  if (!material) throw new Error('ALERT_ENCRYPTION_KEY or TOTP_ENCRYPTION_KEY is required to store Telegram token in D1');
+  if (!material) throw new Error('将 Telegram Token 保存到 D1 需要配置 ALERT_ENCRYPTION_KEY 或 TOTP_ENCRYPTION_KEY');
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM', length: 256 }, false, usages);
 }

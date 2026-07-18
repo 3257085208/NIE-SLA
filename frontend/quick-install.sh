@@ -6,18 +6,17 @@
 # Optional env:
 #   NSTATUS_AGENT_ID or NSTATUS_TARGET
 #   NSTATUS_AGENT_LABEL, NSTATUS_INTERVAL_SEC, NSTATUS_PING_TARGETS, NSTATUS_PING_SEC
-#   NSTATUS_UNLOCK_CHECK_ENABLED, NSTATUS_UNLOCK_CHECK_SEC, NSTATUS_UNLOCK_CHECK_URL
 set -euo pipefail
 
-DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://your-domain.com}"
+DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 SETUP_URL="${DOWNLOAD_BASE%/}/setup.sh"
 
 if [[ -z "${NSTATUS_API_BASE:-${NSTATUS_API:-}}" ]]; then
-  echo "Missing NSTATUS_API_BASE. Use the Admin deploy button to copy a complete command." >&2
+  echo "缺少 NSTATUS_API_BASE，请从管理后台的部署按钮复制完整命令。" >&2
   exit 2
 fi
 if [[ -z "${NSTATUS_AGENT_TOKEN:-${NSTATUS_TOKEN:-}}" ]]; then
-  echo "Missing NSTATUS_AGENT_TOKEN. Use the Admin deploy button to copy a complete command." >&2
+  echo "缺少 NSTATUS_AGENT_TOKEN，请从管理后台的部署按钮复制完整命令。" >&2
   exit 2
 fi
 
@@ -27,10 +26,6 @@ export NSTATUS_AGENT_ID="${NSTATUS_AGENT_ID:-${NSTATUS_TARGET:-$(hostname 2>/dev
 export NSTATUS_AGENT_LABEL="${NSTATUS_AGENT_LABEL:-$NSTATUS_AGENT_ID}"
 export NSTATUS_PING_TARGETS="${NSTATUS_PING_TARGETS:-*}"
 export NSTATUS_PING_SEC="${NSTATUS_PING_SEC:-20}"
-export NSTATUS_UNLOCK_CHECK_ENABLED="${NSTATUS_UNLOCK_CHECK_ENABLED:-1}"
-export NSTATUS_UNLOCK_CHECK_SEC="${NSTATUS_UNLOCK_CHECK_SEC:-300}"
-export NSTATUS_UNLOCK_CHECK_URL="${NSTATUS_UNLOCK_CHECK_URL:-https://IP.Check.Place}"
-export NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC="${NSTATUS_UNLOCK_CHECK_TIMEOUT_SEC:-90}"
 
 TMP="$(mktemp)"
 cleanup() { rm -f "$TMP"; }
@@ -41,7 +36,7 @@ if command -v curl >/dev/null 2>&1; then
 elif command -v wget >/dev/null 2>&1; then
   wget -q "$SETUP_URL" -O "$TMP"
 else
-  echo "Missing curl or wget" >&2
+  echo "缺少 curl 或 wget" >&2
   exit 2
 fi
 
