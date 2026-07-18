@@ -1,7 +1,7 @@
 import { ALLOWED_REGIONS, clamp, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
 import { requireAdmin, requireAgent, requireAgentForId, requireAnyAgent, requireAgentIdentity, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
-import { submitAgentMetrics, getAgentMetrics, cleanupAgentMetricsR2 } from './metrics.js';
+import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
 import { listTargets, createTarget, updateTarget, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
@@ -97,7 +97,7 @@ const ROUTES = [
 
 const KEY = (method, path) => `${method} ${path}`;
 
-async function dispatchStatic(env, url, request) {
+async function dispatchStatic(env, url, request, ctx) {
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const m = request.method;
 
@@ -110,7 +110,7 @@ async function dispatchStatic(env, url, request) {
   if (path === '/api/colo-echo' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json({ ok: true, colo: request.cf?.colo || null, city: request.cf?.city || null, country: request.cf?.country || null, ts: Date.now() }, 200, env); }
   if (path === '/api/status' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getStatusCached(request, env, url); }
   if (path === '/api/checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getChecksCached(request, env, url); }
-  if (path === '/api/agent/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getAgentMetrics(env, url); }
+  if (path === '/api/agent/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getAgentMetricsCached(request, env, url, ctx); }
   if (path === '/api/agent/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
 
   // Agent telemetry is authenticated first and then uses an isolate-local
@@ -194,7 +194,7 @@ export async function handleRequest(request, env, ctx) {
   // Global cap
   if (!await rateLimitGlobal(request, env, 2000, 60, { bestEffort: true })) return deny();
 
-  const response = await dispatchStatic(env, url, request);
+  const response = await dispatchStatic(env, url, request, ctx);
   if (response) return response;
 
   return json({ ok: false, error: '未找到请求的资源' }, 404, env);

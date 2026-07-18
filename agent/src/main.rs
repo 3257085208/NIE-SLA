@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use std::collections::VecDeque;
 use std::env;
 use std::fs;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -26,6 +27,9 @@ const INITIAL_UPDATE_CHECK_SEC: u64 = 60;
 const REPORT_MAX_SAMPLES: usize = 300;
 const DEFAULT_QUEUE_MAX_SAMPLES: usize = 86_400;
 const QUEUE_FLUSH_SEC: u64 = 10;
+const MIN_PING_QUEUE_CAPACITY: usize = 200;
+const MAX_PING_QUEUE_CAPACITY: usize = 10_000;
+const MAX_PING_CONCURRENCY: usize = 32;
 
 #[derive(Clone, Debug)]
 struct Config {
@@ -182,6 +186,7 @@ struct UpdateCheckResult {
 enum UpdateOutcome {
     Current(String),
     AvailableManual(String),
+    Managed(String),
     Installed {
         version: String,
         executable: PathBuf,
@@ -254,6 +259,7 @@ fn run() -> Result<()> {
         samples.drain(0..samples.len() - cfg.queue_max_samples);
     }
     let mut pings: Vec<PingResult> = Vec::new();
+    let mut ping_queue_capacity = MIN_PING_QUEUE_CAPACITY;
     let queue_tx = spawn_queue_writer(
         cfg.queue_file.clone(),
         samples.clone(),
@@ -276,10 +282,10 @@ fn run() -> Result<()> {
 
     loop {
         let sample = collector.sample();
-        samples.push(sample.clone());
+        samples.push_back(sample.clone());
         let _ = queue_tx.send(QueueCommand::Append(sample));
         if samples.len() > cfg.queue_max_samples {
-            samples.remove(0);
+            samples.pop_front();
         }
 
         while let Ok(result) = upload_rx.try_recv() {
@@ -308,10 +314,14 @@ fn run() -> Result<()> {
         }
 
         while let Ok(results) = ping_rx.try_recv() {
+            let expected_cycles = cfg.report_sec.div_ceil(cfg.ping_sec).saturating_add(2) as usize;
+            ping_queue_capacity = ping_queue_capacity
+                .max(expected_cycles.saturating_mul(results.len()))
+                .min(MAX_PING_QUEUE_CAPACITY);
             pings.extend(results);
         }
-        if pings.len() > 200 {
-            let keep_from = pings.len().saturating_sub(200);
+        if pings.len() > ping_queue_capacity {
+            let keep_from = pings.len().saturating_sub(ping_queue_capacity);
             pings.drain(0..keep_from);
         }
 
@@ -324,6 +334,10 @@ fn run() -> Result<()> {
                     ),
                     Ok(UpdateOutcome::AvailableManual(version)) => println!(
                         "{{\"ok\":true,\"update\":\"available_manual\",\"version\":{},\"command\":\"cftz update\"}}",
+                        json_string(&version)
+                    ),
+                    Ok(UpdateOutcome::Managed(version)) => println!(
+                        "{{\"ok\":true,\"update\":\"managed\",\"version\":{}}}",
                         json_string(&version)
                     ),
                     Ok(UpdateOutcome::Installed {
@@ -903,17 +917,32 @@ fn next_ping_worker_sleep(
         .max(Duration::from_millis(50))
 }
 
-fn run_pings(targets: &[PingTarget], _selector: &str) -> Vec<PingResult> {
-    let handles: Vec<_> = targets
+fn run_pings(targets: &[PingTarget], selector: &str) -> Vec<PingResult> {
+    let selected: Vec<_> = targets
         .iter()
+        .filter(|target| ping_target_selected(&target.id, selector))
         .cloned()
-        .map(|target| thread::spawn(move || ping_target(&target)))
         .collect();
+    let mut results = Vec::with_capacity(selected.len());
+    for batch in selected.chunks(MAX_PING_CONCURRENCY) {
+        let handles: Vec<_> = batch
+            .iter()
+            .cloned()
+            .map(|target| thread::spawn(move || ping_target(&target)))
+            .collect();
+        results.extend(handles.into_iter().filter_map(|handle| handle.join().ok()));
+    }
+    results
+}
 
-    handles
-        .into_iter()
-        .filter_map(|handle| handle.join().ok())
-        .collect()
+fn ping_target_selected(id: &str, selector: &str) -> bool {
+    let selector = selector.trim();
+    selector.is_empty()
+        || selector == "*"
+        || selector
+            .split(',')
+            .map(str::trim)
+            .any(|candidate| !candidate.is_empty() && candidate == id)
 }
 
 fn ping_target(target: &PingTarget) -> PingResult {
@@ -954,7 +983,7 @@ fn aggregate(samples: &[SamplePoint]) -> AggStats {
     }
 }
 
-fn drop_samples_through(samples: &mut Vec<SamplePoint>, ts: i64) {
+fn drop_samples_through(samples: &mut VecDeque<SamplePoint>, ts: i64) {
     if ts <= 0 {
         return;
     }
@@ -1039,6 +1068,15 @@ mod tests {
             ),
             Duration::from_millis(50),
         );
+    }
+
+    #[test]
+    fn ping_target_selector_supports_all_and_explicit_ids() {
+        assert!(ping_target_selected("alpha", "*"));
+        assert!(ping_target_selected("alpha", ""));
+        assert!(ping_target_selected("alpha", "beta, alpha, gamma"));
+        assert!(!ping_target_selected("alpha", "beta,gamma"));
+        assert!(!ping_target_selected("alpha", "alphabet"));
     }
 }
 

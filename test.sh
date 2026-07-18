@@ -9,8 +9,13 @@ PASS=0
 FAIL=0
 CARGO_BIN="${CARGO_BIN:-cargo}"
 TMP_DIR="${TMPDIR:-/tmp}"
-# Keep linker intermediates out of Unicode/OneDrive paths on Windows Git Bash.
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$TMP_DIR/nstatus-cargo-target}"
+# Keep linker intermediates out of Unicode/OneDrive paths without sharing stale
+# artifacts between repositories or test runs.
+if [[ -z "${CARGO_TARGET_DIR:-}" ]]; then
+  CARGO_TARGET_DIR="$(mktemp -d "$TMP_DIR/nstatus-cargo-target.XXXXXX")"
+  trap 'rm -rf -- "$CARGO_TARGET_DIR"' EXIT
+fi
+export CARGO_TARGET_DIR
 
 run_check() {
   local name="$1"; shift
@@ -43,6 +48,7 @@ for f in "$ROOT/worker/src"/*.js; do
   run_check "$(basename "$f")" node --check "$f"
 done
 run_check "worker utility tests" node "$ROOT/worker/tests/utils.test.mjs"
+run_shell "worker module bundle" "cd '$ROOT' && npx --yes esbuild worker/src/index.js --bundle --format=esm --platform=browser --external:cloudflare:sockets --outfile='$TMP_DIR/nstatus-worker-bundle.mjs' && rm -f '$TMP_DIR/nstatus-worker-bundle.mjs'"
 run_shell "js undefined references" "cd '$ROOT' && npx --yes eslint@10.6.0 -c tests/eslint.config.mjs worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests --no-error-on-unmatched-pattern"
 
 echo ""
@@ -78,9 +84,9 @@ run_check "public repository safety scan" node "$ROOT/tests/public-repo-safety.t
 echo ""
 echo "=== Rust Agent ==="
 run_shell "cargo fmt" "cd '$ROOT/agent' && $CARGO_BIN fmt -- --check"
-run_shell "cargo check" "cd '$ROOT/agent' && $CARGO_BIN check"
-run_shell "cargo test" "cd '$ROOT/agent' && $CARGO_BIN test"
-run_shell "linux amd64 build" "cd '$ROOT/agent' && $CARGO_BIN build --release --target x86_64-unknown-linux-musl"
+run_shell "cargo check" "cd '$ROOT/agent' && $CARGO_BIN check --locked"
+run_shell "cargo test" "cd '$ROOT/agent' && $CARGO_BIN test --locked"
+run_shell "linux amd64 build" "cd '$ROOT/agent' && $CARGO_BIN build --locked --release --target x86_64-unknown-linux-musl"
 
 echo ""
 echo "=== Shell Script Syntax ==="
@@ -98,6 +104,8 @@ run_shell "safe generated install command" "cd '$ROOT' && ! grep -E \"ExecutionP
 run_shell "generated install command carries ping env" "cd '$ROOT' && (grep -q \"NSTATUS_PING_SEC\" worker/src/admin/install-command.js || grep -q \"NSTATUS_PING_SEC\" worker/src/admin.js)"
 run_shell "generated install command pins installer and version" "cd '$ROOT' && grep -q 'install.sh?v=' worker/src/admin/install-command.js && grep -q 'NSTATUS_EXPECTED_VERSION' worker/src/admin/install-command.js"
 run_shell "linux reinstall replaces legacy agent" "cd '$ROOT' && grep -q 'stop_existing_agent' agent/setup.sh && grep -q 'verify_agent_version' agent/setup.sh && grep -q 'setup.sh?v=' agent/install.sh"
+run_shell "linux agent keeps secrets root-owned" "cd '$ROOT' && grep -q 'chown \"root:\${agent_group}\" \"\$ENV_FILE\"' agent/setup.sh && grep -q 'EnvironmentFile=\${ENV_FILE}' agent/setup.sh && ! grep -q 'chown -R \"\$AGENT_USER\" \"\$WORK_DIR\"' agent/setup.sh"
+run_shell "manual updates verify policy and checksums" "cd '$ROOT' && grep -q 'manifest_sha256' agent/cftz && grep -q 'Agent binary checksum mismatch' agent/cftz && ! grep -q 'download_binary_unverified' agent/cftz"
 run_shell "cftz hides auth header args" "cd '$ROOT' && ! grep -R \"Authorization: Bearer \\\${tok}\" cftz agent/cftz frontend/cftz"
 run_shell "no stale pages install host" "cd '$ROOT' && ! git grep -n \"nstatus-5fi.pages.dev\" -- agent frontend cftz docs README.md"
 run_shell "single audit status source" "cd '$ROOT' && test -f docs/audit-status.md && test ! -e BUG_REPORT.md && test ! -e FINAL_STATUS.md && test ! -e DEEP_SECURITY_AUDIT.md && test ! -e ONE_CLICK_DEPLOY.md"

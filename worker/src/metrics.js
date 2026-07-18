@@ -4,6 +4,12 @@ import { requireAgentForId, safeJson, json } from './auth.js';
 import { readR2Json, writeR2Json } from './storage.js';
 import { rateLimitByIp } from './ratelimit.js';
 
+const MAX_AGENT_SAMPLES_PER_REPORT = 310;
+const MAX_AGENT_PINGS_PER_REPORT = 5_000;
+const MAX_TELEMETRY_HOURS_PER_REPORT = 25;
+const MAX_TELEMETRY_AGE_SEC = 7 * 86400;
+const MAX_TELEMETRY_FUTURE_SEC = 300;
+
 export async function submitAgentMetrics(request, env, ctx = null) {
   if (!env.DB) return json({ ok: false, error: '缺少 D1 的 DB 绑定' }, 500, env);
 
@@ -18,7 +24,7 @@ export async function submitAgentMetrics(request, env, ctx = null) {
   const metrics = body?.metrics;
   if (!metrics || typeof metrics !== 'object') return json({ ok: false, error: '必须提供 metrics 对象' }, 400, env);
   const rawSamples = Array.isArray(metrics.samples) ? metrics.samples : [];
-  if (rawSamples.length > 310) return json({ ok: false, error: 'too many samples; max 310' }, 400, env);
+  if (rawSamples.length > MAX_AGENT_SAMPLES_PER_REPORT) return json({ ok: false, error: `too many samples; max ${MAX_AGENT_SAMPLES_PER_REPORT}` }, 400, env);
   const serialized = JSON.stringify(metrics);
   if (serialized.length > 200_000) return json({ ok: false, error: 'metrics 数据过大' }, 400, env);
 
@@ -39,6 +45,8 @@ export async function submitAgentMetrics(request, env, ctx = null) {
 
   const vpsInfo = metrics.vps_info && typeof metrics.vps_info === 'object' ? metrics.vps_info : null;
   const pings = Array.isArray(metrics.pings) ? metrics.pings : [];
+  const telemetryError = validateTelemetryBatch(rawSamples, pings, ts);
+  if (telemetryError) return json({ ok: false, error: telemetryError }, 400, env);
 
   try {
     await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, metrics, state, vpsInfo, rawSamples, pings, ts });
@@ -121,6 +129,58 @@ export async function getAgentMetrics(env, url, ctx = null) {
   if (responseFormat === 'columns') payload.series = metricPointsToColumns(history, fields);
 
   return json(payload, 200, env, { 'cache-control': 'public, max-age=15' });
+}
+
+export async function getAgentMetricsCached(request, env, url, ctx = null) {
+  if (!globalThis.caches?.default || request.method !== 'GET') return getAgentMetrics(env, url, ctx);
+  const cacheUrl = normalizedMetricsCacheUrl(url, env);
+  const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
+  const cached = await caches.default.match(cacheKey);
+  if (cached) return cached;
+  const response = await getAgentMetrics(env, url, ctx);
+  if (response.ok) {
+    const task = caches.default.put(cacheKey, response.clone());
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(task);
+    else await task;
+  }
+  return response;
+}
+
+function normalizedMetricsCacheUrl(url, env) {
+  const normalized = new URL(url.origin + '/api/agent/metrics');
+  normalized.searchParams.set('agent_id', sanitizeAgentId(url.searchParams.get('agent_id') || env.DEFAULT_AGENT_ID || 'vps'));
+  normalized.searchParams.set('hours', String(clamp(Math.floor(Number(url.searchParams.get('hours') || 24)), 1, 168)));
+  const maxPointsRaw = url.searchParams.has('max_points') ? Number(url.searchParams.get('max_points')) : Number(env.AGENT_METRICS_MAX_POINTS || 900);
+  normalized.searchParams.set('max_points', String(maxPointsRaw <= 0 ? 0 : clamp(Math.floor(maxPointsRaw), 60, 5000)));
+  normalized.searchParams.set('history', url.searchParams.get('history') === '0' ? '0' : '1');
+  normalized.searchParams.set('format', String(url.searchParams.get('format') || '').toLowerCase() === 'columns' ? 'columns' : 'rows');
+  normalized.searchParams.set('fields', (metricFieldsForRequest(url.searchParams.get('metric') || url.searchParams.get('fields') || '') || []).join(','));
+  return normalized;
+}
+
+function validateTelemetryBatch(samples, pings, now) {
+  if (pings.length > MAX_AGENT_PINGS_PER_REPORT) return `too many pings; max ${MAX_AGENT_PINGS_PER_REPORT}`;
+  const hours = new Set();
+  const validatePoint = (point, kind) => {
+    const ts = Math.floor(Number(point?.ts || 0));
+    if (!Number.isFinite(ts) || ts <= 0) return `${kind} has an invalid timestamp`;
+    if (ts < now - MAX_TELEMETRY_AGE_SEC) return `${kind} timestamp is too old`;
+    if (ts > now + MAX_TELEMETRY_FUTURE_SEC) return `${kind} timestamp is in the future`;
+    hours.add(hourStartSec(ts));
+    return '';
+  };
+  for (const point of samples) {
+    const error = validatePoint(point, 'sample');
+    if (error) return error;
+  }
+  for (const point of pings) {
+    const error = validatePoint(point, 'ping');
+    if (error) return error;
+  }
+  if (hours.size > MAX_TELEMETRY_HOURS_PER_REPORT) {
+    return `telemetry spans too many hourly buckets; max ${MAX_TELEMETRY_HOURS_PER_REPORT}`;
+  }
+  return '';
 }
 
 async function agentTrafficSettings(env, agentId, ts = nowSec()) {

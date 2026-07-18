@@ -2,6 +2,7 @@ use super::{
     drop_samples_through, json_string, sample_json, QueueCommand, SamplePoint, QUEUE_FLUSH_SEC,
 };
 use anyhow::{Context, Result};
+use std::collections::VecDeque;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,9 +19,9 @@ pub(super) fn default_queue_file() -> String {
         .to_string()
 }
 
-pub(super) fn load_sample_queue(path: &Path) -> Result<Vec<SamplePoint>> {
+pub(super) fn load_sample_queue(path: &Path) -> Result<VecDeque<SamplePoint>> {
     if !path.exists() {
-        return Ok(Vec::new());
+        return Ok(VecDeque::new());
     }
     let data = fs::read(path).with_context(|| format!("read sample queue {}", path.display()))?;
     let values: serde_json::Value = serde_json::from_slice(&data)
@@ -33,7 +34,7 @@ pub(super) fn load_sample_queue(path: &Path) -> Result<Vec<SamplePoint>> {
         .collect())
 }
 
-pub(super) fn save_sample_queue(path: &Path, samples: &[SamplePoint]) -> Result<()> {
+pub(super) fn save_sample_queue(path: &Path, samples: &VecDeque<SamplePoint>) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create sample queue directory {}", parent.display()))?;
@@ -52,7 +53,7 @@ pub(super) fn save_sample_queue(path: &Path, samples: &[SamplePoint]) -> Result<
 
 pub(super) fn spawn_queue_writer(
     path: PathBuf,
-    mut samples: Vec<SamplePoint>,
+    mut samples: VecDeque<SamplePoint>,
     max_samples: usize,
 ) -> mpsc::Sender<QueueCommand> {
     let (tx, rx) = mpsc::channel();
@@ -62,9 +63,9 @@ pub(super) fn spawn_queue_writer(
         loop {
             match rx.recv_timeout(Duration::from_secs(1)) {
                 Ok(QueueCommand::Append(sample)) => {
-                    samples.push(sample);
+                    samples.push_back(sample);
                     if samples.len() > max_samples {
-                        samples.remove(0);
+                        samples.pop_front();
                     }
                     dirty = true;
                 }
@@ -139,13 +140,13 @@ mod tests {
     #[test]
     fn sample_queue_survives_restart_round_trip() {
         let path = env::temp_dir().join(format!("nstatus-queue-{}.json", std::process::id()));
-        let samples = vec![SamplePoint {
+        let samples = VecDeque::from([SamplePoint {
             ts: 123,
             cpu: 12.5,
             mem: 34.5,
             tcp_conns: 7,
             ..SamplePoint::default()
-        }];
+        }]);
         save_sample_queue(&path, &samples).unwrap();
         let loaded = load_sample_queue(&path).unwrap();
         assert_eq!(loaded.len(), 1);

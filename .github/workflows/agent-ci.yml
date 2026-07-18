@@ -80,9 +80,11 @@ jobs:
           mkdir -p bin
           cp target/${{ matrix.target }}/release/nstatus-metrics bin/${{ matrix.out }}
       - uses: actions/upload-artifact@v5
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: ${{ matrix.out }}
           path: agent/bin/${{ matrix.out }}
+          retention-days: 1
 
   windows:
     name: Windows amd64
@@ -99,14 +101,16 @@ jobs:
           New-Item -ItemType Directory -Force agent/bin | Out-Null
           Copy-Item agent/target/x86_64-pc-windows-msvc/release/nstatus-metrics.exe agent/bin/nstatus-metrics-windows-amd64.exe
       - uses: actions/upload-artifact@v5
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: nstatus-metrics-windows-amd64.exe
           path: agent/bin/nstatus-metrics-windows-amd64.exe
+          retention-days: 1
 
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    needs: [verify, fmt, linux, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write

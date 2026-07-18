@@ -95,6 +95,19 @@ fn check_for_update(cfg: &Config, http: &HttpClient) -> Result<(UpdateOutcome, u
             policy.check_interval_sec,
         ));
     }
+    #[cfg(target_os = "linux")]
+    let privileged_updater = env::var("NSTATUS_PRIVILEGED_UPDATER")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    #[cfg(not(target_os = "linux"))]
+    let privileged_updater = false;
+
+    if policy.auto_update && privileged_updater {
+        return Ok((
+            UpdateOutcome::Managed(policy.latest_version),
+            policy.check_interval_sec,
+        ));
+    }
     if !policy.auto_update || !cfg!(target_os = "linux") {
         return Ok((
             UpdateOutcome::AvailableManual(policy.latest_version),

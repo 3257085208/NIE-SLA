@@ -474,7 +474,7 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "nstatus-agent"
-version = "1.0.12"
+version = "1.0.13"
 dependencies = [
  "anyhow",
  "rustls-rustcrypto",

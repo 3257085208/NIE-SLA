@@ -1,12 +1,9 @@
 (() => {
   const config = window.NSTATUS_CONFIG || {};
-  const params = new URLSearchParams(window.location.search);
-  const apiFromUrl = (params.get('api') || '').replace(/\/+$/, '');
-  let storedApi = '';
+  // API endpoints are deployment configuration, never user-controlled URL state.
   try {
-    if (apiFromUrl) localStorage.setItem('nstatus.apiBase', apiFromUrl);
-    storedApi = localStorage.getItem('nstatus.apiBase') || '';
+    localStorage.removeItem('nstatus.apiBase');
   } catch (_) {}
   window.NSTATUS_CONFIG = config;
-  window.NSTATUS_API_BASE = config.apiBase || apiFromUrl || storedApi || window.NSTATUS_API_BASE || '';
+  window.NSTATUS_API_BASE = config.apiBase || window.NSTATUS_API_BASE || '';
 })();

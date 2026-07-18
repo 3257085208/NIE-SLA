@@ -5,7 +5,6 @@ const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
   CONFIG.apiBase ||
     window.NSTATUS_API_BASE ||
-    localStorage.getItem("nstatus.apiBase") ||
     "",
 ).replace(/\/+$/, "");
 function byId(id) {

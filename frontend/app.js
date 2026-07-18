@@ -67,7 +67,7 @@ function initialFrontendTheme() {
 }
 
 const state = {
-  apiBase: window.NSTATUS_API_BASE || localStorage.getItem('nstatus.apiBase') || '',
+  apiBase: window.NSTATUS_API_BASE || '',
   data: null,
   filteredText: '',
   selectedId: null,
