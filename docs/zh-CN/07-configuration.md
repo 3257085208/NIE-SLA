@@ -41,7 +41,7 @@
 | `PUBLIC_AGENT_INSTALL_BASE` | 安装脚本和 `bin/` 的公开 HTTPS Base |
 | `PUBLIC_AGENT_API_BASE` | Agent 上报 API Base |
 | `AGENT_DOWNLOAD_BASE` | 自动更新读取 `VERSION`/`SHA256SUMS` 的 HTTPS Base，通常与 Pages 相同 |
-| `AGENT_LATEST_VERSION` | Worker 返回的最新版本，例如 `v1.0.12` |
+| `AGENT_LATEST_VERSION` | Worker 返回的最新版本，例如 `v1.0.14` |
 | `NSTATUS_SHA256SUMS_SHA256` | 发布 manifest 自身 SHA-256 |
 | `AGENT_AUTO_UPDATE_DEFAULT` | 后台无设置时默认策略 |
 | `AGENT_UPDATE_CHECK_SEC` | Agent 策略检查建议间隔 |
