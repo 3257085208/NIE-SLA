@@ -33,7 +33,7 @@ tests/                  前端和仓库级测试
 - Linux amd64 release build。
 - Shell 语法。
 - 安装命令和仓库卫生约束。
-- 公共仓库 Token、私钥、Cloudflare ID、生产域名和本机路径扫描。
+- Secret、私钥和本地部署配置检查。
 - 并发与漏检配置检查。
 
 Windows：

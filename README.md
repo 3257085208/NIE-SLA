@@ -22,9 +22,6 @@ Worker + D1 + R2 + Pages + Durable Objects + Rust Agent
 
 </div>
 
-> [!IMPORTANT]
-> 本仓库是经过脱敏的公共源码。所有域名、Cloudflare ID、Token、节点、IP 与账号均为示例或占位符。部署时只在你自己的 Cloudflare 账号中填写真实值，不要把 `.dev.vars`、`.env`、Token 或导出的生产数据提交到 Git。
-
 ## 项目定位
 
 NIE-SLA 把公开状态页、Cloudflare 边缘探测和 VPS 系统遥测放在同一套系统中。它适合个人、自托管服务和小型基础设施，不要求额外购买中心服务器：控制面运行在 Cloudflare，VPS 只运行一个出站 HTTPS Agent，不需要开放 Agent 入站端口。
@@ -211,7 +208,7 @@ Cloudflare Proxy: DNS only
 - Agent 默认拒绝公网明文 HTTP API。
 - 公共状态响应会隐藏查询参数、凭据、Cloudflare Colo，并可掩码 IP/端口。
 - D1 登录限流和 Agent 历史写锁用于降低并发穿透与覆盖风险。
-- CI 的 public repository safety scan 会阻止常见 Token、私钥、生产域名、Cloudflare UUID 和本机路径进入公共提交。
+- CI 包含 Secret 安全检查，防止 Token、私钥和本地配置被意外提交。
 
 安全边界、威胁模型、部署前审计清单见 [安全与免费额度](docs/zh-CN/10-security-free-tier.md) 和 [SECURITY.md](SECURITY.md)。
 
@@ -234,7 +231,7 @@ NIE-SLA/
 │  ├─ src/admin/            后台领域模块
 │  ├─ src/metrics.js        Agent 遥测读写与 R2 合并格式
 │  ├─ src/probe.js          HTTP/TCP 探测和漏检回填
-│  └─ wrangler.toml         完全脱敏的示例配置
+│  └─ wrangler.toml         Wrangler 配置模板
 ├─ frontend/                Pages 状态页与独立管理后台
 │  ├─ js/admin/             后台 API/交互模块
 │  ├─ js/themes/            Classic/Cards 主题
@@ -243,7 +240,7 @@ NIE-SLA/
 │  └─ src/                  平台、队列、更新器和调度实现
 ├─ docs/zh-CN/              中文完整教程
 ├─ docs/en/                 English guides
-├─ tests/                   前端、安装器和公开仓库安全测试
+├─ tests/                   前端、安装器和 Secret 安全测试
 └─ .github/workflows/       验证、多架构构建与 Release
 ```
 
@@ -260,7 +257,7 @@ bash test.sh
 - 安装器 manifest 规则。
 - Rust `fmt`、`check`、单元测试和 Linux amd64 构建。
 - Shell 脚本语法与仓库卫生规则。
-- 公共仓库敏感信息扫描。
+- Secret 与本地配置安全检查。
 
 单独验证 Agent：
 
