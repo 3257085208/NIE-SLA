@@ -6,7 +6,7 @@ import { listTargets, createTarget, updateTarget, reorderTargets, deleteTarget, 
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
 import { VERSION } from './version.js';
-import { setupTOTP, verifyTOTP, disableTOTP } from './totp.js';
+import { setupTOTP, verifyTOTP, disableTOTP, validateAdminSession, checkTOTP } from './totp.js';
 import { getAlertSettings, updateAlertSettings, sendTestAlert, runAlertChecks } from './alerts.js';
 import { isAgentApiPath } from './route-policy.js';
 
@@ -20,15 +20,17 @@ async function withAdmin(request, env) {
 
 async function loginState(request, env) {
   if (!env.DB) return { totp_enabled: false, totp_required: false, session_valid: false, session_id: null, session_expires_at: null };
-  const rows = await env.DB.prepare(`SELECT key, value FROM app_meta WHERE key IN ('totp_secret', 'totp_session_id', 'totp_session_expires')`).all().catch(() => ({ results: [] }));
-  const meta = Object.fromEntries((rows.results || []).map(row => [row.key, row.value]));
-  const secret = meta.totp_secret || '';
-  const storedSession = meta.totp_session_id || '';
-  const sessionExpires = Number(meta.totp_session_expires || 0);
-  const now = Math.floor(Date.now() / 1000);
+  const totp = await checkTOTP(env);
   const presentedSession = String(request.headers.get('x-admin-session') || '').trim();
-  const sessionValid = !!(secret && storedSession && sessionExpires > now && presentedSession && await sessionMatches(storedSession, presentedSession));
-  return { totp_enabled: !!secret, totp_required: !!secret, session_valid: sessionValid, session_id: sessionValid ? presentedSession : null, session_expires_at: sessionValid ? sessionExpires : null };
+  const session = presentedSession ? await validateAdminSession(env, presentedSession) : null;
+  const sessionValid = !!(totp.totp_enabled && session && session.valid);
+  return {
+    totp_enabled: !!totp.totp_enabled,
+    totp_required: !!totp.totp_enabled,
+    session_valid: sessionValid,
+    session_id: sessionValid ? presentedSession : null,
+    session_expires_at: sessionValid ? session.expires_at : null,
+  };
 }
 
 async function sessionMatches(storedSession, presentedSession) {
@@ -110,12 +112,19 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/colo-echo' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json({ ok: true, colo: request.cf?.colo || null, city: request.cf?.city || null, country: request.cf?.country || null, ts: Date.now() }, 200, env); }
   if (path === '/api/status' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getStatusCached(request, env, url); }
   if (path === '/api/checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getChecksCached(request, env, url); }
-  if (path === '/api/agent/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getAgentMetricsCached(request, env, url, ctx); }
-  if (path === '/api/agent/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  if (path === '/api/agent/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return deny(); return getAgentMetricsCached(request, env, url, ctx); }
+  if (path === '/api/agent/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return deny(); return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
 
-  // Agent telemetry is authenticated first and then uses an isolate-local
-  // throttle. Admin login/TOTP and other writes retain durable D1 limiting.
-  if (!isAgentApiPath(path) && !await rateLimitByIp(request, env, 60, 60, { durable: true })) return deny();
+  // Prefer cheap bearer presence check before durable D1 rate-limit tables.
+  // Unauthenticated admin probes should not burn durable counters.
+  const hasBearer = /^bearer\s+\S+/i.test(request.headers.get('authorization') || '');
+  if (!isAgentApiPath(path)) {
+    if (!hasBearer) {
+      if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return deny();
+    } else if (!await rateLimitByIp(request, env, 60, 60, { durable: true })) {
+      return deny();
+    }
+  }
 
   // Agent
   if (path === '/api/agent/targets' && m === 'GET') {

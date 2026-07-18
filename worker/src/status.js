@@ -5,7 +5,7 @@ import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBucke
 import { summarizeTraffic, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 
 export async function getStatusCached(request, env, url) {
-  const ttl = clamp(Number(env.STATUS_CACHE_TTL || 45), 0, 300);
+  const ttl = clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300);
   const wantsFresh = url.searchParams.get('fresh') === '1' || url.searchParams.get('cache') === '0';
   const wantsLite = url.searchParams.get('lite') === '1';
   if (!ttl || (wantsFresh && isAdminRequest(request, env))) return getStatusFresh(env, url);
@@ -171,7 +171,7 @@ async function buildStatusPayload(env, url = null) {
     }
   }
   const frontend = await publicFrontend(env);
-  return { ok: true, name: env.PUBLIC_SITE_NAME || '聶.NET', now: new Date().toISOString(), days: dayList, regions: REGION_LABELS, region_proxy_enabled: Boolean(env.REGION_PROXY), frontend_theme: frontend.theme, frontend, traffic, ping_targets: pingTargetsResult.results || [], privacy: { mask_ips: maskIps, hide_ports: hidePorts, hide_colo: true }, storage: { mode: 'd1-check-buckets+r2-state', raw_checks_in_d1: false, raw_history_in_r2: Boolean(env.ARCHIVE), d1_regular_check_writes: true, status_cache_ttl: clamp(Number(env.STATUS_CACHE_TTL || 45), 0, 300) }, timezone: { offset_minutes: timezoneOffsetMin(env), label: timezoneLabel(env) }, targets: rows, summaries, incidents, warnings: sync_warning ? [sync_warning] : [] };
+  return { ok: true, name: env.PUBLIC_SITE_NAME || '聶.NET', now: new Date().toISOString(), days: dayList, regions: REGION_LABELS, region_proxy_enabled: Boolean(env.REGION_PROXY), frontend_theme: frontend.theme, frontend, traffic, ping_targets: pingTargetsResult.results || [], privacy: { mask_ips: maskIps, hide_ports: hidePorts, hide_colo: true }, storage: { mode: 'd1-check-buckets+r2-state', raw_checks_in_d1: false, raw_history_in_r2: Boolean(env.ARCHIVE), d1_regular_check_writes: true, status_cache_ttl: clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300) }, timezone: { offset_minutes: timezoneOffsetMin(env), label: timezoneLabel(env) }, targets: rows, summaries, incidents, warnings: sync_warning ? [sync_warning] : [] };
 }
 
 async function publicFrontend(env) {
@@ -233,6 +233,33 @@ function mergeSummaryRows(...groups) {
   return [...byKey.values()].sort((a, b) => a.day.localeCompare(b.day) || a.target_id.localeCompare(b.target_id));
 }
 
+async function overlayLiveTargetStatus(env, payload) {
+  if (!env.DB || !payload || !Array.isArray(payload.targets)) return payload;
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo FROM latest_status`
+    ).all();
+    const byId = new Map((rows.results || []).map((r) => [String(r.target_id), r]));
+    payload.targets = payload.targets.map((t) => {
+      const live = byId.get(String(t.id));
+      if (!live) return t;
+      return {
+        ...t,
+        ok: Number(live.ok),
+        checked_at: Number(live.checked_at || t.checked_at || 0),
+        latency_ms: live.latency_ms == null ? t.latency_ms : Number(live.latency_ms),
+        status_code: live.status_code == null ? t.status_code : Number(live.status_code),
+        error: live.error == null ? t.error : live.error,
+        probe_region: live.probe_region || t.probe_region,
+        cf_colo: live.cf_colo || t.cf_colo,
+        live_overlay: true,
+      };
+    });
+    payload.live_overlay_at = nowSec();
+  } catch (_) {}
+  return payload;
+}
+
 export async function getStatusSnapshot(env, url) {
   if (!env.ARCHIVE || !parseBoolean(env.STATUS_SNAPSHOT_TO_R2 ?? true, true)) return null;
   if (clamp(Number(url.searchParams.get('days') || DEFAULT_STATUS_DAYS), 1, 90) !== DEFAULT_STATUS_DAYS) return null;
@@ -240,14 +267,15 @@ export async function getStatusSnapshot(env, url) {
   try {
     const object = await env.ARCHIVE.get(key);
     if (!object) return null;
-    const payload = await object.json();
+    let payload = await object.json();
     const generatedAt = Math.floor(new Date(payload?.generated_at || payload?.now || 0).getTime() / 1000);
-    if (!payload?.ok || payload?.schema !== STATUS_SNAPSHOT_SCHEMA || !Number.isFinite(generatedAt) || !generatedAt || generatedAt < nowSec() - clamp(Number(env.STATUS_SNAPSHOT_MAX_AGE_SEC || 390), 60, 86400)) return null;
+    if (!payload?.ok || payload?.schema !== STATUS_SNAPSHOT_SCHEMA || !Number.isFinite(generatedAt) || !generatedAt || generatedAt < nowSec() - clamp(Number(env.STATUS_SNAPSHOT_MAX_AGE_SEC || 150), 60, 86400)) return null;
+    payload = await overlayLiveTargetStatus(env, payload);
     const frontend = await publicFrontend(env);
     payload.frontend_theme = frontend.theme;
     payload.frontend = { ...(payload.frontend || {}), ...frontend };
     await attachAgentState(payload, env);
-    return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${clamp(Number(env.STATUS_CACHE_TTL || 45), 0, 300)}`, 'x-nstatus-source': 'r2-status-snapshot' });
+    return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300)}`, 'x-nstatus-source': 'r2-status-snapshot' });
   } catch (_) { return null; }
 }
 
@@ -292,7 +320,7 @@ async function attachAgentState(payload, env) {
 
 export async function writeStatusSnapshot(env) {
   if (!env.ARCHIVE || !parseBoolean(env.STATUS_SNAPSHOT_TO_R2 ?? true, true)) return { ok: true, skipped: true, reason: 'disabled_or_missing_r2' };
-  const every = clamp(Number(env.STATUS_SNAPSHOT_EVERY_SEC || 300), 30, 3600);
+  const every = clamp(Number(env.STATUS_SNAPSHOT_EVERY_SEC || 60), 30, 3600);
   const key = String(env.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, '');
   const last = await getStatusSnapshotGeneratedAt(env, key);
   if (last && last > nowSec() - every) return { ok: true, skipped: true, reason: 'too_soon', last_write_at: last };

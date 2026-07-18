@@ -70,9 +70,7 @@ export async function getAgentMetrics(env, url, ctx = null) {
   if (!env.DB) return json({ ok: true, latest: null, history: [] }, 200, env);
 
   const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || env.DEFAULT_AGENT_ID || 'vps');
-  const hours = clamp(Number(url.searchParams.get('hours') || 24), 1, 168);
-  const maxPointsRaw = url.searchParams.has('max_points') ? Number(url.searchParams.get('max_points')) : Number(env.AGENT_METRICS_MAX_POINTS || 900);
-  const maxPoints = maxPointsRaw <= 0 ? 0 : clamp(maxPointsRaw, 60, 5000);
+  const { hours, maxPoints } = resolvePublicMetricsQuery(url, env);
   const includeHistory = url.searchParams.get('history') !== '0';
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
   const fields = metricFieldsForRequest(url.searchParams.get('metric') || url.searchParams.get('fields') || '');
@@ -113,7 +111,7 @@ export async function getAgentMetrics(env, url, ctx = null) {
   const rawHistory = [...historyByTs.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([, pt]) => selectMetricFields(pt, fields));
-  const history = maxPoints > 0 ? compactMetricPoints(rawHistory, maxPoints) : rawHistory;
+  const history = compactMetricPoints(rawHistory, maxPoints);
   const source = env.ARCHIVE
     ? (r2.loaded ? (d1Fallback ? 'r2+d1-fallback' : 'r2') : (d1Fallback ? 'd1-fallback' : 'r2-empty'))
     : 'd1';
@@ -148,14 +146,36 @@ export async function getAgentMetricsCached(request, env, url, ctx = null) {
 
 function normalizedMetricsCacheUrl(url, env) {
   const normalized = new URL(url.origin + '/api/agent/metrics');
+  const { hours, maxPoints } = resolvePublicMetricsQuery(url, env);
   normalized.searchParams.set('agent_id', sanitizeAgentId(url.searchParams.get('agent_id') || env.DEFAULT_AGENT_ID || 'vps'));
-  normalized.searchParams.set('hours', String(clamp(Math.floor(Number(url.searchParams.get('hours') || 24)), 1, 168)));
-  const maxPointsRaw = url.searchParams.has('max_points') ? Number(url.searchParams.get('max_points')) : Number(env.AGENT_METRICS_MAX_POINTS || 900);
-  normalized.searchParams.set('max_points', String(maxPointsRaw <= 0 ? 0 : clamp(Math.floor(maxPointsRaw), 60, 5000)));
+  normalized.searchParams.set('hours', String(hours));
+  normalized.searchParams.set('max_points', String(maxPoints));
   normalized.searchParams.set('history', url.searchParams.get('history') === '0' ? '0' : '1');
   normalized.searchParams.set('format', String(url.searchParams.get('format') || '').toLowerCase() === 'columns' ? 'columns' : 'rows');
   normalized.searchParams.set('fields', (metricFieldsForRequest(url.searchParams.get('metric') || url.searchParams.get('fields') || '') || []).join(','));
   return normalized;
+}
+
+/** Public metrics query hard caps: never allow unlimited (max_points<=0) raw history. */
+export function resolvePublicMetricsQuery(url, env = {}) {
+  const publicMaxHours = clamp(Number(env.AGENT_METRICS_PUBLIC_MAX_HOURS || 72), 1, 168);
+  const hours = clamp(Math.floor(Number(url.searchParams.get('hours') || 24)), 1, publicMaxHours);
+  const hardMax = clamp(Number(env.AGENT_METRICS_HARD_MAX_POINTS || 4000), 60, 10000);
+  const defaultMax = defaultMetricsMaxPointsForHours(hours, env);
+  let maxPointsRaw = url.searchParams.has('max_points')
+    ? Number(url.searchParams.get('max_points'))
+    : defaultMax;
+  if (!Number.isFinite(maxPointsRaw) || maxPointsRaw <= 0) maxPointsRaw = defaultMax;
+  const maxPoints = clamp(Math.floor(maxPointsRaw), 60, hardMax);
+  return { hours, maxPoints, defaultMax, hardMax, publicMaxHours };
+}
+
+export function defaultMetricsMaxPointsForHours(hours, env = {}) {
+  const h = Number(hours) || 24;
+  if (h <= 1) return clamp(Number(env.AGENT_METRICS_MAX_POINTS_1H || 3600), 60, 10000);
+  if (h <= 6) return clamp(Number(env.AGENT_METRICS_MAX_POINTS_6H || 1800), 60, 10000);
+  if (h <= 24) return clamp(Number(env.AGENT_METRICS_MAX_POINTS_24H || 1200), 60, 10000);
+  return clamp(Number(env.AGENT_METRICS_MAX_POINTS || 900), 60, 10000);
 }
 
 function validateTelemetryBatch(samples, pings, now) {

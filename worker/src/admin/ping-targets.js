@@ -95,9 +95,15 @@ export async function submitAgentPings(request, env) {
 export async function getAgentPings(env, url, ctx = null) {
   if (!env.DB) return { ok: true, targets: [], pings: [] };
   const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
-  const hours = clamp(Number(url.searchParams.get('hours') || 24), 1, 168);
-  const maxPerTargetRaw = url.searchParams.has('max_points_per_target') ? Number(url.searchParams.get('max_points_per_target')) : Number(env.AGENT_PINGS_MAX_POINTS_PER_TARGET || 360);
-  const maxPerTarget = maxPerTargetRaw <= 0 ? 0 : clamp(maxPerTargetRaw, 30, 5000);
+  const publicMaxHours = clamp(Number(env.AGENT_PINGS_PUBLIC_MAX_HOURS || env.AGENT_METRICS_PUBLIC_MAX_HOURS || 72), 1, 168);
+  const hours = clamp(Math.floor(Number(url.searchParams.get('hours') || 24)), 1, publicMaxHours);
+  const hardMax = clamp(Number(env.AGENT_PINGS_HARD_MAX_POINTS_PER_TARGET || 2000), 30, 10000);
+  const defaultMax = clamp(Number(env.AGENT_PINGS_MAX_POINTS_PER_TARGET || 360), 30, hardMax);
+  let maxPerTargetRaw = url.searchParams.has('max_points_per_target')
+    ? Number(url.searchParams.get('max_points_per_target'))
+    : defaultMax;
+  if (!Number.isFinite(maxPerTargetRaw) || maxPerTargetRaw <= 0) maxPerTargetRaw = defaultMax;
+  const maxPerTarget = clamp(Math.floor(maxPerTargetRaw), 30, hardMax);
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
   const requestedUntil = nowSec();
   const since = requestedUntil - hours * 3600;
@@ -124,7 +130,7 @@ export async function getAgentPings(env, url, ctx = null) {
     });
   } catch (_) {}
   const rawPings = [...byKey.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
-  const pings = maxPerTarget > 0 ? compactPingPointsByTarget(rawPings, maxPerTarget) : rawPings;
+  const pings = compactPingPointsByTarget(rawPings, maxPerTarget);
   const payload = {
     ok: true,
     targets: targets.results || [],

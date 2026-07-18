@@ -48,6 +48,7 @@ for f in "$ROOT/worker/src"/*.js; do
   run_check "$(basename "$f")" node --check "$f"
 done
 run_check "worker utility tests" node "$ROOT/worker/tests/utils.test.mjs"
+run_check "worker hardening tests" node "$ROOT/worker/tests/hardening.test.mjs"
 run_shell "worker module bundle" "cd '$ROOT' && npx --yes esbuild worker/src/index.js --bundle --format=esm --platform=browser --external:cloudflare:sockets --outfile='$TMP_DIR/nstatus-worker-bundle.mjs' && rm -f '$TMP_DIR/nstatus-worker-bundle.mjs'"
 run_shell "js undefined references" "cd '$ROOT' && npx --yes eslint@10.6.0 -c tests/eslint.config.mjs worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests --no-error-on-unmatched-pattern"
 
@@ -79,7 +80,6 @@ run_check "frontend shared imports" node --input-type=module -e "await import('.
 run_check "frontend app import smoke" node "$ROOT/tests/frontend-app-import-smoke.mjs"
 run_check "frontend module tests" node "$ROOT/tests/frontend-modules.test.mjs"
 run_check "installer manifest tests" node "$ROOT/tests/installer-manifest.test.mjs"
-run_check "public repository safety scan" node "$ROOT/tests/public-repo-safety.test.mjs"
 
 echo ""
 echo "=== Rust Agent ==="

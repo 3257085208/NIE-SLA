@@ -67,7 +67,7 @@ function initialFrontendTheme() {
 }
 
 const state = {
-  apiBase: window.NSTATUS_API_BASE || '',
+  apiBase: window.NSTATUS_API_BASE || localStorage.getItem('nstatus.apiBase') || '',
   data: null,
   filteredText: '',
   selectedId: null,
@@ -1366,7 +1366,7 @@ async function ensureTargetMetricsLoaded() {
     if (includeHistory) {
       params.set('metric', metric);
       params.set('format', 'columns');
-      params.set('max_points', '0');
+      params.set('max_points', String(({ '1h': 3600, '6h': 1800, '24h': 1200 }[state.selectedMetricRange] || 1200)));
     } else {
       params.set('history', '0');
     }
@@ -1477,7 +1477,7 @@ async function updatePingChart() {
         agent_id: state.selectedId,
         hours: String(hours),
         format: 'series',
-        max_points_per_target: '0',
+        max_points_per_target: String(({ '1h': 360, '6h': 360, '24h': 480 }[range] || 360)),
       });
       const res = await fetch(api(`/api/agent/pings?${params}`), { cache: 'no-store' });
       const data = await res.json();

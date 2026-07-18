@@ -5,8 +5,10 @@ const ACTIVE_SECRET_KEY = 'totp_secret';
 const PENDING_SECRET_KEY = 'totp_pending_secret';
 const SESSION_ID_KEY = 'totp_session_id';
 const SESSION_EXPIRES_KEY = 'totp_session_expires';
+const SESSIONS_KEY = 'totp_sessions';
 const ENCRYPTED_SECRET_PREFIX = 'enc:v1:';
 const HASHED_SESSION_PREFIX = 'sha256:';
+const MAX_ADMIN_SESSIONS = 5;
 
 export async function setupTOTP(env) {
   if (!env.DB) return json({ ok: false, error: '需要 D1 数据库' }, 500, env);
@@ -64,6 +66,7 @@ export async function disableTOTP(env) {
   await deleteMeta(env, PENDING_SECRET_KEY);
   await deleteMeta(env, SESSION_ID_KEY);
   await deleteMeta(env, SESSION_EXPIRES_KEY);
+  await deleteMeta(env, SESSIONS_KEY);
   return json({ ok: true }, 200, env);
 }
 
@@ -76,9 +79,53 @@ export async function checkTOTP(env) {
 async function createSession(env) {
   const sessionId = crypto.randomUUID().replace(/-/g, '');
   const expiresAt = nowSec() + 86400;
-  await setMeta(env, SESSION_ID_KEY, HASHED_SESSION_PREFIX + await sha256Hex(sessionId));
+  const tokenHash = HASHED_SESSION_PREFIX + await sha256Hex(sessionId);
+  const now = nowSec();
+  let sessions = await readSessions(env);
+  sessions = sessions.filter((s) => Number(s.expires_at || 0) > now);
+  sessions.push({ token_hash: tokenHash, expires_at: expiresAt, created_at: now });
+  while (sessions.length > MAX_ADMIN_SESSIONS) sessions.shift();
+  await setMeta(env, SESSIONS_KEY, JSON.stringify(sessions));
+  // Keep legacy single-session keys pointing at the newest session for older clients.
+  await setMeta(env, SESSION_ID_KEY, tokenHash);
   await setMeta(env, SESSION_EXPIRES_KEY, String(expiresAt));
   return { session_id: sessionId, expires_at: expiresAt };
+}
+
+async function readSessions(env) {
+  const raw = await getMeta(env, SESSIONS_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.filter((s) => s && s.token_hash);
+    } catch (_) {}
+  }
+  const legacyId = await getMeta(env, SESSION_ID_KEY);
+  const legacyExp = Number(await getMeta(env, SESSION_EXPIRES_KEY) || 0);
+  if (legacyId && legacyExp > nowSec()) {
+    return [{ token_hash: legacyId, expires_at: legacyExp, created_at: legacyExp - 86400 }];
+  }
+  return [];
+}
+
+export async function validateAdminSession(env, sessionId) {
+  const presented = String(sessionId || '').trim();
+  if (!presented || !env.DB) return { valid: false, expires_at: null };
+  const presentedHash = HASHED_SESSION_PREFIX + await sha256Hex(presented);
+  const now = nowSec();
+  const sessions = await readSessions(env);
+  for (const entry of sessions) {
+    const exp = Number(entry.expires_at || 0);
+    if (exp <= now) continue;
+    const stored = String(entry.token_hash || '');
+    if (!stored) continue;
+    if (stored.startsWith(HASHED_SESSION_PREFIX)) {
+      if (stored === presentedHash) return { valid: true, expires_at: exp };
+    } else if (stored === presented) {
+      return { valid: true, expires_at: exp };
+    }
+  }
+  return { valid: false, expires_at: null };
 }
 
 async function readCode(request) {

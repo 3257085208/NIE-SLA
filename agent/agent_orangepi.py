@@ -45,8 +45,11 @@ def main() -> int:
         print("Missing --token or NSTATUS_AGENT_TOKEN", file=sys.stderr)
         return 2
 
+    interval = int(args.interval or 300)
+    last_error = False
     while True:
         started = time.time()
+        last_error = False
         try:
             targets_payload = api_json(args.api, "/api/agent/targets", args.token, method="GET", query={"agent_id": args.agent_id})
             targets = targets_payload.get("targets") or []
@@ -67,10 +70,11 @@ def main() -> int:
                 "rejected": len(response.get("rejected") or []),
             }, ensure_ascii=False))
         except Exception as exc:
+            last_error = True
             print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
 
         if args.once:
-            return 0
+            return 1 if last_error else 0
 
         elapsed = time.time() - started
         time.sleep(max(5, interval - elapsed))

@@ -137,20 +137,59 @@ export function dayStartSec(day, env) {
 }
 
 export function isPrivateHost(host) {
-  const h = String(host || '').trim().toLowerCase();
-  if (!h) return false;
-  if (h === 'localhost' || h === '::1' || h === '0.0.0.0') return true;
-  if (h.startsWith('127.') || h.startsWith('0.')) return true;
-  if (h.startsWith('10.')) return true;
-  if (h.startsWith('192.168.')) return true;
-  const m = h.match(/^172\.(\d+)\./);
-  if (m && Number(m[1]) >= 16 && Number(m[1]) <= 31) return true;
-  if (h.startsWith('169.254.')) return true;
-  if (h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true;
+  const raw = String(host || '').trim().toLowerCase();
+  if (!raw) return true;
+  let hostname = raw;
+  // strip brackets for IPv6 literals
+  if (hostname.startsWith('[') && hostname.endsWith(']')) hostname = hostname.slice(1, -1);
+  // strip zone id
+  hostname = hostname.split('%')[0];
+  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || hostname === '0.0.0.0') return true;
+  // IPv4-mapped IPv6 ::ffff:a.b.c.d
+  const v4mapped = hostname.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+  if (v4mapped) return isPrivateHost(v4mapped[1]);
+  // dotted IPv4
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)) {
+    const parts = hostname.split('.').map((p) => Number(p));
+    if (parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return true;
+    const [a, b] = parts;
+    if (a === 10 || a === 127 || a === 0) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
+    if (a >= 224) return true; // multicast/reserved
+    return false;
+  }
+  // IPv6
+  if (hostname.includes(':')) {
+    const h = hostname;
+    if (h === '::' || h === '::1') return true;
+    if (h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb')) return true;
+    if (h.startsWith('ff')) return true; // multicast
+    return false;
+  }
   return false;
 }
 
-// ── Sanitize ─────────────────────────────────────────────────────────────────
+export function assertPublicHttpUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) throw new Error('URL 不能为空');
+  let u;
+  try {
+    u = new URL(raw);
+  } catch (_) {
+    throw new Error('URL 格式无效');
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new Error('URL 必须使用 http:// 或 https://');
+  }
+  if (isPrivateHost(u.hostname)) {
+    throw new Error('URL 不能指向私有或内部地址');
+  }
+  return u;
+}
+
 
 export function sanitizeId(value) {
   const raw = String(value ?? '').trim().toLowerCase();
@@ -210,10 +249,7 @@ export function normalizeTarget(input, allowPartial = false) {
   if (type === 'http') {
     url = String(input?.url || '').trim();
     if (!/^https?:\/\//i.test(url)) throw new Error('URL 必须以 http:// 或 https:// 开头');
-    try {
-      const u = new URL(url);
-      if (isPrivateHost(u.hostname)) throw new Error('URL 不能指向私有或内部地址');
-    } catch (e) { if (e.message.includes('private')) throw e; }
+    assertPublicHttpUrl(url);
     method = String(input?.method || 'GET').toUpperCase();
     if (!['GET', 'HEAD'].includes(method)) method = 'GET';
     expectedStatus = normalizeExpectedStatus(input?.expected_status || input?.expectedStatus || '200,201,202,204,301,302,307,308');
@@ -435,7 +471,7 @@ export function buildOpenMissedPoints(env, previous, atSec = nowSec(), probeRegi
   const previousBucket = Math.floor(previousAt / BUCKET_SEC) * BUCKET_SEC;
   const nowValue = Number(atSec || nowSec());
   const currentBucket = Math.floor(nowValue / BUCKET_SEC) * BUCKET_SEC;
-  const graceSec = clamp(Number(env.MISSED_BACKFILL_GRACE_SEC || 60), 0, BUCKET_SEC - 1);
+  const graceSec = clamp(Number(env.MISSED_BACKFILL_GRACE_SEC || 150), 0, BUCKET_SEC - 1);
   const virtualBucketAt = (nowValue - currentBucket) >= graceSec ? currentBucket + BUCKET_SEC : currentBucket;
   if (dayFromSec(previousBucket, env) !== dayFromSec(virtualBucketAt, env)) return [];
   const gapBuckets = Math.floor((virtualBucketAt - previousBucket) / BUCKET_SEC) - 1;
