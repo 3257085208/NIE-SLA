@@ -175,17 +175,47 @@ function buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous) 
 export async function runDueTargets(env) {
   const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 60), 1, 200);
   const now = nowSec();
-  const rows = await env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 ORDER BY group_name, name`).all();
-  const state = await readR2State(env);
+  const rows = await env.DB.prepare(
+    `SELECT * FROM targets
+     WHERE enabled = 1
+       AND (last_checked_at IS NULL OR last_checked_at <= ? - CASE WHEN interval_sec < ? THEN ? ELSE interval_sec END)
+     ORDER BY group_name, name`
+  ).bind(now, MIN_INTERVAL_SEC, MIN_INTERVAL_SEC).all();
   const allTargets = rows.results || [];
-  const d1Latest = await readLatestStatusMap(env, allTargets.map(target => target.id));
-  const previousById = buildPreviousStateMap(allTargets, state, d1Latest);
-  const targets = allTargets
-    .map(target => ({ target, lastCheckedAt: Math.max(Number(previousById.get(target.id)?.checked_at || 0), Number(target.last_checked_at || 0)) }))
-    .filter(item => item.lastCheckedAt <= now - Math.max(Number(item.target.interval_sec || DEFAULT_INTERVAL_SEC), MIN_INTERVAL_SEC))
-    .sort((a, b) => a.lastCheckedAt - b.lastCheckedAt).slice(0, maxTargets).map(item => item.target);
-  if (!targets.length) return { ok: true, count: 0, results: [] };
-  return { ok: true, count: targets.length, results: await runTargetBatch(env, targets, previousById) };
+  if (!allTargets.length) return { ok: true, count: 0, results: [] };
+  const lease = await acquireProbeRunLease(env);
+  if (!lease) return { ok: true, count: 0, results: [], skipped: true, reason: 'probe_run_in_progress' };
+  try {
+    const state = await readR2State(env);
+    const d1Latest = await readLatestStatusMap(env, allTargets.map(target => target.id));
+    const previousById = buildPreviousStateMap(allTargets, state, d1Latest);
+    const targets = allTargets
+      .map(target => ({ target, lastCheckedAt: Math.max(Number(previousById.get(target.id)?.checked_at || 0), Number(target.last_checked_at || 0)) }))
+      .filter(item => item.lastCheckedAt <= now - Math.max(Number(item.target.interval_sec || DEFAULT_INTERVAL_SEC), MIN_INTERVAL_SEC))
+      .sort((a, b) => a.lastCheckedAt - b.lastCheckedAt).slice(0, maxTargets).map(item => item.target);
+    if (!targets.length) return { ok: true, count: 0, results: [] };
+    return { ok: true, count: targets.length, results: await runTargetBatch(env, targets, previousById) };
+  } finally {
+    await releaseProbeRunLease(env, lease);
+  }
+}
+
+async function acquireProbeRunLease(env, ttlSec = 180) {
+  if (!env.DB) return null;
+  const key = 'probe:run:lease';
+  const now = nowSec();
+  const token = `${now + ttlSec}:${crypto.randomUUID()}`;
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+    WHERE CAST(substr(app_meta.value, 1, instr(app_meta.value, ':') - 1) AS INTEGER) < ?`)
+    .bind(key, token, now, now).run();
+  const row = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(key).first();
+  return row?.value === token ? { key, token } : null;
+}
+
+async function releaseProbeRunLease(env, lease) {
+  if (!env.DB || !lease) return;
+  await env.DB.prepare(`DELETE FROM app_meta WHERE key = ? AND value = ?`).bind(lease.key, lease.token).run().catch(() => {});
 }
 
 export async function runTargetBatch(env, targets, previousById = null) {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, parseBoolean, sanitizeId, trafficPeriodFromExpiry } from '../src/utils.js';
+import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, parseBoolean, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromExpiry } from '../src/utils.js';
 import { agentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, safeJson } from '../src/auth.js';
 import { rateLimitD1 } from '../src/ratelimit.js';
 import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries, writeAgentTelemetryR2History } from '../src/metrics.js';
@@ -21,6 +21,9 @@ assert.equal(parseBoolean('false', true), false);
 assert.equal(parseBoolean('0', true), false);
 assert.equal(parseBoolean('yes', false), false);
 assert.equal(parseBoolean('enabled', false), false);
+assert.equal(shouldRunScheduledFollowups({ count: 38 }), true);
+assert.equal(shouldRunScheduledFollowups({ count: 0 }), false);
+assert.equal(shouldRunScheduledFollowups(null), false);
 
 const emptyId = sanitizeId('');
 assert.equal(emptyId, sanitizeId(''));

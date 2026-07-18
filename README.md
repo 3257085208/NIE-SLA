@@ -40,7 +40,7 @@ NIE-SLA 把公开状态页、Cloudflare 边缘探测和 VPS 系统遥测放在�
 
 | 模块 | 能力 | 默认精度/周期 |
 | --- | --- | --- |
-| Cloudflare 探测 | HTTP、TCP、状态码、Latency、区域探测 | 5 分钟桶，可配置目标周期 |
+| Cloudflare 探测 | HTTP、TCP、状态码、Latency、区域探测 | 5 分钟桶；每分钟 Cron 提供补跑窗口 |
 | Agent Metrics | CPU、内存、磁盘、Load、网络、IO、进程、线程、连接数 | 本地 1 秒采样，默认 5 分钟批量上报 |
 | Agent Ping | 后台集中管理 TCP Ping 目标 | 默认 20 秒 |
 | Agent 配置刷新 | 获取 Ping 目标和更新策略 | Ping 目标默认 10 分钟，更新默认 1 小时 |
@@ -78,6 +78,10 @@ status page + admin UI                                  API + Cron + alerts
 ### 为什么 1 秒采样不会产生 1 秒一次 Worker 请求
 
 Agent 将采样和上传分开调度。采样线程每秒写入本地队列，上传线程默认每 300 秒将这段时间的全部原始点一次打包。Worker 把同一小时的 Metrics 与 Ping 合并到一个 R2 `telemetry.json` 对象中。因此请求数和 R2 PUT 数较低，但历史接口仍能返回原始 1 秒点。
+
+### 为什么 Cron 每分钟触发，但探测仍是 5 分钟
+
+Cloudflare Scheduled Trigger 偶尔会延迟。Worker 每分钟只查询一次“是否存在到期目标”，没有目标到期就立即结束，不读取遥测历史，也不执行告警或状态快照。目标仍按自身 `interval_sec` 执行，默认是 300 秒；额外的四次触发只是补跑机会。真正探测前还有 D1 原子租约，避免延迟任务与下一分钟任务重复运行。
 
 ### 数据放在哪里
 

@@ -32,6 +32,10 @@ export function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
 
+export function shouldRunScheduledFollowups(probe) {
+  return Number(probe?.count || 0) > 0;
+}
+
 function pad2(n) {
   return String(n).padStart(2, '0');
 }

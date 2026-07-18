@@ -103,6 +103,7 @@ run_shell "no stale pages install host" "cd '$ROOT' && ! git grep -n \"nstatus-5
 run_shell "single audit status source" "cd '$ROOT' && test -f docs/audit-status.md && test ! -e BUG_REPORT.md && test ! -e FINAL_STATUS.md && test ! -e DEEP_SECURITY_AUDIT.md && test ! -e ONE_CLICK_DEPLOY.md"
 run_shell "missed write backfill enabled" "cd '$ROOT' && grep -q 'MISSED_WRITE_BACKFILL_MAX_BUCKETS = \"6\"' worker/wrangler.toml && ! grep -q 'MISSED_WRITE_BACKFILL_MAX_BUCKETS = \"0\"' worker/wrangler.toml"
 run_shell "probe cron uses full target concurrency" "cd '$ROOT' && grep -q 'CONCURRENCY = \"40\"' worker/wrangler.toml && grep -q \"scheduled:probe:last\" worker/src/index.js"
+run_shell "probe cron has one-minute retry windows" "cd '$ROOT' && grep -q 'crons = \[\"\* \* \* \* \*\"\]' worker/wrangler.toml && grep -q 'no_targets_due' worker/src/index.js"
 run_shell "deploy script keeps full target concurrency" "cd '$ROOT' && grep -q 'CONCURRENCY = \"40\"' worker/deploy.sh && ! grep -q 'CONCURRENCY = \"8\"' worker/deploy.sh"
 run_shell "no legacy IP unlock checks" "cd '$ROOT' && ! grep -R -E 'NSTATUS_UNLOCK_CHECK|IP\.Check\.Place|install_unlock_deps' cftz agent/cftz frontend/cftz"
 

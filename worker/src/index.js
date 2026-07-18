@@ -7,7 +7,7 @@ import { runAlertChecks } from './alerts.js';
 import { VERSION } from './version.js';
 import { handleRequest } from './routes.js';
 import { json } from './auth.js';
-import { parseBoolean } from './utils.js';
+import { parseBoolean, shouldRunScheduledFollowups } from './utils.js';
 
 // Durable Object for region probing.
 
@@ -63,7 +63,17 @@ async function runScheduledTasks(env, cron) {
   // Availability checks are the time-sensitive task; maintenance must never
   // consume the cron execution window before probes have run.
   try { results.probe = await measure('probe', () => runDueTargets(env)); } catch (err) { results.probe_error = String(err?.message || err); }
-  try { await recordProbeResult(env, cron, results.probe, results.probe_error, timings.probe); } catch (_) {}
+  if (results.probe_error || shouldRunScheduledFollowups(results.probe)) {
+    try { await recordProbeResult(env, cron, results.probe, results.probe_error, timings.probe); } catch (_) {}
+  }
+  if (!shouldRunScheduledFollowups(results.probe)) {
+    results.followups = { ok: true, skipped: true, reason: results.probe_error ? 'probe_failed' : 'no_targets_due' };
+    results.timings_ms = timings;
+    if (results.probe_error) {
+      try { await recordScheduledResult(env, cron, results); } catch (_) {}
+    }
+    return results;
+  }
   try { results.alerts = await measure('alerts', () => runAlertChecks(env)); } catch (err) { results.alerts_error = String(err?.message || err); }
   try { results.status_snapshot = await measure('status_snapshot', () => writeStatusSnapshot(env)); } catch (err) { results.status_snapshot_error = String(err?.message || err); }
   let runHourlyMaintenance = false;
