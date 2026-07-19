@@ -68,7 +68,6 @@ case "$(uname -m)" in
     x86_64|amd64) ARCH="amd64" ;;
     i386|i486|i586|i686) ARCH="386" ;;
     aarch64|arm64) ARCH="arm64" ;;
-    armv5*) ARCH="armv5" ;;
     armv6*) ARCH="armv6" ;;
     armv7l|armv7*|armhf) ARCH="arm" ;;
     *) err "unsupported architecture: $(uname -m)"; exit 1 ;;

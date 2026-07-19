@@ -18,7 +18,7 @@ export async function getAgentInstallCommand(env, url, request = null) {
   const apiBase = agentApiBase(env, request, url, installBase);
   const pingSec = String(clamp(Number(env.NSTATUS_PING_SEC || env.AGENT_PING_SEC || 20), 5, 600));
   const sha256SumsSha256 = String(env.NSTATUS_SHA256SUMS_SHA256 || '').trim();
-  const expectedVersion = String(env.AGENT_LATEST_VERSION || 'v1.0.16').trim();
+  const expectedVersion = String(env.AGENT_LATEST_VERSION || 'v1.0.17').trim();
 
   const linuxEnvNames = [
     'NSTATUS_AGENT_BASE_URL',

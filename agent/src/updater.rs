@@ -249,7 +249,6 @@ fn linux_binary_name() -> Result<String> {
         "x86_64" | "amd64" => "amd64",
         "i386" | "i486" | "i586" | "i686" | "x86" => "386",
         "aarch64" | "arm64" => "arm64",
-        value if value.starts_with("armv5") => "armv5",
         value if value.starts_with("armv6") => "armv6",
         value if value.starts_with("armv7") || value == "arm" => "arm",
         _ => return Err(anyhow!("unsupported update architecture: {}", machine)),

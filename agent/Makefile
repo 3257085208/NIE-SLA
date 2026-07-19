@@ -20,7 +20,6 @@ build-linux:
 	  "x86_64-unknown-linux-musl nstatus-metrics-linux-amd64" \
 	  "aarch64-unknown-linux-musl nstatus-metrics-linux-arm64" \
 	  "armv7-unknown-linux-musleabihf nstatus-metrics-linux-arm" \
-	  "armv5te-unknown-linux-musleabi nstatus-metrics-linux-armv5" \
 	  "arm-unknown-linux-musleabi nstatus-metrics-linux-armv6" \
 	  "i686-unknown-linux-musl nstatus-metrics-linux-386"; do \
 	    set -- $$item; \

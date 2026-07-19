@@ -77,7 +77,6 @@ detect_arch() {
         x86_64|amd64)  echo "amd64" ;;
         i386|i486|i586|i686) echo "386" ;;
         aarch64|arm64) echo "arm64" ;;
-        armv5*)        echo "armv5" ;;
         armv6*)        echo "armv6" ;;
         armv7l|armv7*|armhf) echo "arm" ;;
         *)             err "unsupported architecture: $(uname -m)"; exit 1 ;;

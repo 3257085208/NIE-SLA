@@ -20,7 +20,6 @@ The interactive installer asks for API URL, Agent token, target name, and ping t
 | `nstatus-metrics-linux-arm64` | Linux ARM64 / aarch64 |
 | `nstatus-metrics-linux-arm` | Linux ARMv7 hard-float |
 | `nstatus-metrics-linux-armv6` | Older ARM routers / embedded Linux |
-| `nstatus-metrics-linux-armv5` | Older soft-float ARM devices |
 | `nstatus-metrics-linux-386` | 32-bit x86 Linux |
 | `nstatus-metrics-windows-amd64.exe` | Windows x86_64 |
 

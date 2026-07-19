@@ -29,7 +29,6 @@ NStatus Agent 是 NIE-SLA 的 VPS 侧 Rust 采集器。它只主动向 Worker �
 | `nstatus-metrics-linux-arm64` | ARM64/aarch64 Linux |
 | `nstatus-metrics-linux-arm` | ARMv7 hard-float |
 | `nstatus-metrics-linux-armv6` | ARMv6 |
-| `nstatus-metrics-linux-armv5` | ARMv5/soft-float |
 | `nstatus-metrics-windows-amd64.exe` | Windows x86_64 |
 
 ## 推荐安装
