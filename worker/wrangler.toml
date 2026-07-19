@@ -10,6 +10,8 @@ workers_dev = true
 crons = ["* * * * *"]
 
 [vars]
+ALLOWED_ORIGIN = ""
+PUBLIC_SITE_ORIGIN = ""
 PUBLIC_SITE_NAME = "NIE-SLA"
 PUBLIC_WORKER_URL = ""
 PUBLIC_AGENT_API_BASE = ""

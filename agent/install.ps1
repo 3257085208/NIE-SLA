@@ -126,6 +126,7 @@ Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Triggers -P
 Start-ScheduledTask -TaskName $TaskName
 
 Write-Host "聶.NET Agent 安装完成"
+Write-Host "Note: scheduled task (AtStartup/SYSTEM when elevated), not a full Windows Service SCM entry."
 Write-Host "版本：$(& $ExePath --version)"
 Write-Host "状态：Get-ScheduledTask -TaskName $TaskName"
 Write-Host "日志：事件查看器 > Windows 日志 > 应用程序，或手动运行 $RunPath"

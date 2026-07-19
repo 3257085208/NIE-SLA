@@ -13,9 +13,16 @@ import { isAgentApiPath } from './route-policy.js';
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
 async function withAdmin(request, env) {
+  // When TOTP is enabled, admin APIs accept short-lived sessions only (no master token).
+  // When TOTP is off, master ADMIN_TOKEN remains the sole gate.
+  const totp = await checkTOTP(env);
+  if (totp.totp_enabled) {
+    const presentedSession = String(request.headers.get('x-admin-session') || '').trim();
+    const session = presentedSession ? await validateAdminSession(env, presentedSession) : null;
+    if (!session?.valid) throw new ApiError(401, '需要有效的管理会话，请重新登录并完成 TOTP');
+    return;
+  }
   requireAdmin(request, env);
-  const state = await loginState(request, env);
-  if (state.totp_required && !state.session_valid) throw new ApiError(401, '需要有效的 TOTP 验证码');
 }
 
 async function loginState(request, env) {
@@ -30,7 +37,33 @@ async function loginState(request, env) {
     session_valid: sessionValid,
     session_id: sessionValid ? presentedSession : null,
     session_expires_at: sessionValid ? session.expires_at : null,
+    auth_mode: totp.totp_enabled ? (sessionValid ? 'session' : 'totp_required') : 'token',
   };
+}
+
+/** Login probe: master token OR valid session (for post-TOTP bootstrap without re-sending master token). */
+async function loginGate(request, env) {
+  const token = (request.headers.get('authorization') || '');
+  const hasBearer = /^bearer\s+\S+/i.test(token);
+  if (hasBearer) {
+    requireAdmin(request, env);
+    return loginState(request, env);
+  }
+  const presentedSession = String(request.headers.get('x-admin-session') || '').trim();
+  if (presentedSession) {
+    const session = await validateAdminSession(env, presentedSession);
+    if (!session?.valid) throw new ApiError(401, '会话无效或已过期');
+    const totp = await checkTOTP(env);
+    return {
+      totp_enabled: !!totp.totp_enabled,
+      totp_required: !!totp.totp_enabled,
+      session_valid: true,
+      session_id: presentedSession,
+      session_expires_at: session.expires_at,
+      auth_mode: 'session',
+    };
+  }
+  throw new ApiError(401, '未授权');
 }
 
 async function sessionMatches(storedSession, presentedSession) {
@@ -150,7 +183,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/totp/disable' && m === 'POST') { await withAdmin(request, env); return disableTOTP(env); }
 
   // Login
-  if (path === '/api/login' && m === 'GET') { requireAdmin(request, env); return json({ ok: true, ...(await loginState(request, env)) }, 200, env); }
+  if (path === '/api/login' && m === 'GET') { return json({ ok: true, ...(await loginGate(request, env)) }, 200, env); }
 
   // Settings
   if (path === '/api/settings' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getPublicSettings(env), 200, env, { 'cache-control': 'no-store' }); }

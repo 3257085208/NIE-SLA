@@ -33,6 +33,8 @@ const {
   apiPublic,
   apiTimeout,
   clearAuth,
+  clearPersistedToken,
+  hasSession,
   persistToken,
   saveSession,
   setToken,
@@ -40,6 +42,18 @@ const {
 let targets = [],
   statusMap = new Map(),
   pingTargets = [],
+  targetRegions = {
+    auto: "自动（当前 Worker 执行位置）",
+    apac: "亚太",
+    weur: "西欧",
+    eeur: "东欧",
+    enam: "北美东部",
+    wnam: "北美西部",
+    sam: "南美",
+    oc: "大洋洲",
+    afr: "非洲",
+    me: "中东",
+  },
   targetAdminLoaded = false,
   pingAdminLoaded = false,
   targetAdminFailed = false,
@@ -126,15 +140,18 @@ async function login() {
   byId("loginMsg").style.display = "block";
   byId("loginMsg").textContent = "验证 Token...";
   try {
-    const d = await apiTimeout("/api/login", { method: "GET" });
+    const d = await apiTimeout("/api/login", { method: "GET", forceToken: true });
     if (d.session_valid) {
       if (d.session_id && d.session_expires_at)
         saveSession(d.session_id, d.session_expires_at);
-      persistToken();
+      // Session-only mode after TOTP: drop master token from storage/header path.
+      if (d.auth_mode === "session" || d.totp_required) clearPersistedToken();
+      else persistToken();
       showApp();
       return;
     }
     if (d.totp_required) {
+      persistToken(); // keep token briefly for TOTP verify only
       showTotpPrompt();
       return;
     }
@@ -168,9 +185,10 @@ async function verifyLoginTotp() {
     const d = await apiTimeout("/api/totp/verify", {
       method: "POST",
       body: JSON.stringify({ code }),
+      forceToken: true,
     });
     if (d.session_id && d.expires_at) saveSession(d.session_id, d.expires_at);
-    persistToken();
+    clearPersistedToken();
     toast("验证通过", "ok");
     showApp();
   } catch (e) {
@@ -397,6 +415,11 @@ async function loadTargets() {
   try {
     const d = await apiAdmin("/api/targets", {}, 30000);
     targets = d.targets || targets;
+    if (d.regions && typeof d.regions === "object") {
+      targetRegions = Object.fromEntries(
+        Object.keys(d.regions).map((code) => [code, targetRegions[code] || d.regions[code]]),
+      );
+    }
     targetAdminLoaded = true;
     renderTargets();
   } catch (e) {
@@ -709,6 +732,16 @@ function nullableInputValue(value) {
   return value === undefined || value === null ? "" : escapeHtml(value);
 }
 
+function targetRegionOptions(region = "auto") {
+  const current = String(region || "auto").toLowerCase();
+  return Object.entries(targetRegions)
+    .map(
+      ([value, label]) =>
+        `<option value="${escapeHtml(value)}"${selectedAttr(current === value)}>${escapeHtml(label)} (${escapeHtml(value)})</option>`,
+    )
+    .join("");
+}
+
 function displayGroupName(value) {
   const name = String(value || "").trim();
   return /^default$/i.test(name) || !name ? "默认分组" : name;
@@ -762,7 +795,11 @@ function targetModalHtml(target, isEdit) {
       ${formField("计费周期", `<select id="mBilling">${targetBillingOptions(cycle)}</select>`)}
     </div>
 
-    ${formField("间隔秒", `<input id="mInterval" type="number" min="300" value="${escapeHtml(target.interval_sec || 300)}">`)}
+    <div class="form-grid">
+      ${formField("间隔秒", `<input id="mInterval" type="number" min="300" value="${escapeHtml(target.interval_sec || 300)}">`)}
+      ${formField("Cloudflare 探测区域", `<select id="mRegion">${targetRegionOptions(target.probe_region)}</select>`)}
+    </div>
+    <p class="hint">选择指定大区后由对应 Cloudflare Durable Object 执行探测；更改后无需重新部署 Worker。</p>
     ${formField(
       "本 VPS 流量统计",
       `
@@ -835,6 +872,7 @@ async function saveTarget(edit) {
     type: byId("mType").value,
     group_name: byId("mGroup").value.trim() || "默认分组",
     interval_sec: Number(byId("mInterval").value) || 300,
+    probe_region: byId("mRegion")?.value || "auto",
     tags: byId("mTags")?.value.trim() || "",
     location: byId("mLocation")?.value.trim() || "",
     expires_at: byId("mExpires")?.value || null,
@@ -1335,8 +1373,10 @@ async function verifyTotp() {
       method: "POST",
       body: JSON.stringify({ code }),
       noAuthReset: true,
+      forceToken: true,
     });
     if (d.session_id && d.expires_at) saveSession(d.session_id, d.expires_at);
+    clearPersistedToken();
     toast("已启用", "ok");
     loadTotp();
   } catch (e) {
@@ -1432,8 +1472,8 @@ byId("pTable").onclick = (e) => {
   if (b.dataset.a === "delete") deletePing(p);
   if (b.dataset.a === "reload") loadPings();
 };
-if (adminClient.getToken())
-  api("/api/login", { method: "GET" })
+if (adminClient.getToken() || hasSession())
+  api("/api/login", { method: "GET", forceToken: Boolean(adminClient.getToken()) })
     .then((d) => {
       if (d.session_valid || !d.totp_required) showApp();
       else showTotpPrompt();

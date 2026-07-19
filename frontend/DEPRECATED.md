@@ -1,9 +1,6 @@
-# DEPRECATED — do not deploy this frontend
+# DEPRECATED — do not deploy
 
-Production frontend source of truth:
+Production frontend: GitHub `3257085208/CloudflareStatus` / local `../frontend`.
 
-- GitHub: `3257085208/CloudflareStatus`
-- Local umbrella: `../frontend` (Desktop/NIE-SLA/frontend)
-
-This directory may lag behind security fixes (for example API base overrides).
-Never deploy Pages from here. Prefer deleting this tree in a later cleanup.
+This tree is a stale copy kept only for historical installer paths / accidental imports.
+`config.js` has been neutralized (no `?api=` override). Still never deploy Pages from here.

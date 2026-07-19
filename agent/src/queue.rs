@@ -41,8 +41,17 @@ pub(super) fn save_sample_queue(path: &Path, samples: &VecDeque<SamplePoint>) ->
     }
     let temp = path.with_extension("json.tmp");
     let values: Vec<_> = samples.iter().map(sample_json).collect();
-    fs::write(&temp, serde_json::to_vec(&values)?)
-        .with_context(|| format!("write sample queue {}", temp.display()))?;
+    {
+        use std::io::Write;
+        let mut file = fs::File::create(&temp)
+            .with_context(|| format!("create sample queue {}", temp.display()))?;
+        file
+            .write_all(&serde_json::to_vec(&values)?)
+            .with_context(|| format!("write sample queue {}", temp.display()))?;
+        file
+            .sync_all()
+            .with_context(|| format!("fsync sample queue {}", temp.display()))?;
+    }
     #[cfg(target_os = "windows")]
     if path.exists() {
         fs::remove_file(path)

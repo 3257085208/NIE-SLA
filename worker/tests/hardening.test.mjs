@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { resolvePublicMetricsQuery, defaultMetricsMaxPointsForHours } from '../src/metrics.js';
 import { isPrivateHost, assertPublicHttpUrl, buildOpenMissedPoints } from '../src/utils.js';
+import { resolveCorsOrigin } from '../src/auth.js';
 
 function urlWith(qs) {
   return new URL('https://example.test/api/agent/metrics?' + qs);
@@ -43,3 +44,11 @@ assert.ok(assertPublicHttpUrl('https://example.com/path'));
 }
 
 console.log('hardening tests passed');
+
+// CORS origin resolution
+{
+  assert.equal(resolveCorsOrigin({ ALLOWED_ORIGIN: 'https://sla.example' }), 'https://sla.example');
+  assert.equal(resolveCorsOrigin({ PUBLIC_SITE_ORIGIN: 'https://pages.example/' }), 'https://pages.example');
+  assert.equal(resolveCorsOrigin({}), '');
+}
+console.log('cors tests passed');

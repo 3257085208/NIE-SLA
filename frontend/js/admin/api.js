@@ -53,12 +53,16 @@ export function createAdminClient({ apiBase, onUnauthorized }) {
     sessionStorage.setItem(TOKEN_TS_KEY, String(Date.now()));
   }
 
-  function clearAuth() {
+  function clearPersistedToken() {
     token = "";
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(TOKEN_TS_KEY);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(TOKEN_TS_KEY);
+  }
+
+  function clearAuth() {
+    clearPersistedToken();
     saveSession("", "");
   }
 
@@ -74,12 +78,16 @@ export function createAdminClient({ apiBase, onUnauthorized }) {
 
   async function api(path, options = {}) {
     const noAuthReset = Boolean(options.noAuthReset);
+    const forceToken = Boolean(options.forceToken);
     const config = { ...options };
     delete config.noAuthReset;
+    delete config.forceToken;
     const session = activeSessionId();
+    // After TOTP login, prefer short-lived session only — do not keep shipping master ADMIN_TOKEN.
+    const sendToken = forceToken || !session;
     config.headers = {
-      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      ...(sendToken && token ? { Authorization: `Bearer ${token}` } : {}),
       ...(session ? { "x-admin-session": session } : {}),
       ...(options.headers || {}),
     };
@@ -133,6 +141,9 @@ export function createAdminClient({ apiBase, onUnauthorized }) {
 
   return {
     api,
+    clearPersistedToken,
+    hasSession: () => Boolean(activeSessionId()),
+    activeSessionId,
     apiAdmin,
     apiPublic,
     apiTimeout,
