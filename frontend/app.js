@@ -26,6 +26,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
+import { groupByDimension, groupByOptionsHtml, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js';
 import {
   buildLinePoints,
   chartColorToRgb,
@@ -67,7 +68,7 @@ function initialFrontendTheme() {
 }
 
 const state = {
-  apiBase: window.NSTATUS_API_BASE || localStorage.getItem('nstatus.apiBase') || '',
+  apiBase: window.NSTATUS_API_BASE || '',
   data: null,
   filteredText: '',
   selectedId: null,
@@ -96,6 +97,7 @@ const state = {
   pingsCache: new Map(),
   frontendTheme: initialFrontendTheme(),
   cardRegion: localStorage.getItem('nstatus.cardRegion') || 'all',
+  groupByMode: localStorage.getItem('nstatus.groupByMode') || 'group',
   cardDetailId: new URLSearchParams(window.location.search).get('target') || '',
   searchInTopbar: false,
   statusRequestSeq: 0,
@@ -709,8 +711,33 @@ function updateIncidentToggle() {
   }
 }
 
+function ensurePublicGroupByBar() {
+  let bar = document.getElementById('publicGroupByBar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'publicGroupByBar';
+    bar.className = 'group-by-bar';
+    const host = document.querySelector('.search-row') || document.querySelector('main.main');
+    if (host) host.appendChild(bar);
+  }
+  bar.innerHTML = groupByOptionsHtml(state.groupByMode || 'group', 'publicGroupBySelect');
+  const sel = document.getElementById('publicGroupBySelect');
+  if (sel && !sel.dataset.bound) {
+    sel.dataset.bound = '1';
+    sel.onchange = () => {
+      state.groupByMode = sel.value || 'group';
+      localStorage.setItem('nstatus.groupByMode', state.groupByMode);
+      state.lastGroupsRenderKey = '';
+      if (state.data) renderGroups(state.data);
+    };
+  } else if (sel) {
+    sel.value = state.groupByMode || 'group';
+  }
+}
+
 function renderGroups(data) {
   if (!els.groups) return;
+  ensurePublicGroupByBar();
 
   const summaries = indexSummaries(data.summaries || []);
   const days = data.days || [];
@@ -759,7 +786,7 @@ function renderGroups(data) {
 
   const groups = state.frontendTheme === 'cards'
     ? { 节点: targets }
-    : groupBy(targets, t => t.group_name || '默认分组');
+    : groupByDimension(targets, state.groupByMode || 'group');
 
   els.groups.innerHTML = Object.entries(groups)
     .map(([name, list], index) => renderGroup(name, list, days, summaries, index))
@@ -863,6 +890,8 @@ function renderService(t, days, summaries) {
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'service-traffic-progress');
   // Metadata badges
   let metaBadges = '';
+  if (t.provider) metaBadges += `<span class="meta-badge meta-provider">🏪 ${escapeHtml(t.provider)}</span>`;
+  if (t.line_type) metaBadges += `<span class="meta-badge meta-line">🔀 ${escapeHtml(t.line_type)}</span>`;
   if (t.location) metaBadges += `<span class="meta-badge meta-loc">📍 ${escapeHtml(t.location)}</span>`;
   if (t.machine_uptime_sec) metaBadges += `<span class="meta-badge meta-uptime">运行时长 ${escapeHtml(formatMachineUptime(t.machine_uptime_sec))}</span>`;
   if (t.tags) {
@@ -1116,7 +1145,9 @@ function latencyBarHeight(value) {
 function cardOsLine(info) {
   const os = info.os || 'Linux';
   const virt = info.virtualization || '';
-  return [os, virt].filter(Boolean).join(' · ');
+  const temp = info.cpu_temp_c != null ? `CPU ${Number(info.cpu_temp_c).toFixed(0)}°C` : '';
+  const gpu = info.gpu_util != null ? `GPU ${Number(info.gpu_util).toFixed(0)}%` : (info.gpu_name || '');
+  return [os, virt, temp, gpu].filter(Boolean).join(' · ');
 }
 
 function cardCpuSub(info) {
@@ -1810,15 +1841,18 @@ function updateMetricsChart() {
   const m = state.targetMetrics;
   const metric = state.selectedMetric;
   const range = state.selectedMetricRange;
-  const labels = { cpu: 'CPU 使用率', mem: '内存使用率', disk: '磁盘使用率', load: '平均负载', net: '网络速度', conns: '连接数', diskio: '磁盘 I/O' };
-  const units = { cpu: '%', mem: '%', disk: '%', load: '', net: '', conns: '', diskio: '' };
-  const fields = { cpu: 'cpu', mem: 'mem', disk: 'disk', load: 'load1', net_rx: 'net_rx', net_tx: 'net_tx', tcp_conns: 'tcp_conns', udp_conns: 'udp_conns', disk_read: 'disk_read', disk_write: 'disk_write' };
+  const labels = { cpu: 'CPU 使用率', mem: '内存使用率', disk: '磁盘使用率', load: '平均负载', net: '网络速度', conns: '连接数', diskio: '磁盘 I/O', temp: '温度', gpu: 'GPU' };
+  const units = { cpu: '%', mem: '%', disk: '%', load: '', net: '', conns: '', diskio: '', temp: '°C', gpu: '%' };
+  const fields = { cpu: 'cpu', mem: 'mem', disk: 'disk', load: 'load1', net_rx: 'net_rx', net_tx: 'net_tx', tcp_conns: 'tcp_conns', udp_conns: 'udp_conns', disk_read: 'disk_read', disk_write: 'disk_write', temp: 'cpu_temp', gpu: 'gpu_util', cpu_temp: 'cpu_temp', gpu_temp: 'gpu_temp', gpu_util: 'gpu_util' };
 
-  els.chartTitle.textContent = labels[metric] || metric;
+  const metricLabel = labels[metric] || metric;
+  els.chartTitle.textContent = metricLabel;
+  els.chartServiceName.textContent = `${state.selectedName || '服务'} ${metricLabel}`;
 
   if (!m || !m.latest) {
     els.chartMeta.textContent = '暂无监控数据，请在此 VPS 上安装 nstatus-metrics Agent。';
     updateChart([], state.selectedName || '服务');
+    els.chartServiceName.textContent = `${state.selectedName || '服务'} ${metricLabel}`;
     return;
   }
   // If history is empty, create a synthetic point from latest state
@@ -1867,7 +1901,35 @@ function updateMetricsChart() {
     return b.toFixed(0) + ' bps';
   }
 
-  if (metric === 'net') {
+  if (metric === 'temp') {
+    const cpuPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.cpu_temp) || 0 }));
+    const gpuPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.gpu_temp) || 0 }));
+    const cpuVals = history.map(p => Number(p.cpu_temp)).filter(Number.isFinite);
+    const gpuVals = history.map(p => Number(p.gpu_temp)).filter(Number.isFinite);
+    const cpuAvg = cpuVals.length ? cpuVals.reduce((a, b) => a + b, 0) / cpuVals.length : 0;
+    const gpuAvg = gpuVals.length ? gpuVals.reduce((a, b) => a + b, 0) / gpuVals.length : 0;
+    els.chartTitle.textContent = '温度';
+    els.chartMeta.textContent = `CPU 平均 ${cpuAvg.toFixed(1)}°C · GPU 平均 ${gpuAvg.toFixed(1)}°C · ${history.length} 个采样点`;
+    els.chartAvg.textContent = `CPU ${Number(latest.vps_info?.cpu_temp_c ?? latest.cpu_temp_c ?? 0).toFixed(1)}°C · GPU ${Number(latest.vps_info?.gpu_temp_c ?? latest.gpu_temp_c ?? 0).toFixed(1)}°C`;
+    if (!state.chart) return;
+    state.chart.data.datasets = [
+      netDataset('CPU °C', cpuPoints, '#ef6c00'),
+      netDataset('GPU °C', gpuPoints, '#8e24aa'),
+    ];
+  } else if (metric === 'gpu') {
+    const utilPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.gpu_util) || 0 }));
+    const tempPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.gpu_temp) || 0 }));
+    const utilVals = history.map(p => Number(p.gpu_util)).filter(Number.isFinite);
+    const avg = utilVals.length ? utilVals.reduce((a, b) => a + b, 0) / utilVals.length : 0;
+    els.chartTitle.textContent = 'GPU';
+    els.chartMeta.textContent = `占用平均 ${avg.toFixed(1)}% · ${history.length} 个采样点`;
+    els.chartAvg.textContent = `占用 ${Number(latest.vps_info?.gpu_util ?? latest.gpu_util ?? 0).toFixed(1)}% · 温度 ${Number(latest.vps_info?.gpu_temp_c ?? latest.gpu_temp_c ?? 0).toFixed(1)}°C`;
+    if (!state.chart) return;
+    state.chart.data.datasets = [
+      netDataset('占用 %', utilPoints, '#3949ab'),
+      netDataset('温度 °C', tempPoints, '#8e24aa'),
+    ];
+  } else if (metric === 'net') {
     const rxPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.net_rx) || 0 }));
     const txPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.net_tx) || 0 }));
     const rxVals = history.map(p => Number(p.net_rx) || 0);
@@ -2530,15 +2592,17 @@ function describeGroup(name, total, up) {
 }
 
 function displayGroupName(name) {
-  const value = String(name || '').trim();
-  if (/^(default|nodes?)$/i.test(value)) return value.toLowerCase() === 'default' ? '默认分组' : '节点';
-  return value || '默认分组';
+  return sharedDisplayGroupName(name);
 }
 
 function targetSearchText(t) {
   return [
     t.name,
     t.group_name,
+    t.provider,
+    t.location,
+    t.line_type,
+    t.tags,
     t.type,
     t.target_host,
     t.target_port,
@@ -2578,3 +2642,5 @@ function avgLatency(rows) {
 
   return Math.round(nums.reduce((a, b) => a + b, 0) / nums.length);
 }
+
+

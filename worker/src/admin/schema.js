@@ -1,9 +1,9 @@
-// Admin sub-module: D1 schema migrations.
+﻿// Admin sub-module: D1 schema migrations.
 import { parseBoolean } from '../utils.js';
 
 let schemaEnsured = false;
 let schemaPromise = null;
-const SCHEMA_MARKER = 'schema:worker-v7-20260716-target-order';
+const SCHEMA_MARKER = 'schema:worker-v8-20260719-provider-line';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -29,13 +29,16 @@ export async function ensureV6Schema(env) {
   // statements on every cron invocation once this schema revision is installed.
   const installed = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(SCHEMA_MARKER).first().catch(() => null);
   if (installed?.value === '1') { schemaEnsured = true; return; }
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL)`).run();
-  for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER']) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '')`).run();
+  for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'']) {
     await runOptionalSchemaChange(env, stmt);
   }
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_due ON targets(enabled, last_checked_at, interval_sec)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_group ON targets(group_name, name)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_sort_order ON targets(sort_order)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_provider ON targets(provider, name)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_line_type ON targets(line_type, name)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_location ON targets(location, name)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS latest_status (target_id TEXT PRIMARY KEY, checked_at INTEGER NOT NULL, ok INTEGER NOT NULL CHECK (ok IN (0, 1)), latency_ms INTEGER, status_code INTEGER, error TEXT, probe_region TEXT DEFAULT 'auto', cf_colo TEXT, uptime_24h REAL, uptime_7d REAL, avg_latency_24h INTEGER, last_fail_at INTEGER, current_outage_started_at INTEGER, last_recover_at INTEGER, status_changed_at INTEGER)`).run();
   for (const stmt of ['ALTER TABLE latest_status ADD COLUMN probe_region TEXT DEFAULT \'auto\'', 'ALTER TABLE latest_status ADD COLUMN cf_colo TEXT', 'ALTER TABLE latest_status ADD COLUMN uptime_24h REAL', 'ALTER TABLE latest_status ADD COLUMN uptime_7d REAL', 'ALTER TABLE latest_status ADD COLUMN avg_latency_24h INTEGER', 'ALTER TABLE latest_status ADD COLUMN last_fail_at INTEGER', 'ALTER TABLE latest_status ADD COLUMN current_outage_started_at INTEGER', 'ALTER TABLE latest_status ADD COLUMN last_recover_at INTEGER', 'ALTER TABLE latest_status ADD COLUMN status_changed_at INTEGER']) {
     await runOptionalSchemaChange(env, stmt);
@@ -147,3 +150,4 @@ export function shouldEnsureSchemaForRequest(path, method, env) {
   if (path === '/api/agent/metrics' && method === 'POST') return parseBoolean(env?.ENSURE_SCHEMA_ON_AGENT_WRITE, false);
   return parseBoolean(env?.ENSURE_SCHEMA_ON_REQUEST, false);
 }
+

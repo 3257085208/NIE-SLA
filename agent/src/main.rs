@@ -132,6 +132,11 @@ struct VpsInfo {
     os: String,
     kernel: String,
     virtualization: String,
+    gpu_name: String,
+    gpu_count: usize,
+    cpu_temp_c: Option<f64>,
+    gpu_temp_c: Option<f64>,
+    gpu_util: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -147,6 +152,9 @@ struct SamplePoint {
     udp_conns: u64,
     disk_read: f64,
     disk_write: f64,
+    cpu_temp: Option<f64>,
+    gpu_temp: Option<f64>,
+    gpu_util: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -530,6 +538,7 @@ impl Collector {
         let memory = self.memory();
         let disk = self.disk();
         let load = load_info();
+        let thermal = platform::thermal_snapshot();
 
         SamplePoint {
             ts: now_sec(),
@@ -543,6 +552,9 @@ impl Collector {
             udp_conns,
             disk_read,
             disk_write,
+            cpu_temp: thermal.cpu_temp_c,
+            gpu_temp: thermal.gpu_temp_c,
+            gpu_util: thermal.gpu_util,
         }
     }
 
@@ -636,6 +648,7 @@ impl Collector {
             .first()
             .map(|c| c.brand().to_string())
             .unwrap_or_default();
+        let thermal = platform::thermal_snapshot();
         VpsInfo {
             cpu_model,
             cpu_cores: self.sys.cpus().len(),
@@ -650,6 +663,11 @@ impl Collector {
             os: os_label(),
             kernel: System::kernel_version().unwrap_or_default(),
             virtualization: platform::virtualization(),
+            gpu_name: thermal.gpu_name,
+            gpu_count: thermal.gpu_count,
+            cpu_temp_c: thermal.cpu_temp_c,
+            gpu_temp_c: thermal.gpu_temp_c,
+            gpu_util: thermal.gpu_util,
         }
     }
 }
@@ -787,15 +805,26 @@ fn stat_json(s: &Stats) -> serde_json::Value {
 }
 
 fn sample_json(s: &SamplePoint) -> serde_json::Value {
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "ts": s.ts, "cpu": s.cpu, "mem": s.mem, "disk": s.disk, "load": s.load,
         "net_rx": s.net_rx, "net_tx": s.net_tx, "tcp_conns": s.tcp_conns, "udp_conns": s.udp_conns,
         "disk_read": s.disk_read, "disk_write": s.disk_write
-    })
+    });
+    let obj = value.as_object_mut().expect("sample json object");
+    if let Some(v) = s.cpu_temp {
+        obj.insert("cpu_temp".to_string(), serde_json::json!(v));
+    }
+    if let Some(v) = s.gpu_temp {
+        obj.insert("gpu_temp".to_string(), serde_json::json!(v));
+    }
+    if let Some(v) = s.gpu_util {
+        obj.insert("gpu_util".to_string(), serde_json::json!(v));
+    }
+    value
 }
 
 fn vps_info_json(v: &VpsInfo) -> serde_json::Value {
-    serde_json::json!({
+    let mut value = serde_json::json!({
         "cpu_model": v.cpu_model,
         "cpu_cores": v.cpu_cores,
         "physical_cores": v.physical_cores,
@@ -806,7 +835,24 @@ fn vps_info_json(v: &VpsInfo) -> serde_json::Value {
         "os": v.os,
         "kernel": v.kernel,
         "virtualization": v.virtualization
-    })
+    });
+    let obj = value.as_object_mut().expect("vps info json object");
+    if !v.gpu_name.is_empty() {
+        obj.insert("gpu_name".to_string(), serde_json::json!(v.gpu_name));
+    }
+    if v.gpu_count > 0 {
+        obj.insert("gpu_count".to_string(), serde_json::json!(v.gpu_count));
+    }
+    if let Some(t) = v.cpu_temp_c {
+        obj.insert("cpu_temp_c".to_string(), serde_json::json!(t));
+    }
+    if let Some(t) = v.gpu_temp_c {
+        obj.insert("gpu_temp_c".to_string(), serde_json::json!(t));
+    }
+    if let Some(u) = v.gpu_util {
+        obj.insert("gpu_util".to_string(), serde_json::json!(u));
+    }
+    value
 }
 
 fn ping_json(p: &PingResult) -> serde_json::Value {

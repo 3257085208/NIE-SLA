@@ -1,4 +1,4 @@
-import { sanitizeAgentId, clamp, nowSec, retentionSeconds, parseBoolean } from './utils.js';
+﻿import { sanitizeAgentId, clamp, nowSec, retentionSeconds, parseBoolean } from './utils.js';
 import { summarizeTraffic, trafficSettingsFromTarget } from './traffic.js';
 import { requireAgentForId, safeJson, json } from './auth.js';
 import { readR2Json, writeR2Json } from './storage.js';
@@ -544,7 +544,7 @@ async function mapWithConcurrency(items, limit, fn) {
   return out;
 }
 
-const METRIC_FIELDS = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write'];
+const METRIC_FIELDS = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write', 'cpu_temp', 'gpu_temp', 'gpu_util'];
 const METRIC_FIELD_GROUPS = {
   cpu: ['cpu'],
   mem: ['mem'],
@@ -553,6 +553,8 @@ const METRIC_FIELD_GROUPS = {
   net: ['net_rx', 'net_tx'],
   conns: ['tcp_conns', 'udp_conns'],
   diskio: ['disk_read', 'disk_write'],
+  temp: ['cpu_temp', 'gpu_temp'],
+  gpu: ['gpu_util', 'gpu_temp'],
 };
 
 export function metricFieldsForRequest(value) {
@@ -618,9 +620,13 @@ export function compactMetricPoints(points, maxPoints = 900) {
 }
 
 function averageMetricChunk(chunk) {
-  const keys = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write'];
+  const keys = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write', 'cpu_temp', 'gpu_temp', 'gpu_util'];
   const out = { ts: Math.round(avgNumber(chunk, 'ts')) };
-  for (const key of keys) out[key] = roundMetric(avgNumber(chunk, key));
+  for (const key of keys) {
+    const avg = avgNumberOptional(chunk, key);
+    if (avg != null) out[key] = roundMetric(avg);
+    else if (!['cpu_temp', 'gpu_temp', 'gpu_util'].includes(key)) out[key] = 0;
+  }
   return out;
 }
 
@@ -629,12 +635,17 @@ function avgNumber(items, key) {
   return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
 }
 
+function avgNumberOptional(items, key) {
+  const vals = items.map(item => Number(item?.[key])).filter(Number.isFinite);
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
 function roundMetric(value) {
   return Math.round(Number(value || 0) * 100) / 100;
 }
 
 function normalizeMetricPoint(point) {
-  return {
+  const out = {
     ts: Number(point?.ts || 0),
     cpu: Number(point?.cpu) || 0,
     mem: Number(point?.mem) || 0,
@@ -647,6 +658,11 @@ function normalizeMetricPoint(point) {
     disk_read: Number(point?.disk_read) || 0,
     disk_write: Number(point?.disk_write) || 0,
   };
+  for (const key of ['cpu_temp', 'gpu_temp', 'gpu_util']) {
+    const n = Number(point?.[key]);
+    if (Number.isFinite(n)) out[key] = n;
+  }
+  return out;
 }
 
 function normalizePingPoint(point, fallbackTs = 0) {
@@ -770,13 +786,20 @@ function averagePingChunk(chunk) {
 }
 
 function mapSamples(samples) {
-  return samples.map(s => ({
-    ts: Number(s.ts) || 0, cpu: Number(s.cpu) || 0, mem: Number(s.mem) || 0,
-    disk: Number(s.disk) || 0, load1: Number(s.load) || 0,
-    net_rx: Number(s.net_rx) || 0, net_tx: Number(s.net_tx) || 0,
-    tcp_conns: Number(s.tcp_conns) || 0, udp_conns: Number(s.udp_conns) || 0,
-    disk_read: Number(s.disk_read) || 0, disk_write: Number(s.disk_write) || 0,
-  }));
+  return samples.map(s => {
+    const point = {
+      ts: Number(s.ts) || 0, cpu: Number(s.cpu) || 0, mem: Number(s.mem) || 0,
+      disk: Number(s.disk) || 0, load1: Number(s.load) || 0,
+      net_rx: Number(s.net_rx) || 0, net_tx: Number(s.net_tx) || 0,
+      tcp_conns: Number(s.tcp_conns) || 0, udp_conns: Number(s.udp_conns) || 0,
+      disk_read: Number(s.disk_read) || 0, disk_write: Number(s.disk_write) || 0,
+    };
+    for (const key of ['cpu_temp', 'gpu_temp', 'gpu_util']) {
+      const n = Number(s?.[key]);
+      if (Number.isFinite(n)) point[key] = n;
+    }
+    return point;
+  });
 }
 
 function limitSeries(points, maxPoints) {
@@ -917,3 +940,4 @@ function mapPings(pings, fallbackTs) {
   }
   return [...byKey.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
 }
+

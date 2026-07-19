@@ -766,3 +766,8 @@ code,
 .targets-table td:nth-child(14) {
   padding-right: 10px;
 }
+
+.group-by-bar,.order-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.group-by-label{display:inline-flex;align-items:center;gap:6px;font-size:13px;opacity:.9}
+.group-by-label select{min-width:120px}
+tr.group-sep td{background:rgba(127,127,127,.12);font-size:13px;padding:8px 10px}

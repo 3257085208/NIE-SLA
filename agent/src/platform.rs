@@ -1,4 +1,30 @@
 #[cfg(target_os = "linux")]
+use std::path::Path;
+use std::process::Command;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct ThermalSnapshot {
+    pub cpu_temp_c: Option<f64>,
+    pub gpu_temp_c: Option<f64>,
+    pub gpu_util: Option<f64>,
+    pub gpu_name: String,
+    pub gpu_count: usize,
+}
+
+struct GpuCache {
+    at: Instant,
+    temp_c: Option<f64>,
+    util: Option<f64>,
+    name: String,
+    count: usize,
+}
+
+static GPU_CACHE: Mutex<Option<GpuCache>> = Mutex::new(None);
+const GPU_CACHE_TTL: Duration = Duration::from_secs(10);
+
+#[cfg(target_os = "linux")]
 pub(super) fn net_bytes() -> (u64, u64) {
     let Ok(text) = std::fs::read_to_string("/proc/net/dev") else {
         return (0, 0);
@@ -74,36 +100,619 @@ pub(super) fn connection_counts() -> (u64, u64) {
     (0, 0)
 }
 
+/// Detect hypervisor / container / cloud virt. Prefer specific products over bare "kvm".
 pub(super) fn virtualization() -> String {
     #[cfg(target_os = "linux")]
     {
-        if std::path::Path::new("/proc/xen").exists() {
+        if let Some(value) = detect_container() {
+            return value;
+        }
+        if let Some(value) = detect_via_systemd() {
+            return value;
+        }
+        if let Some(value) = detect_via_sys_hypervisor() {
+            return value;
+        }
+        if let Some(value) = detect_via_cpuinfo() {
+            return value;
+        }
+        if let Some(value) = detect_via_dmi() {
+            return value;
+        }
+        if Path::new("/proc/xen").exists()
+            || Path::new("/sys/hypervisor/properties/features").exists()
+        {
             return "xen".to_string();
         }
-        if let Ok(product) = std::fs::read_to_string("/sys/class/dmi/id/product_name") {
-            let product = product.trim().to_lowercase();
-            if product.contains("kvm") {
-                return "kvm".to_string();
-            }
-            if product.contains("vmware") {
-                return "vmware".to_string();
-            }
-            if product.contains("virtualbox") {
-                return "virtualbox".to_string();
-            }
-            if product.contains("hyper-v") || product.contains("hyperv") {
-                return "hyper-v".to_string();
-            }
+        if Path::new("/proc/vz").exists() || Path::new("/proc/bc").exists() {
+            return "openvz".to_string();
         }
-        if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
-            let cgroup = cgroup.to_lowercase();
-            if cgroup.contains("docker") {
-                return "docker".to_string();
-            }
-            if cgroup.contains("lxc") {
-                return "lxc".to_string();
-            }
+        if is_wsl() {
+            return "wsl".to_string();
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(value) = detect_windows_virt() {
+            return value;
         }
     }
     String::new()
+}
+
+pub(super) fn thermal_snapshot() -> ThermalSnapshot {
+    let cpu_temp_c = cpu_temperature_c();
+    let (gpu_temp_c, gpu_util, gpu_name, gpu_count) = gpu_snapshot();
+    ThermalSnapshot {
+        cpu_temp_c,
+        gpu_temp_c,
+        gpu_util,
+        gpu_name,
+        gpu_count,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn detect_container() -> Option<String> {
+    if Path::new("/.dockerenv").exists() {
+        return Some("docker".to_string());
+    }
+    if Path::new("/run/.containerenv").exists() {
+        return Some("podman".to_string());
+    }
+    if let Ok(cgroup) = std::fs::read_to_string("/proc/1/cgroup") {
+        let cgroup = cgroup.to_lowercase();
+        if cgroup.contains("docker") || cgroup.contains("containerd") || cgroup.contains("kubepods")
+        {
+            return Some("docker".to_string());
+        }
+        if cgroup.contains("libpod") || cgroup.contains("podman") {
+            return Some("podman".to_string());
+        }
+        if cgroup.contains("/lxc") || cgroup.contains("lxc.payload") {
+            return Some("lxc".to_string());
+        }
+    }
+    if is_wsl() {
+        return Some("wsl".to_string());
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn is_wsl() -> bool {
+    if let Ok(version) = std::fs::read_to_string("/proc/version") {
+        let lower = version.to_lowercase();
+        if lower.contains("microsoft") || lower.contains("wsl") {
+            return true;
+        }
+    }
+    Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()
+}
+
+#[cfg(target_os = "linux")]
+fn detect_via_systemd() -> Option<String> {
+    let named = Command::new("systemd-detect-virt").output().ok()?;
+    let text = String::from_utf8_lossy(&named.stdout).trim().to_lowercase();
+    if text.is_empty() || text == "none" {
+        return None;
+    }
+    Some(normalize_virt_label(&text))
+}
+
+#[cfg(target_os = "linux")]
+fn detect_via_sys_hypervisor() -> Option<String> {
+    let path = Path::new("/sys/hypervisor/type");
+    if !path.exists() {
+        return None;
+    }
+    let text = std::fs::read_to_string(path).ok()?.trim().to_lowercase();
+    if text.is_empty() {
+        return None;
+    }
+    Some(normalize_virt_label(&text))
+}
+
+#[cfg(target_os = "linux")]
+fn detect_via_cpuinfo() -> Option<String> {
+    let text = std::fs::read_to_string("/proc/cpuinfo")
+        .ok()?
+        .to_lowercase();
+    // CPUID hypervisor leaves fingerprints in model name / flags / vendor-like strings.
+    for (needle, label) in [
+        ("kvmkvmkvm", "kvm"),
+        ("microsoft hv", "hyper-v"),
+        ("vmwarevmware", "vmware"),
+        ("xenvmmxenvmm", "xen"),
+        ("prl hyperv", "parallels"),
+        ("bhyve bhyve", "bhyve"),
+        ("tcg tcg tcg", "qemu"),
+        ("lrpepyh vr", "parallels"),
+        ("virtualbox", "virtualbox"),
+        ("vboxvbos", "virtualbox"),
+    ] {
+        if text.contains(needle) {
+            return Some(label.to_string());
+        }
+    }
+    if text.contains("hypervisor") {
+        // Generic hypervisor bit without vendor — try DMI next, but keep qemu guess low priority
+        if text.contains("qemu") {
+            return Some("qemu".to_string());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn detect_via_dmi() -> Option<String> {
+    let blobs = [
+        read_sys_trim("/sys/class/dmi/id/sys_vendor"),
+        read_sys_trim("/sys/class/dmi/id/product_name"),
+        read_sys_trim("/sys/class/dmi/id/product_version"),
+        read_sys_trim("/sys/class/dmi/id/bios_vendor"),
+        read_sys_trim("/sys/class/dmi/id/board_vendor"),
+        read_sys_trim("/sys/class/dmi/id/chassis_vendor"),
+        read_sys_trim("/sys/devices/virtual/dmi/id/product_name"),
+        read_sys_trim("/sys/devices/virtual/dmi/id/sys_vendor"),
+    ]
+    .into_iter()
+    .filter(|s| !s.is_empty())
+    .collect::<Vec<_>>()
+    .join(" ")
+    .to_lowercase();
+
+    if blobs.is_empty() {
+        return None;
+    }
+
+    for (needle, label) in [
+        ("amazon ec2", "amazon-ec2"),
+        ("amazon", "amazon-ec2"),
+        ("google", "gce"),
+        ("compute engine", "gce"),
+        ("microsoft corporation", "hyper-v"),
+        ("hyper-v", "hyper-v"),
+        ("virtual machine", "hyper-v"),
+        ("vmware", "vmware"),
+        ("virtualbox", "virtualbox"),
+        ("innotek", "virtualbox"),
+        ("oracle", "virtualbox"),
+        ("xen", "xen"),
+        ("bochs", "bochs"),
+        ("qemu", "qemu"),
+        ("kvm", "kvm"),
+        ("openstack", "openstack"),
+        ("parallels", "parallels"),
+        ("bhyve", "bhyve"),
+        ("openvz", "openvz"),
+        ("lxc", "lxc"),
+        ("alibaba", "aliyun"),
+        ("alibabacloud", "aliyun"),
+        ("tencent", "tencent"),
+        ("huawei", "huawei"),
+        ("ucloud", "ucloud"),
+        ("digitalocean", "digitalocean"),
+        ("linode", "linode"),
+        ("vultr", "vultr"),
+        ("ovh", "ovh"),
+        ("hertzner", "hetzner"),
+        ("hetzner", "hetzner"),
+        ("proxmox", "kvm"),
+        ("rhev", "kvm"),
+        ("ovirt", "kvm"),
+        ("nutanix", "nutanix"),
+        ("nutanix ahv", "nutanix"),
+        ("powerkvm", "powerkvm"),
+        ("z/vm", "zvm"),
+        ("zvm", "zvm"),
+        ("uml", "uml"),
+        ("apple", "apple-virt"),
+        ("virtual", "virtual"),
+    ] {
+        if blobs.contains(needle) {
+            // Avoid labeling bare metal Apple Mac as virtual
+            if label == "apple-virt" && !blobs.contains("virtual") {
+                continue;
+            }
+            if label == "virtual" {
+                continue;
+            }
+            return Some(label.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn read_sys_trim(path: &str) -> String {
+    std::fs::read_to_string(path)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+fn normalize_virt_label(raw: &str) -> String {
+    let v = raw.trim().to_lowercase();
+    match v.as_str() {
+        "microsoft" | "microsoft-hyper-v" | "hyperv" | "hyper-v" => "hyper-v".to_string(),
+        "kvm" | "qemu" | "qemu-kvm" => {
+            if v.contains("qemu") && !v.contains("kvm") {
+                "qemu".to_string()
+            } else {
+                "kvm".to_string()
+            }
+        }
+        "vmware" | "vmware-esx" | "vmware-workstation" => "vmware".to_string(),
+        "oracle" | "oraclevm" => "virtualbox".to_string(),
+        "bochs" => "bochs".to_string(),
+        "uml" => "uml".to_string(),
+        "xen" | "xen-domU" | "xen-dom0" => "xen".to_string(),
+        "lxc" | "lxc-libvirt" => "lxc".to_string(),
+        "systemd-nspawn" | "container-other" => "container".to_string(),
+        "docker" => "docker".to_string(),
+        "podman" => "podman".to_string(),
+        "openvz" | "parallels" | "bhyve" | "zvm" | "powervm" | "wsl" => v,
+        other if other.is_empty() || other == "none" => String::new(),
+        other => other.replace(' ', "-"),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn detect_windows_virt() -> Option<String> {
+    // Lightweight model/manufacturer probe via PowerShell CIM (best-effort).
+    let script = r#"
+$cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+$model = ($cs.Model + ' ' + $cs.Manufacturer + ' ' + $cs.SystemFamily)
+$model.ToLower()
+"#;
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+    for (needle, label) in [
+        ("vmware", "vmware"),
+        ("virtualbox", "virtualbox"),
+        ("innotek", "virtualbox"),
+        ("hyper-v", "hyper-v"),
+        ("virtual machine", "hyper-v"),
+        ("xen", "xen"),
+        ("kvm", "kvm"),
+        ("qemu", "qemu"),
+        ("parallels", "parallels"),
+        ("bhyve", "bhyve"),
+        ("amazon", "amazon-ec2"),
+        ("google", "gce"),
+        ("openstack", "openstack"),
+    ] {
+        if text.contains(needle) {
+            return Some(label.to_string());
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn cpu_temperature_c() -> Option<f64> {
+    let mut candidates: Vec<(i32, f64)> = Vec::new();
+
+    // thermal_zone* — prefer package/CPU zones
+    if let Ok(entries) = std::fs::read_dir("/sys/class/thermal") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if !name.starts_with("thermal_zone") {
+                continue;
+            }
+            let zone_type = std::fs::read_to_string(path.join("type"))
+                .unwrap_or_default()
+                .trim()
+                .to_lowercase();
+            let priority = thermal_zone_priority(&zone_type);
+            if priority < 0 {
+                continue;
+            }
+            if let Some(temp) = read_millidegree(path.join("temp")) {
+                candidates.push((priority, temp));
+            }
+        }
+    }
+
+    // hwmon sensors
+    if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let chip = std::fs::read_to_string(path.join("name"))
+                .unwrap_or_default()
+                .trim()
+                .to_lowercase();
+            if chip.contains("gpu")
+                || chip.contains("amdgpu")
+                || chip.contains("nouveau")
+                || chip.contains("nvidia")
+            {
+                continue;
+            }
+            // collect temp*_input
+            if let Ok(files) = std::fs::read_dir(&path) {
+                for file in files.flatten() {
+                    let fname = file.file_name().to_string_lossy().to_lowercase();
+                    if !fname.starts_with("temp") || !fname.ends_with("_input") {
+                        continue;
+                    }
+                    let label = {
+                        let label_name = fname.replace("_input", "_label");
+                        std::fs::read_to_string(path.join(label_name))
+                            .unwrap_or_default()
+                            .trim()
+                            .to_lowercase()
+                    };
+                    let Some(temp) = read_millidegree(file.path()) else {
+                        continue;
+                    };
+                    let priority = hwmon_cpu_priority(&chip, &label);
+                    if priority >= 0 {
+                        candidates.push((priority, temp));
+                    }
+                }
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    let best = candidates[0].1;
+    if best < 1.0 || best > 125.0 {
+        return None;
+    }
+    Some((best * 10.0).round() / 10.0)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn cpu_temperature_c() -> Option<f64> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn thermal_zone_priority(zone_type: &str) -> i32 {
+    if zone_type.contains("x86_pkg") || zone_type.contains("pkg_temp") {
+        return 100;
+    }
+    if zone_type.contains("cpu") || zone_type.contains("soc") || zone_type.contains("coretemp") {
+        return 90;
+    }
+    if zone_type.contains("acpitz") || zone_type == "tz00" {
+        return 40;
+    }
+    if zone_type.contains("gpu") || zone_type.contains("nvme") || zone_type.contains("pch") {
+        return -1;
+    }
+    10
+}
+
+#[cfg(target_os = "linux")]
+fn hwmon_cpu_priority(chip: &str, label: &str) -> i32 {
+    if chip.contains("coretemp")
+        || chip.contains("k10temp")
+        || chip.contains("zenpower")
+        || chip.contains("cpu_thermal")
+    {
+        if label.contains("tctl")
+            || label.contains("package")
+            || label.contains("tDie")
+            || label.contains("tdie")
+        {
+            return 100;
+        }
+        if label.contains("core") {
+            return 80;
+        }
+        return 70;
+    }
+    if label.contains("package") || label.contains("tctl") {
+        return 90;
+    }
+    if label.contains("cpu") {
+        return 60;
+    }
+    -1
+}
+
+#[cfg(target_os = "linux")]
+fn read_millidegree(path: impl AsRef<Path>) -> Option<f64> {
+    let raw = std::fs::read_to_string(path.as_ref())
+        .ok()?
+        .trim()
+        .parse::<f64>()
+        .ok()?;
+    // Some sensors already report whole degrees; millidegree is typical for hwmon.
+    let c = if raw.abs() > 200.0 { raw / 1000.0 } else { raw };
+    if c.is_finite() {
+        Some(c)
+    } else {
+        None
+    }
+}
+
+fn gpu_snapshot() -> (Option<f64>, Option<f64>, String, usize) {
+    if let Ok(guard) = GPU_CACHE.lock() {
+        if let Some(cache) = guard.as_ref() {
+            if cache.at.elapsed() < GPU_CACHE_TTL {
+                return (cache.temp_c, cache.util, cache.name.clone(), cache.count);
+            }
+        }
+    }
+
+    let (temp_c, util, name, count) = probe_gpu();
+    if let Ok(mut guard) = GPU_CACHE.lock() {
+        *guard = Some(GpuCache {
+            at: Instant::now(),
+            temp_c,
+            util,
+            name: name.clone(),
+            count,
+        });
+    }
+    (temp_c, util, name, count)
+}
+
+fn probe_gpu() -> (Option<f64>, Option<f64>, String, usize) {
+    if let Some(result) = probe_nvidia_smi() {
+        return result;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(result) = probe_amd_sysfs() {
+            return result;
+        }
+    }
+    (None, None, String::new(), 0)
+}
+
+fn probe_nvidia_smi() -> Option<(Option<f64>, Option<f64>, String, usize)> {
+    let output = Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=name,utilization.gpu,temperature.gpu",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut names = Vec::new();
+    let mut temps = Vec::new();
+    let mut utils = Vec::new();
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split(',').map(str::trim).collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        names.push(parts[0].to_string());
+        if let Ok(u) = parts[1].parse::<f64>() {
+            utils.push(u);
+        }
+        if let Ok(t) = parts[2].parse::<f64>() {
+            temps.push(t);
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    let temp = if temps.is_empty() {
+        None
+    } else {
+        Some(temps.iter().sum::<f64>() / temps.len() as f64)
+    };
+    let util = if utils.is_empty() {
+        None
+    } else {
+        Some(utils.iter().sum::<f64>() / utils.len() as f64)
+    };
+    let name = if names.len() == 1 {
+        names[0].clone()
+    } else {
+        format!("{} (+{})", names[0], names.len() - 1)
+    };
+    Some((
+        temp.map(|v| (v * 10.0).round() / 10.0),
+        util.map(|v| (v * 10.0).round() / 10.0),
+        name,
+        names.len(),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn probe_amd_sysfs() -> Option<(Option<f64>, Option<f64>, String, usize)> {
+    let drm = Path::new("/sys/class/drm");
+    if !drm.exists() {
+        return None;
+    }
+    let mut count = 0usize;
+    let mut temp_sum = 0.0;
+    let mut temp_n = 0usize;
+    let mut util_sum = 0.0;
+    let mut util_n = 0usize;
+    let mut name = String::new();
+
+    let entries = std::fs::read_dir(drm).ok()?;
+    for entry in entries.flatten() {
+        let fname = entry.file_name().to_string_lossy().to_string();
+        if !fname.starts_with("card") || fname.contains('-') {
+            continue;
+        }
+        let device = entry.path().join("device");
+        let vendor = std::fs::read_to_string(device.join("vendor")).unwrap_or_default();
+        // AMD vendor 0x1002; also accept any card with gpu_busy_percent
+        let busy_path = device.join("gpu_busy_percent");
+        let has_busy = busy_path.exists();
+        let is_amd = vendor.trim().eq_ignore_ascii_case("0x1002");
+        if !has_busy && !is_amd {
+            continue;
+        }
+        count += 1;
+        if name.is_empty() {
+            name = std::fs::read_to_string(device.join("product_name"))
+                .or_else(|_| std::fs::read_to_string(entry.path().join("device/label")))
+                .unwrap_or_else(|_| {
+                    if is_amd {
+                        "AMD GPU".to_string()
+                    } else {
+                        format!("GPU {fname}")
+                    }
+                })
+                .trim()
+                .to_string();
+        }
+        if let Ok(util_raw) = std::fs::read_to_string(&busy_path) {
+            if let Ok(u) = util_raw.trim().parse::<f64>() {
+                util_sum += u;
+                util_n += 1;
+            }
+        }
+        // hwmon under device
+        let hwmon_root = device.join("hwmon");
+        if let Ok(hws) = std::fs::read_dir(hwmon_root) {
+            for hw in hws.flatten() {
+                if let Some(t) = read_millidegree(hw.path().join("temp1_input")) {
+                    temp_sum += t;
+                    temp_n += 1;
+                    break;
+                }
+            }
+        }
+    }
+    if count == 0 {
+        return None;
+    }
+    Some((
+        if temp_n > 0 {
+            Some(((temp_sum / temp_n as f64) * 10.0).round() / 10.0)
+        } else {
+            None
+        },
+        if util_n > 0 {
+            Some(((util_sum / util_n as f64) * 10.0).round() / 10.0)
+        } else {
+            None
+        },
+        name,
+        count,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_virt_labels() {
+        assert_eq!(normalize_virt_label("microsoft"), "hyper-v");
+        assert_eq!(normalize_virt_label("kvm"), "kvm");
+        assert_eq!(normalize_virt_label("qemu"), "qemu");
+        assert_eq!(normalize_virt_label("none"), "");
+    }
 }

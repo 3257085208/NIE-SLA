@@ -1,6 +1,6 @@
 ﻿[package]
 name = "nstatus-agent"
-version = "1.0.14"
+version = "1.0.16"
 edition = "2021"
 license = "MIT"
 description = "NStatus cross-platform metrics agent"
@@ -22,3 +22,4 @@ codegen-units = 1
 lto = "thin"
 panic = "abort"
 strip = true
+

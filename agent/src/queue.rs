@@ -45,11 +45,9 @@ pub(super) fn save_sample_queue(path: &Path, samples: &VecDeque<SamplePoint>) ->
         use std::io::Write;
         let mut file = fs::File::create(&temp)
             .with_context(|| format!("create sample queue {}", temp.display()))?;
-        file
-            .write_all(&serde_json::to_vec(&values)?)
+        file.write_all(&serde_json::to_vec(&values)?)
             .with_context(|| format!("write sample queue {}", temp.display()))?;
-        file
-            .sync_all()
+        file.sync_all()
             .with_context(|| format!("fsync sample queue {}", temp.display()))?;
     }
     #[cfg(target_os = "windows")]
@@ -135,11 +133,21 @@ fn sample_from_json(value: &serde_json::Value) -> Option<SamplePoint> {
             .unwrap_or(0),
         disk_read: json_f64(value, "disk_read"),
         disk_write: json_f64(value, "disk_write"),
+        cpu_temp: json_f64_opt(value, "cpu_temp"),
+        gpu_temp: json_f64_opt(value, "gpu_temp"),
+        gpu_util: json_f64_opt(value, "gpu_util"),
     })
 }
 
 fn json_f64(value: &serde_json::Value, key: &str) -> f64 {
     value.get(key).and_then(|item| item.as_f64()).unwrap_or(0.0)
+}
+
+fn json_f64_opt(value: &serde_json::Value, key: &str) -> Option<f64> {
+    value
+        .get(key)
+        .and_then(|item| item.as_f64())
+        .filter(|v| v.is_finite())
 }
 
 #[cfg(test)]

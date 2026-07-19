@@ -13,14 +13,7 @@
   <link rel="stylesheet" href="./style.css?v=20260708-mobile-polish" />
 </head>
 <body data-frontend-theme="cards">
-  <script>
-    (() => {
-      try {
-        const theme = localStorage.getItem('nstatus.frontendTheme');
-        if (theme === 'classic' || theme === 'cards') document.body.dataset.frontendTheme = theme;
-      } catch (_) {}
-    })();
-  </script>
+  <script src="./js/theme-bootstrap.js?v=20260718-security"></script>
   <header class="topbar">
     <div class="wrap topbar-inner">
       <a class="brand" href="./" aria-label="聶.NET 首页">
@@ -86,6 +79,8 @@
               <button type="button" class="metric-tab" data-metric="net">Net</button>
               <button type="button" class="metric-tab" data-metric="conns">Conns</button>
               <button type="button" class="metric-tab" data-metric="diskio">DiskIO</button>
+              <button type="button" class="metric-tab" data-metric="temp">Temp</button>
+              <button type="button" class="metric-tab" data-metric="gpu">GPU</button>
               <button type="button" class="metric-tab" data-metric="ping">TCP Ping</button>
             </div>
             <div class="chart-range-row">
@@ -150,7 +145,7 @@
   </footer>
 
   <script src="./config.js?v=20260704-runtime-config2"></script>
-  <script type="module" src="./app.js?v=20260716-agent-status-modules"></script>
-  <script src="./vendor/chart.umd.min.js?v=4.4.9" async onload="window.dispatchEvent(new Event('nstatus:chartjs-ready'))"></script>
+  <script src="./vendor/chart.umd.min.js?v=4.4.9"></script>
+  <script type="module" src="./app.js?v=20260718-metric-title"></script>
 </body>
 </html>

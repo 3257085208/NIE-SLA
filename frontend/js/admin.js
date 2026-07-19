@@ -1,5 +1,11 @@
 import { copyText } from "./install-command.js";
 import { createAdminClient } from "./admin/api.js";
+import {
+  groupByDimension,
+  groupByOptionsHtml,
+  lineTypeOptionsHtml,
+  displayGroupName as sharedDisplayGroupName,
+} from "./shared/grouping.js";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -40,6 +46,7 @@ const {
   setToken,
 } = adminClient;
 let targets = [],
+  adminGroupBy = localStorage.getItem("nstatus.adminGroupBy") || "group",
   statusMap = new Map(),
   pingTargets = [],
   targetRegions = {
@@ -333,6 +340,10 @@ async function renderMetrics() {
     if (v.os) rows.push(["系统", v.os]);
     if (v.kernel) rows.push(["内核", v.kernel]);
     if (v.virtualization) rows.push(["虚拟化", v.virtualization]);
+    if (v.gpu_name) rows.push(["GPU", v.gpu_name + (v.gpu_count > 1 ? ` x${v.gpu_count}` : "")]);
+    if (v.cpu_temp_c != null) rows.push(["CPU 温度", Number(v.cpu_temp_c).toFixed(1) + "°C"]);
+    if (v.gpu_temp_c != null) rows.push(["GPU 温度", Number(v.gpu_temp_c).toFixed(1) + "°C"]);
+    if (v.gpu_util != null) rows.push(["GPU 占用", Number(v.gpu_util).toFixed(1) + "%"]);
     if (m.agent_version) rows.push(["版本", m.agent_version]);
     if (m.updated_at)
       rows.push([
@@ -524,7 +535,7 @@ function targetRowHtml(target, index) {
     isWeb ? notApplicable : status.machine_uptime_sec ? formatDuration(status.machine_uptime_sec) : "-",
     agentTag,
     isWeb ? notApplicable : `<code>${escapeHtml(status.agent_version || "-")}</code>`,
-    escapeHtml(displayGroupName(target.group_name)),
+    escapeHtml(targetGroupCell(target)),
     `<span title="${escapeHtml(host)}">${escapeHtml(host)}</span>`,
     trafficCell(target, status),
     enabledTag,
@@ -556,13 +567,25 @@ function renderTargets() {
     return;
   }
 
-  const rows = targets
-    .map((target, index) => targetRowHtml(target, index))
-    .join("");
+  let rowIndex = 0;
+  let rows = "";
+  if (adminGroupBy !== "group") {
+    const grouped = groupByDimension(targets, adminGroupBy);
+    rows = Object.entries(grouped)
+      .sort((a, b) => a[0].localeCompare(b[0], "zh-CN"))
+      .map(([name, list]) => {
+        const head = `<tr class="group-sep"><td colspan="12"><strong>${escapeHtml(name)}</strong> · ${list.length}</td></tr>`;
+        const body = list.map((target) => targetRowHtml(target, rowIndex++)).join("");
+        return head + body;
+      })
+      .join("");
+  } else {
+    rows = targets.map((target, index) => targetRowHtml(target, index)).join("");
+  }
   byId("tTable").innerHTML = `
     <div class="target-order-bar">
-      <div><strong>显示顺序</strong><span>拖动左侧手柄调整；保存后前台与后台同步生效</span></div>
-      <span class="order-state" id="targetOrderState">${targetAdminLoaded ? "已同步" : "读取中"}</span>
+      <div><strong>显示顺序</strong><span>拖动左侧手柄；可按商家/地区/价格/线路分组查看</span></div>
+      <div class="order-tools">${groupByOptionsHtml(adminGroupBy, "adminGroupBySelect")}<span class="order-state" id="targetOrderState">${targetAdminLoaded ? "已同步" : "读取中"}</span></div>
     </div>
     <div class="table-scroll">
       <table class="targets-table">
@@ -588,6 +611,28 @@ function renderTargets() {
       </table>
     </div>`;
   bindTargetSorting();
+  bindAdminGroupBy();
+}
+
+function bindAdminGroupBy() {
+  const sel = byId("adminGroupBySelect");
+  if (!sel || sel.dataset.bound) return;
+  sel.dataset.bound = "1";
+  sel.onchange = () => {
+    adminGroupBy = sel.value || "group";
+    localStorage.setItem("nstatus.adminGroupBy", adminGroupBy);
+    renderTargets();
+  };
+}
+
+function targetGroupCell(target) {
+  const parts = [
+    sharedDisplayGroupName(target.group_name),
+    target.provider ? `商家:${target.provider}` : "",
+    target.location ? `地区:${target.location}` : "",
+    target.line_type ? `线路:${target.line_type}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
 }
 
 function targetByRow(row) {
@@ -743,8 +788,7 @@ function targetRegionOptions(region = "auto") {
 }
 
 function displayGroupName(value) {
-  const name = String(value || "").trim();
-  return /^default$/i.test(name) || !name ? "默认分组" : name;
+  return sharedDisplayGroupName(value);
 }
 
 function nullableNumber(id) {
@@ -782,7 +826,9 @@ function targetModalHtml(target, isEdit) {
 
     <div class="form-grid">
       ${inputField("标签", "mTags", target.tags || "", 'placeholder="逗号分隔"')}
-      ${inputField("位置", "mLocation", target.location || "", 'placeholder="例如 HK / LAX"')}
+      ${inputField("位置", "mLocation", target.location || "", 'placeholder="例如 HK / JP / US"')}
+      ${inputField("商家", "mProvider", target.provider || "", 'placeholder="例如 DMIT / Bandwagon"')}
+      ${formField("线路类型", `<select id="mLineType">${lineTypeOptionsHtml(target.line_type || "")}</select>`)}
     </div>
 
     <div class="form-grid">
@@ -875,6 +921,8 @@ async function saveTarget(edit) {
     probe_region: byId("mRegion")?.value || "auto",
     tags: byId("mTags")?.value.trim() || "",
     location: byId("mLocation")?.value.trim() || "",
+    provider: byId("mProvider")?.value.trim() || "",
+    line_type: byId("mLineType")?.value || "",
     expires_at: byId("mExpires")?.value || null,
     price,
     billing_cycle: byId("mBilling")?.value || "",
