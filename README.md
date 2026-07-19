@@ -6,16 +6,14 @@
 
 Worker + D1 + R2 + Pages + Durable Objects + Rust Agent
 
-[![Agent Version](https://img.shields.io/github/v/release/3257085208/NIE-SLA?label=Agent%20Version&style=for-the-badge&color=159754)](https://github.com/3257085208/NIE-SLA/releases)
-[![Worker Compatible](https://img.shields.io/badge/Worker-Compatible-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/workers/)
-[![Top Language](https://img.shields.io/github/languages/top/3257085208/NIE-SLA?style=for-the-badge&color=3572A5)](https://github.com/3257085208/NIE-SLA)
-[![License](https://img.shields.io/github/license/3257085208/NIE-SLA?style=for-the-badge&color=blue)](LICENSE)
+[![Agent Version](docs/badges/agent-version.svg)](https://github.com/3257085208/NIE-SLA/releases)
+[![Worker Compatible](docs/badges/worker.svg)](https://developers.cloudflare.com/workers/)
+[![Top Language](docs/badges/language.svg)](https://github.com/3257085208/NIE-SLA)
+[![License](docs/badges/license.svg)](LICENSE)
 
-[![Contributors](https://img.shields.io/github/contributors/3257085208/NIE-SLA?style=flat-square&color=orange)](https://github.com/3257085208/NIE-SLA/graphs/contributors)
-[![Commit Activity](https://img.shields.io/github/commit-activity/m/3257085208/NIE-SLA?style=flat-square&color=159754)](https://github.com/3257085208/NIE-SLA/commits/main)
-[![Repo Size](https://img.shields.io/github/repo-size/3257085208/NIE-SLA?style=flat-square&color=blue)](https://github.com/3257085208/NIE-SLA)
-[![Stars](https://img.shields.io/github/stars/3257085208/NIE-SLA?style=social)](https://github.com/3257085208/NIE-SLA/stargazers)
-[![Forks](https://img.shields.io/github/forks/3257085208/NIE-SLA?style=social)](https://github.com/3257085208/NIE-SLA/forks)
+[![Contributors](docs/badges/contributors.svg)](https://github.com/3257085208/NIE-SLA/graphs/contributors)
+[![Commit Activity](docs/badges/commits.svg)](https://github.com/3257085208/NIE-SLA/commits/main)
+[![Repo Size](docs/badges/size.svg)](https://github.com/3257085208/NIE-SLA)
 [![Agent CI](https://github.com/3257085208/NIE-SLA/actions/workflows/agent-ci.yml/badge.svg)](https://github.com/3257085208/NIE-SLA/actions/workflows/agent-ci.yml)
 
 [完整中文文档](#文档导航) · [English](README.en.md) · [Release](https://github.com/3257085208/NIE-SLA/releases) · [安全策略](SECURITY.md)

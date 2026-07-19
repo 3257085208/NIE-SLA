@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="170" height="28" role="img" aria-label="Contributors: 1">
+  <linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
+  <rect rx="4" width="170" height="28" fill="#555"/>
+  <rect rx="4" x="116" width="54" height="28" fill="#fe7d37"/>
+  <path fill="#fe7d37" d="M116 0h4v28h-4z"/>
+  <rect rx="4" width="170" height="28" fill="url(#s)"/>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="12">
+    <text x="58" y="18">Contributors</text>
+    <text x="143" y="18">1</text>
+  </g>
+</svg>

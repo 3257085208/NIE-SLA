@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="28" role="img" aria-label="Commits: active">
+  <linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
+  <rect rx="4" width="144" height="28" fill="#555"/>
+  <rect rx="4" x="76" width="68" height="28" fill="#159754"/>
+  <path fill="#159754" d="M76 0h4v28h-4z"/>
+  <rect rx="4" width="144" height="28" fill="url(#s)"/>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="12">
+    <text x="38" y="18">Commits</text>
+    <text x="110" y="18">active</text>
+  </g>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="130" height="28" role="img" aria-label="License: MIT">
+  <linearGradient id="s" x2="0" y2="100%"><stop offset="0" stop-color="#fff" stop-opacity=".1"/><stop offset="1" stop-opacity=".1"/></linearGradient>
+  <rect rx="4" width="130" height="28" fill="#555"/>
+  <rect rx="4" x="76" width="54" height="28" fill="#007ec6"/>
+  <path fill="#007ec6" d="M76 0h4v28h-4z"/>
+  <rect rx="4" width="130" height="28" fill="url(#s)"/>
+  <g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="12">
+    <text x="38" y="18">License</text>
+    <text x="103" y="18">MIT</text>
+  </g>
+</svg>
