@@ -26,7 +26,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { groupByDimension, groupByOptionsHtml, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js';
+import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js';
 import {
   buildLinePoints,
   chartColorToRgb,
@@ -272,7 +272,7 @@ async function loadStatus() {
   state.statusController = controller;
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const res = await fetch(api('/api/status?days=30'), {
+    const res = await fetch(api('/api/status?days=30&lite=1'), {
       cache: 'no-store',
       signal: controller.signal,
     });
@@ -373,6 +373,7 @@ function renderGroupsIfChanged(data) {
 function statusGroupsRenderKey(data) {
   return JSON.stringify({
     theme: state.frontendTheme,
+    groupByMode: state.groupByMode,
     cardRegion: state.cardRegion,
     cardDetailId: state.cardDetailId,
     filter: state.filteredText,
@@ -398,6 +399,7 @@ function applyFrontendTheme(data) {
 function syncCardTopbar(enabled) {
   const topbarInner = document.querySelector('.topbar-inner');
   const brand = document.querySelector('.brand');
+  const cloudflare = topbarInner?.querySelector('.topbar-cf');
   const main = document.querySelector('main.main');
   const searchRow = document.querySelector('.search-row');
   if (!topbarInner || !brand || !main || !searchRow) return;
@@ -436,6 +438,7 @@ function syncCardTopbar(enabled) {
     state.searchInTopbar = true;
   }
   if (!tools.parentNode) topbarInner.appendChild(tools);
+  if (cloudflare) topbarInner.appendChild(cloudflare);
   if (els.serviceSearch) els.serviceSearch.placeholder = '搜索节点...';
 }
 
@@ -720,19 +723,29 @@ function ensurePublicGroupByBar() {
     const host = document.querySelector('.search-row') || document.querySelector('main.main');
     if (host) host.appendChild(bar);
   }
-  bar.innerHTML = groupByOptionsHtml(state.groupByMode || 'group', 'publicGroupBySelect');
-  const sel = document.getElementById('publicGroupBySelect');
-  if (sel && !sel.dataset.bound) {
-    sel.dataset.bound = '1';
-    sel.onchange = () => {
-      state.groupByMode = sel.value || 'group';
-      localStorage.setItem('nstatus.groupByMode', state.groupByMode);
+  const selected = state.groupByMode || 'group';
+  const options = GROUP_BY_OPTIONS.map(({ id, label }) => `
+    <button type="button" class="group-by-option${id === selected ? ' active' : ''}"
+      data-group-by="${escapeAttr(id)}" aria-pressed="${id === selected}">${escapeHtml(label)}</button>
+  `).join('');
+
+  bar.innerHTML = `
+    <span class="group-by-title">分组方式</span>
+    <div class="group-by-options" role="group" aria-label="分组方式">${options}</div>
+  `;
+
+  bar.querySelectorAll('[data-group-by]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextMode = button.dataset.groupBy || 'group';
+      if (nextMode === state.groupByMode) return;
+      state.groupByMode = nextMode;
+      try {
+        localStorage.setItem('nstatus.groupByMode', nextMode);
+      } catch (_) {}
       state.lastGroupsRenderKey = '';
       if (state.data) renderGroups(state.data);
-    };
-  } else if (sel) {
-    sel.value = state.groupByMode || 'group';
-  }
+    });
+  });
 }
 
 function renderGroups(data) {
@@ -950,7 +963,7 @@ function renderServiceCard(t, days, summaries) {
   const latency = Number(t.ok) !== 1 || t.latency_ms == null ? '-' : `${t.latency_ms}ms`;
   const titleMeta = nodegetCardMetaLine([region !== 'OTHER' ? regionMeta(region).label : regionShort(t)]);
   const age = m.updated_at || t.last_metrics_at ? timeAgoSec(Math.floor(new Date(m.updated_at || t.last_metrics_at).getTime() / 1000)) : '-';
-  const latencySamples = cardLatencySamples(t, days);
+  const latencySamples = cardLatencySamples(t, days, summaries);
   const pingRows = cardPingRows(t);
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'node-traffic-progress');
   const slaBars = trafficProgress ? 20 : 30;
@@ -1068,7 +1081,7 @@ function cardLatencyRow(label, rawLatency, samples = []) {
 function cardPingRows(target) {
   const pingTargets = Array.isArray(state.data?.ping_targets) ? state.data.ping_targets : [];
   const pings = Array.isArray(target?.agent_metrics?.pings) ? target.agent_metrics.pings : [];
-  if (!pingTargets.length) return '';
+  if (!pingTargets.length || !pings.length) return '';
   return pingTargets.map((pingTarget, index) => {
     const targetId = String(pingTarget.id || '');
     const samples = pings
@@ -1098,10 +1111,10 @@ function pingTargetColor(seed) {
   return palette[hash % palette.length];
 }
 
-function cardLatencySamples(target, days = []) {
+function cardLatencySamples(target, days = [], summaries = new Map()) {
   const sourceDays = days.length ? days : Object.keys(target.daily || {}).sort();
   return sourceDays.slice(-30).map((day) => {
-    const item = target.daily?.[day];
+    const item = target.daily?.[day] || summaries.get(`${target.id}:${day}`);
     if (!item || !Number(item.total)) return undefined;
     if (Number(item.ok_count || 0) <= 0) return null;
     const avg = Number(item.sum_latency_ms || 0) / Math.max(1, Number(item.ok_count || 0));
@@ -2642,5 +2655,3 @@ function avgLatency(rows) {
 
   return Math.round(nums.reduce((a, b) => a + b, 0) / nums.length);
 }
-
-

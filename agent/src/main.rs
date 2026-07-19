@@ -861,7 +861,6 @@ fn ping_json(p: &PingResult) -> serde_json::Value {
 
 impl HttpClient {
     fn new() -> Self {
-        let _ = rustls_rustcrypto::provider().install_default();
         let config = ureq::Agent::config_builder()
             .user_agent(format!("NStatus-Agent/{}", AGENT_VERSION))
             .timeout_connect(Some(Duration::from_secs(10)))

@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
 const tracked = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: root })
   .toString('utf8').split('\0').filter(Boolean);
 const textFiles = tracked.filter((file) =>
-  !/\.(?:png|jpe?g|gif|ico|woff2?|exe)$/i.test(file)
+  existsSync(path.join(root, file))
+  && !/\.(?:png|jpe?g|gif|ico|woff2?|exe)$/i.test(file)
   && !/(?:^|\/)vendor\//.test(file)
   && !/(?:^|\/)Cargo\.lock$/.test(file)
   && !/(?:^|\/)bin\//.test(file));

@@ -6,7 +6,7 @@
 
 | 名称 | 推荐/默认 | 说明 |
 | --- | --- | --- |
-| `PUBLIC_SITE_NAME` | `NIE-SLA` | 公开站点名称，可自定义 |
+| `PUBLIC_SITE_NAME` | `聶.NET` | 公开站点名称 |
 | `PUBLIC_WORKER_URL` | Worker HTTPS URL | 区域/安装地址回退 |
 | `TIMEZONE_OFFSET_MINUTES` | `480` | UTC+8，影响每日桶和归档 |
 | `CONCURRENCY` | `40` | 单轮并发目标数 |
@@ -40,7 +40,6 @@
 | --- | --- |
 | `PUBLIC_AGENT_INSTALL_BASE` | 安装脚本和 `bin/` 的公开 HTTPS Base |
 | `PUBLIC_AGENT_API_BASE` | Agent 上报 API Base |
-| `AGENT_DOWNLOAD_BASE` | 自动更新读取 `VERSION`/`SHA256SUMS` 的 HTTPS Base，通常与 Pages 相同 |
 | `AGENT_LATEST_VERSION` | Worker 返回的最新版本，例如 `v1.0.14` |
 | `NSTATUS_SHA256SUMS_SHA256` | 发布 manifest 自身 SHA-256 |
 | `AGENT_AUTO_UPDATE_DEFAULT` | 后台无设置时默认策略 |
@@ -61,13 +60,13 @@
 写入：
 
 ```bash
-npx wrangler secret put ADMIN_TOKEN --config wrangler.local.toml
+npx wrangler secret put ADMIN_TOKEN
 ```
 
 列出 secret 名称不会显示值：
 
 ```bash
-npx wrangler secret list --config wrangler.local.toml
+npx wrangler secret list
 ```
 
 ## Agent 环境变量

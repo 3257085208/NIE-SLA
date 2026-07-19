@@ -22,7 +22,7 @@ export function nodegetFlagHtml(code, extraClass = '') {
   const key = String(code || '').trim().toUpperCase();
   if (!/^[A-Z]{2}$/.test(key)) return '';
   const cls = ['region-flag', extraClass].filter(Boolean).join(' ');
-  return `<img class="${escapeAttr(cls)}" src="https://flagcdn.com/${key.toLowerCase()}.svg" alt="${escapeAttr(key)}" title="${escapeAttr(key)}" loading="lazy">`;
+  return `<img class="${escapeAttr(cls)}" src="${ASSET_ROOT}/flags/${key.toLowerCase()}.svg" alt="${escapeAttr(key)}" title="${escapeAttr(key)}" loading="lazy">`;
 }
 
 export function nodegetOsLogoHtml(info = {}) {

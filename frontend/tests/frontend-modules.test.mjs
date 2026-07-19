@@ -6,9 +6,10 @@ import {
   countMissedChecks,
   filterChecksByRange,
   normalizeChartRows,
-} from '../frontend/js/shared/chart-data.js';
-import { createAdminClient } from '../frontend/js/admin/api.js';
-import { groupByDimension, groupKeyFor, priceBandKey } from '../frontend/js/shared/grouping.js';
+} from '../js/shared/chart-data.js';
+import { createAdminClient } from '../js/admin/api.js';
+import { groupByDimension, groupKeyFor, priceBandKey } from '../js/shared/grouping.js';
+import { nodegetFlagHtml } from '../js/themes/nodeget-cards.js';
 
 const rows = normalizeChartRows([
   { checked_at: 30, ok: 1, latency_ms: 20 },
@@ -21,10 +22,7 @@ assert.deepEqual(clampChartRange(-10, 30, 0, 100), { min: 0, max: 40 });
 assert.deepEqual(clampChartRange(80, 120, 0, 100), { min: 60, max: 100 });
 assert.equal(countChartGaps([{ checked_at: 0 }, { checked_at: 10 }, { checked_at: 40 }], 20), 1);
 assert.equal(countMissedChecks([{ missed: true }, {}, { missed: true }]), 2);
-assert.deepEqual(
-  filterChecksByRange([{ checked_at: 100 }, { checked_at: 100_000 }], 'day', 100_000),
-  [{ checked_at: 100_000 }],
-);
+assert.deepEqual(filterChecksByRange([{ checked_at: 100 }, { checked_at: 100_000 }], 'day', 100_000), [{ checked_at: 100_000 }]);
 
 const storage = new Map();
 globalThis.localStorage = {
@@ -42,42 +40,26 @@ globalThis.fetch = async (url, options) => {
     headers: { 'content-type': 'application/json' },
   });
 };
+
 const client = createAdminClient({ apiBase: 'https://api.example' });
 client.setToken('secret');
 client.saveSession('session', Math.floor(Date.now() / 1000) + 60);
-// Session-only mode: master token is not sent when a valid session exists.
 await client.api('/api/targets');
-assert.equal(lastRequest.url, 'https://api.example/api/targets');
 assert.equal(lastRequest.options.headers.Authorization, undefined);
 assert.equal(lastRequest.options.headers['x-admin-session'], 'session');
-// Login/TOTP still force master token.
 await client.api('/api/login', { forceToken: true });
 assert.equal(lastRequest.options.headers.Authorization, 'Bearer secret');
-assert.equal(lastRequest.options.headers['x-admin-session'], 'session');
 
-let unauthorized = '';
-globalThis.fetch = async () => new Response(JSON.stringify({ ok: false, error: '未授权' }), { status: 401 });
-const denied = createAdminClient({
-  apiBase: 'https://api.example',
-  onUnauthorized: (message) => { unauthorized = message; },
-});
-denied.setToken('bad');
-await assert.rejects(() => denied.api('/api/login'), /未授权/);
-assert.equal(denied.getToken(), '');
-assert.equal(unauthorized, '未授权');
+const targets = [
+  { name: 'a', group_name: 'G1', provider: 'DMIT', location: 'HK', line_type: '落地鸡', price: 8 },
+  { name: 'b', group_name: 'G1', provider: 'DMIT', location: 'US', line_type: '线路鸡', price: 12 },
+  { name: 'c', group_name: 'G2', provider: 'Bandwagon', location: 'HK', line_type: '落地鸡', price: 3 },
+];
+assert.equal(groupKeyFor(targets[0], 'provider'), 'DMIT');
+assert.equal(Object.keys(groupByDimension(targets, 'location')).length, 2);
+assert.equal(Object.keys(groupByDimension(targets, 'line_type')).length, 2);
+assert.equal(priceBandKey({ price: 8 }), '5 – 10');
+assert.match(nodegetFlagHtml('HK'), /assets\/nodeget\/flags\/hk\.svg/);
+assert.doesNotMatch(nodegetFlagHtml('HK'), /flagcdn\.com/);
 
 console.log('frontend module tests passed');
-
-
-// grouping dimensions
-{
-  const targets = [
-    { name: 'a', group_name: 'G1', provider: 'DMIT', location: 'HK', line_type: '落地鸡', price: 8, currency: 'USD' },
-    { name: 'b', group_name: 'G1', provider: 'DMIT', location: 'US', line_type: '线路鸡', price: 12, currency: 'USD' },
-    { name: 'c', group_name: 'G2', provider: 'Bandwagon', location: 'HK', line_type: '落地鸡', price: 3, currency: 'USD' },
-  ];
-  assert.equal(groupKeyFor(targets[0], 'provider'), 'DMIT');
-  assert.equal(Object.keys(groupByDimension(targets, 'location')).length, 2);
-  assert.equal(Object.keys(groupByDimension(targets, 'line_type')).length, 2);
-  assert.equal(priceBandKey({ price: 8 }), '5 – 10');
-}

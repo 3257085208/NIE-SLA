@@ -84,8 +84,7 @@ Agent 运行在 VPS 内部：
 
 ```text
 Cron
-  -> 每分钟读取到期目标；空闲分钟立即结束
-  -> 获取 D1 原子租约，避免延迟任务重叠
+  -> 读取启用目标
   -> 根据区域选择 Worker/DO
   -> fetch() 或 cloudflare:sockets connect()
   -> 写入 5 分钟桶
@@ -99,8 +98,6 @@ Cron
 - 漏检：某个应该存在的 5 分钟桶没有真实结果，系统补写 synthetic missed point。
 
 当前默认 `CONCURRENCY=40`，33 个目标可以单批执行，减少后续批次在 Cron 生命周期内无法完成的问题。
-
-Cron 设置为每分钟并不代表每分钟探测。目标仍按 `interval_sec` 到期，默认 300 秒；每分钟触发只是让 Cloudflare 某次调度延迟后仍能在同一个 5 分钟桶内补跑。
 
 ### Agent 指标
 

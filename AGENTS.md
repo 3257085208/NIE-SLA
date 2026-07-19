@@ -1,34 +1,24 @@
-﻿# AGENTS.md — agent/ (production Agent + Worker)
+# AGENTS.md — public/ (desensitized showcase)
 
-GitHub: `3257085208/NIE-SLA-Agent` (private)
+GitHub: `3257085208/NIE-SLA` (public)
 
-This folder lives at `NIE-SLA/agent` on the local umbrella workspace.
+This folder is the public, non-production snapshot inside the local NIE-SLA umbrella workspace.
 
 ## Scope
 
-- Edit **Agent** under `agent/`
-- Edit **Worker** under `worker/`
-- Deploy Worker only from `worker/`: `npx wrangler deploy`
-- Agent releases: git tag `v*` + CI
-- Frontend production is **sibling** `../frontend` (CloudflareStatus), not this tree's possibly-stale `frontend/`
+- Keep only desensitized Agent, Worker, frontend, tests, and documentation
+- Accept updates only from `../agent` and `../frontend` through the one-way export workflow
+- Keep deployment identifiers, production domains, tokens, and private infrastructure data out
+- Preserve public-only README, SECURITY, badges, and repository guidance
 
 ## Forbidden
 
-- Do not deploy from `../_archive`
-- Do not reverse-sync from `../public`
-- Do not push/deploy unless the user asks
+- Never copy files from this repository into `../agent` or `../frontend`
+- Never deploy Worker or Pages from this repository
+- Never add real Cloudflare database IDs, bucket names, routes, API domains, or credentials
+- Do not push unless the user asks
 
+## Validation
 
-## Security / cost guards (2026-07)
-
-- Public metrics/pings reject unlimited history (`max_points<=0` maps to defaults).
-- Production frontend is sibling `../frontend`; local `frontend/` is deprecated.
-- Windows installer prefers AtStartup + SYSTEM when elevated.
-
-
-## Auth (2026-07 full fix)
-
-- With TOTP enabled, admin APIs require `x-admin-session` only (no master token on each request).
-- Login/TOTP setup/verify still use `ADMIN_TOKEN`.
-- CORS uses `ALLOWED_ORIGIN` / `PUBLIC_SITE_ORIGIN` (not *).
-- After deploy: `node scripts/smoke-prod.mjs`
+- Run `node tests/public-repo-safety.test.mjs` after every export
+- Run `test.sh` before pushing the public snapshot

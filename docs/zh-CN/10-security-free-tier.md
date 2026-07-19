@@ -31,14 +31,13 @@
 
 1. 使用不同的随机 Secret。
 2. 启用 TOTP。
-3. 真实资源只写入被忽略的 `wrangler.local.toml`，不修改并提交公共 `wrangler.toml` 模板。
+3. 不提交真实 `wrangler.toml` 数据库 ID/私有域名配置到公共模板。
 4. 不分享完整 Agent 安装命令。
 5. 最小化 GitHub Actions `permissions`。
 6. 定期轮换泄露密钥。
 7. 使用 Cloudflare 账号 MFA。
 8. 审核自定义域名 DNS 和 Pages/Worker 路由。
 9. 对管理操作保留日志但不记录 Authorization Header。
-10. 提交前运行 `node tests/public-repo-safety.test.mjs`，并在 GitHub 启用 Secret Scanning。
 
 ## 节点失陷影响
 
@@ -63,11 +62,9 @@ TOTP 保护登录和管理 API，不防止同源 XSS、已控制浏览器、恶�
 - CF 探测固定 5 分钟，而不是每秒。
 - Agent 1 秒采样但批量上传。
 - 高频历史进入 R2，不逐点写 D1。
-- Metrics 与 Ping 合并成同一小时 telemetry 对象，每批最多一次 R2 PUT。
-- D1 保存最新状态和聚合，长期日汇总优先从 R2 状态读取。
+- D1 保存最新状态和聚合。
 - 清理任务每小时而不是每次 Cron。
 - 状态与检查接口短缓存。
-- 可把 Pages 域名的 `/api/*` 直接路由到 Worker，避免 Pages Function 二次转发。
 
 ## 规模估算方法
 

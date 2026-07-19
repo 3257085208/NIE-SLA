@@ -10,6 +10,7 @@ import { normalizeTargetOrder } from '../src/admin/target-order.js';
 import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates } from '../src/storage.js';
 import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
 import { isAgentApiPath } from '../src/route-policy.js';
+import { compactStatusPayload } from '../src/status-payload.js';
 
 globalThis.crypto ||= webcrypto;
 const originalFetch = globalThis.fetch;
@@ -98,6 +99,26 @@ const rateEnv = fakeRateLimitEnv();
 assert.deepEqual(await Promise.all(Array.from({ length: 8 }, () => rateLimitD1(rateEnv, 'login:1', 3, 60))), [true, true, true, false, false, false, false, false]);
 assert.equal(isAgentApiPath('/api/agent/metrics'), true);
 assert.equal(isAgentApiPath('/api/agent/ping-targets'), true);
+
+const compactStatus = compactStatusPayload({
+  ok: true,
+  days: ['2026-07-19'],
+  summaries: [{ target_id: 'vps-a', day: '2026-07-19', total: 1, ok_count: 1 }],
+  incidents: [{ target_id: 'vps-a', started_at: 1 }],
+  ping_targets: [{ id: 'cn', name: 'China' }],
+  targets: [{
+    id: 'vps-a',
+    provider: 'Example',
+    daily: { '2026-07-19': { total: 1 } },
+    agent_metrics: { cpu_percent: 12, memory: { percent: 34 }, pings: [{ target_id: 'cn', ts: 1 }] },
+  }],
+});
+assert.equal(compactStatus.lite, true);
+assert.deepEqual(compactStatus.summaries, [{ target_id: 'vps-a', day: '2026-07-19', total: 1, ok_count: 1 }]);
+assert.equal(compactStatus.targets[0].provider, 'Example');
+assert.equal(compactStatus.targets[0].agent_metrics.cpu_percent, 12);
+assert.equal('daily' in compactStatus.targets[0], false);
+assert.equal('pings' in compactStatus.targets[0].agent_metrics, false);
 assert.equal(isAgentApiPath('/api/agent/install-command'), false);
 assert.equal(isAgentApiPath('/api/login'), false);
 
@@ -412,4 +433,16 @@ function fakeStatement(sql, tables) {
       return { success: true, meta: { changes: 1 } };
     },
   };
+}
+
+
+// cpu_temp thermal fields
+{
+  const pts = compactMetricPoints([
+    { ts: 1, cpu: 1, cpu_temp: 40, gpu_temp: 50, gpu_util: 10 },
+    { ts: 2, cpu: 2, cpu_temp: 42, gpu_temp: 52, gpu_util: 20 },
+  ], 2);
+  assert.equal(pts.length, 2);
+  assert.equal(pts[0].cpu_temp, 40);
+  assert.equal(pts[1].gpu_util, 20);
 }

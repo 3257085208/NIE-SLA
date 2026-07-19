@@ -3,8 +3,8 @@
  * Post-deploy production smoke checks for NIE-SLA Worker + Pages.
  * Usage: node scripts/smoke-prod.mjs [apiBase] [pagesBase]
  */
-const apiBase = (process.argv[2] || process.env.NSTATUS_API_BASE || 'https://api-sla.niekaixiang.com').replace(/\/+$/, '');
-const pagesBase = (process.argv[3] || process.env.NSTATUS_PAGES_BASE || 'https://sla.niekaixiang.com').replace(/\/+$/, '');
+const apiBase = (process.argv[2] || process.env.NSTATUS_API_BASE || '').replace(/\/+$/, '');
+const pagesBase = (process.argv[3] || process.env.NSTATUS_PAGES_BASE || '').replace(/\/+$/, '');
 
 async function get(url) {
   const res = await fetch(url, { redirect: 'follow' });
@@ -23,6 +23,7 @@ function pass(name) { results.push(['PASS', name]); console.log('  PASS', name);
 function fail(name, err) { results.push(['FAIL', name, String(err)]); console.error('  FAIL', name, err); }
 
 async function main() {
+  assert(apiBase && pagesBase, 'usage: node scripts/smoke-prod.mjs <apiBase> <pagesBase>');
   console.log('Smoke API:', apiBase);
   console.log('Smoke Pages:', pagesBase);
 

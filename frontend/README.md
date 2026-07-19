@@ -2,7 +2,7 @@
 
 本目录是 NIE-SLA 的 Cloudflare Pages 前端，同时包含公开状态页、管理后台、Pages Functions API 代理、Agent 安装脚本和发布二进制。
 
-完整系统文档见 [NIE-SLA 中文主手册](https://github.com/3257085208/NIE-SLA/blob/main/README.zh-CN.md)。Worker/Agent 源码也位于该仓库。
+完整系统文档见 [NIE-SLA-Agent 中文主手册](https://github.com/3257085208/NIE-SLA-Agent/blob/main/README.zh-CN.md)。Worker/Agent 源码也位于该仓库。
 
 ## 目录
 
@@ -65,7 +65,7 @@ Cloudflare Proxy: DNS only
 
 不要开启橙云。Cloudflare Workers TCP Sockets 可能拒绝直接 IPv6 字面地址；连接 Cloudflare 自己的代理 IP 也被禁止。
 
-完整教程见 [IPv6、AAAA 与 CF TCP 探测](https://github.com/3257085208/NIE-SLA/blob/main/docs/zh-CN/12-ipv6-cloudflare-probe.md)。
+完整教程见 [IPv6、AAAA 与 CF TCP 探测](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/12-ipv6-cloudflare-probe.md)。
 
 ## Agent 发布文件
 

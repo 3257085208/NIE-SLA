@@ -92,7 +92,7 @@ export async function getAgentUpdatePolicy(env) {
 }
 
 async function loadAgentRelease(env) {
-  const downloadBase = String(env.AGENT_DOWNLOAD_BASE || env.PUBLIC_AGENT_INSTALL_BASE || '').trim().replace(/\/+$/, '');
+  const downloadBase = String(env.AGENT_DOWNLOAD_BASE || 'https://status.example.com').trim().replace(/\/+$/, '');
   if (!downloadBase.startsWith('https://')) throw new Error('AGENT_DOWNLOAD_BASE must use HTTPS');
   const [versionResponse, manifestResponse] = await Promise.all([
     fetch(`${downloadBase}/bin/VERSION`, { cache: 'no-store' }),

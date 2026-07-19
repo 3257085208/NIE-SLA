@@ -1,5 +1,5 @@
 // Admin sub-module: agent install command generation.
-import { clamp, sanitizeAgentId, sha256Hex } from '../utils.js';
+import { clamp, sanitizeAgentId } from '../utils.js';
 import { agentScopedToken } from '../auth.js';
 
 export async function getAgentInstallCommand(env, url, request = null) {
@@ -17,9 +17,8 @@ export async function getAgentInstallCommand(env, url, request = null) {
   if (!installBase) return { ok: false, error: 'Agent 安装地址不可用。请从公开前端域名打开管理后台，或配置 PUBLIC_AGENT_INSTALL_BASE。' };
   const apiBase = agentApiBase(env, request, url, installBase);
   const pingSec = String(clamp(Number(env.NSTATUS_PING_SEC || env.AGENT_PING_SEC || 20), 5, 600));
-  const release = await resolveInstallRelease(env, installBase);
-  if (!release) return { ok: false, error: 'Agent 发布信息不可用。请部署 frontend/bin，或配置 NSTATUS_SHA256SUMS_SHA256 和 AGENT_LATEST_VERSION。' };
-  const { manifestHash: sha256SumsSha256, version: expectedVersion } = release;
+  const sha256SumsSha256 = String(env.NSTATUS_SHA256SUMS_SHA256 || '').trim();
+  const expectedVersion = String(env.AGENT_LATEST_VERSION || 'v1.0.16').trim();
 
   const linuxEnvNames = [
     'NSTATUS_AGENT_BASE_URL',
@@ -79,33 +78,6 @@ export async function getAgentInstallCommand(env, url, request = null) {
     linux_command: linuxCommand,
     windows_command: windowsCommand,
   };
-}
-
-async function resolveInstallRelease(env, installBase) {
-  const configuredHash = String(env.NSTATUS_SHA256SUMS_SHA256 || '').trim().toLowerCase();
-  const configuredVersion = String(env.AGENT_LATEST_VERSION || '').trim();
-  if (/^[a-f0-9]{64}$/.test(configuredHash) && /^v?\d+\.\d+\.\d+$/.test(configuredVersion)) {
-    return {
-      manifestHash: configuredHash,
-      version: configuredVersion.startsWith('v') ? configuredVersion : `v${configuredVersion}`,
-    };
-  }
-  try {
-    const [versionResponse, manifestResponse] = await Promise.all([
-      fetch(`${installBase}/bin/VERSION`, { cache: 'no-store' }),
-      fetch(`${installBase}/bin/SHA256SUMS`, { cache: 'no-store' }),
-    ]);
-    if (!versionResponse.ok || !manifestResponse.ok) return null;
-    const versionText = String(await versionResponse.text()).trim();
-    const manifest = await manifestResponse.text();
-    if (!/^v?\d+\.\d+\.\d+$/.test(versionText) || !manifest.trim()) return null;
-    return {
-      manifestHash: await sha256Hex(manifest),
-      version: versionText.startsWith('v') ? versionText : `v${versionText}`,
-    };
-  } catch (_) {
-    return null;
-  }
 }
 
 function agentApiBase(env, request = null, url = null, installBase = '') {

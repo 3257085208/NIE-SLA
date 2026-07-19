@@ -5,15 +5,15 @@
   [string]$AgentLabel = $env:NSTATUS_AGENT_LABEL,
   [string]$PingTargets = $(if ($env:NSTATUS_PING_TARGETS) { $env:NSTATUS_PING_TARGETS } else { "*" }),
   [string]$PingSec = $(if ($env:NSTATUS_PING_SEC) { $env:NSTATUS_PING_SEC } else { "20" }),
-  [string]$DownloadBase = $(if ($env:DOWNLOAD_BASE) { $env:DOWNLOAD_BASE } else { "https://sla.niekaixiang.com" }),
+  [string]$DownloadBase = $(if ($env:DOWNLOAD_BASE) { $env:DOWNLOAD_BASE } else { "https://status.example.com" }),
   [string]$InstallDir = $(Join-Path $env:ProgramData "NStatus"),
   [switch]$Uninstall
 )
 
 $ErrorActionPreference = "Stop"
 $TaskName = "NStatusMetrics"
-$DefaultSha256SumsSha256 = "db90eb9037185aa463926e9c3cf1428519af903b6b82c120b5669da466fac9c5"
-$DefaultExpectedVersion = "v1.0.14"
+$DefaultSha256SumsSha256 = ""
+$DefaultExpectedVersion = ""
 $CacheKey = $(if ($env:NSTATUS_SHA256SUMS_SHA256) { $env:NSTATUS_SHA256SUMS_SHA256 -replace '[^A-Za-z0-9._-]', '' } else { [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString() })
 
 function Need-Value($Value, $Prompt) {
@@ -31,7 +31,7 @@ function Get-ExpectedSha256($DownloadBase, $FileName) {
   $expectedManifest = $(if ($env:NSTATUS_SHA256SUMS_SHA256) { $env:NSTATUS_SHA256SUMS_SHA256.Trim() } else { $DefaultSha256SumsSha256 })
   try {
     $actualManifest = (Get-FileHash -Algorithm SHA256 -LiteralPath $checksumsFile).Hash.ToLowerInvariant()
-    if ($actualManifest -ne $expectedManifest.ToLowerInvariant()) {
+    if ($expectedManifest -and $actualManifest -ne $expectedManifest.ToLowerInvariant()) {
       throw "校验清单验证失败。期望 $expectedManifest，实际 $actualManifest"
     }
     $checksums = Get-Content -LiteralPath $checksumsFile -Raw

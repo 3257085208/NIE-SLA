@@ -33,7 +33,6 @@ tests/                  前端和仓库级测试
 - Linux amd64 release build。
 - Shell 语法。
 - 安装命令和仓库卫生约束。
-- Secret、私钥和本地部署配置检查。
 - 并发与漏检配置检查。
 
 Windows：
@@ -77,20 +76,23 @@ cargo build --release
 
 ## 版本发布
 
-公共仓库使用 Tag 驱动的 GitHub Actions Release，建议顺序：
+建议顺序：
 
 1. 更新 Cargo 版本和 Agent 版本常量。
 2. 运行完整测试。
-3. 提交源码并推送 `main`，等待验证 CI 成功。
-4. 创建并推送与 `agent/VERSION` 相同的 `v*` Tag。
-5. CI 构建 Linux 6 种架构与 Windows amd64。
-6. CI 生成 `SHA256SUMS` 和 `VERSION`，逐项校验后创建 GitHub Release。
-7. 使用 `worker/deploy.sh` 下载 Release 到本地 `frontend/bin/`。
-8. 部署 Pages 和 Worker。
-9. 从 Pages 域名重新下载 `VERSION`、manifest 和至少一个二进制校验。
-10. 观察少量节点滚动更新，再扩大。
-
-`agent/bin/` 和 `frontend/bin/` 被公共仓库忽略。不要为了方便把构建产物直接提交到 Git；Release 才是二进制发布面。
+3. 构建全部架构。
+4. 逐个执行 `--version`。
+5. 生成 `SHA256SUMS`。
+6. 计算 `SHA256SUMS` 文件自身 SHA-256。
+7. 更新 Agent/Frontend 两个 `bin/` 目录。
+8. 更新安装器默认版本和 manifest 哈希。
+9. 更新 Worker update policy 默认值。
+10. 提交、推送 tag。
+11. 发布 GitHub Release 资产。
+12. 部署 Pages。
+13. 部署 Worker。
+14. 从生产域名重新下载并校验。
+15. 观察少量节点滚动更新，再扩大。
 
 ## GitHub Actions 权限
 
@@ -117,7 +119,7 @@ sha256sum nstatus-metrics-linux-amd64
 
 - 一个提交解决一个清晰问题。
 - 不提交真实密钥、数据库导出、日志和构建缓存。
-- 二进制、manifest 与 VERSION 必须来自同一次 CI Release。
+- 二进制更新与 manifest 同提交。
 - 文档写明行为和限制，不承诺平台无法保证的区域/实时性。
 - 发布前确认 `git status --short` 为空。
 

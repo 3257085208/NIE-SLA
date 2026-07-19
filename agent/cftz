@@ -78,7 +78,10 @@ write_env_file() {
 assert_safe_install_paths() {
     local path
     for path in "$WORK_DIR" "$STATE_DIR" "$ENV_FILE" "${WORK_DIR}/${BIN_NAME}"; do
-        if [[ -L "$path" ]]; then err "refusing symbolic-link install path: $path"; exit 1; fi
+        if [[ -L "$path" ]]; then
+            err "refusing symbolic-link install path: $path"
+            exit 1
+        fi
     done
 }
 
@@ -90,15 +93,28 @@ secure_install_permissions() {
     if [[ -f "${WORK_DIR}/samples-queue.json" && ! -e "${STATE_DIR}/samples-queue.json" ]]; then
         mv "${WORK_DIR}/samples-queue.json" "${STATE_DIR}/samples-queue.json"
     fi
-    chown root:root "$WORK_DIR"; chmod 0755 "$WORK_DIR"
+    chown root:root "$WORK_DIR"
+    chmod 0755 "$WORK_DIR"
     if [[ -f "$ENV_FILE" ]]; then
-        grep -q '^NSTATUS_QUEUE_FILE=' "$ENV_FILE" || printf 'NSTATUS_QUEUE_FILE=%s\n' "$(shell_quote "${STATE_DIR}/samples-queue.json")" >> "$ENV_FILE"
-        grep -q '^NSTATUS_PRIVILEGED_UPDATER=' "$ENV_FILE" || printf 'NSTATUS_PRIVILEGED_UPDATER=1\n' >> "$ENV_FILE"
-        chown "root:${agent_group}" "$ENV_FILE"; chmod 0640 "$ENV_FILE"
+        if ! grep -q '^NSTATUS_QUEUE_FILE=' "$ENV_FILE"; then
+            printf 'NSTATUS_QUEUE_FILE=%s\n' "$(shell_quote "${STATE_DIR}/samples-queue.json")" >> "$ENV_FILE"
+        fi
+        if ! grep -q '^NSTATUS_PRIVILEGED_UPDATER=' "$ENV_FILE"; then
+            printf 'NSTATUS_PRIVILEGED_UPDATER=1\n' >> "$ENV_FILE"
+        fi
+        chown "root:${agent_group}" "$ENV_FILE"
+        chmod 0640 "$ENV_FILE"
     fi
-    if [[ -f "${WORK_DIR}/${BIN_NAME}" ]]; then chown root:root "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"; fi
-    chown -R "${AGENT_USER}:${agent_group}" "$STATE_DIR"; chmod 0750 "$STATE_DIR"
-    if [[ -f "${INSTALL_DIR}/cftz" ]]; then chown root:root "${INSTALL_DIR}/cftz"; chmod 0755 "${INSTALL_DIR}/cftz"; fi
+    if [[ -f "${WORK_DIR}/${BIN_NAME}" ]]; then
+        chown root:root "${WORK_DIR}/${BIN_NAME}"
+        chmod 0755 "${WORK_DIR}/${BIN_NAME}"
+    fi
+    chown -R "${AGENT_USER}:${agent_group}" "$STATE_DIR"
+    chmod 0750 "$STATE_DIR"
+    if [[ -f "${INSTALL_DIR}/cftz" ]]; then
+        chown root:root "${INSTALL_DIR}/cftz"
+        chmod 0755 "${INSTALL_DIR}/cftz"
+    fi
 }
 
 download_to() {
@@ -136,28 +152,49 @@ detect_arch() {
 
 download_binary() {
     local api="$1" tok="$2" aid="$3" automatic="${4:-0}" arch binary_name policy download_base manifest_hash latest_version auto_update current_version
-    arch="$(detect_arch)"; binary_name="${BIN_NAME}-linux-${arch}"
-    policy="$(curl_api "$tok" "" -fsSL --get --data-urlencode "agent_id=${aid}" "${api%/}/api/agent/update-policy")" || { err "unable to fetch trusted update policy"; exit 1; }
+    arch="$(detect_arch)"
+    binary_name="${BIN_NAME}-linux-${arch}"
+    policy="$(curl_api "$tok" "" -fsSL --get --data-urlencode "agent_id=${aid}" "${api%/}/api/agent/update-policy")" || {
+        err "unable to fetch trusted update policy"
+        exit 1
+    }
     download_base="$(printf '%s' "$policy" | json_string_value download_base)"
     manifest_hash="$(printf '%s' "$policy" | json_string_value manifest_sha256 | tr 'A-F' 'a-f')"
     latest_version="$(printf '%s' "$policy" | json_string_value latest_version)"
     auto_update="$(printf '%s' "$policy" | sed -n 's/.*"auto_update"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' | head -n 1)"
-    if [[ "$automatic" == "1" && "$auto_update" != "true" ]]; then echo "__AUTO_UPDATE_DISABLED__"; return 0; fi
+    if [[ "$automatic" == "1" && "$auto_update" != "true" ]]; then
+        echo "__AUTO_UPDATE_DISABLED__"
+        return 0
+    fi
     current_version="$("${WORK_DIR}/${BIN_NAME}" --version 2>/dev/null || true)"
-    if [[ "$automatic" == "1" && "$current_version" == "$latest_version" ]]; then echo "__ALREADY_CURRENT__"; return 0; fi
+    if [[ "$automatic" == "1" && "$current_version" == "$latest_version" ]]; then
+        echo "__ALREADY_CURRENT__"
+        return 0
+    fi
     [[ "$download_base" == https://* ]] || { err "update download base must use HTTPS"; exit 1; }
     [[ "$manifest_hash" =~ ^[0-9a-f]{64}$ ]] || { err "update policy has no valid manifest hash"; exit 1; }
     [[ -n "$latest_version" ]] || { err "update policy has no version"; exit 1; }
+
     local tmpbin sums expected actual sums_actual reported
-    tmpbin="$(mktemp)"; sums="$(mktemp)"
+    tmpbin="$(mktemp)"
+    sums="$(mktemp)"
     download_to "${download_base%/}/bin/SHA256SUMS" "$sums" || { rm -f "$tmpbin" "$sums"; exit 1; }
     sums_actual="$(sha256_file "$sums")"
-    [[ "${sums_actual,,}" == "$manifest_hash" ]] || { rm -f "$tmpbin" "$sums"; err "update manifest checksum mismatch"; exit 1; }
+    if [[ "${sums_actual,,}" != "$manifest_hash" ]]; then
+        rm -f "$tmpbin" "$sums"
+        err "update manifest checksum mismatch"
+        exit 1
+    fi
     expected="$(awk -v name="$binary_name" '$2 == name || $2 == "bin/" name { print $1; exit }' "$sums")"
     [[ "$expected" =~ ^[0-9A-Fa-f]{64}$ ]] || { rm -f "$tmpbin" "$sums"; err "manifest is missing ${binary_name}"; exit 1; }
     download_to "${download_base%/}/bin/${binary_name}" "$tmpbin" || { rm -f "$tmpbin" "$sums"; exit 1; }
-    actual="$(sha256_file "$tmpbin")"; rm -f "$sums"
-    [[ "${actual,,}" == "${expected,,}" ]] || { rm -f "$tmpbin"; err "Agent binary checksum mismatch"; exit 1; }
+    actual="$(sha256_file "$tmpbin")"
+    rm -f "$sums"
+    if [[ "${actual,,}" != "${expected,,}" ]]; then
+        rm -f "$tmpbin"
+        err "Agent binary checksum mismatch"
+        exit 1
+    fi
     chmod +x "$tmpbin"
     reported="$("$tmpbin" --version 2>&1)" || { rm -f "$tmpbin"; err "downloaded Agent cannot run"; exit 1; }
     [[ "$reported" == "$latest_version" ]] || { rm -f "$tmpbin"; err "Agent version mismatch: ${reported} != ${latest_version}"; exit 1; }
@@ -397,8 +434,14 @@ do_update() {
     local api="${NSTATUS_API_BASE:-}" tok="${NSTATUS_AGENT_TOKEN:-}" aid="${NSTATUS_AGENT_ID:-}" tmpbin backup
     [[ -n "$api" && -n "$tok" && -n "$aid" ]] || { err "Agent 配置不完整，无法获取可信更新策略"; exit 1; }
     tmpbin="$(download_binary "$api" "$tok" "$aid" "$automatic")"
-    if [[ "$tmpbin" == "__AUTO_UPDATE_DISABLED__" ]]; then info "自动更新已关闭，本次不安装更新"; return 0; fi
-    if [[ "$tmpbin" == "__ALREADY_CURRENT__" ]]; then info "Agent 已是最新版本"; return 0; fi
+    if [[ "$tmpbin" == "__AUTO_UPDATE_DISABLED__" ]]; then
+        info "自动更新已关闭，本次不安装更新"
+        return 0
+    fi
+    if [[ "$tmpbin" == "__ALREADY_CURRENT__" ]]; then
+        info "Agent 已是最新版本"
+        return 0
+    fi
     backup="${WORK_DIR}/${BIN_NAME}.bak"
     cp -p "${WORK_DIR}/${BIN_NAME}" "$backup"
     local init=$(detect_init)

@@ -564,7 +564,7 @@ fn probe_gpu() -> (Option<f64>, Option<f64>, String, usize) {
     }
     #[cfg(target_os = "linux")]
     {
-        if let Some(result) = probe_amd_sysfs() {
+        if let Some(result) = probe_drm_sysfs() {
             return result;
         }
     }
@@ -626,7 +626,7 @@ fn probe_nvidia_smi() -> Option<(Option<f64>, Option<f64>, String, usize)> {
 }
 
 #[cfg(target_os = "linux")]
-fn probe_amd_sysfs() -> Option<(Option<f64>, Option<f64>, String, usize)> {
+fn probe_drm_sysfs() -> Option<(Option<f64>, Option<f64>, String, usize)> {
     let drm = Path::new("/sys/class/drm");
     if !drm.exists() {
         return None;
@@ -646,23 +646,23 @@ fn probe_amd_sysfs() -> Option<(Option<f64>, Option<f64>, String, usize)> {
         }
         let device = entry.path().join("device");
         let vendor = std::fs::read_to_string(device.join("vendor")).unwrap_or_default();
-        // AMD vendor 0x1002; also accept any card with gpu_busy_percent
         let busy_path = device.join("gpu_busy_percent");
         let has_busy = busy_path.exists();
-        let is_amd = vendor.trim().eq_ignore_ascii_case("0x1002");
-        if !has_busy && !is_amd {
+        let vendor_name = gpu_vendor_name(vendor.trim());
+        if !has_busy && vendor_name.is_none() {
             continue;
         }
         count += 1;
         if name.is_empty() {
             name = std::fs::read_to_string(device.join("product_name"))
                 .or_else(|_| std::fs::read_to_string(entry.path().join("device/label")))
-                .unwrap_or_else(|_| {
-                    if is_amd {
-                        "AMD GPU".to_string()
-                    } else {
-                        format!("GPU {fname}")
-                    }
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| {
+                    vendor_name
+                        .map(|value| format!("{value} GPU"))
+                        .unwrap_or_else(|| format!("GPU {fname}"))
                 })
                 .trim()
                 .to_string();
@@ -704,6 +704,16 @@ fn probe_amd_sysfs() -> Option<(Option<f64>, Option<f64>, String, usize)> {
     ))
 }
 
+#[cfg(target_os = "linux")]
+fn gpu_vendor_name(vendor: &str) -> Option<&'static str> {
+    match vendor.trim().to_ascii_lowercase().as_str() {
+        "0x1002" => Some("AMD"),
+        "0x10de" => Some("NVIDIA"),
+        "0x8086" => Some("Intel"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,5 +724,14 @@ mod tests {
         assert_eq!(normalize_virt_label("kvm"), "kvm");
         assert_eq!(normalize_virt_label("qemu"), "qemu");
         assert_eq!(normalize_virt_label("none"), "");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn recognizes_common_gpu_vendors() {
+        assert_eq!(gpu_vendor_name("0x1002"), Some("AMD"));
+        assert_eq!(gpu_vendor_name("0x10DE"), Some("NVIDIA"));
+        assert_eq!(gpu_vendor_name("0x8086"), Some("Intel"));
+        assert_eq!(gpu_vendor_name("0xffff"), None);
     }
 }

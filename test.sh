@@ -80,13 +80,18 @@ run_check "frontend shared imports" node --input-type=module -e "await import('.
 run_check "frontend app import smoke" node "$ROOT/tests/frontend-app-import-smoke.mjs"
 run_check "frontend module tests" node "$ROOT/tests/frontend-modules.test.mjs"
 run_check "installer manifest tests" node "$ROOT/tests/installer-manifest.test.mjs"
+run_check "public repository safety" node "$ROOT/tests/public-repo-safety.test.mjs"
 
 echo ""
 echo "=== Rust Agent ==="
 run_shell "cargo fmt" "cd '$ROOT/agent' && $CARGO_BIN fmt -- --check"
 run_shell "cargo check" "cd '$ROOT/agent' && $CARGO_BIN check --locked"
 run_shell "cargo test" "cd '$ROOT/agent' && $CARGO_BIN test --locked"
-run_shell "linux amd64 build" "cd '$ROOT/agent' && $CARGO_BIN build --locked --release --target x86_64-unknown-linux-musl"
+if [[ "$(uname -s)" == MINGW* ]] && command -v zig >/dev/null 2>&1 && "$CARGO_BIN" zigbuild --help >/dev/null 2>&1; then
+  run_shell "linux amd64 build" "cd '$ROOT/agent' && $CARGO_BIN zigbuild --locked --release --target x86_64-unknown-linux-musl"
+else
+  run_shell "linux amd64 build" "cd '$ROOT/agent' && $CARGO_BIN build --locked --release --target x86_64-unknown-linux-musl"
+fi
 
 echo ""
 echo "=== Shell Script Syntax ==="

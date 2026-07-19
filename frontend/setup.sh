@@ -9,6 +9,7 @@ BIN_NAME="nstatus-metrics"
 SERVICE_NAME="nstatus-metrics"
 INSTALL_DIR="/usr/local/bin"
 WORK_DIR="/opt/nstatus-metrics"
+STATE_DIR="/var/lib/nstatus-metrics"
 ENV_FILE="$WORK_DIR/nstatus-metrics.env"
 CFTZ_BIN="$INSTALL_DIR/cftz"
 AGENT_USER="nstatus"
@@ -122,6 +123,35 @@ create_user() {
   fi
 }
 
+assert_safe_install_paths() {
+  local path
+  for path in "$WORK_DIR" "$STATE_DIR" "$ENV_FILE" "${WORK_DIR}/${BIN_NAME}"; do
+    if [[ -L "$path" ]]; then
+      err "拒绝使用符号链接安装路径: $path"
+      exit 1
+    fi
+  done
+}
+
+secure_install_permissions() {
+  local agent_group
+  agent_group="$(id -gn "$AGENT_USER" 2>/dev/null || printf '%s' "$AGENT_USER")"
+  mkdir -p "$WORK_DIR" "$STATE_DIR"
+  if [[ -f "${WORK_DIR}/samples-queue.json" && ! -e "${STATE_DIR}/samples-queue.json" ]]; then
+    mv "${WORK_DIR}/samples-queue.json" "${STATE_DIR}/samples-queue.json"
+  fi
+  chown root:root "$WORK_DIR" "${WORK_DIR}/${BIN_NAME}"
+  chmod 0755 "$WORK_DIR" "${WORK_DIR}/${BIN_NAME}"
+  chown "root:${agent_group}" "$ENV_FILE"
+  chmod 0640 "$ENV_FILE"
+  chown -R "${AGENT_USER}:${agent_group}" "$STATE_DIR"
+  chmod 0750 "$STATE_DIR"
+  if [[ -f "$CFTZ_BIN" ]]; then
+    chown root:root "$CFTZ_BIN"
+    chmod 0755 "$CFTZ_BIN"
+  fi
+}
+
 write_env_file() {
   local api="$1" token="$2" agent_id="$3" label="$4" interval="$5" ping_targets="$6" ping_sec="$7"
   mkdir -p "$WORK_DIR"
@@ -132,6 +162,8 @@ write_env_file() {
     printf 'NSTATUS_AGENT_LABEL=%s\n' "$(shell_quote "$label")"
     printf 'NSTATUS_INTERVAL_SEC=%s\n' "$(shell_quote "$interval")"
     printf 'NSTATUS_SAMPLE_SEC=1\n'
+    printf 'NSTATUS_QUEUE_FILE=%s\n' "$(shell_quote "${STATE_DIR}/samples-queue.json")"
+    printf 'NSTATUS_PRIVILEGED_UPDATER=1\n'
     printf 'NSTATUS_PING_TARGETS=%s\n' "$(shell_quote "$ping_targets")"
     printf 'NSTATUS_PING_SEC=%s\n' "$(shell_quote "$ping_sec")"
   } > "$ENV_FILE"
@@ -147,8 +179,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=${WORK_DIR}
-ExecStart=/bin/sh -c 'set -a; . "${ENV_FILE}"; set +a; exec "${WORK_DIR}/${BIN_NAME}"'
+WorkingDirectory=${STATE_DIR}
+EnvironmentFile=${ENV_FILE}
+ExecStart=${WORK_DIR}/${BIN_NAME}
 Restart=always
 RestartSec=15
 User=${AGENT_USER}
@@ -156,15 +189,38 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=${WORK_DIR}
+ReadWritePaths=${STATE_DIR}
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 EOF
+  cat > "/etc/systemd/system/${SERVICE_NAME}-update.service" <<EOF
+[Unit]
+Description=聶.NET Agent verified update check
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=${CFTZ_BIN} update --automatic
+EOF
+  cat > "/etc/systemd/system/${SERVICE_NAME}-update.timer" <<EOF
+[Unit]
+Description=Check for 聶.NET Agent updates
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
   systemctl daemon-reload
   systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+  systemctl enable --now "${SERVICE_NAME}-update.timer" >/dev/null 2>&1 || true
   systemctl restart "$SERVICE_NAME"
 }
 
@@ -182,7 +238,7 @@ start() {
         --pidfile /run/${SERVICE_NAME}.pid \
         --user ${AGENT_USER} \
         --exec /bin/sh -- \
-        -c 'set -a; . "${ENV_FILE}"; set +a; exec "${WORK_DIR}/${BIN_NAME}" >>"/var/log/${SERVICE_NAME}.log" 2>&1'
+        -c 'cd "${STATE_DIR}"; set -a; . "${ENV_FILE}"; set +a; exec "${WORK_DIR}/${BIN_NAME}" >>"/var/log/${SERVICE_NAME}.log" 2>&1'
     eend \$?
 }
 
@@ -206,7 +262,9 @@ do_uninstall() {
     systemd)
       systemctl stop "$SERVICE_NAME" 2>/dev/null || true
       systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+      systemctl disable --now "${SERVICE_NAME}-update.timer" 2>/dev/null || true
       rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+      rm -f "/etc/systemd/system/${SERVICE_NAME}-update.service" "/etc/systemd/system/${SERVICE_NAME}-update.timer"
       systemctl daemon-reload 2>/dev/null || true
       ;;
     openrc)
@@ -216,7 +274,7 @@ do_uninstall() {
       ;;
   esac
   rm -f "${INSTALL_DIR}/${BIN_NAME}" "$CFTZ_BIN"
-  rm -rf "$WORK_DIR"
+  rm -rf "$WORK_DIR" "$STATE_DIR"
   userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
   ok "已卸载"
 }
@@ -278,6 +336,7 @@ chmod +x "$TMPBIN"
 verify_agent_version "$TMPBIN"
 stop_existing_agent
 create_user
+assert_safe_install_paths
 mkdir -p "$WORK_DIR" "$INSTALL_DIR"
 install -m 0755 "$TMPBIN" "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || { cp "$TMPBIN" "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"; }
 ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
@@ -290,7 +349,7 @@ fi
 rm -f "$CFTZ_TMP"
 
 write_env_file "$API_BASE" "$TOKEN" "$AGENT_ID" "$AGENT_LABEL" "$INTERVAL" "$PING_TARGETS" "$PING_SEC"
-chown -R "$AGENT_USER" "$WORK_DIR" 2>/dev/null || true
+secure_install_permissions
 
 case "$INIT" in
   systemd) install_systemd_service; ok "systemd service started"; info "logs: journalctl -u ${SERVICE_NAME} -f" ;;

@@ -3,8 +3,9 @@ import { json, constantTimeEqual } from './auth.js';
 import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
 import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, getPublicSettings } from './admin.js';
 import { summarizeTraffic, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
+import { compactStatusPayload } from './status-payload.js';
 
-export async function getStatusCached(request, env, url) {
+export async function getStatusCached(request, env, url, ctx = null) {
   const ttl = clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300);
   const wantsFresh = url.searchParams.get('fresh') === '1' || url.searchParams.get('cache') === '0';
   const wantsLite = url.searchParams.get('lite') === '1';
@@ -16,15 +17,34 @@ export async function getStatusCached(request, env, url) {
   const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
-  if (cached) return cached;
-  const canUseSnapshot = !wantsLite && (!wantsFresh || !isAdminRequest(request, env));
+  if (cached) return withCacheState(cached, ttl, 'hit');
+  const canUseSnapshot = !wantsFresh || !isAdminRequest(request, env);
   const res = canUseSnapshot ? (await getStatusSnapshot(env, url)) || await getStatusFresh(env, url) : await getStatusFresh(env, url);
-  const headers = new Headers(res.headers);
-  headers.set('cache-control', `public, max-age=${ttl}`);
-  headers.set('x-nstatus-cache', 'miss');
-  const cachedRes = new Response(res.body, { status: res.status, headers });
-  try { await cache.put(cacheKey, cachedRes.clone()); } catch (_) {}
+  const cachedRes = withCacheState(res, ttl, 'miss');
+  if (cachedRes.ok) await putCachedResponse(cache, cacheKey, cachedRes, ctx, 'status');
   return cachedRes;
+}
+
+function withCacheState(response, ttl, state) {
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', `public, max-age=${ttl}`);
+  headers.set('x-nstatus-cache', state);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+async function putCachedResponse(cache, cacheKey, response, ctx, label) {
+  const task = cache.put(cacheKey, response.clone()).catch((err) => {
+    console.error(`${label} cache put failed:`, String(err?.message || err));
+  });
+  if (ctx && typeof ctx.waitUntil === 'function') {
+    ctx.waitUntil(task);
+    return;
+  }
+  await task;
 }
 
 function isAdminRequest(request, env) {
@@ -40,49 +60,6 @@ export async function getStatusFresh(env, url) {
   let payload = await buildStatusPayload(env, url);
   if (url?.searchParams?.get('lite') === '1') payload = compactStatusPayload(payload);
   return json(sanitizePublicStatusPayload(payload, env), 200, env);
-}
-
-function compactStatusPayload(payload) {
-  const targets = (payload.targets || []).map((target) => ({
-    id: target.id,
-    name: target.name,
-    group_name: target.group_name,
-    type: target.type,
-    enabled: target.enabled,
-    interval_sec: target.interval_sec,
-    ok: target.ok,
-    checked_at: target.checked_at,
-    latency_ms: target.latency_ms,
-    uptime_24h: target.uptime_24h,
-    error: target.error,
-    last_metrics_at: target.last_metrics_at,
-    agent_version: target.agent_version,
-    machine_uptime_sec: target.machine_uptime_sec,
-    status_source: target.status_source,
-    agent_online: target.agent_online,
-    agent_last_seen_sec: target.agent_last_seen_sec,
-    agent_offline_after_sec: target.agent_offline_after_sec,
-    agent_metrics: target.agent_metrics ? { traffic: target.agent_metrics.traffic || null } : null,
-    traffic: target.agent_metrics?.traffic || target.traffic || null,
-  }));
-  return {
-    ok: payload.ok,
-    name: payload.name,
-    now: payload.now,
-    days: payload.days,
-    regions: payload.regions,
-    frontend_theme: payload.frontend_theme,
-    frontend: payload.frontend,
-    traffic: payload.traffic,
-    privacy: payload.privacy,
-    storage: payload.storage,
-    timezone: payload.timezone,
-    targets,
-    summaries: [],
-    incidents: [],
-    warnings: payload.warnings || [],
-    lite: true,
-  };
 }
 
 async function buildStatusPayload(env, url = null) {
@@ -158,6 +135,7 @@ async function buildStatusPayload(env, url = null) {
     const displayTarget = row.type === 'http' ? displayUrl : displayHost;
     const agentState = metricsMap[sanitizeAgentId(targetRow.id)] || null;
     const publicRow = { ...row, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || 'Auto', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, ...agentStatusFields(agentState, env) };
+    delete publicRow.daily;
     if (hidePorts) delete publicRow.target_port;
     return publicRow;
   });
@@ -210,7 +188,6 @@ function publicAgentSummary(row, traffic = null) {
     gpu_temp_c: Number.isFinite(Number(vpsInfo?.gpu_temp_c)) ? Number(vpsInfo.gpu_temp_c) : null,
     gpu_util: Number.isFinite(Number(vpsInfo?.gpu_util)) ? Number(vpsInfo.gpu_util) : null,
     gpu_name: vpsInfo?.gpu_name ? String(vpsInfo.gpu_name) : null,
-    pings: row.pings ? parseJsonSafe(row.pings) : [],
     traffic,
   };
 }
@@ -280,6 +257,7 @@ export async function getStatusSnapshot(env, url) {
     payload.frontend_theme = frontend.theme;
     payload.frontend = { ...(payload.frontend || {}), ...frontend };
     await attachAgentState(payload, env);
+    if (url?.searchParams?.get('lite') === '1') payload = compactStatusPayload(payload);
     return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300)}`, 'x-nstatus-source': 'r2-status-snapshot' });
   } catch (_) { return null; }
 }
@@ -339,7 +317,7 @@ export async function writeStatusSnapshot(env) {
   return { ok: true, key, targets: payload.targets?.length || 0, summaries: payload.summaries?.length || 0 };
 }
 
-export async function getChecksCached(request, env, url) {
+export async function getChecksCached(request, env, url, ctx = null) {
   const ttl = clamp(Number(env.CHECKS_CACHE_TTL || 60), 0, 300);
   if (!ttl) return getChecks(env, url);
   const defaultLimit = clamp(Number(env.CHECKS_DEFAULT_LIMIT || 864), 24, 20000);
@@ -354,13 +332,10 @@ export async function getChecksCached(request, env, url) {
   const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
-  if (cached) return cached;
+  if (cached) return withCacheState(cached, ttl, 'hit');
   const res = await getChecks(env, cacheUrl);
-  const headers = new Headers(res.headers);
-  headers.set('cache-control', `public, max-age=${ttl}`);
-  headers.set('x-nstatus-cache', 'miss');
-  const cachedRes = new Response(res.body, { status: res.status, headers });
-  try { await cache.put(cacheKey, cachedRes.clone()); } catch (_) {}
+  const cachedRes = withCacheState(res, ttl, 'miss');
+  if (cachedRes.ok) await putCachedResponse(cache, cacheKey, cachedRes, ctx, 'checks');
   return cachedRes;
 }
 
