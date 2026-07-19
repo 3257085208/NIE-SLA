@@ -94,8 +94,8 @@ Cloudflare Scheduled Trigger 偶尔会延迟。Worker 每分钟只查询一次�
 
 | 组件 | 当前公开版本 | 兼容说明 |
 | --- | --- | --- |
-| Rust Agent | `v1.0.14` | 推荐版本；Linux amd64/arm64/armv7/armv6/armv5/386 与 Windows amd64 |
-| Worker API | `main` | 与 Agent `v1.0.10` 至 `v1.0.14` 协议兼容；推荐两端同时更新 |
+| Rust Agent | `v1.0.17` | 当前最新版本；Linux amd64/arm64/armv7/armv6/armv5/386 与 Windows amd64 |
+| Worker API | `main` | 与 Agent `v1.0.10` 至 `v1.0.17` 协议兼容；推荐两端同时更新 |
 | Frontend | `main` | 与本仓库同一 commit 的 Worker 配套使用 |
 | Cloudflare Runtime | `compatibility_date = 2026-06-17` | 需要 Workers、D1、R2；区域探测额外使用 Durable Objects |
 | Node.js | `18+` | 部署和测试使用，CI 使用 Node.js 24 |
