@@ -564,15 +564,18 @@ button { border: 0; cursor: pointer; }
   gap: 8px;
 }
 .cf-logo {
-  width: 76px;
-  height: 25px;
+  width: auto;
+  height: 32px;
   display: inline-flex;
   align-items: center;
+  opacity: .95;
+  text-decoration: none;
 }
+.cf-logo:hover { opacity: 1; }
 .cf-logo-img {
   display: block;
-  width: 76px;
-  height: auto;
+  width: 140px;
+  height: 32px;
   object-fit: contain;
 }
 
