@@ -1,47 +1,14 @@
 # Cloudflare Free Tier Analysis
 
-## R2-primary storage mode
+The canonical production capacity calculation is maintained in the Chinese root README: [Cloudflare free-tier and VPS capacity estimate](../../README.zh-CN.md#cloudflare-免费额度与-vps-容量估算).
 
-High-frequency Agent history now uses R2 by default:
+Current assumptions are 1-second local metrics, five 20-second Ping targets per VPS, 72-hour R2 retention, R2-primary history, and D1 history disabled. Under those assumptions:
 
-- `agent_metrics_state` stays in D1 for the latest VPS state and admin metadata.
-- 1-second VPS samples are written to hourly R2 objects.
-- TCP Ping samples are written to the same hourly R2 objects.
-- D1 history tables are fallback-only unless `AGENT_METRICS_TO_D1=true` or `AGENT_PINGS_TO_D1=true`.
-- D1-backed rate limiting is enabled by default for authenticated/write routes when the `DB` binding is present. Public cached reads keep a best-effort in-isolate throttle to avoid extra D1 load.
+| Upload interval | Fleet size | Workers requests | D1 rows written | R2 Class A | R2 Class B baseline | R2 storage |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 minutes | 50 VPS | ~28.8K/day, 28.8% | ~30K-45K/day, 30%-45% | ~432K/month, 43.2% | ~432K/month, 4.32%+ | ~2.2-2.4 GB-month, 22%-24% |
+| 10 minutes | 200 VPS | ~68.4K/day, 68.4% | ~60K-90K/day, 60%-90% | ~864K/month, 86.4% | ~864K/month, 8.64%+ | ~8.8-9.6 GB-month, 88%-96% |
 
-## 50 VPS + 1-second metrics
+The conservative theoretical ceiling is approximately 110 VPS at a 5-minute upload interval. At a 10-minute upload interval, operation-only math reaches roughly 220 VPS, but five Ping targets and 72-hour raw retention make R2 storage too close to the 10 GB-month free allowance. The documented conservative hard ceiling is therefore 200 VPS, with 150-180 VPS preferred for sustained operation.
 
-Assumptions:
-
-- 50 Agents.
-- `NSTATUS_SAMPLE_SEC=1`.
-- `NSTATUS_INTERVAL_SEC=300`.
-- R2 retention: `AGENT_METRICS_R2_RETENTION_HOURS=72`.
-- No public dashboard traffic included.
-
-| Resource | Daily Usage | Monthly | Free Limit | % |
-|----------|-------------|---------|------------|---|
-| Workers Requests | ~28.8K | ~864K | 100K/day | 28.8% |
-| D1 Writes | ~30K-45K | ~0.9M-1.35M | 100K/day | 30%-45% |
-| D1 Storage | tiny, latest state only | — | 5GB | <1% |
-| R2 Class A | ~14.4K | ~432K | 1M/month | 43.2% |
-| R2 Class B | ~14.4K + chart reads | ~432K + chart reads | 10M/month | ~4.3%+ |
-| R2 Storage | ~2.1GB retained | — | 10GB-month | ~21% |
-
-## TCP Ping impact
-
-Ping no longer consumes D1 write quota by default.
-
-Example with 50 Agents, 1 Ping target, `NSTATUS_PING_SEC=20`:
-
-| Resource | Usage | Notes |
-|----------|-------|-------|
-| Ping samples | 216K/day | Stored in R2 hourly objects |
-| Extra D1 writes | 0/day | Unless `AGENT_PINGS_TO_D1=true` |
-| Extra R2 Class A | 0/month | Piggybacks on the normal 5-minute Agent upload |
-| Extra R2 storage | modest | Appended inside the existing hourly JSON |
-
-## Practical conclusion
-
-50 VPS is safe on the free tier in R2-primary mode. The closest regular quotas are D1 writes and R2 Class A writes, both still below half of the free daily/monthly allowance before dashboard/admin reads. Keep high-frequency history in R2 and avoid enabling `AGENT_PINGS_TO_D1` for large fleets.
+Ping samples piggyback on Agent uploads and do not add one Worker request, D1 row write, or R2 Class A operation per sample while `AGENT_PINGS_TO_D1=false`.
