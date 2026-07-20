@@ -132,7 +132,7 @@ bash deploy.sh
 7. 部署 Worker、Cron、Durable Object 与 Pages。
 8. 把 Agent 下载文件随 Pages 发布，供后台生成固定版本安装命令。
 
-完整逐步说明、每个资源的作用和失败回滚方法见 [Cloudflare 从零部署](docs/zh-CN/02-deployment.md)。
+完整新手教程（概念、前置、一键/手动、域名、Agent、验收、排障）见 [Cloudflare 从零部署（新手完整教程）](docs/zh-CN/02-deployment.md)。
 
 ## 必须配置的 Secret
 
@@ -346,7 +346,7 @@ cargo test
 | 文档 | 内容 |
 | --- | --- |
 | [01 架构与组件](docs/zh-CN/01-architecture.md) | Worker、D1、R2、DO、Pages、Agent 的职责与数据流 |
-| [02 Cloudflare 从零部署](docs/zh-CN/02-deployment.md) | 自动/手动部署、Secret、自定义域名、验收与回滚 |
+| [02 Cloudflare 从零部署（新手完整教程）](docs/zh-CN/02-deployment.md) | 从零部署、概念解释、一键/手动、域名、Agent、验收与排障 |
 | [03 后台管理](docs/zh-CN/03-admin.md) | Token/TOTP、Target、排序、主题和更新开关 |
 | [04 Agent 安装与维护](docs/zh-CN/04-agent.md) | Linux/Windows、采样、队列、更新、卸载和日志 |
 | [05 流量与账单](docs/zh-CN/05-traffic-billing.md) | 流量模式、额度、到期日、价格与币种 |
