@@ -95,7 +95,12 @@ function agentApiBase(env, request = null, url = null, installBase = '') {
 }
 
 function agentInstallBase(env, request = null) {
-  const explicit = String(env.PUBLIC_AGENT_INSTALL_BASE || env.AGENT_INSTALL_BASE || '').trim();
+  const explicit = String(
+    env.PUBLIC_AGENT_INSTALL_BASE
+      || env.AGENT_INSTALL_BASE
+      || env.PUBLIC_SITE_ORIGIN
+      || '',
+  ).trim();
   if (explicit) return explicit.replace(/\/+$/, '');
 
   const origin = publicRequestOrigin(request);

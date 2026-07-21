@@ -61,7 +61,13 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 const adminSource = readFileSync(new URL('../frontend/js/admin.js', import.meta.url), 'utf8');
 assert.match(adminSource, /if \(t\.type === "http"\) return '<span class="hint">不适用<\/span>'/);
 assert.match(adminSource, /const agentTag = isWeb\s+\? notApplicable/);
-assert.match(adminSource, /isWeb \? "" : '<button class="btn btn-xs" data-a="deploy">部署 Agent<\/button>'/);
+if (adminSource.includes('btn-deploy')) {
+  assert.match(adminSource, /class="btn btn-xs btn-deploy" data-a="deploy" data-target-id=/);
+  assert.match(adminSource, /showInstallProgress\(t\);[\s\S]*apiAdmin\(/);
+  assert.match(adminSource, /data-retry-install/);
+} else {
+  assert.match(adminSource, /isWeb \? "" : '<button class="btn btn-xs" data-a="deploy">部署 Agent<\/button>'/);
+}
 assert.match(adminSource, /apiAdmin\("\/api\/targets\/order"/);
 assert.match(adminSource, /data-sort-handle/);
 assert.match(adminSource, /function bindTargetSorting\(\)/);

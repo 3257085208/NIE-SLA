@@ -148,6 +148,28 @@ assert.equal(installCommand.install_base, 'https://status.example.test');
 assert.match(installCommand.linux_command, /NSTATUS_AGENT_TOKEN='nst_[a-f0-9]{48}'/);
 assert.match(installCommand.linux_command, /NSTATUS_AGENT_LABEL='VPS A'/);
 assert.match(installCommand.windows_command, /nstatus-install\.ps1/);
+
+const installCommandWithoutSourceHeaders = await getAgentInstallCommand(
+  {
+    AGENT_TOKEN: 'global-agent-secret',
+    PUBLIC_AGENT_API_BASE: 'https://api.example.test',
+    PUBLIC_SITE_ORIGIN: 'https://status.example.test',
+    DB: {
+      prepare() {
+        return {
+          bind() {
+            return { first: async () => ({ id: 'vps-a', name: 'VPS A' }) };
+          },
+        };
+      },
+    },
+  },
+  new URL('https://api.example.test/api/agent/install-command?target_id=vps-a'),
+  new Request('https://api.example.test/api/agent/install-command?target_id=vps-a'),
+);
+assert.equal(installCommandWithoutSourceHeaders.ok, true);
+assert.equal(installCommandWithoutSourceHeaders.install_base, 'https://status.example.test');
+assert.match(installCommandWithoutSourceHeaders.linux_command, /https:\/\/status\.example\.test\/install\.sh/);
 assert.equal(isAgentApiPath('/api/login'), false);
 
 assert.deepEqual(await safeJson(new Request('https://example.com', { method: 'POST', body: '{"ok":true}' }), 64), { ok: true });

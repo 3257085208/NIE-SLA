@@ -530,14 +530,13 @@ function targetRowHtml(target, index) {
   const agentDetails = isWeb
     ? notApplicable
     : `<div class="status-stack"><div>${agentTag}<code>${escapeHtml(status.agent_version || "-")}</code></div><small>${status.machine_uptime_sec ? `运行 ${escapeHtml(formatDuration(status.machine_uptime_sec))}` : "暂无运行时长"}</small></div>`;
+  const monitorDetails = `<div class="monitoring-stack"><div class="monitoring-item"><span class="monitoring-label">CF</span><div class="status-stack"><div>${statusTag(state.text, state.className)}<strong>${status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`}</strong></div><small>${escapeHtml(probeUptime)}</small></div></div><div class="monitoring-item"><span class="monitoring-label">Agent</span>${agentDetails}</div></div>`;
   const cells = [
     `<div class="sort-cell"><button type="button" class="drag-handle" data-sort-handle title="拖动排序" aria-label="拖动 ${escapeHtml(target.name)} 排序">⠿</button><span class="sort-index">${index + 1}</span><span class="mobile-order"><button type="button" data-a="move-up" title="上移" aria-label="上移">↑</button><button type="button" data-a="move-down" title="下移" aria-label="下移">↓</button></span></div>`,
-    `<div class="target-summary"><div><b>${escapeHtml(target.name)}</b>${typeTag}${enabledTag}</div><code>${escapeHtml(target.id)}</code><span title="${escapeHtml(host)}">${escapeHtml(host || "-")}</span></div>`,
-    `<div class="status-stack"><div>${statusTag(state.text, state.className)}<strong>${status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`}</strong></div><small>${escapeHtml(probeUptime)}</small></div>`,
-    agentDetails,
-    `<span class="group-cell">${escapeHtml(targetGroupCell(target))}</span>`,
+    `<div class="target-summary"><div><b>${escapeHtml(target.name)}</b>${typeTag}${enabledTag}</div><code>${escapeHtml(target.id)}</code><span title="${escapeHtml(host)}">${escapeHtml(host || "-")}</span><span class="group-cell" title="${escapeHtml(targetGroupCell(target))}">${escapeHtml(targetGroupCell(target))}</span></div>`,
+    monitorDetails,
     trafficCell(target, status),
-    `<div class="actions">${isWeb ? "" : '<button class="btn btn-xs" data-a="deploy">部署 Agent</button>'}${targetActionsHtml(target)}</div>`,
+    `<div class="actions">${isWeb ? "" : `<button type="button" class="btn btn-xs btn-deploy" data-a="deploy" data-target-id="${escapeHtml(target.id)}">部署 Agent</button>`}${targetActionsHtml(target)}</div>`,
   ];
 
   return `
@@ -547,8 +546,6 @@ function targetRowHtml(target, index) {
       <td>${cells[2]}</td>
       <td>${cells[3]}</td>
       <td>${cells[4]}</td>
-      <td>${cells[5]}</td>
-      <td>${cells[6]}</td>
     </tr>`;
 }
 
@@ -565,7 +562,7 @@ function renderTargets() {
     rows = Object.entries(grouped)
       .sort((a, b) => a[0].localeCompare(b[0], "zh-CN"))
       .map(([name, list]) => {
-        const head = `<tr class="group-sep"><td colspan="7"><strong>${escapeHtml(name)}</strong> · ${list.length}</td></tr>`;
+        const head = `<tr class="group-sep"><td colspan="5"><strong>${escapeHtml(name)}</strong> · ${list.length}</td></tr>`;
         const body = list.map((target) => targetRowHtml(target, rowIndex++)).join("");
         return head + body;
       })
@@ -584,9 +581,7 @@ function renderTargets() {
           <tr>
             <th>排序</th>
             <th>目标</th>
-            <th>CF 探测</th>
-            <th>Agent</th>
-            <th>分组</th>
+            <th>监控状态</th>
             <th>流量</th>
             <th>操作</th>
           </tr>
@@ -619,8 +614,9 @@ function targetGroupCell(target) {
   return parts.join(" · ");
 }
 
-function targetByRow(row) {
-  return targets.find(target => target.id === row?.dataset.id);
+function targetByAction(button) {
+  const targetId = button?.dataset.targetId || button?.closest("tr")?.dataset.id || "";
+  return targets.find(target => target.id === targetId);
 }
 
 function orderedTargetIdsFromTable() {
@@ -1001,12 +997,37 @@ function showInstallCommands(t, data) {
   openModal();
 }
 
+function showInstallProgress(t) {
+  byId("modal").innerHTML = `
+    <h3>部署 Agent · ${escapeHtml(t.name || t.id)}</h3>
+    <div class="install-progress" role="status">
+      <span class="install-spinner" aria-hidden="true"></span>
+      <div><strong>正在生成安装命令</strong><p>正在校验管理会话并向 Worker 请求专用 Token...</p></div>
+    </div>
+    <div class="ma"><button class="btn" type="button" data-close>取消</button></div>`;
+  openModal();
+}
+
+function showInstallError(t, error) {
+  byId("modal").innerHTML = `
+    <h3>部署 Agent · ${escapeHtml(t.name || t.id)}</h3>
+    <div class="install-error" role="alert"><strong>安装命令生成失败</strong><p>${escapeHtml(error?.message || "未知错误")}</p></div>
+    <div class="ma"><button class="btn" type="button" data-close>关闭</button><button class="btn btn-primary" type="button" data-retry-install>重试</button></div>`;
+  byId("modal").querySelector("[data-retry-install]").onclick = () => deploy(t);
+  openModal();
+}
+
 async function deploy(t, trigger = null) {
+  if (!t?.id) {
+    toast("无法识别当前探针，请刷新后台后重试", "err");
+    return;
+  }
   const oldText = trigger?.textContent || "部署 Agent";
   if (trigger) {
     trigger.disabled = true;
     trigger.textContent = "生成中...";
   }
+  showInstallProgress(t);
   toast("正在生成安装命令...", "info");
   try {
     const d = await apiAdmin(
@@ -1025,6 +1046,7 @@ async function deploy(t, trigger = null) {
       toast("命令已生成；浏览器未允许自动复制，请在窗口中手动复制", "info");
     }
   } catch (e) {
+    showInstallError(t, e);
     toast("生成安装命令失败：" + (e?.message || "未知错误"), "err");
   } finally {
     if (trigger && document.body.contains(trigger)) {
@@ -1529,7 +1551,7 @@ byId("overlay").oncontextmenu = (e) => {
 byId("tTable").onclick = (e) => {
   const b = e.target.closest("button[data-a]");
   if (!b) return;
-  const t = targetByRow(b.closest("tr"));
+  const t = targetByAction(b);
   if (b.dataset.a === "edit") targetModal(t);
   if (b.dataset.a === "toggle") toggleTarget(t);
   if (b.dataset.a === "delete") deleteTarget(t);

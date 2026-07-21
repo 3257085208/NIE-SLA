@@ -50,6 +50,10 @@ assert.equal(lastRequest.options.headers.Authorization, undefined);
 assert.equal(lastRequest.options.headers['x-admin-session'], 'session');
 await client.api('/api/login', { forceToken: true });
 assert.equal(lastRequest.options.headers.Authorization, 'Bearer secret');
+const installResponse = await client.apiAdmin('/api/agent/install-command?target_id=vps-a', {}, 1_000);
+assert.equal(installResponse.ok, true);
+assert.match(lastRequest.url, /\/api\/agent\/install-command\?target_id=vps-a$/);
+assert.equal(lastRequest.options.headers['x-admin-session'], 'session');
 
 const targets = [
   { name: 'a', group_name: 'G1', provider: 'DMIT', location: 'HK', line_type: '落地鸡', price: 8 },
