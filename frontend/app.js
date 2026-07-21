@@ -27,7 +27,7 @@ import {
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
 import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js';
-import { canShowTemperature } from './js/shared/hardware.js';
+import { canShowTemperature, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
   buildLinePoints,
@@ -51,7 +51,7 @@ import {
   nodegetOsLogoHtml,
   nodegetStatusDotClass,
   nodegetTopbarToolsHtml,
-} from './js/themes/nodeget-cards.js';
+} from './js/themes/nodeget-cards.js?v=20260721-flag-harmony';
 
 const $ = (sel) => document.querySelector(sel);
 const FRONTEND_THEME_KEY = 'nstatus.frontendTheme';
@@ -96,6 +96,7 @@ const state = {
   selectedMetricRange: '1h',
   targetMetrics: null,
   pingData: null,
+  externalLatencySources: [],
   metricsCache: new Map(),
   pingsCache: new Map(),
   frontendTheme: initialFrontendTheme(),
@@ -906,7 +907,8 @@ function renderService(t, days, summaries) {
   const uptime = t.status_source === 'agent'
     ? (t.agent_online ? 'Agent 在线' : 'Agent 离线')
     : (t.uptime_24h == null ? '-' : `${Number(t.uptime_24h).toFixed(2)}%`);
-  const latency = Number(t.ok) !== 1 || t.latency_ms == null ? '-' : `${t.latency_ms} ms`;
+  const hasLatency = targetHasPublicLatency(t);
+  const latencyHtml = hasLatency ? serviceLatencySourcesHtml(t) : '';
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'service-traffic-progress');
   // Metadata badges
   let metaBadges = '';
@@ -943,17 +945,17 @@ function renderService(t, days, summaries) {
   }
 
   return `
-    <div class="service ${statusClass}${selectedClass}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(t.name)}">
+    <div class="service ${statusClass}${selectedClass}${hasLatency ? '' : ' no-latency'}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(t.name)}">
       <div class="service-name">
         ${escapeHtml(t.name)}
         ${metaHtml ? `<span class="service-target">${metaHtml}</span>` : ''}
         ${metaBadges ? `<span class="service-meta">${metaBadges}</span>` : ''}
       </div>
       <div class="service-status">${status}</div>
-      <div class="service-latency">${latency}</div>
+      ${hasLatency ? `<div class="service-latency">${latencyHtml}</div>` : ''}
       <div class="service-uptime">${uptime}</div>
       <div class="service-bottom-row${trafficProgress ? ' has-traffic' : ''}">
-        <div class="uptime-strip" title="${t.status_source === 'agent' ? 'Cloudflare 探测记录' : '最近 30 天可用率'}">
+        <div class="uptime-strip" title="${Number(t.no_public_ip || 0) === 1 ? 'Agent 在线记录' : '最近 30 天可用率'}">
           ${renderBars(t.id, days, summaries)}
         </div>
         ${trafficProgress}
@@ -974,11 +976,11 @@ function renderServiceCard(t, days, summaries) {
   const region = targetRegionCode(t);
   const regionFlag = nodegetFlagHtml(region, 'node-region-flag');
   const osLine = cardOsLine(info);
-  const latency = Number(t.ok) !== 1 || t.latency_ms == null ? '-' : `${t.latency_ms}ms`;
   const titleMeta = nodegetCardMetaLine([region !== 'OTHER' ? regionMeta(region).label : regionShort(t)]);
   const age = m.updated_at || t.last_metrics_at ? timeAgoSec(Math.floor(new Date(m.updated_at || t.last_metrics_at).getTime() / 1000)) : '-';
   const latencySamples = cardLatencySamples(t, days, summaries);
-  const pingRows = cardPingRows(t);
+  const hasLatency = targetHasPublicLatency(t);
+  const latencyRows = cardLatencySourceRows(t, latencySamples);
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'node-traffic-progress');
   const slaBars = trafficProgress ? 20 : 30;
 
@@ -1000,13 +1002,13 @@ function renderServiceCard(t, days, summaries) {
         ${cardResourceMetric('内存', Number(m.memory?.percent || 0), cardMemorySub(m.memory), 'mem')}
         ${cardResourceMetric('磁盘', Number(m.disk?.percent || 0), cardDiskSub(m.disk), 'disk')}
       </div>
-      <div class="node-latency-panel">
-        <strong>⌁ 延迟监控</strong>
-        <small>${pingRows ? 'IPV4 TCPING' : '真实探测历史'}</small>
-        ${pingRows || cardLatencyRow(regionShort(t) || '当前探测', t.latency_ms, latencySamples)}
-      </div>
+      ${hasLatency ? `<div class="node-latency-panel">
+        <strong>⌁ Latency</strong>
+        <small>多节点 TCP 建连延迟</small>
+        ${latencyRows}
+      </div>` : ''}
       <div class="node-sla-row${trafficProgress ? ' has-traffic' : ''}">
-        <div class="node-uptime-strip" style="--sla-bars:${slaBars}" title="${t.status_source === 'agent' ? 'Cloudflare 探测记录' : `最近 ${slaBars} 天可用率`}">
+        <div class="node-uptime-strip" style="--sla-bars:${slaBars}" title="${Number(t.no_public_ip || 0) === 1 ? 'Agent 在线记录' : `最近 ${slaBars} 天可用率`}">
           ${renderBars(t.id, days, summaries, slaBars)}
         </div>
         ${trafficProgress}
@@ -1080,12 +1082,47 @@ function metricGlowColor(color) {
   return 'rgba(66, 185, 131, 0.18)';
 }
 
+function targetHasPublicLatency(target) {
+  return Number(target?.no_public_ip || 0) !== 1;
+}
+
+function latencySourcesForTarget(target) {
+  if (!targetHasPublicLatency(target)) return [];
+  const sources = Array.isArray(target?.latency_sources) ? target.latency_sources : [];
+  const normalized = sources.map(source => ({
+    id: String(source?.id || ''),
+    name: String(source?.name || source?.id || 'Latency'),
+    kind: source?.kind || 'external',
+    latency_ms: source?.latency_ms == null ? null : Number(source.latency_ms),
+    ok: source?.ok === true || Number(source?.ok) === 1,
+  }));
+  if (!normalized.some(source => source.id === 'cloudflare')) {
+    normalized.unshift({ id: 'cloudflare', name: 'Cloudflare', kind: 'cloudflare', latency_ms: target?.latency_ms == null ? null : Number(target.latency_ms), ok: Number(target?.ok) === 1 });
+  }
+  return normalized.sort((a, b) => (a.id === 'cloudflare' ? -1 : b.id === 'cloudflare' ? 1 : 0));
+}
+
+function serviceLatencySourcesHtml(target) {
+  return latencySourcesForTarget(target).map(source => {
+    const value = source.ok && Number.isFinite(source.latency_ms) ? `${Math.round(source.latency_ms)} ms` : '-';
+    return `<span class="service-latency-source" title="${escapeAttr(source.name)}"><small>${escapeHtml(source.name)}</small><strong>${escapeHtml(value)}</strong></span>`;
+  }).join('');
+}
+
+function cardLatencySourceRows(target, cloudflareSamples = []) {
+  return latencySourcesForTarget(target).map(source => cardLatencyRow(
+    source.name,
+    source.ok ? source.latency_ms : null,
+    source.id === 'cloudflare' ? cloudflareSamples : [],
+  )).join('');
+}
+
 function cardLatencyRow(label, rawLatency, samples = []) {
   const latency = rawLatency == null || !Number.isFinite(Number(rawLatency)) ? null : Math.max(0, Number(rawLatency));
   const tone = latency == null ? '' : latency < 80 ? 'good' : latency < 180 ? 'warn' : 'bad';
   return `
     <div class="lat-row">
-      <span>${escapeHtml(label)}</span>
+      <span title="${escapeAttr(label)}">${escapeHtml(label)}</span>
       <div class="lat-bars ${tone}">${renderLatencyDots(samples)}</div>
       <strong>${latency == null ? '-' : Math.round(latency) + 'ms'}</strong>
     </div>
@@ -1268,6 +1305,7 @@ async function selectService(id, name, el, options = {}) {
     state.checksSource = '';
     state.targetMetrics = null;
     state.pingData = null;
+    state.externalLatencySources = [];
 
     if (els.inlineChartPanel) {
       els.inlineChartPanel.hidden = true;
@@ -1280,30 +1318,33 @@ async function selectService(id, name, el, options = {}) {
   state.selectedId = id;
   state.selectedName = name;
   state.checksPage = 1;
-  state.selectedMetric = 'latency';
+  // Find target type
+  const target = (state.data?.targets || []).find(t => t.id === id);
+  const hasLatency = targetHasPublicLatency(target);
+  state.selectedMetric = hasLatency ? 'latency' : 'cpu';
   state.selectedMetricRange = '1h';
   state.targetMetrics = null;
   state.pingData = null;
-
-  // Find target type
-  const target = (state.data?.targets || []).find(t => t.id === id);
+  state.externalLatencySources = [];
   state.selectedTargetIntervalSec = Math.max(300, Number(target?.interval_sec || 300));
   const isHttp = target?.type === 'http';
 
   document.querySelectorAll('.metric-tab').forEach(b => b.classList.remove('active'));
-  document.querySelector('.metric-tab[data-metric="latency"]')?.classList.add('active');
+  document.querySelector(`.metric-tab[data-metric="${hasLatency ? 'latency' : 'cpu'}"]`)?.classList.add('active');
   // Hide metric tabs for HTTP targets (websites)
   document.querySelectorAll('.metric-tab[data-metric]').forEach(b => {
-    if (b.dataset.metric !== 'latency') {
+    if (b.dataset.metric === 'latency') {
+      b.style.display = hasLatency ? '' : 'none';
+    } else {
       const isTemperature = b.dataset.metric === 'temp';
       const info = target?.agent_metrics?.vps_info || {};
-      b.style.display = isHttp || (isTemperature && !canShowTemperature(info)) ? 'none' : '';
+      b.style.display = isHttp || (isTemperature && !hasTemperatureData(info)) ? 'none' : '';
     }
   });
   const rangeTabs = document.getElementById('rangeTabs');
   const metricRangeTabs = document.getElementById('metricRangeTabs');
-  if (rangeTabs) rangeTabs.style.display = '';
-  if (metricRangeTabs) metricRangeTabs.style.display = 'none';
+  if (rangeTabs) rangeTabs.style.display = hasLatency ? '' : 'none';
+  if (metricRangeTabs) metricRangeTabs.style.display = hasLatency ? 'none' : '';
   document.querySelectorAll('.metric-range-tab').forEach(b => b.classList.remove('active'));
   document.querySelector('.metric-range-tab[data-range="1h"]')?.classList.add('active');
 
@@ -1316,7 +1357,15 @@ async function selectService(id, name, el, options = {}) {
     );
   }
 
-  await loadChecks(id, name, target, { hours: rangeHours('day') });
+  if (hasLatency) {
+    await loadChecks(id, name, target, { hours: rangeHours('day') });
+  } else {
+    els.chartTitle.textContent = 'CPU 使用率';
+    els.chartServiceName.textContent = `${name} CPU`;
+    els.chartMeta.textContent = 'Agent 在线数据';
+    await ensureTargetMetricsLoaded();
+    updateMetricsChart();
+  }
 }
 
 function attachInlineChart(serviceEl) {
@@ -1351,9 +1400,15 @@ async function loadChecks(id, name, target = null, options = {}) {
     const checksHours = Math.max(requestedHours, Number(window.NSTATUS_CHECKS_MIN_HOURS || 0) || 0);
     const checksLimit = Math.min(20000, Math.max(864, Math.ceil((checksHours * 3600) / intervalSec) + 120));
 
-    const checksRes = await fetch(api(`/api/checks?target_id=${encodeURIComponent(id)}&limit=${encodeURIComponent(checksLimit)}&hours=${encodeURIComponent(checksHours)}`), { cache: 'no-store' });
+    const [checksRes, latencyRes] = await Promise.all([
+      fetch(api(`/api/checks?target_id=${encodeURIComponent(id)}&limit=${encodeURIComponent(checksLimit)}&hours=${encodeURIComponent(checksHours)}`), { cache: 'no-store' }),
+      fetch(api(`/api/latency?target_id=${encodeURIComponent(id)}&hours=${encodeURIComponent(Math.min(168, checksHours))}`), { cache: 'no-store' }).catch(() => null),
+    ]);
 
-    const data = await checksRes.json();
+    const [data, latencyData] = await Promise.all([
+      checksRes.json(),
+      latencyRes?.ok ? latencyRes.json().catch(() => null) : null,
+    ]);
 
     if (state.selectedId !== id) return;
 
@@ -1364,6 +1419,7 @@ async function loadChecks(id, name, target = null, options = {}) {
     state.allChecks = data.checks || [];
     state.dailyPoints = data.daily_points || [];
     state.checksSource = data.source || '';
+    state.externalLatencySources = latencyData?.ok && Array.isArray(latencyData.sources) ? latencyData.sources : [];
     state.checksLoadedHours = checksHours;
     state.checksPage = 1;
 
@@ -1378,6 +1434,7 @@ async function loadChecks(id, name, target = null, options = {}) {
     state.checksLoadedHours = 0;
     state.targetMetrics = null;
     state.pingData = null;
+    state.externalLatencySources = [];
 
     els.chartMeta.textContent = `检查记录加载失败：${err.message}`;
     els.checks.innerHTML = `<div class="empty fail-text">${escapeHtml(err.message)}</div>`;
@@ -1461,7 +1518,7 @@ function renderVPSInfo() {
   const latest = m?.latest || {};
   const info = m?.latest?.vps_info || {};
   const tempTab = document.querySelector('.metric-tab[data-metric="temp"]');
-  if (tempTab) tempTab.style.display = canShowTemperature(info) ? '' : 'none';
+  if (tempTab) tempTab.style.display = hasTemperatureData(info) ? '' : 'none';
   const selectedTarget = (state.data?.targets || []).find(t => t.id === state.selectedId) || null;
   const uptimeSec = Number(m?.latest?.uptime_sec ?? selectedTarget?.machine_uptime_sec ?? 0);
   const net = latest.net || {};
@@ -1506,12 +1563,33 @@ function renderVPSInfo() {
   if (uptimeSec > 0) networkItems.push(vpsItem('运行时长', formatMachineUptime(uptimeSec)));
   if (latest.agent_version) networkItems.push(vpsItem('Agent', latest.agent_version));
   if (latest.updated_at) networkItems.push(vpsItem('更新', new Date(latest.updated_at).toLocaleString('zh-CN', { hour12: false })));
+  const temperatureItems = temperatureSensorItems(info);
 
   bar.innerHTML = `
     <section class="vps-info-section"><h4>系统信息</h4>${systemItems.join('')}</section>
     <section class="vps-info-section"><h4>网络与负载</h4>${networkItems.join('')}</section>
+    ${temperatureItems.length ? `<section class="vps-info-section vps-temperature-section"><h4>温度传感器</h4>${temperatureItems.join('')}</section>` : ''}
   `;
   bar.hidden = false;
+}
+
+function temperatureSensorItems(info = {}) {
+  if (!hasTemperatureData(info)) return [];
+  const items = [];
+  const add = (label, value) => {
+    if (Number.isFinite(Number(value))) items.push(vpsItem(label, `${Number(value).toFixed(1)}°C`));
+  };
+  add('CPU', info.cpu_temp_c);
+  add('GPU', info.gpu_temp_c);
+  const sensors = Array.isArray(info.temperature_sensors) ? info.temperature_sensors : [];
+  for (const sensor of sensors.slice(0, 16)) {
+    const kind = { motherboard: '主板', disk: '硬盘', chipset: '芯片组', other: '传感器' }[sensor?.kind] || '传感器';
+    add(`${kind} · ${sensor?.label || sensor?.id || '-'}`, sensor?.temp_c);
+  }
+  if (!sensors.some(sensor => sensor?.kind === 'motherboard')) add('主板', info.motherboard_temp_c);
+  if (!sensors.some(sensor => sensor?.kind === 'disk')) add('硬盘', info.disk_temp_c);
+  if (!sensors.some(sensor => sensor?.kind === 'chipset')) add('芯片组', info.chipset_temp_c);
+  return items;
 }
 
 function vpsItem(label, value) {
@@ -1862,9 +1940,10 @@ function updateChartForCurrentRange() {
   const expected = expectedChartGapSec(state.selectedRange);
   const gapCount = countChartGaps(rangeChecks, expected);
   const missedCount = countMissedChecks(rangeChecks);
+  const externalCount = (state.externalLatencySources || []).length;
   const mode = rangeChecks.length
-    ? `每 5 分钟检查${gapCount ? `，${gapCount} 个数据间断` : ''}${missedCount ? `，${missedCount} 次漏检` : ''}`
-    : '无原始检查数据';
+    ? `Cloudflare 每 5 分钟${externalCount ? ` + ${externalCount} 个外部 Latency 节点` : ''}${gapCount ? `，${gapCount} 个数据间断` : ''}${missedCount ? `，${missedCount} 次漏检` : ''}`
+    : (externalCount ? `${externalCount} 个外部 Latency 节点` : '无原始检查数据');
   els.chartMeta.innerHTML = chartMetaHtml(state.selectedRange, rangeChecks.length, '', mode);
 }
 
@@ -1934,7 +2013,7 @@ function updateMetricsChart() {
 
   if (metric === 'temp') {
     if (!canShowTemperature(latest.vps_info || {})) {
-      els.chartMeta.textContent = '虚拟化环境不显示 CPU / GPU 温度。';
+      els.chartMeta.textContent = '虚拟化环境不显示硬件温度。';
       els.chartAvg.textContent = '-';
       if (state.chart) {
         state.chart.data.datasets = [];
@@ -1942,20 +2021,33 @@ function updateMetricsChart() {
       }
       return;
     }
-    const cpuPoints = history.map(p => ({ x: Number(p.ts), y: Number.isFinite(Number(p.cpu_temp)) ? Number(p.cpu_temp) : null }));
-    const gpuPoints = history.map(p => ({ x: Number(p.ts), y: Number.isFinite(Number(p.gpu_temp)) ? Number(p.gpu_temp) : null }));
-    const cpuVals = history.map(p => Number(p.cpu_temp)).filter(Number.isFinite);
-    const gpuVals = history.map(p => Number(p.gpu_temp)).filter(Number.isFinite);
-    const cpuAvg = cpuVals.length ? cpuVals.reduce((a, b) => a + b, 0) / cpuVals.length : 0;
-    const gpuAvg = gpuVals.length ? gpuVals.reduce((a, b) => a + b, 0) / gpuVals.length : 0;
-    els.chartTitle.textContent = '温度';
-    els.chartMeta.textContent = `CPU 平均 ${cpuAvg.toFixed(1)}°C · GPU 平均 ${gpuAvg.toFixed(1)}°C · ${history.length} 个采样点`;
-    els.chartAvg.textContent = `CPU ${Number(latest.vps_info?.cpu_temp_c ?? latest.cpu_temp_c ?? 0).toFixed(1)}°C · GPU ${Number(latest.vps_info?.gpu_temp_c ?? latest.gpu_temp_c ?? 0).toFixed(1)}°C`;
-    if (!state.chart) return;
-    state.chart.data.datasets = [
-      netDataset('CPU °C', cpuPoints, '#ef6c00'),
-      netDataset('GPU °C', gpuPoints, '#8e24aa'),
+    const definitions = [
+      { field: 'cpu_temp', latest: 'cpu_temp_c', label: 'CPU', color: '#e4572e' },
+      { field: 'gpu_temp', latest: 'gpu_temp_c', label: 'GPU', color: '#2f80ed' },
+      { field: 'motherboard_temp', latest: 'motherboard_temp_c', label: '主板', color: '#009688' },
+      { field: 'disk_temp', latest: 'disk_temp_c', label: '硬盘', color: '#d39e00' },
+      { field: 'chipset_temp', latest: 'chipset_temp_c', label: '芯片组', color: '#64748b' },
     ];
+    const series = definitions.map(definition => {
+      const values = history.map(point => Number(point[definition.field])).filter(Number.isFinite);
+      return {
+        ...definition,
+        values,
+        points: history.map(point => ({ x: Number(point.ts), y: Number.isFinite(Number(point[definition.field])) ? Number(point[definition.field]) : null })),
+      };
+    }).filter(item => item.values.length);
+    els.chartTitle.textContent = '温度';
+    els.chartMeta.textContent = series.length
+      ? `${series.map(item => `${item.label} 平均 ${(item.values.reduce((a, b) => a + b, 0) / item.values.length).toFixed(1)}°C`).join(' · ')} · ${history.length} 个采样点`
+      : '当前设备未提供可用的温度历史数据。';
+    const currentTemperatures = definitions.map(item => {
+      const raw = latest.vps_info?.[item.latest];
+      const value = Number(raw);
+      return raw != null && Number.isFinite(value) ? `${item.label} ${value.toFixed(1)}°C` : '';
+    }).filter(Boolean);
+    els.chartAvg.textContent = currentTemperatures.join(' · ') || '-';
+    if (!state.chart) return;
+    state.chart.data.datasets = series.map(item => netDataset(`${item.label} °C`, item.points, item.color));
   } else if (metric === 'gpu') {
     const showTemperature = canShowTemperature(latest.vps_info || {});
     const utilPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.gpu_util) || 0 }));
@@ -2120,13 +2212,15 @@ function updateChart(checks, name) {
   delete state.chart.options.scales.y.title;
   delete state.chart.options.scales.y.max;
 
-  state.chart.data.datasets = buildChartDatasets(points);
-  applyChartFullRange(points);
-  tuneChartAnimation(points.length);
+  const externalSeries = externalLatencyChartSeries();
+  const allPoints = [points, ...externalSeries.map(source => source.points)].flat();
+  state.chart.data.datasets = buildChartDatasets(points, externalSeries);
+  applyChartFullRange(allPoints);
+  tuneChartAnimation(allPoints.length);
   state.chart.update();
 }
 
-function buildChartDatasets(cfPoints) {
+function buildChartDatasets(cfPoints, externalSeries = []) {
   const datasets = [
     lineDataset({
       label: 'Cloudflare',
@@ -2138,7 +2232,29 @@ function buildChartDatasets(cfPoints) {
     }),
   ];
 
+  for (const source of externalSeries) {
+    datasets.push(lineDataset({
+      label: source.name,
+      data: source.points,
+      color: pingTargetColor(source.id || source.name),
+      fill: false,
+      order: 2,
+    }));
+  }
+
   return datasets;
+}
+
+function externalLatencyChartSeries() {
+  return (state.externalLatencySources || []).map(source => {
+    const checks = filterChecksByRange((source.points || []).map(point => ({
+      checked_at: Number(point.checked_at),
+      latency_ms: point.latency_ms == null ? null : Number(point.latency_ms),
+      ok: point.ok ? 1 : 0,
+    })), state.selectedRange);
+    const points = trimEmptyPointEdges(buildLinePoints(normalizeChartRows(checks)));
+    return { id: String(source.id || ''), name: String(source.name || source.id || 'Latency'), points };
+  }).filter(source => source.points.length);
 }
 
 function lineDataset({ label, data, color, fill, fillStrength = 1, order }) {
@@ -2678,7 +2794,7 @@ function groupBy(arr, fn) {
 }
 
 function avgLatency(rows) {
-  const nums = rows.map(t => Number(t.latency_ms)).filter(Number.isFinite);
+  const nums = rows.filter(targetHasPublicLatency).map(t => Number(t.latency_ms)).filter(Number.isFinite);
 
   if (!nums.length) {
     return null;

@@ -6,6 +6,9 @@ import { applyProbeWriteBatch, readCheckBucketDaySummary } from './admin.js';
 // ── HTTP/TCP probe ───────────────────────────────────────────────────────────
 
 export async function probeTarget(target, cf = {}) {
+  if (Number(target?.no_public_ip || 0) === 1) {
+    return { ok: false, latency_ms: null, status_code: null, error: null, cf_colo: cf.colo || null, skipped: true };
+  }
   if (target.type === 'http') return probeHttp(target, cf);
   if (target.type === 'tcp') return probeTcp(target, cf);
   return { ok: false, latency_ms: null, status_code: null, error: `Unknown target type: ${target.type}`, cf_colo: cf.colo || null };
@@ -51,6 +54,11 @@ async function probeTcp(target, cf) {
 // ── Region probe via Durable Object ──────────────────────────────────────────
 
 export async function probeAndSaveTargetViaRegion(env, target, checkedAt, previousState = null) {
+  if (Number(target?.no_public_ip || 0) === 1) {
+    const result = await probeTarget(target);
+    const saved = await saveCheck(env, target, checkedAt, result, previousState);
+    return { target_id: target.id, name: target.name, ...result, saved, state_update: null };
+  }
   const region = target.probe_region || 'auto';
   if (region !== 'auto' && env.REGION_PROXY && ALLOWED_REGIONS.has(region)) {
     const version = sanitizeId(env.REGION_PROXY_VERSION || 'v9');
@@ -176,8 +184,9 @@ export async function runDueTargets(env) {
   const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 60), 1, 200);
   const now = nowSec();
   const rows = await env.DB.prepare(
-    `SELECT * FROM targets
+     `SELECT * FROM targets
      WHERE enabled = 1
+       AND COALESCE(no_public_ip, 0) = 0
        AND (last_checked_at IS NULL OR last_checked_at <= ? - CASE WHEN interval_sec < ? THEN ? ELSE interval_sec END)
      ORDER BY group_name, name`
   ).bind(now, MIN_INTERVAL_SEC, MIN_INTERVAL_SEC).all();

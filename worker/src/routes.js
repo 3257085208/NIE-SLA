@@ -1,8 +1,8 @@
 import { ALLOWED_REGIONS, clamp, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
-import { requireAdmin, requireAgent, requireAgentForId, requireAnyAgent, requireAgentIdentity, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
+import { requireAdmin, requireAgent, requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
-import { listTargets, createTarget, updateTarget, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth } from './admin.js';
+import { listTargets, createTarget, updateTarget, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
 import { VERSION } from './version.js';
@@ -87,6 +87,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/checks', rl: 'public' },
   { method: 'GET', path: '/api/agent/metrics', rl: 'public' },
   { method: 'GET', path: '/api/agent/pings', rl: 'public' },
+  { method: 'GET', path: '/api/latency', rl: 'public' },
 
   // Agent endpoints
   { method: 'GET', path: '/api/agent/targets', rl: 'write' },
@@ -95,6 +96,8 @@ const ROUTES = [
   { method: 'GET', path: '/api/agent/update-policy', rl: 'write' },
   { method: 'GET', path: '/api/agent/ping-targets', rl: 'write' },
   { method: 'POST', path: '/api/agent/pings', rl: 'write' },
+  { method: 'GET', path: '/api/latency-agent/targets', rl: 'write' },
+  { method: 'POST', path: '/api/latency-agent/results', rl: 'write' },
 
   // TOTP
   { method: 'POST', path: '/api/totp/setup', rl: 'write' },
@@ -115,6 +118,7 @@ const ROUTES = [
   // Stats & maintenance
   { method: 'GET', path: '/api/stats', rl: 'write' },
   { method: 'GET', path: '/api/agent/install-command', rl: 'write' },
+  { method: 'GET', path: '/api/latency-agent/install-command', rl: 'write' },
   { method: 'POST', path: '/api/maintenance/cleanup', rl: 'write' },
 
   // Admin CRUD
@@ -128,6 +132,8 @@ const ROUTES = [
   { method: 'POST', path: '/api/archive', rl: 'write' },
   { method: 'POST', path: '/api/ping-targets', rl: 'write' },
   { method: 'GET', path: '/api/ping-targets', rl: 'write' },
+  { method: 'GET', path: '/api/latency-agents', rl: 'write' },
+  { method: 'POST', path: '/api/latency-agents', rl: 'write' },
 ];
 
 const KEY = (method, path) => `${method} ${path}`;
@@ -147,6 +153,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getChecksCached(request, env, url, ctx); }
   if (path === '/api/agent/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return deny(); return getAgentMetricsCached(request, env, url, ctx); }
   if (path === '/api/agent/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return deny(); return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  if (path === '/api/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny(); await ensureV6Schema(env); return json(await getPublicLatency(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
 
   // Prefer cheap bearer presence check before durable D1 rate-limit tables.
   // Unauthenticated admin probes should not burn durable counters.
@@ -176,6 +183,8 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/agent/update-policy' && m === 'GET') { const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getAgentUpdatePolicy(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent/ping-targets' && m === 'GET') { const agentId = url.searchParams.get('agent_id') || ''; if (agentId) await requireAgentForId(request, env, agentId); else await requireAnyAgent(request, env); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getPingTargets(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent/pings' && m === 'POST') return json(await submitAgentPings(request, env), 200, env, { 'cache-control': 'no-store' });
+  if (path === '/api/latency-agent/targets' && m === 'GET') { await ensureV6Schema(env); const nodeId = url.searchParams.get('node_id') || ''; await requireLatencyAgentForId(request, env, nodeId); return json(await getLatencyAgentTargets(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/latency-agent/results' && m === 'POST') { await ensureV6Schema(env); const body = await safeJson(request); await requireLatencyAgentForId(request, env, body.node_id); return json(await submitLatencyAgentResults(request, env, body), 200, env, { 'cache-control': 'no-store' }); }
 
   // TOTP
   if (path === '/api/totp/setup' && m === 'POST') { requireAdmin(request, env); return setupTOTP(env); }
@@ -198,6 +207,7 @@ async function dispatchStatic(env, url, request, ctx) {
   // Stats & maintenance
   if (path === '/api/stats' && m === 'GET') { await withAdmin(request, env); return json(await getStats(env), 200, env); }
   if (path === '/api/agent/install-command' && m === 'GET') { await withAdmin(request, env); return json(await getAgentInstallCommand(env, url, request), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/latency-agent/install-command' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getLatencyAgentInstallCommand(env, url, request), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/maintenance/cleanup' && m === 'POST') { await withAdmin(request, env); const body = await safeJson(request).catch(() => ({})); return json({ ok: true, d1: await cleanupVolatileHistory(env, body), r2: await cleanupAgentMetricsR2(env, body) }, 200, env, { 'cache-control': 'no-store' }); }
 
   // Admin CRUD
@@ -211,6 +221,8 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/archive' && m === 'POST') { await withAdmin(request, env); return json(await archiveDay(env, (await safeJson(request))?.day || archiveYesterdayLocal(env)), 200, env); }
   if (path === '/api/ping-targets' && m === 'POST') { await withAdmin(request, env); return json(await createPingTarget(request, env), 201, env); }
   if (path === '/api/ping-targets' && m === 'GET') { await withAdmin(request, env); return json(await getPingTargets(env, { enabledOnly: false }), 200, env); }
+  if (path === '/api/latency-agents' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listLatencyAgents(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/latency-agents' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await createLatencyAgent(request, env), 201, env, { 'cache-control': 'no-store' }); }
 
   // Parameterized routes
   const targetMatch = path.match(/^\/api\/targets\/([^/]+)$/);
@@ -220,6 +232,10 @@ async function dispatchStatic(env, url, request, ctx) {
   const pingMatch = path.match(/^\/api\/ping-targets\/([^/]+)$/);
   if (pingMatch && m === 'PATCH') { await withAdmin(request, env); return json(await updatePingTarget(pathParam(pingMatch[1]), request, env), 200, env); }
   if (pingMatch && m === 'DELETE') { await withAdmin(request, env); return json(await deletePingTarget(pathParam(pingMatch[1]), env), 200, env); }
+
+  const latencyAgentMatch = path.match(/^\/api\/latency-agents\/([^/]+)$/);
+  if (latencyAgentMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateLatencyAgent(pathParam(latencyAgentMatch[1]), request, env), 200, env); }
+  if (latencyAgentMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); return json(await deleteLatencyAgent(pathParam(latencyAgentMatch[1]), env), 200, env); }
 
   return null;
 }

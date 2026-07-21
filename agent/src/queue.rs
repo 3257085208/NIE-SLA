@@ -136,6 +136,9 @@ fn sample_from_json(value: &serde_json::Value) -> Option<SamplePoint> {
         cpu_temp: json_f64_opt(value, "cpu_temp"),
         gpu_temp: json_f64_opt(value, "gpu_temp"),
         gpu_util: json_f64_opt(value, "gpu_util"),
+        motherboard_temp: json_f64_opt(value, "motherboard_temp"),
+        disk_temp: json_f64_opt(value, "disk_temp"),
+        chipset_temp: json_f64_opt(value, "chipset_temp"),
     })
 }
 

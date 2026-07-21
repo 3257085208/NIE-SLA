@@ -11,10 +11,10 @@ import {
 } from "./shared/target-catalogs.js";
 import {
   groupByDimension,
-  groupByOptionsHtml,
+  groupByMenuHtml,
   lineTypeOptionsHtml,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js";
+} from "./shared/grouping.js?v=20260721-control-harmony";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -57,6 +57,7 @@ const {
 let targets = [],
   adminGroupBy = localStorage.getItem("nstatus.adminGroupBy") || "group",
   statusMap = new Map(),
+  latencyNodes = [],
   pingTargets = [],
   targetRegions = {
     auto: "自动（当前 Worker 执行位置）",
@@ -227,6 +228,7 @@ function nav(p) {
     .forEach((x) => x.classList.toggle("on", x.dataset.p === p));
   if (p === "dash") loadDash();
   if (p === "targets") loadTargets();
+  if (p === "latency") loadLatencyNodes();
   if (p === "pings") loadPings();
   if (p === "settings") loadSettings();
 }
@@ -515,6 +517,7 @@ function targetRowHtml(target, index) {
   const status = statusMap.get(target.id) || {};
   const state = targetStatus(status, target);
   const host = targetHostText(target);
+  const noPublicIp = Number(target.no_public_ip || status.no_public_ip || 0) === 1;
   const typeTag =
     target.type === "http"
       ? statusTag("HTTP", "tag-http")
@@ -538,7 +541,10 @@ function targetRowHtml(target, index) {
   const agentDetails = isWeb
     ? notApplicable
     : `<div class="status-stack"><div>${agentTag}<code>${escapeHtml(status.agent_version || "-")}</code></div><small>${status.machine_uptime_sec ? `运行 ${escapeHtml(formatDuration(status.machine_uptime_sec))}` : "暂无运行时长"}</small></div>`;
-  const monitorDetails = `<div class="monitoring-stack"><div class="monitoring-item"><span class="monitoring-label">CF</span><div class="status-stack"><div>${statusTag(state.text, state.className)}<strong>${status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`}</strong></div><small>${escapeHtml(probeUptime)}</small></div></div><div class="monitoring-item"><span class="monitoring-label">Agent</span>${agentDetails}</div></div>`;
+  const cfDetails = noPublicIp
+    ? ""
+    : `<div class="monitoring-item"><span class="monitoring-label">CF</span><div class="status-stack"><div>${statusTag(state.text, state.className)}<strong>${status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`}</strong></div><small>${escapeHtml(probeUptime)}</small></div></div>`;
+  const monitorDetails = `<div class="monitoring-stack">${cfDetails}<div class="monitoring-item"><span class="monitoring-label">Agent</span>${agentDetails}</div></div>`;
   const cells = [
     `<div class="sort-cell"><button type="button" class="drag-handle" data-sort-handle title="拖动排序" aria-label="拖动 ${escapeHtml(target.name)} 排序">⠿</button><span class="sort-index">${index + 1}</span><span class="mobile-order"><button type="button" data-a="move-up" title="上移" aria-label="上移">↑</button><button type="button" data-a="move-down" title="下移" aria-label="下移">↓</button></span></div>`,
     `<div class="target-summary"><div><b>${escapeHtml(target.name)}</b>${typeTag}${enabledTag}</div><code>${escapeHtml(target.id)}</code><span title="${escapeHtml(host)}">${escapeHtml(host || "-")}</span><span class="group-cell" title="${escapeHtml(targetGroupCell(target))}">${escapeHtml(targetGroupCell(target))}</span></div>`,
@@ -581,7 +587,7 @@ function renderTargets() {
   byId("tTable").innerHTML = `
     <div class="target-order-bar">
       <div><strong>显示顺序</strong><span>拖动左侧手柄；可按商家/地区/价格/线路分组查看</span></div>
-      <div class="order-tools">${groupByOptionsHtml(adminGroupBy, "adminGroupBySelect")}<span class="order-state" id="targetOrderState">${targetAdminLoaded ? "已同步" : "读取中"}</span></div>
+      <div class="order-tools">${groupByMenuHtml(adminGroupBy, "adminGroupByMenu")}<span class="order-state" id="targetOrderState">${targetAdminLoaded ? "已同步" : "读取中"}</span></div>
     </div>
     <div class="table-scroll">
       <table class="targets-table">
@@ -602,15 +608,73 @@ function renderTargets() {
 }
 
 function bindAdminGroupBy() {
-  const sel = byId("adminGroupBySelect");
-  if (!sel || sel.dataset.bound) return;
-  sel.dataset.bound = "1";
-  sel.onchange = () => {
-    adminGroupBy = sel.value || "group";
+  const root = byId("adminGroupByMenu");
+  const trigger = root?.querySelector(".group-by-trigger");
+  const menu = root?.querySelector(".group-by-menu");
+  const options = [...(menu?.querySelectorAll(".group-by-option") || [])];
+  if (!root || !trigger || !menu || root.dataset.bound) return;
+  root.dataset.bound = "1";
+
+  const setOpen = (open, focusSelected = false) => {
+    root.classList.toggle("is-open", open);
+    trigger.setAttribute("aria-expanded", String(open));
+    menu.hidden = !open;
+    if (open && focusSelected) {
+      (options.find(option => option.getAttribute("aria-selected") === "true") || options[0])?.focus();
+    }
+  };
+  const choose = value => {
+    adminGroupBy = value || "group";
     localStorage.setItem("nstatus.adminGroupBy", adminGroupBy);
     renderTargets();
   };
+
+  trigger.onclick = event => {
+    event.stopPropagation();
+    setOpen(menu.hidden);
+  };
+  trigger.onkeydown = event => {
+    if (!["ArrowDown", "Enter", " "].includes(event.key)) return;
+    event.preventDefault();
+    setOpen(true, true);
+  };
+  menu.onclick = event => {
+    const option = event.target.closest("[data-group-value]");
+    if (option) choose(option.dataset.groupValue);
+  };
+  menu.onkeydown = event => {
+    const current = event.target.closest(".group-by-option");
+    if (!current) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      trigger.focus();
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      choose(current.dataset.groupValue);
+      return;
+    }
+    const offset = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+    if (!offset) return;
+    event.preventDefault();
+    const index = options.indexOf(current);
+    options[(index + offset + options.length) % options.length]?.focus();
+  };
+  root.onfocusout = event => {
+    if (!root.contains(event.relatedTarget)) setOpen(false);
+  };
 }
+
+document.addEventListener("click", () => {
+  document.querySelectorAll(".group-by-control.is-open").forEach(root => {
+    root.classList.remove("is-open");
+    root.querySelector(".group-by-trigger")?.setAttribute("aria-expanded", "false");
+    const menu = root.querySelector(".group-by-menu");
+    if (menu) menu.hidden = true;
+  });
+});
 
 function targetGroupCell(target) {
   const parts = [
@@ -895,8 +959,15 @@ function targetModalHtml(target, isEdit) {
       ${formField("分组", `<select id="mGroup">${targetGroupOptions(type, target.group_name)}</select>`)}
     </div>
 
-    ${formField("主机", `<input id="mHost" value="${escapeHtml(target.target_host || "")}">`, "ftcp")}
-    ${formField("端口", `<input id="mPort" type="number" value="${escapeHtml(target.target_port || "")}">`, "ftcp")}
+    <div class="form-grid ftcp">
+      ${formField("主机 / IP", `<input id="mHost" value="${escapeHtml(target.target_host || "")}">`)}
+      ${formField("端口", `<input id="mPort" type="number" value="${escapeHtml(target.target_port || "")}">`)}
+    </div>
+    ${formField(
+      "公网探测",
+      `<label class="switch-line"><input type="checkbox" id="mNoPublicIp"${checkedAttr(Number(target.no_public_ip || 0))}><span>无公网 IP，仅使用 Agent 在线状态</span></label><p class="hint">停止 Cloudflare 与外部 Latency 节点探测；前台隐藏 Latency，SLA 仅按 Agent 心跳记录。</p>`,
+      "ftcp",
+    )}
     ${formField("URL", `<input id="mUrl" value="${escapeHtml(target.url || "")}">`, "fhttp")}
     ${formField("状态码", `<input id="mStatus" value="${escapeHtml(target.expected_status || "200,301,302")}">`, "fhttp")}
 
@@ -979,12 +1050,22 @@ function toggleTargetTypeFields() {
   document.querySelectorAll(".fvps").forEach((item) => {
     item.style.display = isTcp ? "block" : "none";
   });
+  toggleNoPublicIpFields();
+}
+
+function toggleNoPublicIpFields() {
+  const noPublicIp = byId("mType")?.value === "tcp" && !!byId("mNoPublicIp")?.checked;
+  for (const id of ["mHost", "mPort", "mRegion"]) {
+    const field = byId(id);
+    if (field) field.disabled = noPublicIp;
+  }
 }
 
 function targetModal(target = null) {
   const isEdit = Boolean(target);
   byId("modal").innerHTML = targetModalHtml(target || {}, isEdit);
   byId("mType").onchange = toggleTargetTypeFields;
+  byId("mNoPublicIp").onchange = toggleNoPublicIpFields;
   bindCatalogSearch("mLocationSearch", "mLocation", countryOptionsHtml, updateCountryPreview);
   bindCatalogSearch("mProviderSearch", "mProvider", providerOptionsHtml);
   toggleTargetTypeFields();
@@ -1005,6 +1086,7 @@ async function saveTarget(edit) {
     group_name: byId("mGroup").value === "Web" ? "Web" : "VPS",
     interval_sec: Number(byId("mInterval").value) || 300,
     probe_region: byId("mRegion")?.value || "auto",
+    no_public_ip: byId("mType").value === "tcp" && !!byId("mNoPublicIp")?.checked,
     tags: byId("mTags")?.value.trim() || "",
     location: byId("mLocation")?.value || "",
     provider: byId("mProvider")?.value || "",
@@ -1028,7 +1110,7 @@ async function saveTarget(edit) {
   if (b.type === "tcp") {
     b.target_host = byId("mHost").value.trim();
     b.target_port = Number(byId("mPort").value) || 0;
-    if (!b.target_host || !b.target_port) return toast("需要主机和端口", "err");
+    if (!b.no_public_ip && (!b.target_host || !b.target_port)) return toast("需要主机和端口，或选择“无公网 IP”", "err");
   } else {
     b.url = byId("mUrl").value.trim();
     b.expected_status = byId("mStatus").value.trim() || "200,301,302";
@@ -1162,6 +1244,128 @@ async function deploy(t, trigger = null) {
     }
   }
 }
+
+async function loadLatencyNodes() {
+  loading("latencyTable", "加载 Latency 节点...");
+  try {
+    const data = await apiAdmin("/api/latency-agents", {}, 30000);
+    latencyNodes = data.nodes || [];
+    renderLatencyNodes();
+  } catch (error) {
+    errBox("latencyTable", error);
+  }
+}
+
+function renderLatencyNodes() {
+  const builtin = `
+    <tr class="latency-builtin-row">
+      <td><code>cloudflare</code></td>
+      <td><strong>Cloudflare</strong><small class="table-note">系统默认来源</small></td>
+      <td><span class="tag tag-on">内置 · 启用</span></td>
+      <td>全球边缘网络</td>
+      <td><span class="muted">固定保留，不可删除</span></td>
+    </tr>`;
+  const external = latencyNodes.map((node, index) => `
+    <tr data-i="${index}">
+      <td><code>${escapeHtml(node.id)}</code></td>
+      <td>${escapeHtml(node.name)}</td>
+      <td><span class="tag ${Number(node.enabled) ? "tag-on" : "tag-off"}">${Number(node.enabled) ? "启用" : "停用"}</span></td>
+      <td>${node.last_seen_at ? escapeHtml(new Date(Number(node.last_seen_at) * 1000).toLocaleString("zh-CN")) : "尚未上报"}</td>
+      <td><div class="actions">
+        <button class="btn btn-xs btn-deploy" data-a="latency-deploy">部署</button>
+        <button class="btn btn-xs" data-a="latency-edit">编辑</button>
+        <button class="btn btn-xs" data-a="latency-toggle">${Number(node.enabled) ? "停用" : "启用"}</button>
+        <button class="btn btn-xs btn-danger" data-a="latency-delete">删除</button>
+      </div></td>
+    </tr>`).join("");
+  byId("latencyTable").innerHTML = `
+    <div class="table-scroll">
+      <table class="pings-table latency-nodes-table">
+        <thead><tr><th>ID</th><th>显示名称</th><th>状态</th><th>最近上报</th><th>操作</th></tr></thead>
+        <tbody>${builtin}${external}</tbody>
+      </table>
+    </div>`;
+}
+
+function latencyNodeModal(node = null) {
+  const edit = Boolean(node);
+  byId("modal").innerHTML = `
+    <h3>${edit ? "编辑" : "新增"} Latency 节点</h3>
+    ${edit ? inputField("ID", "latencyNodeId", node.id, "readonly") : ""}
+    ${inputField("显示名称", "latencyNodeName", node?.name || "", 'placeholder="例如：东京 IIJ、洛杉矶 CN2"')}
+    <p class="hint">名称会显示在前台 Latency 列表中；此节点与 VPS Agent、Ping 功能完全独立。</p>
+    <div class="ma"><button class="btn" data-close>取消</button><button class="btn btn-primary" id="saveLatencyNode">保存</button></div>`;
+  byId("saveLatencyNode").onclick = () => saveLatencyNode(node);
+  openModal();
+}
+
+async function saveLatencyNode(node = null) {
+  const name = byId("latencyNodeName").value.trim();
+  if (!name) return toast("请填写 Latency 节点名称", "err");
+  const button = byId("saveLatencyNode");
+  button.disabled = true;
+  try {
+    await apiAdmin(node ? `/api/latency-agents/${encodeURIComponent(node.id)}` : "/api/latency-agents", {
+      method: node ? "PATCH" : "POST",
+      body: JSON.stringify({ name }),
+    }, 30000);
+    closeModal();
+    toast("Latency 节点已保存", "ok");
+    loadLatencyNodes();
+  } catch (error) {
+    toast(error.message, "err");
+    button.disabled = false;
+  }
+}
+
+async function toggleLatencyNode(node) {
+  try {
+    await apiAdmin(`/api/latency-agents/${encodeURIComponent(node.id)}`, { method: "PATCH", body: JSON.stringify({ enabled: !Number(node.enabled) }) });
+    toast("Latency 节点状态已更新", "ok");
+    loadLatencyNodes();
+  } catch (error) {
+    toast(error.message, "err");
+  }
+}
+
+async function deleteLatencyNode(node) {
+  if (!confirm(`删除 Latency 节点“${node.name}”及其历史数据？`)) return;
+  try {
+    await apiAdmin(`/api/latency-agents/${encodeURIComponent(node.id)}`, { method: "DELETE" });
+    toast("Latency 节点已删除", "ok");
+    loadLatencyNodes();
+  } catch (error) {
+    toast(error.message, "err");
+  }
+}
+
+async function deployLatencyNode(node, trigger = null) {
+  if (trigger) trigger.disabled = true;
+  byId("modal").innerHTML = `<h3>部署 Latency 节点 · ${escapeHtml(node.name)}</h3><div class="install-progress" role="status"><span class="install-spinner" aria-hidden="true"></span><div><strong>正在生成独立安装命令</strong><p>该命令不会安装 VPS 监控 Agent。</p></div></div>`;
+  openModal();
+  try {
+    const data = await apiAdmin(`/api/latency-agent/install-command?node_id=${encodeURIComponent(node.id)}`, {}, 20000);
+    const command = data.linux_command || "";
+    if (!command) throw new Error(data.error || "Worker 未返回安装命令");
+    byId("modal").innerHTML = `
+      <h3>部署 Latency 节点 · ${escapeHtml(node.name)}</h3>
+      <p class="hint">独立 Latency 安装器，只执行 TCP 延迟测量，不采集 VPS 资源，也不属于 Ping。</p>
+      <div class="install-command-block"><div class="install-command-head"><strong>Linux</strong><button class="btn btn-sm btn-blue" id="copyLatencyInstall">复制安装命令</button></div><pre class="code">${escapeHtml(command)}</pre></div>
+      <div class="ma"><button class="btn" data-close>关闭</button></div>`;
+    byId("copyLatencyInstall").onclick = async () => {
+      try { await copyText(command); toast("已复制 Latency 节点安装命令", "ok"); }
+      catch (error) { toast(error.message || "复制失败", "err"); }
+    };
+    try { await copyText(command); toast("已生成并复制独立 Latency 安装命令", "ok"); }
+    catch (_) { toast("命令已生成，请在窗口中手动复制", "info"); }
+  } catch (error) {
+    byId("modal").innerHTML = `<h3>部署 Latency 节点 · ${escapeHtml(node.name)}</h3><div class="install-error" role="alert"><strong>安装命令生成失败</strong><p>${escapeHtml(error.message || "未知错误")}</p></div><div class="ma"><button class="btn" data-close>关闭</button></div>`;
+    toast(error.message, "err");
+  } finally {
+    if (trigger && document.body.contains(trigger)) trigger.disabled = false;
+  }
+}
+
 async function loadPings() {
   loading(
     "pTable",
@@ -1623,6 +1827,7 @@ byId("nav").onclick = (e) => {
   }
 };
 byId("addTargetBtn").onclick = () => targetModal();
+byId("addLatencyBtn").onclick = () => latencyNodeModal();
 byId("probeBtn").onclick = async () => {
   try {
     const d = await api("/api/probe-now", { method: "POST", body: "{}" });
@@ -1675,6 +1880,16 @@ byId("pTable").onclick = (e) => {
   if (b.dataset.a === "toggle") togglePing(p);
   if (b.dataset.a === "delete") deletePing(p);
   if (b.dataset.a === "reload") loadPings();
+};
+byId("latencyTable").onclick = (e) => {
+  const button = e.target.closest("button[data-a]");
+  if (!button) return;
+  const node = latencyNodes[Number(button.closest("tr")?.dataset.i)];
+  if (!node) return;
+  if (button.dataset.a === "latency-deploy") deployLatencyNode(node, button);
+  if (button.dataset.a === "latency-edit") latencyNodeModal(node);
+  if (button.dataset.a === "latency-toggle") toggleLatencyNode(node);
+  if (button.dataset.a === "latency-delete") deleteLatencyNode(node);
 };
 if (adminClient.getToken() || hasSession())
   api("/api/login", { method: "GET", forceToken: Boolean(adminClient.getToken()) })

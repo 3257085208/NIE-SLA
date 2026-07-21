@@ -68,6 +68,24 @@ export async function agentScopedToken(env, agentId) {
   return `nst_${(await sha256Hex(`${configured}:${id}`)).slice(0, 48)}`;
 }
 
+export async function requireLatencyAgentForId(request, env, nodeId) {
+  const id = sanitizeAgentId(nodeId);
+  if (!id || !env.DB) throw new ApiError(401, 'Latency 节点不存在或已禁用');
+  const node = await env.DB.prepare(`SELECT id FROM latency_agents WHERE id = ? AND enabled = 1`).bind(id).first().catch(() => null);
+  if (!node) throw new ApiError(401, 'Latency 节点不存在或已禁用');
+  const token = bearerToken(request);
+  const globalToken = String(env.AGENT_TOKEN || '').trim();
+  if (!globalToken) throw new ApiError(500, '未配置身份验证');
+  if (token && constantTimeEqual(token, globalToken)) return { type: 'global', node_id: id };
+  const scoped = await latencyAgentScopedToken(env, id);
+  if (token && scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', node_id: id };
+  throw new ApiError(401, '未授权');
+}
+
+export async function latencyAgentScopedToken(env, nodeId) {
+  return agentScopedToken(env, `latency:${sanitizeAgentId(nodeId)}`);
+}
+
 export function bearerToken(request) {
   const auth = request.headers.get('authorization') || '';
   return auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';

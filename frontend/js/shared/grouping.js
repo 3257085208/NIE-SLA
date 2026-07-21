@@ -63,12 +63,13 @@ export function groupByDimension(targets = [], mode = 'group') {
   return groups;
 }
 
-export function groupByOptionsHtml(selected = 'group', selectId = 'groupBySelect') {
-  const options = GROUP_BY_OPTIONS.map((opt) => {
-    const sel = opt.id === selected ? ' selected' : '';
-    return `<option value="${opt.id}"${sel}>${opt.label}</option>`;
+export function groupByMenuHtml(selected = 'group', menuId = 'groupByMenu') {
+  const current = GROUP_BY_OPTIONS.find((option) => option.id === selected) || GROUP_BY_OPTIONS[0];
+  const options = GROUP_BY_OPTIONS.map((option) => {
+    const active = option.id === current.id;
+    return `<button type="button" role="option" aria-selected="${active}" class="group-by-option${active ? ' is-active' : ''}" data-group-value="${option.id}">${option.label}</button>`;
   }).join('');
-  return `<label class="group-by-label">分组方式 <select id="${selectId}">${options}</select></label>`;
+  return `<div class="group-by-control" id="${menuId}"><span class="group-by-caption">分组方式</span><button type="button" class="group-by-trigger" aria-haspopup="listbox" aria-expanded="false"><span>${current.label}</span><i aria-hidden="true"></i></button><div class="group-by-menu" role="listbox" aria-label="分组方式" hidden>${options}</div></div>`;
 }
 
 export function lineTypeOptionsHtml(selected = '') {

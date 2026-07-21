@@ -1,7 +1,7 @@
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA } from './utils.js';
 import { json, constantTimeEqual } from './auth.js';
 import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
-import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, convertPriceToCny, getPublicSettings } from './admin.js';
+import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, convertPriceToCny, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
 import { summarizeTraffic, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 import { compactStatusPayload } from './status-payload.js';
 
@@ -67,7 +67,7 @@ async function buildStatusPayload(env, url = null) {
   try { if (parseBoolean(env.AUTO_SYNC_TARGETS ?? false, false)) await syncEnvTargetsMaybe(env); } catch (_) { sync_warning = 'TARGETS_JSON sync failed; using last known targets'; }
   const days = clamp(Number(url?.searchParams?.get('days') || DEFAULT_STATUS_DAYS), 1, 90);
   const startDay = dateAddLocal(env, -days + 1);
-  const targetsPromise = env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.sort_order, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.provider, t.line_type, t.traffic_enabled, t.traffic_quota_gb, t.traffic_mode FROM targets t WHERE t.enabled = 1 ORDER BY CASE WHEN t.sort_order IS NULL THEN 1 ELSE 0 END, t.sort_order, t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all()
+  const targetsPromise = env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.no_public_ip, t.sort_order, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.provider, t.line_type, t.traffic_enabled, t.traffic_quota_gb, t.traffic_mode FROM targets t WHERE t.enabled = 1 ORDER BY CASE WHEN t.sort_order IS NULL THEN 1 ELSE 0 END, t.sort_order, t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all()
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.provider, t.line_type, t.traffic_enabled, t.traffic_quota_gb FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all())
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.provider, t.line_type FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all())
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all());
@@ -84,7 +84,9 @@ async function buildStatusPayload(env, url = null) {
     .map(target => String(target.id));
   const latestMap = {};
   for (const row of latestResult.results || []) latestMap[row.target_id] = row;
-  const summaries = mergeSummaryRows(r2SummaryRows, await getCheckBucketSummaries(env, startDay, { recentFromDay, historicalTargetIds }));
+  const noPublicTargetIds = new Set((targets.results || []).filter(target => Number(target.no_public_ip || 0) === 1).map(target => String(target.id)));
+  const summaries = mergeSummaryRows(r2SummaryRows, await getCheckBucketSummaries(env, startDay, { recentFromDay, historicalTargetIds }))
+    .filter(summary => !noPublicTargetIds.has(String(summary.target_id)));
   const dayList = [];
   for (let i = days - 1; i >= 0; i--) dayList.push(dateAddLocal(env, -i));
   const maskIps = publicMaskIps(env);
@@ -125,16 +127,28 @@ async function buildStatusPayload(env, url = null) {
     }
   }
 
+  const externalLatency = await getLatestExternalLatencyByTarget(env, (targets.results || [])
+    .filter(target => Number(target.no_public_ip || 0) !== 1 && target.type === 'tcp')
+    .map(target => target.id)).catch(() => new Map());
+
   const rows = (targets.results || []).map((targetRow) => {
     const r2Status = r2State.targets?.[targetRow.id] || {};
     const d1Status = latestMap[targetRow.id] || {};
-    const status = Number(d1Status.checked_at || 0) > Number(r2Status.checked_at || 0) ? d1Status : r2Status;
+    const noPublicIp = Number(targetRow.no_public_ip || 0) === 1;
+    const status = noPublicIp ? {} : (Number(d1Status.checked_at || 0) > Number(r2Status.checked_at || 0) ? d1Status : r2Status);
     const row = { ...targetRow, ...status };
     const displayHost = row.type === 'tcp' ? publicHost(row.target_host, maskIps) : row.target_host;
     const displayUrl = row.type === 'http' ? publicUrl(row.url, env) : row.url;
     const displayTarget = row.type === 'http' ? displayUrl : displayHost;
     const agentState = metricsMap[sanitizeAgentId(targetRow.id)] || null;
-    const publicRow = { ...row, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || 'Auto', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, ...agentStatusFields(agentState, env) };
+    const publicRow = { ...row, no_public_ip: noPublicIp ? 1 : 0, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || 'Auto', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, ...agentStatusFields(agentState, env) };
+    publicRow.latency_sources = noPublicIp ? [] : [
+      { id: 'cloudflare', name: 'Cloudflare', kind: 'cloudflare', builtin: true, checked_at: row.checked_at || null, latency_ms: row.latency_ms ?? null, ok: Number(row.ok) === 1 },
+      ...(externalLatency.get(String(targetRow.id)) || []),
+    ];
+    if (noPublicIp) {
+      Object.assign(publicRow, { status_source: 'agent', agent_online: Boolean(agentState && agentStatusFields(agentState, env).agent_online), latency_ms: null, checked_at: null, ok: null, uptime_24h: null, uptime_7d: null, avg_latency_24h: null, error: null });
+    }
     delete publicRow.daily;
     if (hidePorts) delete publicRow.target_port;
     return publicRow;
@@ -171,6 +185,16 @@ function publicAgentSummary(row, traffic = null) {
     delete net.tx_bytes;
   }
   const vpsInfo = parseJsonSafe(row.vps_info);
+  const temperatureSensors = Array.isArray(vpsInfo?.temperature_sensors)
+    ? vpsInfo.temperature_sensors.slice(0, 16).map(sensor => ({
+        id: String(sensor?.id || '').slice(0, 64),
+        label: String(sensor?.label || '').slice(0, 64),
+        kind: ['motherboard', 'disk', 'chipset', 'other'].includes(String(sensor?.kind || '')) ? String(sensor.kind) : 'other',
+        temp_c: Number.isFinite(Number(sensor?.temp_c)) ? Number(sensor.temp_c) : null,
+      })).filter(sensor => sensor.id && sensor.label && sensor.temp_c != null && sensor.temp_c >= 1 && sensor.temp_c <= 125)
+    : [];
+  if (temperatureSensors.length) vpsInfo.temperature_sensors = temperatureSensors;
+  else delete vpsInfo.temperature_sensors;
   return {
     updated_at: row.updated_at || null,
     agent_version: row.agent_version || null,
@@ -188,6 +212,10 @@ function publicAgentSummary(row, traffic = null) {
     gpu_temp_c: Number.isFinite(Number(vpsInfo?.gpu_temp_c)) ? Number(vpsInfo.gpu_temp_c) : null,
     gpu_util: Number.isFinite(Number(vpsInfo?.gpu_util)) ? Number(vpsInfo.gpu_util) : null,
     gpu_name: vpsInfo?.gpu_name ? String(vpsInfo.gpu_name) : null,
+    motherboard_temp_c: Number.isFinite(Number(vpsInfo?.motherboard_temp_c)) ? Number(vpsInfo.motherboard_temp_c) : null,
+    disk_temp_c: Number.isFinite(Number(vpsInfo?.disk_temp_c)) ? Number(vpsInfo.disk_temp_c) : null,
+    chipset_temp_c: Number.isFinite(Number(vpsInfo?.chipset_temp_c)) ? Number(vpsInfo.chipset_temp_c) : null,
+    temperature_sensors: temperatureSensors,
     traffic,
   };
 }
@@ -223,6 +251,7 @@ async function overlayLiveTargetStatus(env, payload) {
     ).all();
     const byId = new Map((rows.results || []).map((r) => [String(r.target_id), r]));
     payload.targets = payload.targets.map((t) => {
+      if (Number(t.no_public_ip || 0) === 1) return { ...t, status_source: 'agent', latency_ms: null, checked_at: null, ok: null, error: null };
       const live = byId.get(String(t.id));
       if (!live) return t;
       return {
@@ -290,12 +319,16 @@ async function attachAgentState(payload, env) {
     }
     for (const target of payload.targets) {
       const state = byAgent[sanitizeAgentId(target.id)];
-      if (!state) continue;
+      if (!state) {
+        if (Number(target.no_public_ip || 0) === 1) Object.assign(target, { status_source: 'agent', agent_online: false, latency_ms: null, checked_at: null, ok: null, error: null });
+        continue;
+      }
       target.last_metrics_at = state.updated_at || null;
       target.agent_version = state.agent_version || null;
       target.machine_uptime_sec = Number(state.uptime_sec || 0) || null;
       target.agent_metrics = state;
       Object.assign(target, agentStatusFields(state, env));
+      if (Number(target.no_public_ip || 0) === 1) Object.assign(target, { status_source: 'agent', latency_ms: null, checked_at: null, ok: null, error: null });
     }
     if (targetOrder) payload.targets.sort((a, b) => (targetOrder.get(String(a.id)) ?? Number.MAX_SAFE_INTEGER) - (targetOrder.get(String(b.id)) ?? Number.MAX_SAFE_INTEGER));
   } catch (_) {}

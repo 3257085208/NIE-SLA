@@ -188,7 +188,7 @@ button { border: 0; cursor: pointer; }
 .service-list { padding: 2px 20px 17px 51px; }
 .service {
   display: grid;
-  grid-template-columns: minmax(230px, 1fr) 125px 95px 90px;
+  grid-template-columns: minmax(230px, 1fr) 125px 150px 90px;
   align-items: start;
   gap: 14px;
   padding: 8px 0;
@@ -226,7 +226,24 @@ button { border: 0; cursor: pointer; }
   font-weight: 600;
   white-space: nowrap;
 }
-.meta-loc { background: #e8f0fe; color: #1a73e8; }
+.meta-loc {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+.service.no-latency { grid-template-columns: minmax(230px, 1fr) 125px 90px; }
+.region-flag {
+  width: 18px;
+  height: 13px;
+  display: inline-block;
+  flex: 0 0 18px;
+  object-fit: cover;
+  border: 1px solid rgba(15, 23, 42, .12);
+  border-radius: 2px;
+  vertical-align: -2px;
+}
 .meta-tag { background: #f0f4f8; color: #57616d; }
 .meta-expiry { background: #e8f7ef; color: #159754; }
 .meta-expiry-warn { background: #fef7e0; color: #b8860b; }
@@ -571,6 +588,26 @@ button { border: 0; cursor: pointer; }
   opacity: .95;
   text-decoration: none;
 }
+.service-latency {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  font-size: 13px;
+}
+.service-latency-source {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 6px;
+}
+.service-latency-source small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+.service-latency-source strong { font-size: 13px; }
 .cf-logo:hover { opacity: 1; }
 .cf-logo-img {
   display: block;
@@ -1040,6 +1077,8 @@ body:not(.is-loaded) .incident-log {
   .service-status { grid-column: 2; grid-row: 1; font-size: 15px; }
   .service-latency { justify-self: start; font-size: 14px; }
   .service-uptime { justify-self: end; font-size: 14px; }
+  .service.no-latency { grid-template-columns: 1fr auto; }
+  .service.no-latency .service-uptime { grid-column: 2; grid-row: 2; }
   .service-bottom-row,
   .service-bottom-row.has-traffic {
     grid-template-columns: 1fr;
@@ -1290,6 +1329,7 @@ body[data-frontend-theme="cards"] .topbar .footer-right {
   flex: 0 0 auto;
   margin-left: 0 !important;
 }
+.vps-temperature-section { grid-column: 1 / -1; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
 body[data-frontend-theme="cards"] .topbar .search-row {
   position: relative;
@@ -3348,6 +3388,7 @@ body[data-frontend-theme="cards"].card-detail-mode .node-detail-checks.is-collap
   .vps-info-section {
     grid-template-columns: 1fr;
   }
+  .vps-temperature-section { grid-column: auto; }
 }
 
 .group-by-bar {
@@ -3359,6 +3400,11 @@ body[data-frontend-theme="cards"].card-detail-mode .node-detail-checks.is-collap
   background: var(--paper);
   border: 1px solid var(--line-strong);
   box-shadow: var(--shadow);
+}
+body[data-frontend-theme="cards"] .lat-row > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .group-by-title {
   display: inline-flex;

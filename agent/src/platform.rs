@@ -11,6 +11,18 @@ pub(super) struct ThermalSnapshot {
     pub gpu_util: Option<f64>,
     pub gpu_name: String,
     pub gpu_count: usize,
+    pub motherboard_temp_c: Option<f64>,
+    pub disk_temp_c: Option<f64>,
+    pub chipset_temp_c: Option<f64>,
+    pub sensors: Vec<TemperatureSensor>,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct TemperatureSensor {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub temp_c: f64,
 }
 
 struct GpuCache {
@@ -143,13 +155,26 @@ pub(super) fn virtualization() -> String {
 pub(super) fn thermal_snapshot() -> ThermalSnapshot {
     let cpu_temp_c = cpu_temperature_c();
     let (gpu_temp_c, gpu_util, gpu_name, gpu_count) = gpu_snapshot();
+    let sensors = temperature_sensors();
     ThermalSnapshot {
         cpu_temp_c,
         gpu_temp_c,
         gpu_util,
         gpu_name,
         gpu_count,
+        motherboard_temp_c: hottest_sensor(&sensors, "motherboard"),
+        disk_temp_c: hottest_sensor(&sensors, "disk"),
+        chipset_temp_c: hottest_sensor(&sensors, "chipset"),
+        sensors,
     }
+}
+
+fn hottest_sensor(sensors: &[TemperatureSensor], kind: &str) -> Option<f64> {
+    sensors
+        .iter()
+        .filter(|sensor| sensor.kind == kind)
+        .map(|sensor| sensor.temp_c)
+        .reduce(f64::max)
 }
 
 #[cfg(target_os = "linux")]
@@ -534,6 +559,110 @@ fn read_millidegree(path: impl AsRef<Path>) -> Option<f64> {
     } else {
         None
     }
+}
+
+#[cfg(target_os = "linux")]
+fn temperature_sensors() -> Vec<TemperatureSensor> {
+    let mut sensors = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") else {
+        return sensors;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let chip = std::fs::read_to_string(path.join("name"))
+            .unwrap_or_default()
+            .trim()
+            .to_lowercase();
+        let Ok(files) = std::fs::read_dir(&path) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let filename = file.file_name().to_string_lossy().to_lowercase();
+            if !filename.starts_with("temp") || !filename.ends_with("_input") {
+                continue;
+            }
+            let Some(temp_c) = read_millidegree(file.path()) else {
+                continue;
+            };
+            if !(1.0..=125.0).contains(&temp_c) {
+                continue;
+            }
+            let label_filename = filename.replace("_input", "_label");
+            let raw_label = std::fs::read_to_string(path.join(label_filename))
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            let label_lower = raw_label.to_lowercase();
+            let Some(kind) = sensor_kind(&chip, &label_lower) else {
+                continue;
+            };
+            let label = if raw_label.is_empty() {
+                format!("{} {}", chip, filename.trim_end_matches("_input"))
+            } else {
+                raw_label
+            };
+            let id = format!("{}:{}", chip, filename.trim_end_matches("_input"));
+            sensors.push(TemperatureSensor {
+                id: id.chars().take(64).collect(),
+                label: label.chars().take(64).collect(),
+                kind: kind.to_string(),
+                temp_c: (temp_c * 10.0).round() / 10.0,
+            });
+        }
+    }
+    sensors.sort_by(|a, b| a.kind.cmp(&b.kind).then_with(|| a.label.cmp(&b.label)));
+    sensors.dedup_by(|a, b| a.id == b.id);
+    sensors.truncate(16);
+    sensors
+}
+
+#[cfg(target_os = "linux")]
+fn sensor_kind(chip: &str, label: &str) -> Option<&'static str> {
+    if chip.contains("gpu")
+        || chip.contains("amdgpu")
+        || chip.contains("nouveau")
+        || chip.contains("nvidia")
+        || label.contains("gpu")
+    {
+        return None;
+    }
+    if hwmon_cpu_priority(chip, label) >= 0 {
+        return None;
+    }
+    if chip.contains("nvme")
+        || chip.contains("drivetemp")
+        || chip.contains("hddtemp")
+        || label.contains("drive")
+        || label.contains("ssd")
+    {
+        return Some("disk");
+    }
+    if label.contains("pch") || label.contains("chipset") || chip.contains("pch") {
+        return Some("chipset");
+    }
+    if label.contains("motherboard")
+        || label.contains("mainboard")
+        || label == "system"
+        || label.contains("board")
+        || label.contains("vrm")
+        || chip.contains("acpitz")
+        || chip.starts_with("nct")
+        || chip.starts_with("it8")
+        || chip.starts_with("w83")
+        || chip.starts_with("f718")
+        || chip.contains("asus")
+    {
+        return Some("motherboard");
+    }
+    if label.contains("battery") {
+        return None;
+    }
+    Some("other")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn temperature_sensors() -> Vec<TemperatureSensor> {
+    Vec::new()
 }
 
 fn gpu_snapshot() -> (Option<f64>, Option<f64>, String, usize) {

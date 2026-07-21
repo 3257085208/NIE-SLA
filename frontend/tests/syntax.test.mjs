@@ -15,7 +15,8 @@ for (const file of files) {
   assert.equal(result.status, 0, `${path.relative(root, file)} syntax failed:\n${result.stderr}`);
 }
 
-const [adminSource, adminCss, adminHtml] = await Promise.all([
+const [appSource, adminSource, adminCss, adminHtml] = await Promise.all([
+  readFile(path.join(root, 'app.js'), 'utf8'),
   readFile(path.join(root, 'js', 'admin.js'), 'utf8'),
   readFile(path.join(root, 'admin.css'), 'utf8'),
   readFile(path.join(root, 'admin.html'), 'utf8'),
@@ -27,13 +28,20 @@ assert.match(adminSource, /button\?\.dataset\.targetId \|\| button\?\.closest\("
 assert.match(adminSource, /targetGroupOptions\(type, target\.group_name\)/, 'target grouping must be a VPS/Web selector');
 assert.match(adminSource, /bindCatalogSearch\("mLocationSearch", "mLocation"/, 'location must provide catalog search');
 assert.match(adminSource, /currencyOptionsHtml\(target\.currency \|\| "USD"\)/, 'currency must use the supported selector');
+assert.match(adminSource, /id="mNoPublicIp"/, 'VPS editor must expose the no-public-IP option');
+assert.match(adminSource, /const cfDetails = noPublicIp[\s\S]*\? ""/, 'no-public-IP targets must hide Cloudflare status in admin');
+assert.match(adminSource, /\/api\/latency-agents/, 'admin must manage independent Latency nodes');
+assert.match(adminSource, /install-command\?node_id=/, 'Latency nodes must have an independent installer command');
+assert.doesNotMatch(appSource, /pingRows \|\| cardLatencyRow/, 'Latency rendering must not fall back to Ping rows');
 assert.doesNotMatch(adminCss, /min-width:\s*(?:1080|1280)px/, 'probe table must not regress to the old extra-wide layout');
 assert.match(adminCss, /width:\s*min\(980px,\s*calc\(100vw - 44px\)\)/, 'admin content width should match the frontend rhythm');
 assert.doesNotMatch(adminCss, /\.stat(?:\.\w+)?::before/, 'dashboard stats must not render decorative edge stripes');
-assert.match(adminCss, /\.group-by-label select\s*\{[\s\S]*appearance:\s*none/, 'group selector must use the admin control styling');
+assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector must use the custom admin menu');
+assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
-assert.match(adminHtml, /admin\.css\?v=20260721-structured-editor/, 'admin CSS cache key must publish the structured editor');
-assert.match(adminHtml, /js\/admin\.js\?v=20260721-structured-editor/, 'admin JS cache key must publish the structured editor');
+assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
+assert.match(adminHtml, /admin\.css\?v=20260721-latency-sources/, 'admin CSS cache key must publish the Latency controls');
+assert.match(adminHtml, /js\/admin\.js\?v=20260721-latency-sources/, 'admin JS cache key must publish the Latency controls');
 
 console.log(`frontend syntax tests passed (${files.length} files)`);
 

@@ -18,7 +18,7 @@ export async function getAgentInstallCommand(env, url, request = null) {
   const apiBase = agentApiBase(env, request, url, installBase);
   const pingSec = String(clamp(Number(env.NSTATUS_PING_SEC || env.AGENT_PING_SEC || 20), 5, 600));
   const sha256SumsSha256 = String(env.NSTATUS_SHA256SUMS_SHA256 || '').trim();
-  const expectedVersion = String(env.AGENT_LATEST_VERSION || 'v1.0.17').trim();
+  const expectedVersion = String(env.AGENT_LATEST_VERSION || 'v1.0.18').trim();
 
   const linuxEnvNames = [
     'NSTATUS_AGENT_BASE_URL',
@@ -80,7 +80,7 @@ export async function getAgentInstallCommand(env, url, request = null) {
   };
 }
 
-function agentApiBase(env, request = null, url = null, installBase = '') {
+export function agentApiBase(env, request = null, url = null, installBase = '') {
   const explicit = String(env.PUBLIC_AGENT_API_BASE || env.AGENT_API_BASE || env.PUBLIC_API_BASE || '').trim();
   if (explicit) return explicit.replace(/\/+$/, '');
 
@@ -94,7 +94,7 @@ function agentApiBase(env, request = null, url = null, installBase = '') {
   return String(url ? `${url.protocol}//${url.host}` : '').replace(/\/+$/, '');
 }
 
-function agentInstallBase(env, request = null) {
+export function agentInstallBase(env, request = null) {
   const explicit = String(
     env.PUBLIC_AGENT_INSTALL_BASE
       || env.AGENT_INSTALL_BASE
@@ -132,7 +132,7 @@ function isPublicHttpOrigin(value) {
   }
 }
 
-function shellQuote(value) {
+export function shellQuote(value) {
   return `'${String(value ?? '').replace(/'/g, `'\\''`)}'`;
 }
 

@@ -3,7 +3,7 @@ import { parseBoolean } from '../utils.js';
 
 let schemaEnsured = false;
 let schemaPromise = null;
-const SCHEMA_MARKER = 'schema:worker-v8-20260719-provider-line';
+const SCHEMA_MARKER = 'schema:worker-v9-20260721-latency-agents';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -29,8 +29,8 @@ export async function ensureV6Schema(env) {
   // statements on every cron invocation once this schema revision is installed.
   const installed = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(SCHEMA_MARKER).first().catch(() => null);
   if (installed?.value === '1') { schemaEnsured = true; return; }
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '')`).run();
-  for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'']) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, no_public_ip INTEGER NOT NULL DEFAULT 0, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '')`).run();
+  for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN no_public_ip INTEGER NOT NULL DEFAULT 0']) {
     await runOptionalSchemaChange(env, stmt);
   }
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_due ON targets(enabled, last_checked_at, interval_sec)`).run();
@@ -123,6 +123,26 @@ export async function ensureV6Schema(env) {
     PRIMARY KEY (target_id, agent_id, ts)
   )`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_ping_history_agent_ts ON ping_history(agent_id, ts DESC)`).run();
+
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS latency_agents (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_seen_at INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS latency_results (
+    node_id TEXT NOT NULL,
+    target_id TEXT NOT NULL,
+    checked_at INTEGER NOT NULL,
+    latency_ms INTEGER,
+    ok INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    PRIMARY KEY (node_id, target_id, checked_at)
+  )`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_latency_results_target_time ON latency_results(target_id, checked_at DESC)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_latency_results_node_time ON latency_results(node_id, checked_at DESC)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS alert_state (
     target_id TEXT NOT NULL,
     rule_key TEXT NOT NULL,

@@ -49,6 +49,7 @@ for f in "$ROOT/worker/src"/*.js; do
 done
 run_check "worker utility tests" node "$ROOT/worker/tests/utils.test.mjs"
 run_check "worker hardening tests" node "$ROOT/worker/tests/hardening.test.mjs"
+run_check "external Latency agent tests" node "$ROOT/worker/tests/latency-agents.test.mjs"
 run_shell "worker module bundle" "cd '$ROOT' && npx --yes esbuild worker/src/index.js --bundle --format=esm --platform=browser --external:cloudflare:sockets --outfile='$TMP_DIR/nstatus-worker-bundle.mjs' && rm -f '$TMP_DIR/nstatus-worker-bundle.mjs'"
 run_shell "js undefined references" "cd '$ROOT' && npx --yes eslint@10.6.0 -c tests/eslint.config.mjs worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests --no-error-on-unmatched-pattern"
 

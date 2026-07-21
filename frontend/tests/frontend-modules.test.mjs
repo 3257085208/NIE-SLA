@@ -10,9 +10,9 @@ import {
   trimEmptyPointEdges,
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
-import { groupByDimension, groupKeyFor, priceBandKey } from '../js/shared/grouping.js';
+import { groupByDimension, groupByMenuHtml, groupKeyFor, priceBandKey } from '../js/shared/grouping.js';
 import { nodegetFlagHtml } from '../js/themes/nodeget-cards.js';
-import { canShowTemperature, isVirtualized } from '../js/shared/hardware.js';
+import { canShowTemperature, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
 import {
   CURRENCIES,
   COUNTRIES,
@@ -82,13 +82,19 @@ assert.equal(groupKeyFor(targets[0], 'provider'), 'DMIT');
 assert.equal(Object.keys(groupByDimension(targets, 'location')).length, 2);
 assert.equal(Object.keys(groupByDimension(targets, 'line_type')).length, 2);
 assert.equal(priceBandKey({ price: 8 }), '5 – 10');
+assert.match(groupByMenuHtml('location'), /role="listbox"/);
+assert.match(groupByMenuHtml('location'), /data-group-value="location"[^>]*>国家\/地区<\/button>/);
 assert.match(nodegetFlagHtml('HK'), /assets\/flags\/4x3\/hk\.svg/);
+assert.match(nodegetFlagHtml('HK'), /width="18" height="13"/);
 assert.equal(countryFlagAsset('HK'), './assets/flags/4x3/hk.svg');
 assert.doesNotMatch(nodegetFlagHtml('HK'), /flagcdn\.com/);
 assert.equal(isVirtualized({ virtualization: 'kvm' }), true);
 assert.equal(isVirtualized({ virtualization: 'bare-metal' }), false);
 assert.equal(canShowTemperature({ virtualization: 'docker' }), false);
 assert.equal(canShowTemperature({ virtualization: '' }), true);
+assert.equal(hasTemperatureData({ virtualization: 'kvm', cpu_temp_c: 40 }), false);
+assert.equal(hasTemperatureData({ virtualization: '', disk_temp_c: 36 }), true);
+assert.equal(hasTemperatureData({ virtualization: '', temperature_sensors: [{ temp_c: 42 }] }), true);
 assert.equal(COUNTRIES.length, 249);
 for (const country of COUNTRIES) {
   assert.equal(existsSync(new URL(`../assets/flags/4x3/${country.code.toLowerCase()}.svg`, import.meta.url)), true);

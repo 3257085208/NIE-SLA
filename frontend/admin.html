@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./admin.css?v=20260721-structured-editor" />
+    <link rel="stylesheet" href="./admin.css?v=20260721-latency-sources" />
   </head>
   <body>
     <div class="login-bg" id="loginPage">
@@ -59,6 +59,7 @@
           <div class="nav" id="nav">
             <a href="#" class="on" data-p="dash">仪表盘</a
             ><a href="#" data-p="targets">探针</a
+            ><a href="#" data-p="latency">Latency</a
             ><a href="#" data-p="pings">Ping</a
             ><a href="#" data-p="settings">设置</a>
           </div>
@@ -112,10 +113,21 @@
           </div>
           <div id="tTable"><div class="loading">加载中...</div></div>
         </section>
+        <section class="page" id="pg-latency">
+          <div class="top-actions">
+            <div class="page-intro">
+              <span class="page-kicker">LATENCY / 03</span>
+              <h2>Latency 节点</h2>
+              <p>管理从不同网络位置发起 TCP 延迟测量的独立节点。</p>
+            </div>
+            <button class="btn btn-primary" id="addLatencyBtn">+ 新增节点</button>
+          </div>
+          <div id="latencyTable"><div class="loading">加载中...</div></div>
+        </section>
         <section class="page" id="pg-pings">
           <div class="top-actions">
             <div class="page-intro">
-              <span class="page-kicker">NETWORK / 03</span>
+              <span class="page-kicker">NETWORK / 04</span>
               <h2>Ping 管理</h2>
               <p>管理 Agent 侧网络质量检测目标。</p>
             </div>
@@ -125,7 +137,7 @@
         </section>
         <section class="page" id="pg-settings">
           <div class="page-intro">
-            <span class="page-kicker">SYSTEM / 04</span>
+            <span class="page-kicker">SYSTEM / 05</span>
             <h2>系统设置</h2>
             <p>集中管理显示策略、自动更新、报警与数据维护。</p>
           </div>
@@ -190,7 +202,7 @@
 
     <script
       type="module"
-      src="./js/admin.js?v=20260721-structured-editor"
+      src="./js/admin.js?v=20260721-latency-sources"
     ></script>
   </body>
 </html>

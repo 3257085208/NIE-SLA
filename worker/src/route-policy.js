@@ -5,6 +5,8 @@ const AGENT_API_PATHS = new Set([
   '/api/agent/update-policy',
   '/api/agent/ping-targets',
   '/api/agent/pings',
+  '/api/latency-agent/targets',
+  '/api/latency-agent/results',
 ]);
 
 export function isAgentApiPath(path) {

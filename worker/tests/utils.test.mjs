@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, parseBoolean, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromExpiry } from '../src/utils.js';
-import { agentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, safeJson } from '../src/auth.js';
+import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, normalizeTarget, parseBoolean, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromExpiry } from '../src/utils.js';
+import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, requireLatencyAgentForId, safeJson } from '../src/auth.js';
 import { rateLimitD1 } from '../src/ratelimit.js';
 import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
@@ -12,6 +12,7 @@ import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
 import { isAgentApiPath } from '../src/route-policy.js';
 import { compactStatusPayload } from '../src/status-payload.js';
 import { getAgentInstallCommand } from '../src/admin/install-command.js';
+import { getLatencyAgentInstallCommand } from '../src/admin/latency-agents.js';
 
 globalThis.crypto ||= webcrypto;
 const originalFetch = globalThis.fetch;
@@ -100,6 +101,14 @@ const rateEnv = fakeRateLimitEnv();
 assert.deepEqual(await Promise.all(Array.from({ length: 8 }, () => rateLimitD1(rateEnv, 'login:1', 3, 60))), [true, true, true, false, false, false, false, false]);
 assert.equal(isAgentApiPath('/api/agent/metrics'), true);
 assert.equal(isAgentApiPath('/api/agent/ping-targets'), true);
+assert.equal(isAgentApiPath('/api/latency-agent/targets'), true);
+assert.equal(isAgentApiPath('/api/latency-agent/results'), true);
+
+assert.throws(() => normalizeTarget({ type: 'tcp', name: 'Private VPS', target_host: '', target_port: 0 }), /主机/);
+const privateTarget = normalizeTarget({ type: 'tcp', name: 'Private VPS', no_public_ip: true });
+assert.equal(privateTarget.no_public_ip, true);
+assert.equal(privateTarget.target_host, null);
+assert.equal(privateTarget.target_port, null);
 
 const compactStatus = compactStatusPayload({
   ok: true,
@@ -170,6 +179,23 @@ const installCommandWithoutSourceHeaders = await getAgentInstallCommand(
 assert.equal(installCommandWithoutSourceHeaders.ok, true);
 assert.equal(installCommandWithoutSourceHeaders.install_base, 'https://status.example.test');
 assert.match(installCommandWithoutSourceHeaders.linux_command, /https:\/\/status\.example\.test\/install\.sh/);
+const latencyInstallCommand = await getLatencyAgentInstallCommand(
+  {
+    AGENT_TOKEN: 'global-agent-secret',
+    PUBLIC_AGENT_API_BASE: 'https://api.example.test',
+    PUBLIC_SITE_ORIGIN: 'https://status.example.test',
+    DB: {
+      prepare() {
+        return { bind() { return { first: async () => ({ id: 'latency-tokyo', name: '东京 IIJ' }) }; } };
+      },
+    },
+  },
+  new URL('https://api.example.test/api/latency-agent/install-command?node_id=latency-tokyo'),
+  new Request('https://api.example.test/api/latency-agent/install-command?node_id=latency-tokyo'),
+);
+assert.equal(latencyInstallCommand.ok, true);
+assert.match(latencyInstallCommand.linux_command, /install-latency\.sh/);
+assert.doesNotMatch(latencyInstallCommand.linux_command, /NSTATUS_AGENT_ID=/);
 assert.equal(isAgentApiPath('/api/login'), false);
 
 assert.deepEqual(await safeJson(new Request('https://example.com', { method: 'POST', body: '{"ok":true}' }), 64), { ok: true });
@@ -190,6 +216,9 @@ await assert.rejects(() => requireAgentForId(agentRequest(scopedToken), authEnv,
 await assert.rejects(() => requireAgentForId(agentRequest(scopedToken), authEnv, 'deleted-vps'), /不存在或已禁用/);
 assert.deepEqual(await requireAnyAgent(agentRequest(scopedToken), authEnvWithTargets(['vps-a'])), { type: 'scoped', agent_id: 'vps-a' });
 await assert.rejects(() => requireAnyAgent(agentRequest(scopedToken), authEnvWithTargets(['vps-b'])), /未授权/);
+const latencyAuthEnv = authEnvWithTargets(['latency-tokyo']);
+const latencyToken = await latencyAgentScopedToken(latencyAuthEnv, 'latency-tokyo');
+assert.deepEqual(await requireLatencyAgentForId(agentRequest(latencyToken), latencyAuthEnv, 'latency-tokyo'), { type: 'scoped', node_id: 'latency-tokyo' });
 
 const settingsEnv = fakeD1Env();
 assert.equal((await getPublicSettings(settingsEnv)).agent_auto_update, false);
@@ -499,10 +528,13 @@ function fakeStatement(sql, tables) {
 // cpu_temp thermal fields
 {
   const pts = compactMetricPoints([
-    { ts: 1, cpu: 1, cpu_temp: 40, gpu_temp: 50, gpu_util: 10 },
-    { ts: 2, cpu: 2, cpu_temp: 42, gpu_temp: 52, gpu_util: 20 },
+    { ts: 1, cpu: 1, cpu_temp: 40, gpu_temp: 50, gpu_util: 10, motherboard_temp: 35, disk_temp: 32, chipset_temp: 44 },
+    { ts: 2, cpu: 2, cpu_temp: 42, gpu_temp: 52, gpu_util: 20, motherboard_temp: 37, disk_temp: 34, chipset_temp: 46 },
   ], 2);
   assert.equal(pts.length, 2);
   assert.equal(pts[0].cpu_temp, 40);
   assert.equal(pts[1].gpu_util, 20);
+  assert.equal(pts[0].motherboard_temp, 35);
+  assert.equal(pts[1].disk_temp, 34);
+  assert.deepEqual(metricFieldsForRequest('temp'), ['cpu_temp', 'gpu_temp', 'motherboard_temp', 'disk_temp', 'chipset_temp']);
 }

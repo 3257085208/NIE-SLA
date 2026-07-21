@@ -137,6 +137,10 @@ struct VpsInfo {
     cpu_temp_c: Option<f64>,
     gpu_temp_c: Option<f64>,
     gpu_util: Option<f64>,
+    motherboard_temp_c: Option<f64>,
+    disk_temp_c: Option<f64>,
+    chipset_temp_c: Option<f64>,
+    temperature_sensors: Vec<platform::TemperatureSensor>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -155,6 +159,9 @@ struct SamplePoint {
     cpu_temp: Option<f64>,
     gpu_temp: Option<f64>,
     gpu_util: Option<f64>,
+    motherboard_temp: Option<f64>,
+    disk_temp: Option<f64>,
+    chipset_temp: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -555,17 +562,32 @@ impl Collector {
             cpu_temp: thermal.cpu_temp_c,
             gpu_temp: thermal.gpu_temp_c,
             gpu_util: thermal.gpu_util,
+            motherboard_temp: thermal.motherboard_temp_c,
+            disk_temp: thermal.disk_temp_c,
+            chipset_temp: thermal.chipset_temp_c,
         }
     }
 
     fn metrics(
         &mut self,
         hostname: &str,
-        vps_info: Option<VpsInfo>,
+        mut vps_info: Option<VpsInfo>,
         samples: &[SamplePoint],
         pings: &[PingResult],
     ) -> Metrics {
         let latest = samples.last().cloned().unwrap_or_else(|| self.sample());
+        if let Some(info) = vps_info.as_mut() {
+            let thermal = platform::thermal_snapshot();
+            info.cpu_temp_c = thermal.cpu_temp_c;
+            info.gpu_temp_c = thermal.gpu_temp_c;
+            info.gpu_util = thermal.gpu_util;
+            info.gpu_name = thermal.gpu_name;
+            info.gpu_count = thermal.gpu_count;
+            info.motherboard_temp_c = thermal.motherboard_temp_c;
+            info.disk_temp_c = thermal.disk_temp_c;
+            info.chipset_temp_c = thermal.chipset_temp_c;
+            info.temperature_sensors = thermal.sensors;
+        }
         self.sys.refresh_processes();
         let process_count = self.sys.processes().len();
         let thread_count = self
@@ -668,6 +690,10 @@ impl Collector {
             cpu_temp_c: thermal.cpu_temp_c,
             gpu_temp_c: thermal.gpu_temp_c,
             gpu_util: thermal.gpu_util,
+            motherboard_temp_c: thermal.motherboard_temp_c,
+            disk_temp_c: thermal.disk_temp_c,
+            chipset_temp_c: thermal.chipset_temp_c,
+            temperature_sensors: thermal.sensors,
         }
     }
 }
@@ -820,6 +846,15 @@ fn sample_json(s: &SamplePoint) -> serde_json::Value {
     if let Some(v) = s.gpu_util {
         obj.insert("gpu_util".to_string(), serde_json::json!(v));
     }
+    if let Some(v) = s.motherboard_temp {
+        obj.insert("motherboard_temp".to_string(), serde_json::json!(v));
+    }
+    if let Some(v) = s.disk_temp {
+        obj.insert("disk_temp".to_string(), serde_json::json!(v));
+    }
+    if let Some(v) = s.chipset_temp {
+        obj.insert("chipset_temp".to_string(), serde_json::json!(v));
+    }
     value
 }
 
@@ -851,6 +886,33 @@ fn vps_info_json(v: &VpsInfo) -> serde_json::Value {
     }
     if let Some(u) = v.gpu_util {
         obj.insert("gpu_util".to_string(), serde_json::json!(u));
+    }
+    if let Some(t) = v.motherboard_temp_c {
+        obj.insert("motherboard_temp_c".to_string(), serde_json::json!(t));
+    }
+    if let Some(t) = v.disk_temp_c {
+        obj.insert("disk_temp_c".to_string(), serde_json::json!(t));
+    }
+    if let Some(t) = v.chipset_temp_c {
+        obj.insert("chipset_temp_c".to_string(), serde_json::json!(t));
+    }
+    if !v.temperature_sensors.is_empty() {
+        obj.insert(
+            "temperature_sensors".to_string(),
+            serde_json::Value::Array(
+                v.temperature_sensors
+                    .iter()
+                    .map(|sensor| {
+                        serde_json::json!({
+                            "id": sensor.id,
+                            "label": sensor.label,
+                            "kind": sensor.kind,
+                            "temp_c": sensor.temp_c
+                        })
+                    })
+                    .collect(),
+            ),
+        );
     }
     value
 }

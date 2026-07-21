@@ -544,7 +544,7 @@ async function mapWithConcurrency(items, limit, fn) {
   return out;
 }
 
-const METRIC_FIELDS = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write', 'cpu_temp', 'gpu_temp', 'gpu_util'];
+const METRIC_FIELDS = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write', 'cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp'];
 const METRIC_FIELD_GROUPS = {
   cpu: ['cpu'],
   mem: ['mem'],
@@ -553,7 +553,7 @@ const METRIC_FIELD_GROUPS = {
   net: ['net_rx', 'net_tx'],
   conns: ['tcp_conns', 'udp_conns'],
   diskio: ['disk_read', 'disk_write'],
-  temp: ['cpu_temp', 'gpu_temp'],
+  temp: ['cpu_temp', 'gpu_temp', 'motherboard_temp', 'disk_temp', 'chipset_temp'],
   gpu: ['gpu_util', 'gpu_temp'],
 };
 
@@ -620,12 +620,12 @@ export function compactMetricPoints(points, maxPoints = 900) {
 }
 
 function averageMetricChunk(chunk) {
-  const keys = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write', 'cpu_temp', 'gpu_temp', 'gpu_util'];
+  const keys = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write', 'cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp'];
   const out = { ts: Math.round(avgNumber(chunk, 'ts')) };
   for (const key of keys) {
     const avg = avgNumberOptional(chunk, key);
     if (avg != null) out[key] = roundMetric(avg);
-    else if (!['cpu_temp', 'gpu_temp', 'gpu_util'].includes(key)) out[key] = 0;
+    else if (!['cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp'].includes(key)) out[key] = 0;
   }
   return out;
 }
@@ -658,7 +658,7 @@ function normalizeMetricPoint(point) {
     disk_read: Number(point?.disk_read) || 0,
     disk_write: Number(point?.disk_write) || 0,
   };
-  for (const key of ['cpu_temp', 'gpu_temp', 'gpu_util']) {
+  for (const key of ['cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp']) {
     const n = Number(point?.[key]);
     if (Number.isFinite(n)) out[key] = n;
   }
@@ -794,7 +794,7 @@ function mapSamples(samples) {
       tcp_conns: Number(s.tcp_conns) || 0, udp_conns: Number(s.udp_conns) || 0,
       disk_read: Number(s.disk_read) || 0, disk_write: Number(s.disk_write) || 0,
     };
-    for (const key of ['cpu_temp', 'gpu_temp', 'gpu_util']) {
+    for (const key of ['cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp']) {
       const n = Number(s?.[key]);
       if (Number.isFinite(n)) point[key] = n;
     }

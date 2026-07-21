@@ -238,13 +238,18 @@ export function normalizeTarget(input, allowPartial = false) {
   const timeoutMs = clamp(Number(input?.timeout_ms || DEFAULT_TIMEOUT_MS), 500, 30000);
   const intervalSec = clamp(Number(input?.interval_sec || DEFAULT_INTERVAL_SEC), MIN_INTERVAL_SEC, 86400);
   const probeRegion = ALLOWED_REGIONS.has(String(input?.probe_region || 'auto')) ? String(input?.probe_region || 'auto') : 'auto';
+  const noPublicIp = type === 'tcp' && parseBoolean(input?.no_public_ip, false);
 
   let targetHost = null, targetPort = null, url = null, method = null, expectedStatus = '';
   if (type === 'tcp') {
     targetHost = String(input?.target_host || input?.host || '').trim();
     targetPort = Number(input?.target_port || input?.port || 0);
-    if (!targetHost) throw new Error('TCP 目标必须填写主机');
-    if (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) throw new Error('目标端口必须在 1 到 65535 之间');
+    if (!noPublicIp && !targetHost) throw new Error('TCP 目标必须填写主机，或选择“无公网 IP”');
+    if (!noPublicIp && (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535)) throw new Error('目标端口必须在 1 到 65535 之间');
+    if (noPublicIp && (!targetHost || !Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535)) {
+      targetHost = targetHost || null;
+      targetPort = null;
+    }
   }
   if (type === 'http') {
     url = String(input?.url || '').trim();
@@ -254,13 +259,13 @@ export function normalizeTarget(input, allowPartial = false) {
     if (!['GET', 'HEAD'].includes(method)) method = 'GET';
     expectedStatus = normalizeExpectedStatus(input?.expected_status || input?.expectedStatus || '200,201,202,204,301,302,307,308');
   }
-  return { name, group_name: groupName, type, target_host: targetHost, target_port: targetPort, url, method, expected_status: expectedStatus, timeout_ms: timeoutMs, interval_sec: intervalSec, probe_region: probeRegion, enabled: input?.enabled === undefined ? true : parseBoolean(input.enabled, true) };
+  return { name, group_name: groupName, type, target_host: targetHost, target_port: targetPort, url, method, expected_status: expectedStatus, timeout_ms: timeoutMs, interval_sec: intervalSec, probe_region: probeRegion, no_public_ip: noPublicIp, enabled: input?.enabled === undefined ? true : parseBoolean(input.enabled, true) };
 }
 
 export function stableTargetId(input, normalized) {
   const explicit = String(input?.id || '').trim();
   if (explicit) return sanitizeId(explicit);
-  const raw = normalized.type === 'http' ? `http-${normalized.name}-${normalized.url}` : `tcp-${normalized.name}-${normalized.target_host}-${normalized.target_port}`;
+  const raw = normalized.type === 'http' ? `http-${normalized.name}-${normalized.url}` : `tcp-${normalized.name}-${normalized.target_host || 'agent'}-${normalized.target_port || 'local'}`;
   return sanitizeId(raw);
 }
 
