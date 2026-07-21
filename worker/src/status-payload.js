@@ -9,6 +9,7 @@ export function compactStatusPayload(payload) {
     now: payload.now,
     days: payload.days,
     regions: payload.regions,
+    region_proxy_enabled: payload.region_proxy_enabled,
     frontend_theme: payload.frontend_theme,
     frontend: payload.frontend,
     traffic: payload.traffic,

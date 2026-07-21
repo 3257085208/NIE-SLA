@@ -283,13 +283,39 @@ th {
   letter-spacing: 0.06em;
 }
 .targets-table {
-  min-width: 1460px;
+  min-width: 1080px;
 }
 .pings-table {
   min-width: 860px;
 }
 .name-cell {
   white-space: normal;
+}
+.target-summary,
+.status-stack {
+  display: grid;
+  gap: 4px;
+}
+.target-summary > div,
+.status-stack > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.target-summary > span,
+.group-cell {
+  display: block;
+  max-width: 260px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+.status-stack small {
+  color: var(--muted);
+}
+.status-stack code {
+  font-size: 11px;
 }
 .host-cell {
   overflow: hidden;
@@ -538,6 +564,22 @@ th {
   margin-bottom: 18px;
   gap: 12px;
 }
+.install-command-block {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+.install-command-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.install-command-block .code {
+  max-height: 220px;
+  margin: 0;
+  overflow: auto;
+}
 .page-intro {
   margin-bottom: 20px;
 }
@@ -746,9 +788,20 @@ code,
 }
 
 @media (max-width: 720px) {
-  .target-order-bar { align-items: flex-start; }
-  .target-order-bar div { display: grid; gap: 2px; }
-  .target-order-bar div span { max-width: 240px; }
+  .target-order-bar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .target-order-bar > div:first-child { display: grid; gap: 2px; }
+  .target-order-bar > div:first-child span { max-width: 240px; }
+  .target-order-bar .order-tools {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: nowrap;
+  }
+  .target-order-bar .group-by-label { display: inline-flex; }
   .drag-handle { display: none; }
   .mobile-order { display: inline-flex; gap: 2px; }
   .mobile-order button {
@@ -762,8 +815,8 @@ code,
   .action-cluster { width: 100%; }
   .action-cluster .btn { flex: 1; }
 }
-.targets-table th:nth-child(14),
-.targets-table td:nth-child(14) {
+.targets-table th:nth-child(7),
+.targets-table td:nth-child(7) {
   padding-right: 10px;
 }
 

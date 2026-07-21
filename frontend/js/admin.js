@@ -1,5 +1,6 @@
 import { copyText } from "./install-command.js";
 import { createAdminClient } from "./admin/api.js";
+import { canShowTemperature } from "./shared/hardware.js";
 import {
   groupByDimension,
   groupByOptionsHtml,
@@ -66,11 +67,13 @@ let targets = [],
   targetAdminFailed = false,
   pingAdminFailed = false,
   targetOrderSaving = false;
+let toastTimer = 0;
 function toast(m, t = "info") {
   const e = byId("toast");
+  clearTimeout(toastTimer);
   e.textContent = m;
   e.className = "toast " + t + " show";
-  setTimeout(() => e.classList.remove("show"), 3200);
+  toastTimer = setTimeout(() => e.classList.remove("show"), t === "err" ? 6000 : 3200);
 }
 function showLogin(message = "", { requireTotp = false } = {}) {
   byId("loginPage").style.display = "flex";
@@ -341,8 +344,8 @@ async function renderMetrics() {
     if (v.kernel) rows.push(["内核", v.kernel]);
     if (v.virtualization) rows.push(["虚拟化", v.virtualization]);
     if (v.gpu_name) rows.push(["GPU", v.gpu_name + (v.gpu_count > 1 ? ` x${v.gpu_count}` : "")]);
-    if (v.cpu_temp_c != null) rows.push(["CPU 温度", Number(v.cpu_temp_c).toFixed(1) + "°C"]);
-    if (v.gpu_temp_c != null) rows.push(["GPU 温度", Number(v.gpu_temp_c).toFixed(1) + "°C"]);
+    if (canShowTemperature(v) && v.cpu_temp_c != null) rows.push(["CPU 温度", Number(v.cpu_temp_c).toFixed(1) + "°C"]);
+    if (canShowTemperature(v) && v.gpu_temp_c != null) rows.push(["GPU 温度", Number(v.gpu_temp_c).toFixed(1) + "°C"]);
     if (v.gpu_util != null) rows.push(["GPU 占用", Number(v.gpu_util).toFixed(1) + "%"]);
     if (m.agent_version) rows.push(["版本", m.agent_version]);
     if (m.updated_at)
@@ -519,26 +522,21 @@ function targetRowHtml(target, index) {
     ? statusTag("已启用", "tag-on")
     : statusTag("已禁用", "tag-off");
 
+  const probeUptime = status.status_source === "agent"
+    ? (status.agent_online === true ? "Agent 在线" : "Agent 离线")
+    : status.uptime_24h == null
+      ? "暂无 24h 数据"
+      : `24h ${Number(status.uptime_24h).toFixed(2)}%`;
+  const agentDetails = isWeb
+    ? notApplicable
+    : `<div class="status-stack"><div>${agentTag}<code>${escapeHtml(status.agent_version || "-")}</code></div><small>${status.machine_uptime_sec ? `运行 ${escapeHtml(formatDuration(status.machine_uptime_sec))}` : "暂无运行时长"}</small></div>`;
   const cells = [
     `<div class="sort-cell"><button type="button" class="drag-handle" data-sort-handle title="拖动排序" aria-label="拖动 ${escapeHtml(target.name)} 排序">⠿</button><span class="sort-index">${index + 1}</span><span class="mobile-order"><button type="button" data-a="move-up" title="上移" aria-label="上移">↑</button><button type="button" data-a="move-down" title="下移" aria-label="下移">↓</button></span></div>`,
-    `<b>${escapeHtml(target.name)}</b><br><code>${escapeHtml(target.id)}</code>`,
-    typeTag,
-    statusTag(state.text, state.className),
-    status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`,
-    status.status_source === "agent"
-      ? status.agent_online === true
-        ? "Agent 在线"
-        : "Agent 离线"
-      : status.uptime_24h == null
-        ? "-"
-        : `${Number(status.uptime_24h).toFixed(2)}%`,
-    isWeb ? notApplicable : status.machine_uptime_sec ? formatDuration(status.machine_uptime_sec) : "-",
-    agentTag,
-    isWeb ? notApplicable : `<code>${escapeHtml(status.agent_version || "-")}</code>`,
-    escapeHtml(targetGroupCell(target)),
-    `<span title="${escapeHtml(host)}">${escapeHtml(host)}</span>`,
+    `<div class="target-summary"><div><b>${escapeHtml(target.name)}</b>${typeTag}${enabledTag}</div><code>${escapeHtml(target.id)}</code><span title="${escapeHtml(host)}">${escapeHtml(host || "-")}</span></div>`,
+    `<div class="status-stack"><div>${statusTag(state.text, state.className)}<strong>${status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`}</strong></div><small>${escapeHtml(probeUptime)}</small></div>`,
+    agentDetails,
+    `<span class="group-cell">${escapeHtml(targetGroupCell(target))}</span>`,
     trafficCell(target, status),
-    enabledTag,
     `<div class="actions">${isWeb ? "" : '<button class="btn btn-xs" data-a="deploy">部署 Agent</button>'}${targetActionsHtml(target)}</div>`,
   ];
 
@@ -551,13 +549,6 @@ function targetRowHtml(target, index) {
       <td>${cells[4]}</td>
       <td>${cells[5]}</td>
       <td>${cells[6]}</td>
-      <td>${cells[7]}</td>
-      <td>${cells[8]}</td>
-      <td>${cells[9]}</td>
-      <td class="host-cell">${cells[10]}</td>
-      <td>${cells[11]}</td>
-      <td>${cells[12]}</td>
-      <td>${cells[13]}</td>
     </tr>`;
 }
 
@@ -574,7 +565,7 @@ function renderTargets() {
     rows = Object.entries(grouped)
       .sort((a, b) => a[0].localeCompare(b[0], "zh-CN"))
       .map(([name, list]) => {
-        const head = `<tr class="group-sep"><td colspan="12"><strong>${escapeHtml(name)}</strong> · ${list.length}</td></tr>`;
+        const head = `<tr class="group-sep"><td colspan="7"><strong>${escapeHtml(name)}</strong> · ${list.length}</td></tr>`;
         const body = list.map((target) => targetRowHtml(target, rowIndex++)).join("");
         return head + body;
       })
@@ -592,18 +583,11 @@ function renderTargets() {
         <thead>
           <tr>
             <th>排序</th>
-            <th>名称</th>
-            <th>类型</th>
-            <th>CF 状态</th>
-            <th>延迟</th>
-            <th>24h</th>
-            <th>机器在线</th>
-            <th>Agent</th>
-            <th>版本</th>
-            <th>分组</th>
             <th>目标</th>
+            <th>CF 探测</th>
+            <th>Agent</th>
+            <th>分组</th>
             <th>流量</th>
-            <th>启用</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -992,18 +976,61 @@ async function deleteTarget(t) {
     toast(e.message, "err");
   }
 }
-async function deploy(t) {
+function showInstallCommands(t, data) {
+  const linuxCommand = data.linux_command || data.command || "";
+  const windowsCommand = data.windows_command || "";
+  byId("modal").innerHTML = `
+    <h3>部署 Agent · ${escapeHtml(t.name || t.id)}</h3>
+    <div class="install-command-block">
+      <div class="install-command-head"><strong>Linux</strong><button class="btn btn-sm btn-blue" type="button" data-copy-install="linux">复制 Linux 命令</button></div>
+      <pre class="code">${escapeHtml(linuxCommand)}</pre>
+    </div>
+    ${windowsCommand ? `<div class="install-command-block"><div class="install-command-head"><strong>Windows PowerShell</strong><button class="btn btn-sm btn-blue" type="button" data-copy-install="windows">复制 Windows 命令</button></div><pre class="code">${escapeHtml(windowsCommand)}</pre></div>` : ""}
+    <div class="ma"><button class="btn" type="button" data-close>关闭</button></div>`;
+  byId("modal").querySelectorAll("[data-copy-install]").forEach((button) => {
+    button.onclick = async () => {
+      const command = button.dataset.copyInstall === "windows" ? windowsCommand : linuxCommand;
+      try {
+        await copyText(command);
+        toast(`已复制 ${button.dataset.copyInstall === "windows" ? "Windows" : "Linux"} 安装命令`, "ok");
+      } catch (error) {
+        toast(error?.message || "复制失败，请手动选择命令", "err");
+      }
+    };
+  });
+  openModal();
+}
+
+async function deploy(t, trigger = null) {
+  const oldText = trigger?.textContent || "部署 Agent";
+  if (trigger) {
+    trigger.disabled = true;
+    trigger.textContent = "生成中...";
+  }
+  toast("正在生成安装命令...", "info");
   try {
-    const d = await api(
+    const d = await apiAdmin(
       "/api/agent/install-command?target_id=" + encodeURIComponent(t.id),
+      {},
+      20000,
     );
     const cmd = d.linux_command || d.command;
     if (!cmd)
       throw new Error(d.error || "Worker 未返回安装命令");
-    await copyText(cmd);
-    toast("已复制“" + (t.name || t.id) + "”的安装命令", "ok");
+    showInstallCommands(t, d);
+    try {
+      await copyText(cmd);
+      toast("已生成并复制“" + (t.name || t.id) + "”的 Linux 安装命令", "ok");
+    } catch (_) {
+      toast("命令已生成；浏览器未允许自动复制，请在窗口中手动复制", "info");
+    }
   } catch (e) {
-    toast(e.message, "err");
+    toast("生成安装命令失败：" + (e?.message || "未知错误"), "err");
+  } finally {
+    if (trigger && document.body.contains(trigger)) {
+      trigger.disabled = false;
+      trigger.textContent = oldText;
+    }
   }
 }
 async function loadPings() {
@@ -1506,7 +1533,7 @@ byId("tTable").onclick = (e) => {
   if (b.dataset.a === "edit") targetModal(t);
   if (b.dataset.a === "toggle") toggleTarget(t);
   if (b.dataset.a === "delete") deleteTarget(t);
-  if (b.dataset.a === "deploy") deploy(t);
+  if (b.dataset.a === "deploy") deploy(t, b);
   if (b.dataset.a === "move-up") moveTarget(t, -1);
   if (b.dataset.a === "move-down") moveTarget(t, 1);
   if (b.dataset.a === "reload") loadTargets();

@@ -27,6 +27,7 @@ import {
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
 import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js';
+import { canShowTemperature } from './js/shared/hardware.js';
 import {
   buildLinePoints,
   chartColorToRgb,
@@ -1158,7 +1159,7 @@ function latencyBarHeight(value) {
 function cardOsLine(info) {
   const os = info.os || 'Linux';
   const virt = info.virtualization || '';
-  const temp = info.cpu_temp_c != null ? `CPU ${Number(info.cpu_temp_c).toFixed(0)}°C` : '';
+  const temp = canShowTemperature(info) && info.cpu_temp_c != null ? `CPU ${Number(info.cpu_temp_c).toFixed(0)}°C` : '';
   const gpu = info.gpu_util != null ? `GPU ${Number(info.gpu_util).toFixed(0)}%` : (info.gpu_name || '');
   return [os, virt, temp, gpu].filter(Boolean).join(' · ');
 }
@@ -1281,7 +1282,9 @@ async function selectService(id, name, el, options = {}) {
   // Hide metric tabs for HTTP targets (websites)
   document.querySelectorAll('.metric-tab[data-metric]').forEach(b => {
     if (b.dataset.metric !== 'latency') {
-      b.style.display = isHttp ? 'none' : '';
+      const isTemperature = b.dataset.metric === 'temp';
+      const info = target?.agent_metrics?.vps_info || {};
+      b.style.display = isHttp || (isTemperature && !canShowTemperature(info)) ? 'none' : '';
     }
   });
   const rangeTabs = document.getElementById('rangeTabs');
@@ -1444,6 +1447,8 @@ function renderVPSInfo() {
   const m = state.targetMetrics;
   const latest = m?.latest || {};
   const info = m?.latest?.vps_info || {};
+  const tempTab = document.querySelector('.metric-tab[data-metric="temp"]');
+  if (tempTab) tempTab.style.display = canShowTemperature(info) ? '' : 'none';
   const selectedTarget = (state.data?.targets || []).find(t => t.id === state.selectedId) || null;
   const uptimeSec = Number(m?.latest?.uptime_sec ?? selectedTarget?.machine_uptime_sec ?? 0);
   const net = latest.net || {};
@@ -1915,8 +1920,17 @@ function updateMetricsChart() {
   }
 
   if (metric === 'temp') {
-    const cpuPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.cpu_temp) || 0 }));
-    const gpuPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.gpu_temp) || 0 }));
+    if (!canShowTemperature(latest.vps_info || {})) {
+      els.chartMeta.textContent = '虚拟化环境不显示 CPU / GPU 温度。';
+      els.chartAvg.textContent = '-';
+      if (state.chart) {
+        state.chart.data.datasets = [];
+        state.chart.update();
+      }
+      return;
+    }
+    const cpuPoints = history.map(p => ({ x: Number(p.ts), y: Number.isFinite(Number(p.cpu_temp)) ? Number(p.cpu_temp) : null }));
+    const gpuPoints = history.map(p => ({ x: Number(p.ts), y: Number.isFinite(Number(p.gpu_temp)) ? Number(p.gpu_temp) : null }));
     const cpuVals = history.map(p => Number(p.cpu_temp)).filter(Number.isFinite);
     const gpuVals = history.map(p => Number(p.gpu_temp)).filter(Number.isFinite);
     const cpuAvg = cpuVals.length ? cpuVals.reduce((a, b) => a + b, 0) / cpuVals.length : 0;
@@ -1930,17 +1944,18 @@ function updateMetricsChart() {
       netDataset('GPU °C', gpuPoints, '#8e24aa'),
     ];
   } else if (metric === 'gpu') {
+    const showTemperature = canShowTemperature(latest.vps_info || {});
     const utilPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.gpu_util) || 0 }));
-    const tempPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.gpu_temp) || 0 }));
+    const tempPoints = history.map(p => ({ x: Number(p.ts), y: Number.isFinite(Number(p.gpu_temp)) ? Number(p.gpu_temp) : null }));
     const utilVals = history.map(p => Number(p.gpu_util)).filter(Number.isFinite);
     const avg = utilVals.length ? utilVals.reduce((a, b) => a + b, 0) / utilVals.length : 0;
     els.chartTitle.textContent = 'GPU';
     els.chartMeta.textContent = `占用平均 ${avg.toFixed(1)}% · ${history.length} 个采样点`;
-    els.chartAvg.textContent = `占用 ${Number(latest.vps_info?.gpu_util ?? latest.gpu_util ?? 0).toFixed(1)}% · 温度 ${Number(latest.vps_info?.gpu_temp_c ?? latest.gpu_temp_c ?? 0).toFixed(1)}°C`;
+    els.chartAvg.textContent = `占用 ${Number(latest.vps_info?.gpu_util ?? latest.gpu_util ?? 0).toFixed(1)}%${showTemperature ? ` · 温度 ${Number(latest.vps_info?.gpu_temp_c ?? latest.gpu_temp_c ?? 0).toFixed(1)}°C` : ''}`;
     if (!state.chart) return;
     state.chart.data.datasets = [
       netDataset('占用 %', utilPoints, '#3949ab'),
-      netDataset('温度 °C', tempPoints, '#8e24aa'),
+      ...(showTemperature ? [netDataset('温度 °C', tempPoints, '#8e24aa')] : []),
     ];
   } else if (metric === 'net') {
     const rxPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.net_rx) || 0 }));

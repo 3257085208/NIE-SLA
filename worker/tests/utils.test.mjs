@@ -11,6 +11,7 @@ import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates }
 import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
 import { isAgentApiPath } from '../src/route-policy.js';
 import { compactStatusPayload } from '../src/status-payload.js';
+import { getAgentInstallCommand } from '../src/admin/install-command.js';
 
 globalThis.crypto ||= webcrypto;
 const originalFetch = globalThis.fetch;
@@ -103,6 +104,7 @@ assert.equal(isAgentApiPath('/api/agent/ping-targets'), true);
 const compactStatus = compactStatusPayload({
   ok: true,
   days: ['2026-07-19'],
+  region_proxy_enabled: true,
   summaries: [{ target_id: 'vps-a', day: '2026-07-19', total: 1, ok_count: 1 }],
   incidents: [{ target_id: 'vps-a', started_at: 1 }],
   ping_targets: [{ id: 'cn', name: 'China' }],
@@ -114,12 +116,38 @@ const compactStatus = compactStatusPayload({
   }],
 });
 assert.equal(compactStatus.lite, true);
+assert.equal(compactStatus.region_proxy_enabled, true);
 assert.deepEqual(compactStatus.summaries, [{ target_id: 'vps-a', day: '2026-07-19', total: 1, ok_count: 1 }]);
 assert.equal(compactStatus.targets[0].provider, 'Example');
 assert.equal(compactStatus.targets[0].agent_metrics.cpu_percent, 12);
 assert.equal('daily' in compactStatus.targets[0], false);
 assert.equal('pings' in compactStatus.targets[0].agent_metrics, false);
 assert.equal(isAgentApiPath('/api/agent/install-command'), false);
+
+const installCommand = await getAgentInstallCommand(
+  {
+    AGENT_TOKEN: 'global-agent-secret',
+    PUBLIC_AGENT_API_BASE: 'https://api.example.test',
+    DB: {
+      prepare() {
+        return {
+          bind() {
+            return { first: async () => ({ id: 'vps-a', name: 'VPS A' }) };
+          },
+        };
+      },
+    },
+  },
+  new URL('https://api.example.test/api/agent/install-command?target_id=vps-a'),
+  new Request('https://api.example.test/api/agent/install-command?target_id=vps-a', {
+    headers: { origin: 'https://status.example.test' },
+  }),
+);
+assert.equal(installCommand.ok, true);
+assert.equal(installCommand.install_base, 'https://status.example.test');
+assert.match(installCommand.linux_command, /NSTATUS_AGENT_TOKEN='nst_[a-f0-9]{48}'/);
+assert.match(installCommand.linux_command, /NSTATUS_AGENT_LABEL='VPS A'/);
+assert.match(installCommand.windows_command, /nstatus-install\.ps1/);
 assert.equal(isAgentApiPath('/api/login'), false);
 
 assert.deepEqual(await safeJson(new Request('https://example.com', { method: 'POST', body: '{"ok":true}' }), 64), { ok: true });

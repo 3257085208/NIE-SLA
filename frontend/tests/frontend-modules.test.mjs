@@ -10,6 +10,7 @@ import {
 import { createAdminClient } from '../js/admin/api.js';
 import { groupByDimension, groupKeyFor, priceBandKey } from '../js/shared/grouping.js';
 import { nodegetFlagHtml } from '../js/themes/nodeget-cards.js';
+import { canShowTemperature, isVirtualized } from '../js/shared/hardware.js';
 
 const rows = normalizeChartRows([
   { checked_at: 30, ok: 1, latency_ms: 20 },
@@ -61,5 +62,9 @@ assert.equal(Object.keys(groupByDimension(targets, 'line_type')).length, 2);
 assert.equal(priceBandKey({ price: 8 }), '5 – 10');
 assert.match(nodegetFlagHtml('HK'), /assets\/nodeget\/flags\/hk\.svg/);
 assert.doesNotMatch(nodegetFlagHtml('HK'), /flagcdn\.com/);
+assert.equal(isVirtualized({ virtualization: 'kvm' }), true);
+assert.equal(isVirtualized({ virtualization: 'bare-metal' }), false);
+assert.equal(canShowTemperature({ virtualization: 'docker' }), false);
+assert.equal(canShowTemperature({ virtualization: '' }), true);
 
 console.log('frontend module tests passed');
