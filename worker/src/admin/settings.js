@@ -2,6 +2,14 @@
 import { nowSec, clamp, parseBoolean, sha256Hex } from '../utils.js';
 import { safeJson } from '../auth.js';
 
+const EXCHANGE_RATE_TTL_SEC = 86400;
+const EXCHANGE_RATE_RETRY_SEC = 3600;
+export const SUPPORTED_CURRENCIES = new Set([
+  'CNY', 'USD', 'EUR', 'GBP', 'JPY', 'HKD', 'TWD', 'SGD', 'KRW', 'AUD',
+  'CAD', 'CHF', 'NZD', 'RUB', 'INR', 'BRL', 'MXN', 'THB', 'MYR', 'IDR',
+  'PHP', 'VND', 'AED', 'TRY', 'PLN', 'SEK', 'NOK', 'DKK', 'CZK', 'ZAR',
+]);
+
 // ── Meta ─────────────────────────────────────────────────────────────────────
 
 export async function getMeta(env, key) {
@@ -16,25 +24,54 @@ export async function setMeta(env, key, value) {
 // ── Exchange rates ─────────────────────────────────────────────────────────
 
 export async function fetchExchangeRates(env) {
-  if (!env.DB) return;
+  if (!env.DB) return null;
+  const attemptedAt = nowSec();
+  await setMeta(env, 'exchange_rates_attempted', String(attemptedAt)).catch(() => {});
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
-    const res = await fetch('https://api.exchangerate-api.com/v4/latest/CNY', { headers: { 'User-Agent': 'NStatus/1.0' } });
-    if (!res.ok) return;
+    const res = await fetch('https://api.exchangerate-api.com/v4/latest/CNY', {
+      headers: { 'User-Agent': 'NStatus/1.0' },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
     const data = await res.json();
-    if (data?.rates) {
-      await setMeta(env, 'exchange_rates', JSON.stringify(data.rates));
-      await setMeta(env, 'exchange_rates_updated', String(nowSec()));
-    }
-  } catch (_) {}
+    if (!data?.rates || Number(data.rates.CNY) !== 1) return null;
+    await setMeta(env, 'exchange_rates', JSON.stringify(data.rates));
+    await setMeta(env, 'exchange_rates_updated', String(nowSec()));
+    return data.rates;
+  } catch (_) { return null; }
+  finally { clearTimeout(timer); }
 }
 
 export async function getExchangeRates(env) {
   try {
     const raw = await getMeta(env, 'exchange_rates');
     const updated = Number(await getMeta(env, 'exchange_rates_updated') || 0);
-    if (!raw || updated < nowSec() - 86400) return null;
-    return JSON.parse(raw);
+    const cached = raw ? JSON.parse(raw) : null;
+    if (cached && updated >= nowSec() - EXCHANGE_RATE_TTL_SEC) return cached;
+
+    const attempted = Number(await getMeta(env, 'exchange_rates_attempted') || 0);
+    if (attempted < nowSec() - EXCHANGE_RATE_RETRY_SEC) {
+      const refreshed = await fetchExchangeRates(env);
+      if (refreshed) return refreshed;
+    }
+    return cached;
   } catch (_) { return null; }
+}
+
+export function normalizeCurrency(value, fallback = 'USD') {
+  const aliases = { RMB: 'CNY', CNH: 'CNY' };
+  const code = aliases[String(value || '').trim().toUpperCase()] || String(value || '').trim().toUpperCase();
+  return SUPPORTED_CURRENCIES.has(code) ? code : fallback;
+}
+
+export function convertPriceToCny(amount, currency, rates) {
+  const value = Number(amount);
+  const code = normalizeCurrency(currency, '');
+  const rate = Number(rates?.[code]);
+  if (!Number.isFinite(value) || value < 0 || !code || !Number.isFinite(rate) || rate <= 0) return null;
+  return Math.round((value / rate) * 100) / 100;
 }
 
 // ── Settings ────────────────────────────────────────────────────────────────

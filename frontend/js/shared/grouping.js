@@ -1,7 +1,7 @@
 ﻿/** Multi-dimension VPS / target grouping helpers. */
 
 export const GROUP_BY_OPTIONS = [
-  { id: 'group', label: '自定义分组' },
+  { id: 'group', label: 'VPS / Web' },
   { id: 'provider', label: '商家' },
   { id: 'location', label: '国家/地区' },
   { id: 'price', label: '价格档' },

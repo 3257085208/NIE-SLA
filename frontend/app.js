@@ -28,6 +28,7 @@ import {
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
 import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js';
 import { canShowTemperature } from './js/shared/hardware.js';
+import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
   buildLinePoints,
   chartColorToRgb,
@@ -37,6 +38,7 @@ import {
   filterChecksByRange,
   hexToRgba,
   normalizeChartRows,
+  trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
 import {
   mountNodegetDetailChecksPanel,
@@ -518,6 +520,8 @@ function buildCardRegionBuckets(targets) {
 }
 
 function targetRegionCode(t) {
+  const locationCode = normalizeCountryCode(t.location);
+  if (locationCode) return locationCode;
   const text = [
     t.location,
     t.region_label,
@@ -538,6 +542,8 @@ function targetRegionCode(t) {
 }
 
 function regionMeta(code) {
+  const country = countryByCode(code);
+  if (country) return { flag: country.flag, label: country.name };
   const map = {
     HK: { flag: '🇭🇰', label: 'HK' },
     US: { flag: '🇺🇸', label: 'US' },
@@ -906,7 +912,12 @@ function renderService(t, days, summaries) {
   let metaBadges = '';
   if (t.provider) metaBadges += `<span class="meta-badge meta-provider">🏪 ${escapeHtml(t.provider)}</span>`;
   if (t.line_type) metaBadges += `<span class="meta-badge meta-line">🔀 ${escapeHtml(t.line_type)}</span>`;
-  if (t.location) metaBadges += `<span class="meta-badge meta-loc">📍 ${escapeHtml(t.location)}</span>`;
+  if (t.location) {
+    const country = countryByCode(t.location);
+    const locationFlag = country ? nodegetFlagHtml(country.code) : '';
+    const locationText = country ? country.name : `📍 ${t.location}`;
+    metaBadges += `<span class="meta-badge meta-loc">${locationFlag}${escapeHtml(locationText)}</span>`;
+  }
   if (t.machine_uptime_sec) metaBadges += `<span class="meta-badge meta-uptime">运行时长 ${escapeHtml(formatMachineUptime(t.machine_uptime_sec))}</span>`;
   if (t.tags) {
     const tags = t.tags.split(',').map(s => s.trim()).filter(Boolean).slice(0, 5);
@@ -925,8 +936,10 @@ function renderService(t, days, summaries) {
   if (t.price != null) {
     const cycle = billingCycleSuffix(billingCycle);
     const cur = t.currency || 'USD';
-    metaBadges += `<span class="meta-badge meta-price">${cur} ${t.price}${cycle}</span>`;
-    if (t.price_cny != null && cur !== 'CNY') metaBadges += `<span class="meta-badge meta-price">≈ ¥${t.price_cny}${cycle}</span>`;
+    const priceText = t.price_cny != null
+      ? `¥${Number(t.price_cny).toFixed(2)}${cycle}`
+      : `${cur} ${t.price}${cycle}`;
+    metaBadges += `<span class="meta-badge meta-price">${escapeHtml(priceText)}</span>`;
   }
 
   return `
@@ -2091,7 +2104,7 @@ function getChartPointsForRange() {
 
 function updateChart(checks, name) {
   const rows = normalizeChartRows(checks);
-  const points = buildLinePoints(rows);
+  const points = trimEmptyPointEdges(buildLinePoints(rows));
 
   const nums = points.map(p => p.y).filter(Number.isFinite);
   const avg = nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
@@ -2108,7 +2121,7 @@ function updateChart(checks, name) {
   delete state.chart.options.scales.y.max;
 
   state.chart.data.datasets = buildChartDatasets(points);
-  applyChartFullRange(rows);
+  applyChartFullRange(points);
   tuneChartAnimation(points.length);
   state.chart.update();
 }
@@ -2288,13 +2301,13 @@ function applyChartFullRange(rows) {
     return;
   }
 
-  const { min, max } = minMax(xs);
-  const span = max - min || 300;
-  const pad = Math.max(60, Math.round(span * 0.025));
-  state.chartZoomFullMin = min - pad;
-  state.chartZoomFullMax = max + pad;
-  delete xScale.min;
-  delete xScale.max;
+  const range = minMax(xs);
+  const min = range.min === range.max ? range.min - 150 : range.min;
+  const max = range.min === range.max ? range.max + 150 : range.max;
+  state.chartZoomFullMin = min;
+  state.chartZoomFullMax = max;
+  xScale.min = min;
+  xScale.max = max;
   updateChartZoomButton();
 }
 
@@ -2432,8 +2445,8 @@ function resetChartZoom() {
   if (!state.chart) return;
   state.chartPan = null;
   els.chartCanvasWrap?.classList.remove('is-panning');
-  delete state.chart.options.scales.x.min;
-  delete state.chart.options.scales.x.max;
+  state.chart.options.scales.x.min = state.chartZoomFullMin;
+  state.chart.options.scales.x.max = state.chartZoomFullMax;
   state.chart.update('none');
   updateChartZoomButton();
 }
@@ -2624,11 +2637,14 @@ function displayGroupName(name) {
 }
 
 function targetSearchText(t) {
+  const country = countryByCode(t.location);
   return [
     t.name,
     t.group_name,
     t.provider,
     t.location,
+    country?.name,
+    country?.englishName,
     t.line_type,
     t.tags,
     t.type,

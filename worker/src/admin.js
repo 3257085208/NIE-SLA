@@ -6,7 +6,7 @@
 export { ensureV6Schema, shouldEnsureSchemaForRequest } from './admin/schema.js';
 
 // Settings, meta, exchange rates
-export { getMeta, setMeta, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, fetchExchangeRates, getExchangeRates, hasOwn } from './admin/settings.js';
+export { getMeta, setMeta, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, fetchExchangeRates, getExchangeRates, normalizeCurrency, convertPriceToCny, SUPPORTED_CURRENCIES, hasOwn } from './admin/settings.js';
 
 // Target CRUD, probes, agent targets
 export { listTargets, createTarget, updateTarget, reorderTargets, deleteTarget, probeNow, getAgentTargets } from './admin/targets.js';

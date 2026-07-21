@@ -1,7 +1,7 @@
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA } from './utils.js';
 import { json, constantTimeEqual } from './auth.js';
 import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
-import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, getPublicSettings } from './admin.js';
+import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, convertPriceToCny, getPublicSettings } from './admin.js';
 import { summarizeTraffic, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 import { compactStatusPayload } from './status-payload.js';
 
@@ -144,8 +144,8 @@ async function buildStatusPayload(env, url = null) {
   if (rates && rows.length) {
     for (const row of rows) {
       if (row.price != null && row.currency) {
-        const rate = rates[row.currency.toUpperCase()] || 1;
-        row.price_cny = Math.round((Number(row.price) / rate) * 100) / 100;
+        const converted = convertPriceToCny(row.price, row.currency, rates);
+        if (converted != null) row.price_cny = converted;
       }
     }
   }

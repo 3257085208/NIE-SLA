@@ -9,6 +9,7 @@ import { ensureV6Schema } from './schema.js';
 import { setMeta } from './settings.js';
 import { syncEnvTargetsMaybe, syncEnvTargets } from './sync.js';
 import { normalizeTargetOrder } from './target-order.js';
+import { convertPriceToCny, getExchangeRates, normalizeCurrency } from './settings.js';
 
 const TARGET_ORDER_SQL = `CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END, sort_order, group_name COLLATE NOCASE, name COLLATE NOCASE`;
 
@@ -51,9 +52,15 @@ export async function listTargets(env) {
     const result = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all();
     for (const row of result.results || []) trafficRows[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
   } catch (_) {}
+  const rates = await getExchangeRates(env);
   const targets = (rows.results || []).map((target) => {
     const settings = trafficSettingsFromTarget(target, env);
-    return { ...target, traffic: summarizeTraffic(trafficRows[`${sanitizeAgentId(target.id)}|${settings.month}`], settings) };
+    const priceCny = convertPriceToCny(target.price, target.currency, rates);
+    return {
+      ...target,
+      ...(priceCny == null ? {} : { price_cny: priceCny }),
+      traffic: summarizeTraffic(trafficRows[`${sanitizeAgentId(target.id)}|${settings.month}`], settings),
+    };
   });
   return { ok: true, targets, regions: REGION_LABELS };
 }
@@ -71,7 +78,7 @@ export async function createTarget(request, env) {
   const location = String(body?.location || '').trim() || null;
   const provider = String(body?.provider || '').trim() || null;
   const lineType = String(body?.line_type || '').trim() || null;
-  const currency = String(body?.currency || 'USD').trim().toUpperCase() || 'USD';
+  const currency = normalizeCurrency(body?.currency, 'USD');
   const trafficEnabled = parseBoolean(body?.traffic_enabled, false) ? 1 : 0;
   const trafficQuotaGb = normalizeTrafficQuotaGb(body?.traffic_quota_gb ?? 0);
   const trafficMode = normalizeTrafficMode(body?.traffic_mode);
@@ -99,7 +106,7 @@ export async function updateTarget(id, request, env) {
   const location = body?.location !== undefined ? (String(body.location || '').trim() || null) : (existing.location ?? null);
   const provider = body?.provider !== undefined ? (String(body.provider || '').trim() || null) : (existing.provider ?? null);
   const lineType = body?.line_type !== undefined ? (String(body.line_type || '').trim() || null) : (existing.line_type ?? null);
-  const currency = body?.currency !== undefined ? (String(body.currency || 'USD').trim().toUpperCase() || 'USD') : (existing.currency ?? 'USD');
+  const currency = body?.currency !== undefined ? normalizeCurrency(body.currency, 'USD') : normalizeCurrency(existing.currency, 'USD');
   const trafficEnabled = body?.traffic_enabled !== undefined ? (parseBoolean(body.traffic_enabled, false) ? 1 : 0) : (parseBoolean(existing.traffic_enabled, false) ? 1 : 0);
   const trafficQuotaGb = body?.traffic_quota_gb !== undefined ? normalizeTrafficQuotaGb(body.traffic_quota_gb) : normalizeTrafficQuotaGb(existing.traffic_quota_gb ?? 0);
   const trafficMode = body?.traffic_mode !== undefined ? normalizeTrafficMode(body.traffic_mode) : normalizeTrafficMode(existing.traffic_mode);

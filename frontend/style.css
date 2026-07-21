@@ -3360,7 +3360,6 @@ body[data-frontend-theme="cards"].card-detail-mode .node-detail-checks.is-collap
   border: 1px solid var(--line-strong);
   box-shadow: var(--shadow);
 }
-
 .group-by-title {
   display: inline-flex;
   align-items: center;

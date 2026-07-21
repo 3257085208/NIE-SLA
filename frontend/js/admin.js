@@ -2,6 +2,14 @@ import { copyText } from "./install-command.js";
 import { createAdminClient } from "./admin/api.js";
 import { canShowTemperature } from "./shared/hardware.js";
 import {
+  CURRENCIES,
+  COUNTRIES,
+  countryFlagAsset,
+  filterCountries,
+  filterProviders,
+  normalizeCountryCode,
+} from "./shared/target-catalogs.js";
+import {
   groupByDimension,
   groupByOptionsHtml,
   lineTypeOptionsHtml,
@@ -767,6 +775,94 @@ function targetRegionOptions(region = "auto") {
     .join("");
 }
 
+function targetGroupOptions(type = "tcp", current = "") {
+  const selected = /^web$/i.test(current) || (!current && type === "http") ? "Web" : "VPS";
+  return ["VPS", "Web"]
+    .map((value) => `<option value="${value}"${selectedAttr(selected === value)}>${value}</option>`)
+    .join("");
+}
+
+function countryOptionsHtml(current = "", query = "") {
+  const selected = normalizeCountryCode(current);
+  const countries = filterCountries(query);
+  const selectedCountry = COUNTRIES.find((country) => country.code === selected);
+  const options = selectedCountry && !countries.includes(selectedCountry)
+    ? [selectedCountry, ...countries]
+    : countries;
+  return [
+    '<option value="">请选择国家或地区</option>',
+    ...options.map((country) =>
+      `<option value="${country.code}"${selectedAttr(country.code === selected)}>${escapeHtml(country.name)} (${country.code})</option>`),
+  ].join("");
+}
+
+function providerOptionsHtml(current = "", query = "") {
+  const selected = String(current || "").trim();
+  const providers = filterProviders(query);
+  const options = selected && !providers.includes(selected)
+    ? [selected, ...providers]
+    : providers;
+  return [
+    '<option value="">请选择商家</option>',
+    ...options.map((provider) =>
+      `<option value="${escapeHtml(provider)}"${selectedAttr(provider === selected)}>${escapeHtml(provider)}</option>`),
+  ].join("");
+}
+
+function currencyOptionsHtml(current = "USD") {
+  const selected = String(current || "USD").trim().toUpperCase();
+  return CURRENCIES.map((currency) =>
+    `<option value="${currency.code}"${selectedAttr(currency.code === selected)}>${escapeHtml(currency.name)} (${currency.code})</option>`).join("");
+}
+
+function searchableCatalogField({ label, searchId, selectId, searchPlaceholder, options }) {
+  return formField(label, `
+    <div class="catalog-select">
+      <input type="search" id="${searchId}" placeholder="${escapeHtml(searchPlaceholder)}" autocomplete="off">
+      <select id="${selectId}">${options}</select>
+    </div>`);
+}
+
+function countryCatalogField(current = "") {
+  const code = normalizeCountryCode(current);
+  const asset = countryFlagAsset(code);
+  return formField("位置", `
+    <div class="catalog-select">
+      <input type="search" id="mLocationSearch" placeholder="搜索中文名、英文名或代码" autocomplete="off">
+      <div class="country-select-row">
+        <img id="mLocationFlag" class="country-flag-preview" src="${escapeHtml(asset)}" alt=""${asset ? "" : " hidden"}>
+        <select id="mLocation" required>${countryOptionsHtml(current)}</select>
+      </div>
+    </div>`);
+}
+
+function updateCountryPreview(code) {
+  const preview = byId("mLocationFlag");
+  if (!preview) return;
+  const country = COUNTRIES.find((item) => item.code === code);
+  const asset = countryFlagAsset(code);
+  preview.hidden = !asset;
+  preview.src = asset;
+  preview.alt = country ? `${country.name}国旗` : "";
+}
+
+function bindCatalogSearch(searchId, selectId, renderOptions, onChange = () => {}) {
+  const search = byId(searchId);
+  const select = byId(selectId);
+  if (!search || !select) return;
+  search.oninput = () => {
+    select.innerHTML = renderOptions(select.value, search.value);
+    onChange(select.value);
+  };
+  search.onkeydown = (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    select.focus();
+  };
+  select.onchange = () => onChange(select.value);
+  onChange(select.value);
+}
+
 function displayGroupName(value) {
   return sharedDisplayGroupName(value);
 }
@@ -796,7 +892,7 @@ function targetModalHtml(target, isEdit) {
           <option value="http"${selectedAttr(type === "http")}>HTTP</option>
         </select>`,
       )}
-      ${inputField("分组", "mGroup", target.group_name || "默认分组")}
+      ${formField("分组", `<select id="mGroup">${targetGroupOptions(type, target.group_name)}</select>`)}
     </div>
 
     ${formField("主机", `<input id="mHost" value="${escapeHtml(target.target_host || "")}">`, "ftcp")}
@@ -806,8 +902,14 @@ function targetModalHtml(target, isEdit) {
 
     <div class="form-grid">
       ${inputField("标签", "mTags", target.tags || "", 'placeholder="逗号分隔"')}
-      ${inputField("位置", "mLocation", target.location || "", 'placeholder="例如 HK / JP / US"')}
-      ${inputField("商家", "mProvider", target.provider || "", 'placeholder="例如 DMIT / Bandwagon"')}
+      ${countryCatalogField(target.location || "")}
+      ${searchableCatalogField({
+        label: "商家",
+        searchId: "mProviderSearch",
+        selectId: "mProvider",
+        searchPlaceholder: "搜索商家名称",
+        options: providerOptionsHtml(target.provider || ""),
+      })}
       ${formField("线路类型", `<select id="mLineType">${lineTypeOptionsHtml(target.line_type || "")}</select>`)}
     </div>
 
@@ -817,7 +919,7 @@ function targetModalHtml(target, isEdit) {
     </div>
 
     <div class="form-grid">
-      ${inputField("币种", "mCurrency", target.currency || "USD", 'maxlength="8"')}
+      ${formField("币种", `<select id="mCurrency">${currencyOptionsHtml(target.currency || "USD")}</select><p class="hint currency-note">汇率每日自动更新，前台统一换算为人民币。</p>`)}
       ${formField("计费周期", `<select id="mBilling">${targetBillingOptions(cycle)}</select>`)}
     </div>
 
@@ -866,6 +968,8 @@ function targetModalHtml(target, isEdit) {
 
 function toggleTargetTypeFields() {
   const isTcp = byId("mType").value === "tcp";
+  const group = byId("mGroup");
+  if (group) group.value = isTcp ? "VPS" : "Web";
   document.querySelectorAll(".ftcp").forEach((item) => {
     item.style.display = isTcp ? "block" : "none";
   });
@@ -881,6 +985,8 @@ function targetModal(target = null) {
   const isEdit = Boolean(target);
   byId("modal").innerHTML = targetModalHtml(target || {}, isEdit);
   byId("mType").onchange = toggleTargetTypeFields;
+  bindCatalogSearch("mLocationSearch", "mLocation", countryOptionsHtml, updateCountryPreview);
+  bindCatalogSearch("mProviderSearch", "mProvider", providerOptionsHtml);
   toggleTargetTypeFields();
   byId("saveTarget").onclick = () => saveTarget(isEdit);
   openModal();
@@ -896,17 +1002,17 @@ async function saveTarget(edit) {
   const b = {
     name: byId("mName").value.trim(),
     type: byId("mType").value,
-    group_name: byId("mGroup").value.trim() || "默认分组",
+    group_name: byId("mGroup").value === "Web" ? "Web" : "VPS",
     interval_sec: Number(byId("mInterval").value) || 300,
     probe_region: byId("mRegion")?.value || "auto",
     tags: byId("mTags")?.value.trim() || "",
-    location: byId("mLocation")?.value.trim() || "",
-    provider: byId("mProvider")?.value.trim() || "",
+    location: byId("mLocation")?.value || "",
+    provider: byId("mProvider")?.value || "",
     line_type: byId("mLineType")?.value || "",
     expires_at: byId("mExpires")?.value || null,
     price,
     billing_cycle: byId("mBilling")?.value || "",
-    currency: byId("mCurrency")?.value.trim().toUpperCase() || "USD",
+    currency: byId("mCurrency")?.value || "USD",
     traffic_enabled: byId("mType").value === "tcp" && !!byId("mTrafficEnabled")?.checked,
     traffic_quota_gb: byId("mType").value === "tcp" ? Number(byId("mTrafficQuota")?.value) || 0 : 0,
     traffic_mode: byId("mTrafficMode")?.value || "total",
@@ -918,6 +1024,7 @@ async function saveTarget(edit) {
   const id = byId("mId").value.trim();
   if (id && !edit) b.id = id;
   if (!b.name) return toast("名称不能为空", "err");
+  if (!b.location) return toast("请选择国家或地区", "err");
   if (b.type === "tcp") {
     b.target_host = byId("mHost").value.trim();
     b.target_port = Number(byId("mPort").value) || 0;

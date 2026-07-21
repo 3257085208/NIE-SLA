@@ -5,7 +5,7 @@ import { agentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAg
 import { rateLimitD1 } from '../src/ratelimit.js';
 import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
-import { getAgentUpdatePolicy, getPublicSettings, updatePublicSettings } from '../src/admin/settings.js';
+import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeCurrency, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
 import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates } from '../src/storage.js';
 import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
@@ -193,6 +193,16 @@ await assert.rejects(() => requireAnyAgent(agentRequest(scopedToken), authEnvWit
 
 const settingsEnv = fakeD1Env();
 assert.equal((await getPublicSettings(settingsEnv)).agent_auto_update, false);
+assert.equal(normalizeCurrency('rmb'), 'CNY');
+assert.equal(normalizeCurrency('not-a-currency'), 'USD');
+assert.equal(convertPriceToCny(10, 'USD', { CNY: 1, USD: 0.14 }), 71.43);
+assert.equal(convertPriceToCny(10, 'UNKNOWN', { CNY: 1 }), null);
+globalThis.fetch = async (url) => String(url).includes('api.exchangerate-api.com')
+  ? new Response(JSON.stringify({ rates: { CNY: 1, USD: 0.14, EUR: 0.12 } }), { headers: { 'content-type': 'application/json' } })
+  : new Response('', { status: 404 });
+const fetchedRates = await getExchangeRates(settingsEnv);
+assert.equal(fetchedRates.USD, 0.14);
+assert.ok(settingsEnv._tables.app_meta.some(row => row.key === 'exchange_rates_updated'));
 await updatePublicSettings(new Request('https://example.com', {
   method: 'PATCH',
   body: JSON.stringify({ agent_auto_update: true }),

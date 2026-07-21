@@ -1,6 +1,6 @@
 import { enrichCfContext, probeTarget, saveCheck, runDueTargets } from './probe.js';
 import { writeStatusSnapshot } from './status.js';
-import { archiveYesterdayOncePerLocalDay, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema } from './admin.js';
+import { archiveYesterdayOncePerLocalDay, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates } from './admin.js';
 import { cleanupRateLimitsD1 } from './ratelimit.js';
 import { cleanupAgentMetricsR2 } from './metrics.js';
 import { runAlertChecks } from './alerts.js';
@@ -79,6 +79,7 @@ async function runScheduledTasks(env, cron) {
   let runHourlyMaintenance = false;
   try { runHourlyMaintenance = await claimHourlyMaintenanceSlot(env, cron); } catch (err) { results.hourly_claim_error = String(err?.message || err); }
   if (runHourlyMaintenance) {
+    try { results.exchange_rates = await measure('exchange_rates', async () => ({ ok: Boolean(await getExchangeRates(env)) })); } catch (err) { results.exchange_rates_error = String(err?.message || err); }
     try { results.volatile_cleanup = await measure('volatile_cleanup', () => cleanupVolatileHistory(env)); } catch (err) { results.volatile_cleanup_error = String(err?.message || err); }
     try { results.rate_limit_cleanup = await measure('rate_limit_cleanup', () => cleanupRateLimitsD1(env)); } catch (err) { results.rate_limit_cleanup_error = String(err?.message || err); }
     try { results.check_bucket_cleanup = await measure('check_bucket_cleanup', () => cleanupOldCheckBuckets(env, 31)); } catch (err) { results.check_bucket_cleanup_error = String(err?.message || err); }

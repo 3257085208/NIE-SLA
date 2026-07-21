@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import {
   buildLinePoints,
   clampChartRange,
@@ -6,11 +7,21 @@ import {
   countMissedChecks,
   filterChecksByRange,
   normalizeChartRows,
+  trimEmptyPointEdges,
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
 import { groupByDimension, groupKeyFor, priceBandKey } from '../js/shared/grouping.js';
 import { nodegetFlagHtml } from '../js/themes/nodeget-cards.js';
 import { canShowTemperature, isVirtualized } from '../js/shared/hardware.js';
+import {
+  CURRENCIES,
+  COUNTRIES,
+  PROVIDERS,
+  countryFlagAsset,
+  filterCountries,
+  filterProviders,
+  normalizeCountryCode,
+} from '../js/shared/target-catalogs.js';
 
 const rows = normalizeChartRows([
   { checked_at: 30, ok: 1, latency_ms: 20 },
@@ -19,6 +30,13 @@ const rows = normalizeChartRows([
 ]);
 assert.deepEqual(rows.map((row) => row.x), [10, 20, 30]);
 assert.deepEqual(buildLinePoints(rows), [{ x: 10, y: null }, { x: 30, y: 20 }]);
+assert.deepEqual(trimEmptyPointEdges([
+  { x: 10, y: null },
+  { x: 20, y: 11 },
+  { x: 30, y: null },
+  { x: 40, y: 12 },
+  { x: 50, y: null },
+]), [{ x: 20, y: 11 }, { x: 30, y: null }, { x: 40, y: 12 }]);
 assert.deepEqual(clampChartRange(-10, 30, 0, 100), { min: 0, max: 40 });
 assert.deepEqual(clampChartRange(80, 120, 0, 100), { min: 60, max: 100 });
 assert.equal(countChartGaps([{ checked_at: 0 }, { checked_at: 10 }, { checked_at: 40 }], 20), 1);
@@ -64,11 +82,21 @@ assert.equal(groupKeyFor(targets[0], 'provider'), 'DMIT');
 assert.equal(Object.keys(groupByDimension(targets, 'location')).length, 2);
 assert.equal(Object.keys(groupByDimension(targets, 'line_type')).length, 2);
 assert.equal(priceBandKey({ price: 8 }), '5 – 10');
-assert.match(nodegetFlagHtml('HK'), /assets\/nodeget\/flags\/hk\.svg/);
+assert.match(nodegetFlagHtml('HK'), /assets\/flags\/4x3\/hk\.svg/);
+assert.equal(countryFlagAsset('HK'), './assets/flags/4x3/hk.svg');
 assert.doesNotMatch(nodegetFlagHtml('HK'), /flagcdn\.com/);
 assert.equal(isVirtualized({ virtualization: 'kvm' }), true);
 assert.equal(isVirtualized({ virtualization: 'bare-metal' }), false);
 assert.equal(canShowTemperature({ virtualization: 'docker' }), false);
 assert.equal(canShowTemperature({ virtualization: '' }), true);
+assert.equal(COUNTRIES.length, 249);
+for (const country of COUNTRIES) {
+  assert.equal(existsSync(new URL(`../assets/flags/4x3/${country.code.toLowerCase()}.svg`, import.meta.url)), true);
+}
+assert.equal(PROVIDERS.length >= 40, true);
+assert.equal(CURRENCIES.length >= 15, true);
+assert.equal(normalizeCountryCode('香港'), 'HK');
+assert.equal(filterCountries('新加坡')[0].code, 'SG');
+assert.equal(filterProviders('rack')[0], 'RackNerd');
 
 console.log('frontend module tests passed');

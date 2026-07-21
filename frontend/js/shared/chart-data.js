@@ -19,6 +19,15 @@ export function buildLinePoints(rows) {
     }));
 }
 
+export function trimEmptyPointEdges(points) {
+  const values = points || [];
+  const first = values.findIndex((point) => Number.isFinite(point?.y));
+  if (first < 0) return [];
+  let last = values.length - 1;
+  while (last > first && !Number.isFinite(values[last]?.y)) last -= 1;
+  return values.slice(first, last + 1);
+}
+
 export function chartColorToRgb(color) {
   const value = String(color || "").trim();
   const hex = value.match(/^#?([0-9a-f]{6})$/i);
