@@ -13,6 +13,7 @@ Admin endpoints use `Authorization: Bearer ADMIN_TOKEN` and optionally `x-admin-
 | GET | `/api/checks?target_id=ID&hours=72` | Target history |
 | GET | `/api/agent/metrics?agent_id=ID` | Agent metrics |
 | GET | `/api/agent/pings?agent_id=ID` | Agent pings |
+| GET | `/api/latency?target_id=ID&hours=24` | External Latency Agent history |
 | GET | `/api/colo-echo` | Cloudflare colo echo |
 
 ## Admin Endpoints
@@ -30,6 +31,9 @@ Admin endpoints use `Authorization: Bearer ADMIN_TOKEN` and optionally `x-admin-
 | POST | `/api/totp/setup` | Setup TOTP |
 | POST | `/api/totp/verify` | Verify TOTP |
 | POST | `/api/totp/disable` | Disable TOTP |
+| GET/POST | `/api/latency-agents` | List/create external Latency nodes |
+| PATCH/DELETE | `/api/latency-agents/:id` | Update/delete an external Latency node |
+| GET | `/api/latency-agent/install-command?node_id=ID` | Generate a node-scoped install command |
 
 ## Agent Endpoints
 
@@ -40,3 +44,5 @@ Admin endpoints use `Authorization: Bearer ADMIN_TOKEN` and optionally `x-admin-
 | POST | `/api/agent/metrics` | System metrics |
 | GET | `/api/agent/ping-targets` | Ping targets |
 | POST | `/api/agent/pings` | Ping results |
+| GET | `/api/latency-agent/targets?node_id=ID` | External Latency Agent target list |
+| POST | `/api/latency-agent/results` | External Latency Agent results |

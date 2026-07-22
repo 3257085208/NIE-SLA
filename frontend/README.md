@@ -18,7 +18,9 @@
 | `functions/api/[[path]].js` | Pages 到 Worker 的 API 代理 |
 | `config.js` | API Base 配置 |
 | `bin/` | Agent VERSION、SHA256SUMS 和二进制 |
-| `install.sh`/`install.ps1` | Linux/Windows 安装入口 |
+| `install.sh`/`install.ps1` | Linux/Windows Rust Agent 安装入口 |
+| `install-latency.sh` | 外部 Latency Agent 的 Linux/systemd 安装入口 |
+| `latency-agent.py` | 从独立网络位置测量公开 TCP 目标的轻量服务 |
 
 ## 配置 API
 
@@ -46,13 +48,19 @@ https://YOUR-PAGES/bin/VERSION
 https://YOUR-PAGES/bin/SHA256SUMS
 ```
 
-## 两种状态不要混淆
+## 四种数据不要混淆
 
 - Agent 在线：VPS 最近仍在主动上传。
 - CF 状态/Latency：Cloudflare 是否能主动连接目标。
+- Agent TCP Ping：被监控 VPS 到后台 Ping 目标的延迟。
+- 外部 Latency Agent：独立 Linux 节点到所有公开 TCP 目标的延迟。
 - 日色块：当前表示 CF 每日探测成功率。
 
 因此 Agent 在线但 CF Latency 为 `-` 并不矛盾。
+
+后台“Latency”页新增节点后，还必须执行该节点当前生成的部署命令。成功安装会输出 `{"ok":true,"targets":N,"accepted":N}`；只有成功上报后，后台“最近上报”和公开页面的外部 Latency 来源才会出现。
+
+完整教程见 [外部 Latency Agent 部署与排障](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/13-external-latency-agents.md)。
 
 ## IPv6-only TCP 目标
 

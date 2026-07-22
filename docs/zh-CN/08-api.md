@@ -38,6 +38,7 @@ Token 与 `agent_id` 绑定。身份不匹配返回 401/403。
 | GET | `/api/checks?target_id=ID&hours=72&limit=864` | 5 分钟明细和 Agent series |
 | GET | `/api/agent/metrics?agent_id=ID&hours=6` | Agent 指标 |
 | GET | `/api/agent/pings?agent_id=ID&hours=6` | Ping 历史 |
+| GET | `/api/latency?target_id=ID&hours=24` | 外部 Latency 节点历史 |
 | GET | `/api/colo-echo` | 当前请求 colo 调试 |
 
 ## Agent 接口
@@ -48,8 +49,10 @@ Token 与 `agent_id` 绑定。身份不匹配返回 401/403。
 | GET | `/api/agent/update-policy?agent_id=ID` | 读取自动更新策略 |
 | GET | `/api/agent/ping-targets?agent_id=ID` | 拉取 Ping 目标 |
 | POST | `/api/agent/pings` | 上传 Ping 批次 |
-| GET | `/api/agent/targets?agent_id=ID` | 外部 Agent 拉取目标 |
-| POST | `/api/agent/results` | 外部 Agent 上传探测结果 |
+| GET | `/api/agent/targets?agent_id=ID` | Rust Agent 拉取自身目标配置 |
+| POST | `/api/agent/results` | Rust Agent 上传可用性结果 |
+| GET | `/api/latency-agent/targets?node_id=ID` | 外部 Latency Agent 拉取公开 TCP 目标 |
+| POST | `/api/latency-agent/results` | 外部 Latency Agent 上传结果 |
 
 请求体有大小限制。不要一次上传无限历史；Agent 会控制批次和队列。
 
@@ -97,6 +100,10 @@ curl -X POST https://YOUR-API/api/targets \
 | POST | `/api/maintenance/cleanup` | 手动清理 |
 | GET | `/api/debug/latency-health` | Latency 健康诊断 |
 | GET | `/api/agent/install-command?target_id=ID` | 生成 scoped 安装命令 |
+| GET | `/api/latency-agents` | 列出外部 Latency 节点 |
+| POST | `/api/latency-agents` | 创建外部 Latency 节点 |
+| PATCH/DELETE | `/api/latency-agents/:id` | 编辑、停用或删除节点 |
+| GET | `/api/latency-agent/install-command?node_id=ID` | 生成节点 scoped 安装命令 |
 
 ## 常见状态码
 

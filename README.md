@@ -4,7 +4,7 @@
 
 **基于 Cloudflare 的开源状态页、VPS 遥测与告警系统**
 
-Worker + D1 + R2 + Pages + Durable Objects + Rust Agent
+Worker + D1 + R2 + Pages + Durable Objects + Rust Agent + External Latency Agents
 
 [![Agent Version](docs/badges/agent-version.svg)](https://github.com/3257085208/NIE-SLA/releases)
 [![Worker Compatible](docs/badges/worker.svg)](https://developers.cloudflare.com/workers/)
@@ -30,6 +30,7 @@ NIE-SLA 把公开状态页、Cloudflare 边缘探测和 VPS 系统遥测放在�
 - 用 Rust Agent 每 1 秒采集 CPU、内存、磁盘、负载、网络、磁盘 IO、连接数等原始指标。
 - 将 1 秒原始样本按批次上传，网络慢或短暂断网时进入本地持久队列，而不是降低采样精度。
 - 从各 VPS 执行 TCP Ping，并在前端查看 Latency 历史。
+- 从家庭宽带、不同云厂商或运营商网络部署轻量 Latency Agent，比较同一批公开 TCP 目标的多来源延迟。
 - 管理流量额度、到期日、价格、币种、标签和位置。
 - 使用 Telegram 发送离线、恢复、资源、流量和到期告警。
 - 使用 Admin Token 与可选 TOTP 管理目标、排序、主题、Agent 更新策略和告警。
@@ -41,6 +42,7 @@ NIE-SLA 把公开状态页、Cloudflare 边缘探测和 VPS 系统遥测放在�
 | Cloudflare 探测 | HTTP、TCP、状态码、Latency、区域探测 | 5 分钟桶；每分钟 Cron 提供补跑窗口 |
 | Agent Metrics | CPU、内存、磁盘、Load、网络、IO、进程、线程、连接数 | 本地 1 秒采样，默认 5 分钟批量上报 |
 | Agent Ping | 后台集中管理 TCP Ping 目标 | 默认 20 秒 |
+| External Latency Agent | 独立 Linux 节点测量所有公开 TCP 目标 | 默认 60 秒 |
 | Agent 配置刷新 | 获取 Ping 目标和更新策略 | Ping 目标默认 10 分钟，更新默认 1 小时 |
 | 历史存储 | R2 小时级遥测对象、状态快照；D1 最新状态与业务元数据 | 原始 Metrics 不写入 D1 |
 | 状态页 | 服务卡片、30/90 天可用率、故障记录、图表、移动端 | 公共缓存默认 45 秒 |
@@ -180,6 +182,16 @@ sudo cftz uninstall
 ```
 
 详细安装过程、文件位置、systemd/OpenRC、Windows、更新策略和故障排查见 [Agent 安装与维护](docs/zh-CN/04-agent.md)。
+
+## 安装外部 Latency Agent
+
+后台进入“Latency”，新增测量节点并执行该节点生成的 Linux 命令。仅创建后台记录不代表部署成功；安装输出必须包含大于 0 的 `accepted`，后台“最近上报”才会更新时间，公开 Latency 图例才会显示该来源。
+
+```text
+{"ok":true,"targets":38,"accepted":38}
+```
+
+每个节点命令包含独立 scoped Token，禁止跨节点复用或公开。完整步骤、旧实例升级和 401/403/1010 排障见 [外部 Latency Agent 部署与排障](docs/zh-CN/13-external-latency-agents.md)。
 
 ## 自动更新语义
 
@@ -357,6 +369,7 @@ cargo test
 | [10 安全与免费额度](docs/zh-CN/10-security-free-tier.md) | 密钥、权限、用量和公开前审计 |
 | [11 开发与发布](docs/zh-CN/11-development.md) | 本地测试、CI、多架构 Release 和版本流程 |
 | [12 IPv6 专章](docs/zh-CN/12-ipv6-cloudflare-probe.md) | literal、AAAA、橙云、Workers Socket 限制 |
+| [13 外部 Latency Agent](docs/zh-CN/13-external-latency-agents.md) | 多网络测量节点、部署验证、旧版升级与排障 |
 
 ## 贡献与许可
 

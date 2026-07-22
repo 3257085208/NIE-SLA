@@ -38,6 +38,8 @@ npx wrangler d1 execute nstatus-db --remote --command \
 | 单目标持续失败 | 目标地址、端口、区域、网络 |
 | Agent 离线 | Agent 服务、日志、Token、API DNS |
 | Agent 在线但 CF 红 | CF 入站链路，IPv6/AAAA/防火墙 |
+| Latency 节点“尚未上报” | 外部 Latency 服务、首次 `--once` 输出、节点 Token |
+| 前端 Latency 只有 Cloudflare | `latency_results`、stale 窗口、目标是否为公开 TCP |
 | 图表点少 | 采样、上传批次、R2、窗口和抽样 |
 | 登录后跳回登录页 | TOTP session、时间、缓存、401 |
 | 429 | D1 限流窗口，不要继续重试 |
@@ -93,6 +95,22 @@ sudo stat /opt/nstatus-metrics/nstatus-metrics.env
 - scoped Token 与 Agent ID 不匹配。
 - 系统时间偏差导致 TLS/TOTP/时间窗口异常。
 - 服务启动的是旧二进制或重复进程。
+
+## 外部 Latency Agent 没有上报
+
+外部 Latency Agent 与普通 Rust Agent 是两个独立服务。后台已有节点但“最近上报”为“尚未上报”，表示 D1 中只有节点记录，尚无一次成功结果。
+
+在测量节点检查：
+
+```bash
+sudo systemctl is-active nstatus-latency-agent.service
+sudo journalctl -u nstatus-latency-agent.service -n 100 --no-pager
+sudo sh -c 'set -a; . /etc/nstatus-latency-agent.env; set +a; /usr/bin/python3 /opt/nstatus-latency/latency-agent.py --once'
+```
+
+成功输出应包含 `targets` 和大于 0 的 `accepted`。旧脚本可能因 Python 默认 User-Agent 被 Cloudflare 1010 拦截，应在后台重新生成当前部署命令并完整重装，不要只重启旧服务。
+
+若后台已经显示最近上报，但前端仍只有 Cloudflare，等待几十秒状态缓存刷新，并确认查看的目标是公开 TCP 目标。完整说明见 [13 外部 Latency Agent 部署与排障](13-external-latency-agents.md)。
 
 ## Agent 版本没有更新
 

@@ -98,6 +98,19 @@ TCP：
 
 完整命令含节点 Token，等同凭据。不要贴到公开聊天、Issue 或截图。
 
+## Latency 节点
+
+“Latency”页管理的是独立外部测量节点，不是普通 VPS 的 Rust Agent，也不是 Cloudflare 内置来源。
+
+- Cloudflare 行是系统内置来源，不能删除。
+- 新增外部节点只会创建节点 ID；在 Linux 上执行“部署”命令并成功提交后，才会出现“最近上报”。
+- 安装成功输出应包含 `{"ok":true,"targets":N,"accepted":N}`。
+- `accepted` 大于 0 后，公开 TCP/VPS 目标的 Latency 图例会增加该节点。
+- 每个节点命令包含不同 scoped Token，不能跨节点复用。
+- 编辑显示名称不需要重装；新建或更换节点 ID 后需要重新部署。
+
+完整步骤和故障排查见 [13 外部 Latency Agent 部署与排障](13-external-latency-agents.md)。
+
 ## Ping 管理
 
 Ping 目标由 Agent 定期拉取。格式通常为域名/IP与端口。Agent 按 `NSTATUS_PING_SEC` 从 VPS 本地发起连接。

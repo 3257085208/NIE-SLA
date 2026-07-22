@@ -1,6 +1,6 @@
 # NIE-SLA
 
-NIE-SLA is an open-source, Cloudflare-native status page and VPS telemetry system built with Workers, D1, R2, Pages, Durable Objects, and a Rust Agent.
+NIE-SLA is an open-source, Cloudflare-native status page and VPS telemetry system built with Workers, D1, R2, Pages, Durable Objects, a Rust Agent, and optional external Latency Agents.
 
 The Chinese [README](README.md) and [documentation index](README.md#文档导航) are the primary, most detailed manuals. English component guides are available under [`docs/en`](docs/en/01-architecture.md).
 
@@ -9,6 +9,7 @@ The Chinese [README](README.md) and [documentation index](README.md#文档导航
 - HTTP/TCP availability checks from Cloudflare.
 - One-second local VPS metric sampling with durable batching and retry.
 - Agent-side TCP Ping history.
+- Multi-network TCP latency from lightweight external Linux nodes.
 - D1 for relational state and R2 for raw telemetry and snapshots.
 - Public status page plus Token/TOTP protected administration.
 - Telegram alerts, traffic quotas, billing metadata, custom ordering, and themes.
@@ -31,6 +32,6 @@ The deployment script creates or reuses D1/R2, downloads and verifies Agent rele
 bash test.sh
 ```
 
-See [deployment](docs/en/02-deployment.md), [Agent](docs/en/04-agent.md), [operations](docs/en/09-operations.md), and [security](docs/en/10-security-free-tier.md) for English references.
+See [deployment](docs/en/02-deployment.md), [Agent](docs/en/04-agent.md), [external Latency Agents](docs/en/12-external-latency-agents.md), [operations](docs/en/09-operations.md), and [security](docs/en/10-security-free-tier.md) for English references.
 
 Licensed under the [MIT License](LICENSE).
