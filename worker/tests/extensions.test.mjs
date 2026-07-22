@@ -24,6 +24,10 @@ assert.equal(theme.extension.enabled, false);
 assert.equal(theme.extension.storage_root, 'themes/v1');
 assert.ok(env.ARCHIVE.keys().some(key => key.startsWith('themes/v1/ocean-theme/')));
 await assert.rejects(() => uploadExtension(uploadRequest(themeZip, 'plugins'), env, 'plugin'), /只接受 plugin 包/);
+const collidingPluginZip = extensionZip({
+  schema: 'nstatus-extension-v1', id: 'ocean-theme', name: 'Colliding Plugin', version: '1.0.0', type: 'plugin', entry: 'index.html', permissions: ['status:read'],
+}, { 'index.html': '<!doctype html><p>collision</p>' });
+await assert.rejects(() => uploadExtension(uploadRequest(collidingPluginZip, 'plugins'), env, 'plugin'), /已被主题使用/);
 await updateExtension('ocean-theme', jsonRequest({ enabled: true }), env);
 assert.equal((await listPublicExtensions(env)).active_theme.id, 'ocean-theme');
 

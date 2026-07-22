@@ -73,6 +73,11 @@ export async function uploadExtension(request, env, expectedType = '') {
   if (requiredType && extension.type !== requiredType) {
     throw new ApiError(400, requiredType === 'theme' ? '主题上传入口只接受 theme 包' : '插件上传入口只接受 plugin 包');
   }
+  const registry = await loadRegistry(env);
+  const previous = registry.find(item => item.id === extension.id);
+  if (previous && previous.type !== extension.type) {
+    throw new ApiError(409, `扩展 ID ${extension.id} 已被${previous.type === 'theme' ? '主题' : '插件'}使用`);
+  }
   const revision = crypto.randomUUID().replaceAll('-', '');
   const storageRoot = extensionStorageRoot(extension.type);
   const prefix = `${storageRoot}/${extension.id}/${revision}/`;
@@ -83,8 +88,6 @@ export async function uploadExtension(request, env, expectedType = '') {
     })));
   }
 
-  const registry = await loadRegistry(env);
-  const previous = registry.find(item => item.id === extension.id);
   const record = { ...extension, revision, storage_root: storageRoot, enabled: previous?.enabled || false, uploaded_at: nowSec() };
   const next = [...registry.filter(item => item.id !== record.id), record].sort((a, b) => a.name.localeCompare(b.name));
   await saveRegistry(env, next);
