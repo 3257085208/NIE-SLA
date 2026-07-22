@@ -15,11 +15,13 @@ for (const file of files) {
   assert.equal(result.status, 0, `${path.relative(root, file)} syntax failed:\n${result.stderr}`);
 }
 
-const [appSource, adminSource, adminCss, adminHtml] = await Promise.all([
+const [appSource, adminSource, adminCss, adminHtml, latencyAgentSource, latencyInstallerSource] = await Promise.all([
   readFile(path.join(root, 'app.js'), 'utf8'),
   readFile(path.join(root, 'js', 'admin.js'), 'utf8'),
   readFile(path.join(root, 'admin.css'), 'utf8'),
   readFile(path.join(root, 'admin.html'), 'utf8'),
+  readFile(path.join(root, 'latency-agent.py'), 'utf8'),
+  readFile(path.join(root, 'install-latency.sh'), 'utf8'),
 ]);
 assert.match(adminSource, /showInstallProgress\(t\);[\s\S]*apiAdmin\(/, 'deploy must show feedback before requesting the command');
 assert.match(adminSource, /data-retry-install/, 'deploy failures must offer a retry action');
@@ -42,6 +44,10 @@ assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/,
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
 assert.match(adminHtml, /admin\.css\?v=20260721-latency-sources/, 'admin CSS cache key must publish the Latency controls');
 assert.match(adminHtml, /js\/admin\.js\?v=20260721-latency-sources/, 'admin JS cache key must publish the Latency controls');
+assert.match(latencyAgentSource, /"User-Agent": USER_AGENT/, 'Latency agent must avoid Cloudflare rejecting Python urllib requests');
+assert.match(latencyAgentSource, /sys\.argv\[1:\] == \["--once"\]/, 'Latency agent must support an installation preflight cycle');
+assert.match(latencyInstallerSource, /latency-agent\.py --once/, 'Latency installer must verify API access before reporting success');
+assert.match(latencyInstallerSource, /systemctl is-active --quiet nstatus-latency-agent\.service/, 'Latency installer must verify the service is running');
 
 console.log(`frontend syntax tests passed (${files.length} files)`);
 

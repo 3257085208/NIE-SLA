@@ -99,7 +99,12 @@ assert.equal(COUNTRIES.length, 249);
 for (const country of COUNTRIES) {
   assert.equal(existsSync(new URL(`../assets/flags/4x3/${country.code.toLowerCase()}.svg`, import.meta.url)), true);
 }
-assert.equal(PROVIDERS.length >= 40, true);
+assert.equal(PROVIDERS.length >= 140, true);
+assert.equal(new Set(PROVIDERS.map((provider) => provider.toLocaleLowerCase('en'))).size, PROVIDERS.length);
+assert.deepEqual([...PROVIDERS].sort((a, b) => a.localeCompare(b, 'en', { sensitivity: 'base' })), PROVIDERS);
+for (const provider of ['DMIT', 'LightLayer', 'MKCloud', 'HostDZire', 'Cloudnium', 'HostBrr', 'servaRICA', 'ReliableSite']) {
+  assert.equal(PROVIDERS.includes(provider), true, `${provider} must be available in the provider catalog`);
+}
 assert.equal(CURRENCIES.length >= 15, true);
 assert.equal(normalizeCountryCode('香港'), 'HK');
 assert.equal(filterCountries('新加坡')[0].code, 'SG');

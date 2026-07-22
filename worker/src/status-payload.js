@@ -25,6 +25,27 @@ export function compactStatusPayload(payload) {
   };
 }
 
+export function refreshLatencySources(target, externalSources = []) {
+  const result = { ...(target || {}) };
+  if (Number(result.no_public_ip || 0) === 1) {
+    result.latency_sources = [];
+    return result;
+  }
+  result.latency_sources = [
+    {
+      id: 'cloudflare',
+      name: 'Cloudflare',
+      kind: 'cloudflare',
+      builtin: true,
+      checked_at: result.checked_at || null,
+      latency_ms: result.latency_ms ?? null,
+      ok: Number(result.ok) === 1,
+    },
+    ...(result.type === 'tcp' ? externalSources : []),
+  ];
+  return result;
+}
+
 function withoutKeys(value, keys) {
   const result = { ...(value || {}) };
   for (const key of keys) delete result[key];

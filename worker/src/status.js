@@ -3,7 +3,7 @@ import { json, constantTimeEqual } from './auth.js';
 import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
 import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, convertPriceToCny, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
 import { summarizeTraffic, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
-import { compactStatusPayload } from './status-payload.js';
+import { compactStatusPayload, refreshLatencySources } from './status-payload.js';
 
 export async function getStatusCached(request, env, url, ctx = null) {
   const ttl = clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300);
@@ -246,15 +246,18 @@ function mergeSummaryRows(...groups) {
 async function overlayLiveTargetStatus(env, payload) {
   if (!env.DB || !payload || !Array.isArray(payload.targets)) return payload;
   try {
-    const rows = await env.DB.prepare(
-      `SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo FROM latest_status`
-    ).all();
+    const externalPromise = getLatestExternalLatencyByTarget(env, payload.targets
+      .filter(target => Number(target.no_public_ip || 0) !== 1 && target.type === 'tcp')
+      .map(target => target.id)).catch(() => new Map());
+    const [rows, externalLatency] = await Promise.all([
+      env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo FROM latest_status`).all(),
+      externalPromise,
+    ]);
     const byId = new Map((rows.results || []).map((r) => [String(r.target_id), r]));
     payload.targets = payload.targets.map((t) => {
-      if (Number(t.no_public_ip || 0) === 1) return { ...t, status_source: 'agent', latency_ms: null, checked_at: null, ok: null, error: null };
+      if (Number(t.no_public_ip || 0) === 1) return refreshLatencySources({ ...t, status_source: 'agent', latency_ms: null, checked_at: null, ok: null, error: null });
       const live = byId.get(String(t.id));
-      if (!live) return t;
-      return {
+      const current = live ? {
         ...t,
         ok: Number(live.ok),
         checked_at: Number(live.checked_at || t.checked_at || 0),
@@ -264,7 +267,8 @@ async function overlayLiveTargetStatus(env, payload) {
         probe_region: live.probe_region || t.probe_region,
         cf_colo: live.cf_colo || t.cf_colo,
         live_overlay: true,
-      };
+      } : t;
+      return refreshLatencySources(current, externalLatency.get(String(t.id)) || []);
     });
     payload.live_overlay_at = nowSec();
   } catch (_) {}

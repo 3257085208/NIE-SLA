@@ -5,6 +5,7 @@ import concurrent.futures
 import json
 import os
 import socket
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -14,6 +15,7 @@ API_BASE = os.environ["NSTATUS_LATENCY_API_BASE"].rstrip("/")
 TOKEN = os.environ["NSTATUS_LATENCY_TOKEN"]
 NODE_ID = os.environ["NSTATUS_LATENCY_NODE_ID"]
 INTERVAL = max(30, min(600, int(os.environ.get("NSTATUS_LATENCY_INTERVAL_SEC", "60"))))
+USER_AGENT = os.environ.get("NSTATUS_LATENCY_USER_AGENT", "NStatus-Latency/1.0")
 
 
 def api(path, payload=None):
@@ -21,7 +23,12 @@ def api(path, payload=None):
     request = urllib.request.Request(
         API_BASE + path,
         data=body,
-        headers={"Authorization": "Bearer " + TOKEN, "Content-Type": "application/json"},
+        headers={
+            "Authorization": "Bearer " + TOKEN,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": USER_AGENT,
+        },
         method="GET" if payload is None else "POST",
     )
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -44,11 +51,16 @@ def run_once():
     targets = data.get("targets", []) if data.get("ok") else []
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(20, max(1, len(targets)))) as pool:
         results = list(pool.map(probe, targets))
-    if results:
-        api("/api/latency-agent/results", {"node_id": NODE_ID, "results": results})
+    submitted = api("/api/latency-agent/results", {"node_id": NODE_ID, "results": results}) if results else {"ok": True, "accepted": 0}
+    if not submitted.get("ok"):
+        raise RuntimeError(submitted.get("error") or "Latency result submission failed")
+    return {"targets": len(targets), "accepted": int(submitted.get("accepted", 0))}
 
 
 def main():
+    if sys.argv[1:] == ["--once"]:
+        print(json.dumps({"ok": True, **run_once()}, separators=(",", ":")), flush=True)
+        return
     while True:
         started = time.monotonic()
         try:

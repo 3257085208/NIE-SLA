@@ -10,7 +10,7 @@ import { normalizeTargetOrder } from '../src/admin/target-order.js';
 import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates } from '../src/storage.js';
 import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
 import { isAgentApiPath } from '../src/route-policy.js';
-import { compactStatusPayload } from '../src/status-payload.js';
+import { compactStatusPayload, refreshLatencySources } from '../src/status-payload.js';
 import { getAgentInstallCommand } from '../src/admin/install-command.js';
 import { getLatencyAgentInstallCommand } from '../src/admin/latency-agents.js';
 
@@ -131,6 +131,12 @@ assert.equal(compactStatus.targets[0].provider, 'Example');
 assert.equal(compactStatus.targets[0].agent_metrics.cpu_percent, 12);
 assert.equal('daily' in compactStatus.targets[0], false);
 assert.equal('pings' in compactStatus.targets[0].agent_metrics, false);
+const liveLatency = refreshLatencySources({ id: 'vps-a', type: 'tcp', checked_at: 100, latency_ms: 20, ok: 1 }, [
+  { id: 'tokyo', name: 'Tokyo', kind: 'external', checked_at: 101, latency_ms: 35, ok: true },
+]);
+assert.deepEqual(liveLatency.latency_sources.map(source => source.id), ['cloudflare', 'tokyo']);
+assert.equal(liveLatency.latency_sources[0].latency_ms, 20);
+assert.deepEqual(refreshLatencySources({ id: 'private', type: 'tcp', no_public_ip: 1 }, liveLatency.latency_sources).latency_sources, []);
 assert.equal(isAgentApiPath('/api/agent/install-command'), false);
 
 const installCommand = await getAgentInstallCommand(
@@ -195,6 +201,7 @@ const latencyInstallCommand = await getLatencyAgentInstallCommand(
 );
 assert.equal(latencyInstallCommand.ok, true);
 assert.match(latencyInstallCommand.linux_command, /install-latency\.sh/);
+assert.match(latencyInstallCommand.linux_command, /install-latency\.sh\?v=2/);
 assert.doesNotMatch(latencyInstallCommand.linux_command, /NSTATUS_AGENT_ID=/);
 assert.equal(isAgentApiPath('/api/login'), false);
 

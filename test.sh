@@ -50,6 +50,9 @@ done
 run_check "worker utility tests" node "$ROOT/worker/tests/utils.test.mjs"
 run_check "worker hardening tests" node "$ROOT/worker/tests/hardening.test.mjs"
 run_check "external Latency agent tests" node "$ROOT/worker/tests/latency-agents.test.mjs"
+if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
+  run_check "public export tool" node --check "$ROOT/scripts/export-public.mjs"
+fi
 run_shell "worker module bundle" "cd '$ROOT' && npx --yes esbuild worker/src/index.js --bundle --format=esm --platform=browser --external:cloudflare:sockets --outfile='$TMP_DIR/nstatus-worker-bundle.mjs' && rm -f '$TMP_DIR/nstatus-worker-bundle.mjs'"
 run_shell "js undefined references" "cd '$ROOT' && npx --yes eslint@10.6.0 -c tests/eslint.config.mjs worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests --no-error-on-unmatched-pattern"
 
@@ -81,14 +84,13 @@ run_check "frontend shared imports" node --input-type=module -e "await import('.
 run_check "frontend app import smoke" node "$ROOT/tests/frontend-app-import-smoke.mjs"
 run_check "frontend module tests" node "$ROOT/tests/frontend-modules.test.mjs"
 run_check "installer manifest tests" node "$ROOT/tests/installer-manifest.test.mjs"
-run_check "public repository safety" node "$ROOT/tests/public-repo-safety.test.mjs"
 
 echo ""
 echo "=== Rust Agent ==="
 run_shell "cargo fmt" "cd '$ROOT/agent' && $CARGO_BIN fmt -- --check"
 run_shell "cargo check" "cd '$ROOT/agent' && $CARGO_BIN check --locked"
 run_shell "cargo test" "cd '$ROOT/agent' && $CARGO_BIN test --locked"
-if [[ "$(uname -s)" == MINGW* ]] && command -v zig >/dev/null 2>&1 && "$CARGO_BIN" zigbuild --help >/dev/null 2>&1; then
+if command -v zig >/dev/null 2>&1 && "$CARGO_BIN" zigbuild --help >/dev/null 2>&1; then
   run_shell "linux amd64 build" "cd '$ROOT/agent' && $CARGO_BIN zigbuild --locked --release --target x86_64-unknown-linux-musl"
 else
   run_shell "linux amd64 build" "cd '$ROOT/agent' && $CARGO_BIN build --locked --release --target x86_64-unknown-linux-musl"

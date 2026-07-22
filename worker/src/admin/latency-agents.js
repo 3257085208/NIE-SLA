@@ -63,7 +63,7 @@ export async function getLatencyAgentInstallCommand(env, url, request = null) {
     `${prefix}; export ${envNames.join(' ')}`,
     'tmp=$(mktemp)',
     `trap 'rm -f "$tmp"' EXIT`,
-    `curl -fsSL ${shellQuote(`${installBase}/install-latency.sh?v=1`)} -o "$tmp"`,
+    `curl -fsSL ${shellQuote(`${installBase}/install-latency.sh?v=2`)} -o "$tmp"`,
     `(if [ "$(id -u)" -eq 0 ]; then sh "$tmp"; else sudo --preserve-env=${envNames.join(',')} sh "$tmp"; fi)`,
   ].join(' && ');
   return { ok: true, node_id: nodeId, node_name: node.name, api_base: apiBase, install_base: installBase, linux_command: command };
