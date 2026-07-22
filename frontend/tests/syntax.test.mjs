@@ -54,6 +54,10 @@ assert.match(appSource, /initializeFrontendExtensions\(\)/, 'frontend must initi
 assert.doesNotMatch(appSource, /meta-provider">🏪/, 'provider metadata must use typography instead of decorative emoji');
 assert.doesNotMatch(appSource, /meta-line">🔀/, 'line type metadata must use typography instead of decorative emoji');
 assert.doesNotMatch(appSource, /`📍 \$\{t\.location\}`/, 'fallback location metadata must not add decorative emoji');
+assert.match(appSource, /apac:\s*'亚太'/, 'probe region labels must be fully Chinese');
+assert.match(appSource, /wnam:\s*'北美西部'/, 'Western North America label must stay Chinese');
+assert.doesNotMatch(appSource, /apac:\s*'APAC'/, 'probe region labels must not mix English abbreviations');
+assert.doesNotMatch(appSource, /wnam:\s*'美国西部'/, 'region labels must use the shared Chinese wording');
 assert.match(latencyAgentSource, /"User-Agent": USER_AGENT/, 'Latency agent must avoid Cloudflare rejecting Python urllib requests');
 assert.match(latencyAgentSource, /sys\.argv\[1:\] == \["--once"\]/, 'Latency agent must support an installation preflight cycle');
 assert.match(latencyAgentSource, /def update_if_needed\(\):/, 'Latency agent must support automatic updates');

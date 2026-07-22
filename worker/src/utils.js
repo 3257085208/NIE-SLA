@@ -1,9 +1,16 @@
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const REGION_LABELS = {
-  auto: 'Auto', apac: 'Asia-Pacific', weur: 'Western Europe', eeur: 'Eastern Europe',
-  enam: 'Eastern North America', wnam: 'Western North America', sam: 'South America',
-  oc: 'Oceania', afr: 'Africa', me: 'Middle East',
+  auto: '自动',
+  apac: '亚太',
+  weur: '西欧',
+  eeur: '东欧',
+  enam: '北美东部',
+  wnam: '北美西部',
+  sam: '南美',
+  oc: '大洋洲',
+  afr: '非洲',
+  me: '中东',
 };
 
 export const ALLOWED_REGIONS = new Set(Object.keys(REGION_LABELS));
@@ -358,7 +365,7 @@ export function publicError(error, statusCode = null) {
 
 export function publicCheckPoint(point) {
   const { cf_colo, ...safePoint } = point || {};
-  return { ...safePoint, region_label: REGION_LABELS[safePoint.probe_region || 'auto'] || safePoint.probe_region || 'Auto', error: publicError(safePoint.error, safePoint.status_code) };
+  return { ...safePoint, region_label: REGION_LABELS[safePoint.probe_region || 'auto'] || safePoint.probe_region || '自动', error: publicError(safePoint.error, safePoint.status_code) };
 }
 
 export function sanitizePublicStatusPayload(payload, env) {
@@ -386,7 +393,7 @@ export function sanitizePublicTarget(row, env, maskIps = publicMaskIps(env), hid
   if ('error' in clean) clean.error = publicError(clean.error, clean.status_code);
   if ('last_error' in clean) clean.last_error = publicError(clean.last_error, clean.status_code);
   clean.cf_colo = null; clean.start_colo = null; clean.recover_colo = null;
-  clean.region_label = REGION_LABELS[clean.probe_region || 'auto'] || clean.probe_region || 'Auto';
+  clean.region_label = REGION_LABELS[clean.probe_region || 'auto'] || clean.probe_region || '自动';
   if (hidePorts) delete clean.target_port;
   return clean;
 }

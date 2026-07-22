@@ -50,7 +50,7 @@ export async function getRecentIncidents(env, limit, maskIps, hidePorts = true) 
   return (rows.results || []).map(row => {
     const displayHost = row.type === 'tcp' ? publicHost(row.target_host, maskIps) : row.target_host;
     const displayUrl = row.type === 'http' ? publicUrl(row.url, env) : row.url;
-    const publicRow = { ...row, target_host: row.type === 'tcp' ? displayHost : row.target_host, url: row.type === 'http' ? displayUrl : row.url, target: row.type === 'http' ? displayUrl : displayHost, last_error: publicError(row.last_error, null), start_colo: null, recover_colo: null, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || 'Auto' };
+    const publicRow = { ...row, target_host: row.type === 'tcp' ? displayHost : row.target_host, url: row.type === 'http' ? displayUrl : row.url, target: row.type === 'http' ? displayUrl : displayHost, last_error: publicError(row.last_error, null), start_colo: null, recover_colo: null, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || '自动' };
     if (hidePorts) delete publicRow.target_port;
     return publicRow;
   });

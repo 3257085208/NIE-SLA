@@ -2667,12 +2667,12 @@ function regionShort(t) {
   }
 
   const map = {
-    apac: 'APAC',
+    apac: '亚太',
     weur: '西欧',
     eeur: '东欧',
-    enam: '美国东部',
-    wnam: '美国西部',
-    sam: '南美洲',
+    enam: '北美东部',
+    wnam: '北美西部',
+    sam: '南美',
     oc: '大洋洲',
     afr: '非洲',
     me: '中东',
