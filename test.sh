@@ -43,6 +43,10 @@ run_shell() {
 
 rm -f "$TMP_DIR/nstatus-test.out"
 
+if [[ -f "$ROOT/worker/package-lock.json" && ! -d "$ROOT/worker/node_modules/fflate" ]]; then
+  npm ci --prefix "$ROOT/worker" --ignore-scripts --no-audit --no-fund
+fi
+
 echo "=== Worker JS Syntax ==="
 for f in "$ROOT/worker/src"/*.js; do
   run_check "$(basename "$f")" node --check "$f"
@@ -50,6 +54,7 @@ done
 run_check "worker utility tests" node "$ROOT/worker/tests/utils.test.mjs"
 run_check "worker hardening tests" node "$ROOT/worker/tests/hardening.test.mjs"
 run_check "external Latency agent tests" node "$ROOT/worker/tests/latency-agents.test.mjs"
+run_check "extension package tests" node "$ROOT/worker/tests/extensions.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
   run_check "public export tool" node --check "$ROOT/scripts/export-public.mjs"
 fi

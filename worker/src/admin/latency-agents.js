@@ -1,6 +1,7 @@
 import { safeJson, latencyAgentScopedToken } from '../auth.js';
 import { clamp, nowSec, parseBoolean, sanitizeAgentId } from '../utils.js';
 import { agentApiBase, agentInstallBase, shellQuote } from './install-command.js';
+import { getPublicSettings } from './settings.js';
 
 const RESULT_BUCKET_SEC = 60;
 
@@ -63,10 +64,20 @@ export async function getLatencyAgentInstallCommand(env, url, request = null) {
     `${prefix}; export ${envNames.join(' ')}`,
     'tmp=$(mktemp)',
     `trap 'rm -f "$tmp"' EXIT`,
-    `curl -fsSL ${shellQuote(`${installBase}/install-latency.sh?v=2`)} -o "$tmp"`,
+    `curl -fsSL ${shellQuote(`${installBase}/install-latency.sh?v=4`)} -o "$tmp"`,
     `(if [ "$(id -u)" -eq 0 ]; then sh "$tmp"; else sudo --preserve-env=${envNames.join(',')} sh "$tmp"; fi)`,
   ].join(' && ');
   return { ok: true, node_id: nodeId, node_name: node.name, api_base: apiBase, install_base: installBase, linux_command: command };
+}
+
+export async function getLatencyAgentUpdatePolicy(env) {
+  const settings = await getPublicSettings(env);
+  return {
+    ok: true,
+    auto_update: settings.agent_auto_update,
+    check_interval_sec: clamp(Number(env.LATENCY_AGENT_UPDATE_CHECK_SEC || 3600), 300, 86400),
+    script_version: 4,
+  };
 }
 
 export async function getLatencyAgentTargets(env) {

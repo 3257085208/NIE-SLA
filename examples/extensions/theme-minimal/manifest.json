@@ -1,0 +1,11 @@
+{
+  "schema": "nstatus-extension-v1",
+  "id": "minimal-green-theme",
+  "name": "Minimal Green",
+  "version": "1.0.0",
+  "type": "theme",
+  "author": "Example Developer",
+  "description": "A small variable-based NStatus theme example.",
+  "base_theme": "classic",
+  "styles": ["theme.css"]
+}

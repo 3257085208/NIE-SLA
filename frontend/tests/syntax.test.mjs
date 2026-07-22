@@ -42,11 +42,23 @@ assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector
 assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260721-latency-sources/, 'admin CSS cache key must publish the Latency controls');
-assert.match(adminHtml, /js\/admin\.js\?v=20260721-latency-sources/, 'admin JS cache key must publish the Latency controls');
+assert.match(adminHtml, /admin\.css\?v=20260722-extensions/, 'admin CSS cache key must publish the extension controls');
+assert.match(adminHtml, /js\/admin\.js\?v=20260722-extensions/, 'admin JS cache key must publish the extension controls');
+assert.match(adminSource, /\/api\/extensions\/upload/, 'admin must upload extension ZIP packages');
+assert.match(adminSource, /data-extension-action/, 'admin must manage installed extensions');
+assert.match(appSource, /initializeFrontendExtensions\(\)/, 'frontend must initialize enabled extensions');
 assert.match(latencyAgentSource, /"User-Agent": USER_AGENT/, 'Latency agent must avoid Cloudflare rejecting Python urllib requests');
 assert.match(latencyAgentSource, /sys\.argv\[1:\] == \["--once"\]/, 'Latency agent must support an installation preflight cycle');
+assert.match(latencyAgentSource, /def update_if_needed\(\):/, 'Latency agent must support automatic updates');
+assert.match(latencyAgentSource, /\/api\/latency-agent\/update-policy\?node_id=/, 'Latency agent must read the server-side update policy');
+assert.match(latencyAgentSource, /policy\.get\("script_version", SCRIPT_VERSION\)/, 'Latency updates must use the server-selected cache version');
+assert.match(latencyAgentSource, /os\.replace\(next_path, SCRIPT_PATH\)/, 'Latency agent updates must replace the script atomically');
 assert.match(latencyInstallerSource, /latency-agent\.py --once/, 'Latency installer must verify API access before reporting success');
+assert.match(latencyInstallerSource, /latency-agent\.py\?v=4/, 'Latency installer must cache-bust the current agent script');
+assert.match(latencyInstallerSource, /stop_existing_latency_agent\(\)/, 'Latency reinstall must stop all existing agent processes');
+assert.match(latencyInstallerSource, /systemctl disable --now nstatus-latency-agent\.service/, 'Latency reinstall must stop and disable the old service');
+assert.match(latencyInstallerSource, /pgrep -f '\/opt\/nstatus-latency\/latency-agent\.py'/, 'Latency reinstall must find residual agent processes');
+assert.match(latencyInstallerSource, /ReadWritePaths=\/opt\/nstatus-latency/, 'Latency service must allow atomic self-updates inside its sandbox');
 assert.match(latencyInstallerSource, /systemctl is-active --quiet nstatus-latency-agent\.service/, 'Latency installer must verify the service is running');
 
 console.log(`frontend syntax tests passed (${files.length} files)`);

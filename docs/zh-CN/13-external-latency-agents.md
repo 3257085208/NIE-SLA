@@ -35,11 +35,14 @@
 安装器会：
 
 1. 检查 systemd 和 Python 3。
-2. 下载带版本参数的最新 `latency-agent.py`。
-3. 写入权限为 `0600` 的环境文件。
-4. 执行一次 `--once` 预检并提交首批结果。
-5. 创建并启动 `nstatus-latency-agent.service`。
-6. 验证 systemd 服务处于 active 状态。
+2. 停止并禁用已有的 `nstatus-latency-agent.service`，再终止仍引用旧脚本的残留进程。
+3. 下载带版本参数的最新 `latency-agent.py`。
+4. 写入权限为 `0600` 的环境文件。
+5. 执行一次 `--once` 预检并提交首批结果。
+6. 创建并启动 `nstatus-latency-agent.service`。
+7. 验证 systemd 服务处于 active 状态。
+
+因此同一节点需要重装或更换 Token 时，直接执行后台当前生成的新命令即可。安装器不会保留旧的 Latency Agent 进程并行上报。
 
 成功输出形态类似：
 
@@ -89,6 +92,18 @@ npx wrangler d1 execute nstatus-db --remote --command \
 
 公开状态接口只展示未过期的最新来源。正常上报后通常在几十秒内可见；长时间无新结果的来源会按 Worker 的 stale 窗口暂时隐藏。
 
+## 自动更新
+
+后台设置页的“Agent 自动更新”开关同时控制普通 Rust Agent 和外部 Latency Agent。Latency Agent 使用自己的节点 scoped Token 定期读取 `/api/latency-agent/update-policy`：
+
+- 关闭时只读取策略，不修改本地脚本。
+- 开启时从安装命令记录的 HTTPS Pages 地址下载当前脚本。
+- 下载后先限制文件大小、比较 SHA-256 并执行 Python 编译检查。
+- 校验通过后在 `/opt/nstatus-latency` 内原子替换脚本，并通过 `exec` 重启当前进程。
+- 更新检查失败只写入 journal，不会中止后续延迟探测；默认一小时后重试。
+
+首次启用这项能力需要重新执行一次后台生成的最新部署命令，以写入安装源并更新 systemd 沙箱权限。以后脚本更新可自动完成。
+
 ## 旧节点升级
 
 如果节点是在旧版安装脚本时期部署，后台可能一直显示“尚未上报”。不要只重启旧服务，应当：
@@ -98,7 +113,7 @@ npx wrangler d1 execute nstatus-db --remote --command \
 3. 在原节点重新执行完整安装命令。
 4. 必须看到 `{"ok":true,...,"accepted":...}`，再认为升级完成。
 
-旧 Python `urllib` 默认 User-Agent 可能被 Cloudflare Browser Integrity Check 以 1010 拦截，请求甚至不会进入 Worker。当前脚本显式发送 `NStatus-Latency/1.0`，并通过 `--once` 在安装阶段立即发现 API、Token 或边缘安全策略问题。
+旧 Python `urllib` 默认 User-Agent 可能被 Cloudflare Browser Integrity Check 以 1010 拦截，请求甚至不会进入 Worker。当前脚本显式发送 `NStatus-Latency/1.0`，通过 `--once` 在安装阶段立即发现 API、Token 或边缘安全策略问题，并在重装前清理旧服务与残留进程。
 
 ## 常见故障
 

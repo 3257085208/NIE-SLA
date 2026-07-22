@@ -8,6 +8,7 @@
 | `PUBLIC_WORKER_URL` | empty | Public Worker URL |
 | `PUBLIC_AGENT_INSTALL_BASE` | auto | Installer/download base |
 | `ALLOWED_ORIGIN` | empty | CORS origin |
+| `DEVELOPER_API_ORIGINS` | empty | Exact comma-separated browser origins for read-only `/api/v1`; no wildcard |
 | `TIMEZONE_OFFSET_MINUTES` | `480` | Timezone offset |
 | `CONCURRENCY` | `8` | Probe concurrency |
 | `MAX_TARGETS_PER_RUN` | `60` | Cron probe cap |

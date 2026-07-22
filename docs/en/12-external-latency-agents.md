@@ -40,6 +40,8 @@ External Latency Agent installed: latency-example
 
 `targets` is the number of eligible targets returned by the Worker. `accepted` is the number of results validated and stored. A positive matching count confirms target retrieval, authentication, probing, and D1 writes.
 
+Re-running the current deployment command first disables and stops the existing systemd service, terminates residual processes still using the old script, and then starts one fresh instance. This makes the generated command the supported reinstall and token-refresh path.
+
 ## Verification
 
 ```bash
@@ -65,6 +67,12 @@ npx wrangler d1 execute nstatus-db --remote --command \
 npx wrangler d1 execute nstatus-db --remote --command \
   "SELECT node_id,COUNT(*) AS count,MAX(checked_at) AS newest FROM latency_results GROUP BY node_id;"
 ```
+
+## Automatic Updates
+
+The Agent automatic-update setting controls both the Rust telemetry Agent and external Latency Agents. Each Latency Agent authenticates with its node-scoped token and periodically reads `/api/latency-agent/update-policy`.
+
+When enabled, it downloads the current script from the HTTPS Pages install origin, enforces a size limit, compares SHA-256, compiles the candidate, atomically replaces the installed script, and restarts itself with `exec`. Update failures are logged without stopping probe cycles. Re-run the latest deployment command once on older nodes to install the update origin and required systemd write permission.
 
 ## Upgrading Old Installations
 

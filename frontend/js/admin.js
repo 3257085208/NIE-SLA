@@ -230,7 +230,85 @@ function nav(p) {
   if (p === "targets") loadTargets();
   if (p === "latency") loadLatencyNodes();
   if (p === "pings") loadPings();
+  if (p === "extensions") loadExtensions();
   if (p === "settings") loadSettings();
+}
+
+async function loadExtensions() {
+  loading("extensionTable");
+  try {
+    const data = await api("/api/extensions/manage");
+    const rows = data.extensions || [];
+    if (!rows.length) {
+      byId("extensionTable").innerHTML = '<div class="empty">尚未安装主题或插件。</div>';
+      return;
+    }
+    byId("extensionTable").innerHTML = `<div class="extension-grid">${rows.map(extensionCardHtml).join("")}</div>`;
+  } catch (error) {
+    errBox("extensionTable", error);
+  }
+}
+
+function extensionCardHtml(extension) {
+  const type = extension.type === "theme" ? "主题" : "插件";
+  const state = extension.enabled ? "已启用" : "未启用";
+  return `<article class="extension-card${extension.enabled ? " active" : ""}">
+    <div class="extension-card-head">
+      <div><span>${escapeHtml(type)}</span><h3>${escapeHtml(extension.name)}</h3></div>
+      <em>${escapeHtml(state)}</em>
+    </div>
+    <p>${escapeHtml(extension.description || "暂无说明")}</p>
+    <dl>
+      <div><dt>ID</dt><dd><code>${escapeHtml(extension.id)}</code></dd></div>
+      <div><dt>版本</dt><dd>${escapeHtml(extension.version)}</dd></div>
+      <div><dt>作者</dt><dd>${escapeHtml(extension.author || "未署名")}</dd></div>
+    </dl>
+    <div class="extension-card-actions">
+      <button class="btn btn-sm ${extension.enabled ? "" : "btn-primary"}" data-extension-action="toggle" data-extension-id="${escapeHtml(extension.id)}" data-extension-enabled="${extension.enabled ? "1" : "0"}">${extension.enabled ? "停用" : "启用"}</button>
+      <button class="btn btn-sm btn-danger" data-extension-action="delete" data-extension-id="${escapeHtml(extension.id)}">删除</button>
+    </div>
+  </article>`;
+}
+
+async function uploadExtensionPackage(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".zip")) return toast("请选择 ZIP 扩展包", "err");
+  if (file.size > 2 * 1024 * 1024) return toast("扩展 ZIP 不能超过 2 MB", "err");
+  const button = byId("uploadExtensionBtn");
+  button.disabled = true;
+  button.textContent = "正在校验并上传...";
+  try {
+    const result = await api("/api/extensions/upload", {
+      method: "POST",
+      headers: { "Content-Type": "application/zip", "x-extension-filename": file.name },
+      body: file,
+    });
+    toast(`已安装 ${result.extension.name}，请确认后启用`, "ok");
+    await loadExtensions();
+  } catch (error) {
+    toast(error.message, "err");
+  } finally {
+    button.disabled = false;
+    button.textContent = "上传 ZIP";
+    byId("extensionZip").value = "";
+  }
+}
+
+async function toggleExtension(id, enabled) {
+  try {
+    await api(`/api/extensions/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ enabled: !enabled }) });
+    toast(enabled ? "扩展已停用" : "扩展已启用", "ok");
+    await loadExtensions();
+  } catch (error) { toast(error.message, "err"); }
+}
+
+async function removeExtension(id) {
+  if (!confirm(`确认删除扩展 ${id}？其 R2 文件也会被删除。`)) return;
+  try {
+    await api(`/api/extensions/${encodeURIComponent(id)}`, { method: "DELETE" });
+    toast("扩展已删除", "ok");
+    await loadExtensions();
+  } catch (error) { toast(error.message, "err"); }
 }
 async function loadDash() {
   loading("dStats");
@@ -1838,6 +1916,15 @@ byId("probeBtn").onclick = async () => {
   }
 };
 byId("addPingBtn").onclick = () => pingModal();
+byId("uploadExtensionBtn").onclick = () => byId("extensionZip").click();
+byId("extensionZip").onchange = () => uploadExtensionPackage(byId("extensionZip").files?.[0]);
+byId("extensionTable").onclick = (event) => {
+  const button = event.target.closest("button[data-extension-action]");
+  if (!button) return;
+  const id = button.dataset.extensionId;
+  if (button.dataset.extensionAction === "toggle") toggleExtension(id, button.dataset.extensionEnabled === "1");
+  if (button.dataset.extensionAction === "delete") removeExtension(id);
+};
 byId("archiveBtn").onclick = async () => {
   try {
     await api("/api/archive", { method: "POST", body: "{}" });

@@ -1,0 +1,16 @@
+:root {
+  --bg: #eef2f0;
+  --paper: #ffffff;
+  --text: #102019;
+  --muted: #64726b;
+  --line: #cdd8d2;
+  --green: #137a4a;
+  --green-dark: #0d6039;
+  --green-soft: #e0f2e8;
+  --radius: 3px;
+  --shadow: 0 2px 6px rgba(16, 32, 25, 0.08);
+}
+
+body[data-extension-theme="minimal-green-theme"] .topbar {
+  border-bottom-color: var(--green);
+}

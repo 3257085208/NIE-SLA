@@ -103,6 +103,7 @@ assert.equal(isAgentApiPath('/api/agent/metrics'), true);
 assert.equal(isAgentApiPath('/api/agent/ping-targets'), true);
 assert.equal(isAgentApiPath('/api/latency-agent/targets'), true);
 assert.equal(isAgentApiPath('/api/latency-agent/results'), true);
+assert.equal(isAgentApiPath('/api/latency-agent/update-policy'), true);
 
 assert.throws(() => normalizeTarget({ type: 'tcp', name: 'Private VPS', target_host: '', target_port: 0 }), /主机/);
 const privateTarget = normalizeTarget({ type: 'tcp', name: 'Private VPS', no_public_ip: true });
@@ -201,7 +202,7 @@ const latencyInstallCommand = await getLatencyAgentInstallCommand(
 );
 assert.equal(latencyInstallCommand.ok, true);
 assert.match(latencyInstallCommand.linux_command, /install-latency\.sh/);
-assert.match(latencyInstallCommand.linux_command, /install-latency\.sh\?v=2/);
+assert.match(latencyInstallCommand.linux_command, /install-latency\.sh\?v=4/);
 assert.doesNotMatch(latencyInstallCommand.linux_command, /NSTATUS_AGENT_ID=/);
 assert.equal(isAgentApiPath('/api/login'), false);
 

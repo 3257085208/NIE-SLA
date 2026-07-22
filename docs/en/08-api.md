@@ -46,3 +46,9 @@ Admin endpoints use `Authorization: Bearer ADMIN_TOKEN` and optionally `x-admin-
 | POST | `/api/agent/pings` | Ping results |
 | GET | `/api/latency-agent/targets?node_id=ID` | External Latency Agent target list |
 | POST | `/api/latency-agent/results` | External Latency Agent results |
+| GET | `/api/latency-agent/update-policy?node_id=ID` | External Latency Agent update policy |
+| GET | `/api/v1` | Versioned public API capability manifest |
+| GET | `/api/extensions` | Enabled public extension registry |
+| GET | `/api/extensions/manage` | Installed extensions (Admin) |
+| POST | `/api/extensions/upload` | Upload extension ZIP (Admin) |
+| PATCH/DELETE | `/api/extensions/:id` | Enable, disable, or delete an extension (Admin) |

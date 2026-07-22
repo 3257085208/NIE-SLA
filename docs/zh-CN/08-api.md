@@ -41,6 +41,8 @@ Token 与 `agent_id` 绑定。身份不匹配返回 401/403。
 | GET | `/api/latency?target_id=ID&hours=24` | 外部 Latency 节点历史 |
 | GET | `/api/colo-echo` | 当前请求 colo 调试 |
 
+版本化开发接口使用 `/api/v1`，完整兼容约定见 [14 主题、插件与开发者 API](14-extensions-developer-guide.md)。
+
 ## Agent 接口
 
 | 方法 | 路径 | 说明 |
@@ -53,6 +55,7 @@ Token 与 `agent_id` 绑定。身份不匹配返回 401/403。
 | POST | `/api/agent/results` | Rust Agent 上传可用性结果 |
 | GET | `/api/latency-agent/targets?node_id=ID` | 外部 Latency Agent 拉取公开 TCP 目标 |
 | POST | `/api/latency-agent/results` | 外部 Latency Agent 上传结果 |
+| GET | `/api/latency-agent/update-policy?node_id=ID` | 外部 Latency Agent 读取自动更新策略 |
 
 请求体有大小限制。不要一次上传无限历史；Agent 会控制批次和队列。
 
@@ -104,6 +107,11 @@ curl -X POST https://YOUR-API/api/targets \
 | POST | `/api/latency-agents` | 创建外部 Latency 节点 |
 | PATCH/DELETE | `/api/latency-agents/:id` | 编辑、停用或删除节点 |
 | GET | `/api/latency-agent/install-command?node_id=ID` | 生成节点 scoped 安装命令 |
+| GET | `/api/extensions/manage` | 列出已安装主题与插件 |
+| POST | `/api/extensions/upload` | 上传并校验扩展 ZIP |
+| PATCH/DELETE | `/api/extensions/:id` | 启停或删除扩展 |
+
+公开扩展注册表为 `GET /api/extensions`，启用后的包文件由 `GET /api/extensions/file/:id/:path` 提供。扩展文件接口不接受任意 R2 key，只能读取注册表中启用包的清单内文件。
 
 ## 常见状态码
 

@@ -233,6 +233,30 @@ button { border: 0; cursor: pointer; }
   background: #e8f0fe;
   color: #1a73e8;
 }
+
+.extension-plugin-panels {
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+}
+.extension-plugin-panels[hidden] { display: none; }
+.extension-plugin-panel {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface, var(--paper, #fff));
+}
+.extension-plugin-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.extension-plugin-heading span { color: var(--muted); font-size: 11px; }
+.extension-plugin-panel iframe { display: block; width: 100%; border: 0; background: transparent; }
 .service.no-latency { grid-template-columns: minmax(230px, 1fr) 125px 90px; }
 .region-flag {
   width: 18px;

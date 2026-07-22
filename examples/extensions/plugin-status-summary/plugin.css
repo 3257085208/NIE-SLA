@@ -1,0 +1,7 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; }
+body { margin: 0; color: #152019; background: #fff; }
+main { padding: 18px; }
+p { color: #68736d; }
+#summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+#summary span { padding: 12px; border: 1px solid #dce3df; text-align: center; }
+#summary strong { display: block; margin-bottom: 4px; font-size: 24px; }

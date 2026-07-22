@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { resolvePublicMetricsQuery, defaultMetricsMaxPointsForHours } from '../src/metrics.js';
 import { isPrivateHost, assertPublicHttpUrl, buildOpenMissedPoints } from '../src/utils.js';
 import { resolveCorsOrigin } from '../src/auth.js';
+import { getDeveloperApiManifest, resolveDeveloperApiOrigin, withDeveloperApiHeaders } from '../src/developer-api.js';
 
 function urlWith(qs) {
   return new URL('https://example.test/api/agent/metrics?' + qs);
@@ -52,3 +53,23 @@ console.log('hardening tests passed');
   assert.equal(resolveCorsOrigin({}), '');
 }
 console.log('cors tests passed');
+
+// Versioned developer API stays read-only and uses explicit origins.
+{
+  const request = new Request('https://api.example.test/api/v1', { headers: { origin: 'https://theme.example.test' } });
+  const env = {
+    ALLOWED_ORIGIN: 'https://status.example.test',
+    DEVELOPER_API_ORIGINS: 'https://theme.example.test,http://localhost:5173,*,http://unsafe.example.test',
+  };
+  assert.equal(resolveDeveloperApiOrigin(request, env), 'https://theme.example.test');
+  assert.equal(resolveDeveloperApiOrigin(new Request(request.url, { headers: { origin: 'https://blocked.example.test' } }), env), 'https://status.example.test');
+  const manifest = getDeveloperApiManifest(request, env, 'v1.2.3');
+  assert.equal(manifest.api_version, 'v1');
+  assert.equal(manifest.authentication.write, 'not_available');
+  assert.equal(manifest.extensions.privileged_plugins, false);
+  assert.ok(manifest.endpoints.every(endpoint => endpoint.method === 'GET' && endpoint.url.startsWith('https://api.example.test/api/v1/')));
+  const response = withDeveloperApiHeaders(new Response('{}'), request, env);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://theme.example.test');
+  assert.equal(response.headers.get('x-nstatus-api-version'), 'v1');
+}
+console.log('developer API tests passed');

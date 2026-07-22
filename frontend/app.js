@@ -28,6 +28,7 @@ import {
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
 import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js';
 import { canShowTemperature, hasTemperatureData } from './js/shared/hardware.js';
+import { extensionBaseTheme, initializeFrontendExtensions, publishExtensionStatus } from './js/extensions.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
   buildLinePoints,
@@ -262,6 +263,9 @@ window.addEventListener('nstatus:chartjs-ready', () => {
     if (state.selectedId) updateChartForCurrentRange();
   }
 });
+initializeFrontendExtensions().then(() => {
+  if (state.data) render(state.data);
+});
 loadStatus();
 setInterval(loadStatus, 60_000);
 
@@ -365,6 +369,7 @@ function render(data) {
   renderCardThemeExtras(data);
   renderIncidentLog(data);
   renderGroupsIfChanged(data);
+  publishExtensionStatus(data);
 }
 
 function renderGroupsIfChanged(data) {
@@ -390,7 +395,7 @@ function statusGroupsRenderKey(data) {
 }
 
 function applyFrontendTheme(data) {
-  const raw = data?.frontend?.theme || data?.frontend_theme || 'classic';
+  const raw = extensionBaseTheme() || data?.frontend?.theme || data?.frontend_theme || 'classic';
   const theme = raw === 'cards' ? 'cards' : 'classic';
   state.frontendTheme = theme;
   document.body.dataset.frontendTheme = theme;

@@ -2,6 +2,7 @@
 """Independent NStatus external Latency probe node."""
 
 import concurrent.futures
+import hashlib
 import json
 import os
 import socket
@@ -15,7 +16,11 @@ API_BASE = os.environ["NSTATUS_LATENCY_API_BASE"].rstrip("/")
 TOKEN = os.environ["NSTATUS_LATENCY_TOKEN"]
 NODE_ID = os.environ["NSTATUS_LATENCY_NODE_ID"]
 INTERVAL = max(30, min(600, int(os.environ.get("NSTATUS_LATENCY_INTERVAL_SEC", "60"))))
+UPDATE_INTERVAL = max(300, min(86400, int(os.environ.get("NSTATUS_LATENCY_UPDATE_CHECK_SEC", "3600"))))
+INSTALL_BASE = os.environ["NSTATUS_LATENCY_INSTALL_BASE"].rstrip("/")
 USER_AGENT = os.environ.get("NSTATUS_LATENCY_USER_AGENT", "NStatus-Latency/1.0")
+SCRIPT_PATH = os.path.realpath(__file__)
+SCRIPT_VERSION = "4"
 
 
 def api(path, payload=None):
@@ -57,17 +62,78 @@ def run_once():
     return {"targets": len(targets), "accepted": int(submitted.get("accepted", 0))}
 
 
+def update_policy():
+    return api("/api/latency-agent/update-policy?node_id=" + urllib.parse.quote(NODE_ID))
+
+
+def update_if_needed():
+    policy = update_policy()
+    check_interval = max(300, min(86400, int(policy.get("check_interval_sec", UPDATE_INTERVAL))))
+    if not policy.get("auto_update"):
+        return check_interval
+
+    script_version = str(policy.get("script_version", SCRIPT_VERSION))
+    if not script_version.isdigit():
+        raise RuntimeError("invalid Latency agent update version")
+    update_url = INSTALL_BASE + "/latency-agent.py?v=" + urllib.parse.quote(script_version)
+    if urllib.parse.urlparse(update_url).scheme != "https":
+        raise RuntimeError("Latency agent automatic updates require HTTPS")
+    request = urllib.request.Request(
+        update_url,
+        headers={"Accept": "text/x-python, text/plain", "User-Agent": USER_AGENT},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        candidate = response.read(1024 * 1024 + 1)
+    if not candidate or len(candidate) > 1024 * 1024:
+        raise RuntimeError("invalid Latency agent update size")
+
+    with open(SCRIPT_PATH, "rb") as current_file:
+        current = current_file.read()
+    if hashlib.sha256(candidate).digest() == hashlib.sha256(current).digest():
+        return check_interval
+
+    source = candidate.decode("utf-8")
+    compile(source, SCRIPT_PATH, "exec")
+    next_path = SCRIPT_PATH + ".next"
+    try:
+        with open(next_path, "wb") as next_file:
+            next_file.write(candidate)
+            next_file.flush()
+            os.fsync(next_file.fileno())
+        os.chmod(next_path, 0o755)
+        os.replace(next_path, SCRIPT_PATH)
+    finally:
+        try:
+            os.unlink(next_path)
+        except FileNotFoundError:
+            pass
+
+    print("Latency agent updated; restarting", flush=True)
+    os.execv(sys.executable, [sys.executable, SCRIPT_PATH])
+    return check_interval
+
+
 def main():
     if sys.argv[1:] == ["--once"]:
         print(json.dumps({"ok": True, **run_once()}, separators=(",", ":")), flush=True)
         return
+    next_update = time.monotonic()
     while True:
         started = time.monotonic()
         try:
             run_once()
         except Exception as error:
             print("latency probe cycle failed:", error, flush=True)
-        time.sleep(max(1, INTERVAL - (time.monotonic() - started)))
+        now = time.monotonic()
+        if now >= next_update:
+            try:
+                next_update = now + update_if_needed()
+            except Exception as error:
+                print("latency agent update check failed:", error, flush=True)
+                next_update = now + UPDATE_INTERVAL
+        sleep_for = min(INTERVAL - (time.monotonic() - started), next_update - time.monotonic())
+        time.sleep(max(1, sleep_for))
 
 
 if __name__ == "__main__":

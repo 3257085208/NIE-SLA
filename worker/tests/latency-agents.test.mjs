@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { ensureV6Schema } from '../src/admin/schema.js';
-import { createLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentTargets, submitLatencyAgentResults } from '../src/admin/latency-agents.js';
+import { createLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentTargets, getLatencyAgentUpdatePolicy, submitLatencyAgentResults } from '../src/admin/latency-agents.js';
 
 globalThis.crypto ||= webcrypto;
 
@@ -29,6 +29,14 @@ assert.equal(privateRow.target_port, null);
 
 const targets = await getLatencyAgentTargets(env);
 assert.deepEqual(targets.targets.map(target => target.id), ['public-vps']);
+assert.deepEqual(await getLatencyAgentUpdatePolicy(env), {
+  ok: true,
+  auto_update: false,
+  check_interval_sec: 3600,
+  script_version: 4,
+});
+database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES ('agent_auto_update', 'true', ?)`).run(now);
+assert.equal((await getLatencyAgentUpdatePolicy(env)).auto_update, true);
 
 const created = await createLatencyAgent(jsonRequest({ name: '东京 IIJ' }), env);
 assert.equal(created.ok, true);

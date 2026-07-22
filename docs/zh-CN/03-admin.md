@@ -108,6 +108,7 @@ TCP：
 - `accepted` 大于 0 后，公开 TCP/VPS 目标的 Latency 图例会增加该节点。
 - 每个节点命令包含不同 scoped Token，不能跨节点复用。
 - 编辑显示名称不需要重装；新建或更换节点 ID 后需要重新部署。
+- 重复执行当前部署命令会先停止旧服务和残留进程，再启动唯一的新实例。
 
 完整步骤和故障排查见 [13 外部 Latency Agent 部署与排障](13-external-latency-agents.md)。
 
@@ -124,7 +125,7 @@ Ping 目标由 Agent 定期拉取。格式通常为域名/IP与端口。Agent �
 - 开：支持自动安装的平台发现新版本后下载、校验并替换。
 - 关：Agent 不主动修改自身。
 
-开关是动态读取，不是在安装时永久写死。关闭自动更新后仍可手动执行 `sudo cftz update`。
+开关同时控制普通 Rust Agent 与外部 Latency Agent，并且是动态读取，不是在安装时永久写死。关闭自动更新后，Rust Agent 仍可手动执行 `sudo cftz update`；Latency Agent 可重新执行后台生成的部署命令完成手动升级。
 
 ## 主题
 

@@ -19,6 +19,7 @@
 | `RATE_LIMIT_D1` | `true` | 使用 D1 做跨实例限流 |
 | `MISSED_WRITE_BACKFILL_MAX_BUCKETS` | `6` | 最多补写漏检桶 |
 | `ALERT_MAX_MESSAGES_PER_RUN` | `30` | 单轮报警上限 |
+| `DEVELOPER_API_ORIGINS` | 空 | `/api/v1` 浏览器调用的精确 Origin 逗号列表；不支持 `*` |
 
 ## 指标与历史
 

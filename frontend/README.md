@@ -60,7 +60,13 @@ https://YOUR-PAGES/bin/SHA256SUMS
 
 后台“Latency”页新增节点后，还必须执行该节点当前生成的部署命令。成功安装会输出 `{"ok":true,"targets":N,"accepted":N}`；只有成功上报后，后台“最近上报”和公开页面的外部 Latency 来源才会出现。
 
+重复执行当前部署命令会先停止旧服务和所有残留 Latency 进程，再启动唯一的新实例。后台“Agent 自动更新”开关也控制外部 Latency Agent；旧节点需要重新执行一次最新命令，之后才能按策略自动更新。
+
 完整教程见 [外部 Latency Agent 部署与排障](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/13-external-latency-agents.md)。
+
+## 主题与插件
+
+后台“扩展”页可上传 `nstatus-extension-v1` ZIP。第三方主题以 CSS 覆盖原版 `classic`/`cards`，第三方插件在 sandbox iframe 中通过只读消息 API 获取公开状态；停用第三方主题会回退到设置页选择的原版主题。包结构、权限、示例和 `/api/v1` 开发接口见 [扩展开发规范](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/14-extensions-developer-guide.md)。
 
 ## IPv6-only TCP 目标
 
