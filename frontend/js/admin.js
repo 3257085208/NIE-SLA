@@ -230,26 +230,33 @@ function nav(p) {
   if (p === "targets") loadTargets();
   if (p === "latency") loadLatencyNodes();
   if (p === "pings") loadPings();
-  if (p === "extensions") loadExtensions();
+  if (p === "themes") loadThemes();
+  if (p === "plugins") loadPlugins();
   if (p === "settings") loadSettings();
 }
 
-async function loadExtensions() {
-  loading("extensionTable");
+async function loadManagedExtensions(resource) {
+  const apiBase = resource === "themes" ? "/api/themes" : "/api/plugins";
+  const tableId = resource === "themes" ? "themeTable" : "pluginTable";
+  const emptyName = resource === "themes" ? "主题" : "插件";
+  loading(tableId);
   try {
-    const data = await api("/api/extensions/manage");
+    const data = await api(`${apiBase}/manage`);
     const rows = data.extensions || [];
     if (!rows.length) {
-      byId("extensionTable").innerHTML = '<div class="empty">尚未安装主题或插件。</div>';
+      byId(tableId).innerHTML = `<div class="empty">尚未安装${emptyName}。</div>`;
       return;
     }
-    byId("extensionTable").innerHTML = `<div class="extension-grid">${rows.map(extensionCardHtml).join("")}</div>`;
+    byId(tableId).innerHTML = `<div class="extension-grid">${rows.map((extension) => extensionCardHtml(extension, resource)).join("")}</div>`;
   } catch (error) {
-    errBox("extensionTable", error);
+    errBox(tableId, error);
   }
 }
 
-function extensionCardHtml(extension) {
+function loadThemes() { return loadManagedExtensions("themes"); }
+function loadPlugins() { return loadManagedExtensions("plugins"); }
+
+function extensionCardHtml(extension, resource) {
   const type = extension.type === "theme" ? "主题" : "插件";
   const state = extension.enabled ? "已启用" : "未启用";
   return `<article class="extension-card${extension.enabled ? " active" : ""}">
@@ -264,50 +271,56 @@ function extensionCardHtml(extension) {
       <div><dt>作者</dt><dd>${escapeHtml(extension.author || "未署名")}</dd></div>
     </dl>
     <div class="extension-card-actions">
-      <button class="btn btn-sm ${extension.enabled ? "" : "btn-primary"}" data-extension-action="toggle" data-extension-id="${escapeHtml(extension.id)}" data-extension-enabled="${extension.enabled ? "1" : "0"}">${extension.enabled ? "停用" : "启用"}</button>
-      <button class="btn btn-sm btn-danger" data-extension-action="delete" data-extension-id="${escapeHtml(extension.id)}">删除</button>
+      <button class="btn btn-sm ${extension.enabled ? "" : "btn-primary"}" data-extension-action="toggle" data-extension-resource="${resource}" data-extension-id="${escapeHtml(extension.id)}" data-extension-enabled="${extension.enabled ? "1" : "0"}">${extension.enabled ? "停用" : "启用"}</button>
+      <button class="btn btn-sm btn-danger" data-extension-action="delete" data-extension-resource="${resource}" data-extension-id="${escapeHtml(extension.id)}">删除</button>
     </div>
   </article>`;
 }
 
-async function uploadExtensionPackage(file) {
+async function uploadExtensionPackage(resource, file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith(".zip")) return toast("请选择 ZIP 扩展包", "err");
-  if (file.size > 2 * 1024 * 1024) return toast("扩展 ZIP 不能超过 2 MB", "err");
-  const button = byId("uploadExtensionBtn");
+  const isTheme = resource === "themes";
+  const apiBase = isTheme ? "/api/themes" : "/api/plugins";
+  const displayName = isTheme ? "主题" : "插件";
+  const inputId = isTheme ? "themeZip" : "pluginZip";
+  const button = byId(isTheme ? "uploadThemeBtn" : "uploadPluginBtn");
+  if (!file.name.toLowerCase().endsWith(".zip")) return toast(`请选择 ZIP ${displayName}包`, "err");
+  if (file.size > 2 * 1024 * 1024) return toast(`${displayName} ZIP 不能超过 2 MB`, "err");
   button.disabled = true;
   button.textContent = "正在校验并上传...";
   try {
-    const result = await api("/api/extensions/upload", {
+    const result = await api(`${apiBase}/upload`, {
       method: "POST",
       headers: { "Content-Type": "application/zip", "x-extension-filename": file.name },
       body: file,
     });
     toast(`已安装 ${result.extension.name}，请确认后启用`, "ok");
-    await loadExtensions();
+    await loadManagedExtensions(resource);
   } catch (error) {
     toast(error.message, "err");
   } finally {
     button.disabled = false;
-    button.textContent = "上传 ZIP";
-    byId("extensionZip").value = "";
+    button.textContent = `上传${displayName} ZIP`;
+    byId(inputId).value = "";
   }
 }
 
-async function toggleExtension(id, enabled) {
+async function toggleExtension(resource, id, enabled) {
+  const apiBase = resource === "themes" ? "/api/themes" : "/api/plugins";
   try {
-    await api(`/api/extensions/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ enabled: !enabled }) });
-    toast(enabled ? "扩展已停用" : "扩展已启用", "ok");
-    await loadExtensions();
+    await api(`${apiBase}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ enabled: !enabled }) });
+    toast(enabled ? "已停用" : "已启用", "ok");
+    await loadManagedExtensions(resource);
   } catch (error) { toast(error.message, "err"); }
 }
 
-async function removeExtension(id) {
-  if (!confirm(`确认删除扩展 ${id}？其 R2 文件也会被删除。`)) return;
+async function removeExtension(resource, id) {
+  const apiBase = resource === "themes" ? "/api/themes" : "/api/plugins";
+  if (!confirm(`确认删除 ${id}？其 R2 文件也会被删除。`)) return;
   try {
-    await api(`/api/extensions/${encodeURIComponent(id)}`, { method: "DELETE" });
-    toast("扩展已删除", "ok");
-    await loadExtensions();
+    await api(`${apiBase}/${encodeURIComponent(id)}`, { method: "DELETE" });
+    toast("已删除", "ok");
+    await loadManagedExtensions(resource);
   } catch (error) { toast(error.message, "err"); }
 }
 async function loadDash() {
@@ -1916,15 +1929,20 @@ byId("probeBtn").onclick = async () => {
   }
 };
 byId("addPingBtn").onclick = () => pingModal();
-byId("uploadExtensionBtn").onclick = () => byId("extensionZip").click();
-byId("extensionZip").onchange = () => uploadExtensionPackage(byId("extensionZip").files?.[0]);
-byId("extensionTable").onclick = (event) => {
+byId("uploadThemeBtn").onclick = () => byId("themeZip").click();
+byId("themeZip").onchange = () => uploadExtensionPackage("themes", byId("themeZip").files?.[0]);
+byId("uploadPluginBtn").onclick = () => byId("pluginZip").click();
+byId("pluginZip").onchange = () => uploadExtensionPackage("plugins", byId("pluginZip").files?.[0]);
+function handleManagedExtensionClick(event) {
   const button = event.target.closest("button[data-extension-action]");
   if (!button) return;
   const id = button.dataset.extensionId;
-  if (button.dataset.extensionAction === "toggle") toggleExtension(id, button.dataset.extensionEnabled === "1");
-  if (button.dataset.extensionAction === "delete") removeExtension(id);
-};
+  const resource = button.dataset.extensionResource;
+  if (button.dataset.extensionAction === "toggle") toggleExtension(resource, id, button.dataset.extensionEnabled === "1");
+  if (button.dataset.extensionAction === "delete") removeExtension(resource, id);
+}
+byId("themeTable").onclick = handleManagedExtensionClick;
+byId("pluginTable").onclick = handleManagedExtensionClick;
 byId("archiveBtn").onclick = async () => {
   try {
     await api("/api/archive", { method: "POST", body: "{}" });

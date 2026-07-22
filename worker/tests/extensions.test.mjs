@@ -4,7 +4,7 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { strToU8, zipSync } from 'fflate';
 import { ensureV6Schema } from '../src/admin/schema.js';
-import { deleteExtension, getExtensionFile, listManagedExtensions, listPublicExtensions, updateExtension, uploadExtension } from '../src/extensions.js';
+import { deleteExtension, getExtensionFile, listManagedExtensions, listManagedExtensionsByType, listPublicExtensions, updateExtension, uploadExtension } from '../src/extensions.js';
 
 const database = new DatabaseSync(':memory:');
 const env = { DB: d1(database), ARCHIVE: r2(), PUBLIC_SITE_ORIGIN: 'https://status.example.test' };
@@ -19,8 +19,11 @@ const themeZip = extensionZip({
   base_theme: 'classic',
   styles: ['theme.css'],
 }, { 'theme.css': 'body { color: #123456; }' });
-const theme = await uploadExtension(uploadRequest(themeZip), env);
+const theme = await uploadExtension(uploadRequest(themeZip, 'themes'), env, 'theme');
 assert.equal(theme.extension.enabled, false);
+assert.equal(theme.extension.storage_root, 'themes/v1');
+assert.ok(env.ARCHIVE.keys().some(key => key.startsWith('themes/v1/ocean-theme/')));
+await assert.rejects(() => uploadExtension(uploadRequest(themeZip, 'plugins'), env, 'plugin'), /只接受 plugin 包/);
 await updateExtension('ocean-theme', jsonRequest({ enabled: true }), env);
 assert.equal((await listPublicExtensions(env)).active_theme.id, 'ocean-theme');
 
@@ -37,7 +40,10 @@ const pluginZip = extensionZip({
   'index.html': '<!doctype html><script src="plugin.js"></script>',
   'plugin.js': 'parent.postMessage({type:"nstatus:ready"}, "*");',
 });
-await uploadExtension(uploadRequest(pluginZip), env);
+const plugin = await uploadExtension(uploadRequest(pluginZip, 'plugins'), env, 'plugin');
+assert.equal(plugin.extension.storage_root, 'plugins/v1');
+assert.ok(env.ARCHIVE.keys().some(key => key.startsWith('plugins/v1/hello-plugin/')));
+await assert.rejects(() => uploadExtension(uploadRequest(pluginZip, 'themes'), env, 'theme'), /只接受 theme 包/);
 await updateExtension('hello-plugin', jsonRequest({ enabled: true }), env);
 const publicRegistry = await listPublicExtensions(env);
 assert.equal(publicRegistry.plugins[0].id, 'hello-plugin');
@@ -56,6 +62,26 @@ await updateExtension('mono-theme', jsonRequest({ enabled: true }), env);
 const managed = await listManagedExtensions(env);
 assert.equal(managed.extensions.find(item => item.id === 'mono-theme').enabled, true);
 assert.equal(managed.extensions.find(item => item.id === 'ocean-theme').enabled, false);
+assert.deepEqual((await listManagedExtensionsByType(env, 'theme')).extensions.map(item => item.type), ['theme', 'theme']);
+assert.deepEqual((await listManagedExtensionsByType(env, 'plugin')).extensions.map(item => item.type), ['plugin']);
+await assert.rejects(() => updateExtension('hello-plugin', jsonRequest({ enabled: false }), env, 'theme'), /主题不存在/);
+await assert.rejects(() => deleteExtension('mono-theme', env, 'plugin'), /插件不存在/);
+
+const legacyZip = extensionZip({
+  schema: 'nstatus-extension-v1', id: 'legacy-theme', name: 'Legacy Theme', version: '1.0.0', type: 'theme', styles: ['theme.css'],
+}, { 'theme.css': 'body { color: gray; }' });
+const legacyUpload = await uploadExtension(uploadRequest(legacyZip), env);
+await updateExtension('legacy-theme', jsonRequest({ enabled: true }), env);
+const legacyRecord = legacyUpload.extension;
+const legacyBytes = env.ARCHIVE.value(`themes/v1/${legacyRecord.id}/${legacyRecord.revision}/theme.css`);
+env.ARCHIVE.setValue(`extensions/v1/${legacyRecord.id}/${legacyRecord.revision}/theme.css`, legacyBytes);
+env.ARCHIVE.deleteValue(`themes/v1/${legacyRecord.id}/${legacyRecord.revision}/theme.css`);
+await env.DB.prepare('UPDATE app_meta SET value = ?, updated_at = ? WHERE key = ?').bind(
+  JSON.stringify((await listManagedExtensions(env)).extensions.map(item => item.id === legacyRecord.id ? { ...item, storage_root: 'themes/v1' } : item)),
+  Math.floor(Date.now() / 1000),
+  'extensions:registry:v1',
+).run();
+assert.equal(await (await getExtensionFile(env, 'legacy-theme', 'theme.css')).text(), 'body { color: gray; }');
 
 await deleteExtension('hello-plugin', env);
 assert.equal((await listPublicExtensions(env)).plugins.length, 0);
@@ -85,8 +111,8 @@ function extensionZip(manifest, files) {
   ]));
 }
 
-function uploadRequest(body) {
-  return new Request('https://api.example.test/api/extensions/upload', { method: 'POST', body, headers: { 'content-type': 'application/zip' } });
+function uploadRequest(body, resource = 'extensions') {
+  return new Request(`https://api.example.test/api/${resource}/upload`, { method: 'POST', body, headers: { 'content-type': 'application/zip' } });
 }
 
 function jsonRequest(body) {
@@ -111,6 +137,10 @@ function d1(db) {
 function r2() {
   const values = new Map();
   return {
+    keys() { return [...values.keys()]; },
+    value(key) { return values.get(key); },
+    setValue(key, value) { values.set(key, value); },
+    deleteValue(key) { values.delete(key); },
     async put(key, value) { values.set(key, new Uint8Array(value)); },
     async get(key) {
       const value = values.get(key);

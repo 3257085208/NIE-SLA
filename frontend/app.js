@@ -917,12 +917,12 @@ function renderService(t, days, summaries) {
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'service-traffic-progress');
   // Metadata badges
   let metaBadges = '';
-  if (t.provider) metaBadges += `<span class="meta-badge meta-provider">🏪 ${escapeHtml(t.provider)}</span>`;
-  if (t.line_type) metaBadges += `<span class="meta-badge meta-line">🔀 ${escapeHtml(t.line_type)}</span>`;
+  if (t.provider) metaBadges += `<span class="meta-badge meta-provider">${escapeHtml(t.provider)}</span>`;
+  if (t.line_type) metaBadges += `<span class="meta-badge meta-line">${escapeHtml(t.line_type)}</span>`;
   if (t.location) {
     const country = countryByCode(t.location);
     const locationFlag = country ? nodegetFlagHtml(country.code) : '';
-    const locationText = country ? country.name : `📍 ${t.location}`;
+    const locationText = country ? country.name : t.location;
     metaBadges += `<span class="meta-badge meta-loc">${locationFlag}${escapeHtml(locationText)}</span>`;
   }
   if (t.machine_uptime_sec) metaBadges += `<span class="meta-badge meta-uptime">运行时长 ${escapeHtml(formatMachineUptime(t.machine_uptime_sec))}</span>`;

@@ -226,6 +226,21 @@ button { border: 0; cursor: pointer; }
   font-weight: 600;
   white-space: nowrap;
 }
+.meta-provider {
+  padding: 0 6px 0 0;
+  border-right: 1px solid var(--line-strong);
+  border-radius: 0;
+  color: var(--text);
+  font-family: var(--font), "Noto Sans SC", "PingFang SC", sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+}
+.meta-line {
+  border: 1px solid var(--line-strong);
+  background: var(--paper);
+  color: var(--soft);
+  font-weight: 700;
+}
 .meta-loc {
   display: inline-flex;
   align-items: center;
@@ -1246,7 +1261,9 @@ body:not(.is-loaded) .incident-log {
 /* Metadata badges */
 .service-meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
 .meta-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; white-space: nowrap; }
-.meta-loc { background: #e8f0fe; color: #1a73e8; }
+.meta-provider { padding: 0 6px 0 0; border-right: 1px solid var(--line-strong); border-radius: 0; color: var(--text); font-family: var(--font), "Noto Sans SC", "PingFang SC", sans-serif; font-size: 11px; font-weight: 800; }
+.meta-line { border: 1px solid var(--line-strong); background: var(--paper); color: var(--soft); font-weight: 700; }
+.meta-loc { background: transparent; color: var(--soft); }
 .meta-tag { background: #f0f4f8; color: #57616d; }
 .meta-expiry { background: #e8f7ef; color: #159754; }
 .meta-expiry-warn { background: #fef7e0; color: #b8860b; }

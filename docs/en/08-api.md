@@ -49,6 +49,9 @@ Admin endpoints use `Authorization: Bearer ADMIN_TOKEN` and optionally `x-admin-
 | GET | `/api/latency-agent/update-policy?node_id=ID` | External Latency Agent update policy |
 | GET | `/api/v1` | Versioned public API capability manifest |
 | GET | `/api/extensions` | Enabled public extension registry |
-| GET | `/api/extensions/manage` | Installed extensions (Admin) |
-| POST | `/api/extensions/upload` | Upload extension ZIP (Admin) |
-| PATCH/DELETE | `/api/extensions/:id` | Enable, disable, or delete an extension (Admin) |
+| GET | `/api/themes/manage` | Installed themes (Admin) |
+| POST | `/api/themes/upload` | Upload a theme ZIP; accepts `type: theme` only (Admin) |
+| PATCH/DELETE | `/api/themes/:id` | Enable, disable, or delete a theme (Admin) |
+| GET | `/api/plugins/manage` | Installed plugins (Admin) |
+| POST | `/api/plugins/upload` | Upload a plugin ZIP; accepts `type: plugin` only (Admin) |
+| PATCH/DELETE | `/api/plugins/:id` | Enable, disable, or delete a plugin (Admin) |

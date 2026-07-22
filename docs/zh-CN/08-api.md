@@ -107,11 +107,16 @@ curl -X POST https://YOUR-API/api/targets \
 | POST | `/api/latency-agents` | 创建外部 Latency 节点 |
 | PATCH/DELETE | `/api/latency-agents/:id` | 编辑、停用或删除节点 |
 | GET | `/api/latency-agent/install-command?node_id=ID` | 生成节点 scoped 安装命令 |
-| GET | `/api/extensions/manage` | 列出已安装主题与插件 |
-| POST | `/api/extensions/upload` | 上传并校验扩展 ZIP |
-| PATCH/DELETE | `/api/extensions/:id` | 启停或删除扩展 |
+| GET | `/api/themes/manage` | 列出已安装主题 |
+| POST | `/api/themes/upload` | 上传并校验主题 ZIP，只接受 `type: theme` |
+| PATCH/DELETE | `/api/themes/:id` | 启停或删除主题 |
+| GET | `/api/plugins/manage` | 列出已安装插件 |
+| POST | `/api/plugins/upload` | 上传并校验插件 ZIP，只接受 `type: plugin` |
+| PATCH/DELETE | `/api/plugins/:id` | 启停或删除插件 |
 
 公开扩展注册表为 `GET /api/extensions`，启用后的包文件由 `GET /api/extensions/file/:id/:path` 提供。扩展文件接口不接受任意 R2 key，只能读取注册表中启用包的清单内文件。
+
+旧 `/api/extensions/manage`、`/api/extensions/upload` 和 `/api/extensions/:id` 暂时保留兼容，但新后台和第三方管理工具必须使用分类型接口。
 
 ## 常见状态码
 

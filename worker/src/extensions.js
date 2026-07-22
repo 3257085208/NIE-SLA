@@ -26,7 +26,17 @@ export async function listManagedExtensions(env) {
   return { ok: true, schema: 'nstatus-extensions-v1', extensions: await loadRegistry(env) };
 }
 
-export async function uploadExtension(request, env) {
+export async function listManagedExtensionsByType(env, type) {
+  const expectedType = cleanExtensionType(type);
+  return {
+    ok: true,
+    schema: 'nstatus-extensions-v1',
+    type: expectedType,
+    extensions: (await loadRegistry(env)).filter(item => item.type === expectedType),
+  };
+}
+
+export async function uploadExtension(request, env, expectedType = '') {
   requireExtensionStorage(env);
   const contentLength = Number(request.headers.get('content-length') || 0);
   if (contentLength > ZIP_MAX_BYTES) throw new ApiError(413, '扩展 ZIP 不能超过 2 MB');
@@ -59,8 +69,13 @@ export async function uploadExtension(request, env) {
   try { manifest = JSON.parse(strFromU8(files['manifest.json'])); }
   catch (_) { throw new ApiError(400, 'manifest.json 不是有效 JSON'); }
   const extension = validateManifest(manifest, files);
+  const requiredType = expectedType ? cleanExtensionType(expectedType) : '';
+  if (requiredType && extension.type !== requiredType) {
+    throw new ApiError(400, requiredType === 'theme' ? '主题上传入口只接受 theme 包' : '插件上传入口只接受 plugin 包');
+  }
   const revision = crypto.randomUUID().replaceAll('-', '');
-  const prefix = `extensions/v1/${extension.id}/${revision}/`;
+  const storageRoot = extensionStorageRoot(extension.type);
+  const prefix = `${storageRoot}/${extension.id}/${revision}/`;
   for (let offset = 0; offset < entries.length; offset += 20) {
     await Promise.all(entries.slice(offset, offset + 20).map(([path, data]) => env.ARCHIVE.put(prefix + path, data, {
       httpMetadata: { contentType: contentType(path) },
@@ -70,19 +85,20 @@ export async function uploadExtension(request, env) {
 
   const registry = await loadRegistry(env);
   const previous = registry.find(item => item.id === extension.id);
-  const record = { ...extension, revision, enabled: previous?.enabled || false, uploaded_at: nowSec() };
+  const record = { ...extension, revision, storage_root: storageRoot, enabled: previous?.enabled || false, uploaded_at: nowSec() };
   const next = [...registry.filter(item => item.id !== record.id), record].sort((a, b) => a.name.localeCompare(b.name));
   await saveRegistry(env, next);
-  if (previous?.revision) await deletePrefix(env, `extensions/v1/${previous.id}/${previous.revision}/`);
+  if (previous?.revision) await deletePrefix(env, extensionPrefix(previous));
   return { ok: true, extension: record };
 }
 
-export async function updateExtension(id, request, env) {
+export async function updateExtension(id, request, env, expectedType = '') {
   const cleanId = cleanExtensionId(id);
   const body = await safeJson(request, 16_000);
   const registry = await loadRegistry(env);
   const current = registry.find(item => item.id === cleanId);
   if (!current) throw new ApiError(404, '扩展不存在');
+  assertExpectedType(current, expectedType);
   const enabled = parseBoolean(body.enabled, current.enabled);
   const next = registry.map(item => ({
     ...item,
@@ -92,13 +108,14 @@ export async function updateExtension(id, request, env) {
   return { ok: true, extension: next.find(item => item.id === cleanId) };
 }
 
-export async function deleteExtension(id, env) {
+export async function deleteExtension(id, env, expectedType = '') {
   const cleanId = cleanExtensionId(id);
   const registry = await loadRegistry(env);
   const current = registry.find(item => item.id === cleanId);
   if (!current) throw new ApiError(404, '扩展不存在');
+  assertExpectedType(current, expectedType);
   await saveRegistry(env, registry.filter(item => item.id !== cleanId));
-  await deletePrefix(env, `extensions/v1/${current.id}/${current.revision}/`);
+  await deletePrefix(env, extensionPrefix(current));
   return { ok: true, id: cleanId };
 }
 
@@ -109,7 +126,10 @@ export async function getExtensionFile(env, id, path) {
   const registry = await loadRegistry(env);
   const extension = registry.find(item => item.id === cleanId && item.enabled);
   if (!extension || !extension.files.includes(cleanPath)) throw new ApiError(404, '扩展文件不存在');
-  const object = await env.ARCHIVE.get(`extensions/v1/${extension.id}/${extension.revision}/${cleanPath}`);
+  let object = await env.ARCHIVE.get(`${extensionPrefix(extension)}${cleanPath}`);
+  if (!object && extension.storage_root) {
+    object = await env.ARCHIVE.get(`extensions/v1/${extension.id}/${extension.revision}/${cleanPath}`);
+  }
   if (!object) throw new ApiError(404, '扩展文件不存在');
   const headers = new Headers({
     'content-type': contentType(cleanPath),
@@ -167,6 +187,27 @@ function cleanExtensionId(value) {
   const id = String(value || '').trim().toLowerCase();
   if (!/^[a-z][a-z0-9-]{2,48}$/.test(id)) throw new ApiError(400, '扩展 ID 必须是 3-49 位小写字母、数字或连字符');
   return id;
+}
+
+function cleanExtensionType(value) {
+  const type = String(value || '').trim().toLowerCase();
+  if (!['theme', 'plugin'].includes(type)) throw new ApiError(400, '扩展类型只能是 theme 或 plugin');
+  return type;
+}
+
+function extensionStorageRoot(type) {
+  return cleanExtensionType(type) === 'theme' ? 'themes/v1' : 'plugins/v1';
+}
+
+function extensionPrefix(extension) {
+  const root = String(extension?.storage_root || '').trim() || 'extensions/v1';
+  return `${root}/${extension.id}/${extension.revision}/`;
+}
+
+function assertExpectedType(extension, expectedType) {
+  if (!expectedType) return;
+  const requiredType = cleanExtensionType(expectedType);
+  if (extension.type !== requiredType) throw new ApiError(404, requiredType === 'theme' ? '主题不存在' : '插件不存在');
 }
 
 function cleanPackagePath(value) {

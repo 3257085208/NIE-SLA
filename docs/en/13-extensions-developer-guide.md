@@ -1,6 +1,8 @@
 # 13 Extensions and Developer API
 
-NStatus accepts validated extension ZIP packages from Admin -> Extensions. Version 1 supports CSS-only themes, sandboxed read-only plugin panels, and a stable versioned public API.
+NStatus accepts validated ZIP packages from the separate Admin -> Themes and Admin -> Plugins pages. Version 1 supports CSS-only themes, sandboxed read-only plugin panels, and a stable versioned public API.
+
+Use an independent repository per theme or plugin. See [14 Theme Engineering Standard](14-theme-development-standard.md) and [15 Plugin Engineering Standard](15-plugin-development-standard.md) for required layout, commands, testing, SemVer, licensing, and release acceptance. The structure borrows useful independent-package ideas from NodeGet, but NStatus has an incompatible least-privilege runtime.
 
 ## Package Layout
 

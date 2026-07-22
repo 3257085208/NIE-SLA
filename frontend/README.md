@@ -66,7 +66,9 @@ https://YOUR-PAGES/bin/SHA256SUMS
 
 ## 主题与插件
 
-后台“扩展”页可上传 `nstatus-extension-v1` ZIP。第三方主题以 CSS 覆盖原版 `classic`/`cards`，第三方插件在 sandbox iframe 中通过只读消息 API 获取公开状态；停用第三方主题会回退到设置页选择的原版主题。包结构、权限、示例和 `/api/v1` 开发接口见 [扩展开发规范](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/14-extensions-developer-guide.md)。
+后台“主题”和“插件”是两个独立页面，分别使用 `/api/themes/*` 与 `/api/plugins/*` 上传和管理 `nstatus-extension-v1` ZIP。主题以 CSS 覆盖原版 `classic`/`cards`，插件在 sandbox iframe 中通过只读消息 API 获取公开状态；停用第三方主题会回退到设置页选择的原版主题。
+
+包格式与 `/api/v1` 见[扩展开发指南](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/14-extensions-developer-guide.md)，独立仓库、工程命令、测试、SemVer、许可证与发布标准见[主题规范](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/15-theme-development-standard.md)和[插件规范](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/16-plugin-development-standard.md)。
 
 ## IPv6-only TCP 目标
 

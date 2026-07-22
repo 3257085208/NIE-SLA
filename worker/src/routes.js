@@ -10,7 +10,7 @@ import { setupTOTP, verifyTOTP, disableTOTP, validateAdminSession, checkTOTP } f
 import { getAlertSettings, updateAlertSettings, sendTestAlert, runAlertChecks } from './alerts.js';
 import { isAgentApiPath } from './route-policy.js';
 import { developerApiPreflight, developerApiUrl, getDeveloperApiManifest, withDeveloperApiHeaders } from './developer-api.js';
-import { deleteExtension, getExtensionFile, listManagedExtensions, listPublicExtensions, updateExtension, uploadExtension } from './extensions.js';
+import { deleteExtension, getExtensionFile, listManagedExtensions, listManagedExtensionsByType, listPublicExtensions, updateExtension, uploadExtension } from './extensions.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
@@ -133,6 +133,10 @@ const ROUTES = [
   { method: 'POST', path: '/api/maintenance/cleanup', rl: 'write' },
   { method: 'GET', path: '/api/extensions/manage', rl: 'write' },
   { method: 'POST', path: '/api/extensions/upload', rl: 'write' },
+  { method: 'GET', path: '/api/themes/manage', rl: 'write' },
+  { method: 'POST', path: '/api/themes/upload', rl: 'write' },
+  { method: 'GET', path: '/api/plugins/manage', rl: 'write' },
+  { method: 'POST', path: '/api/plugins/upload', rl: 'write' },
 
   // Admin CRUD
   { method: 'GET', path: '/api/debug-colo', rl: 'write' },
@@ -234,6 +238,10 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/maintenance/cleanup' && m === 'POST') { await withAdmin(request, env); const body = await safeJson(request).catch(() => ({})); return json({ ok: true, d1: await cleanupVolatileHistory(env, body), r2: await cleanupAgentMetricsR2(env, body) }, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/extensions/manage' && m === 'GET') { await withAdmin(request, env); return json(await listManagedExtensions(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/extensions/upload' && m === 'POST') { await withAdmin(request, env); return json(await uploadExtension(request, env), 201, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/themes/manage' && m === 'GET') { await withAdmin(request, env); return json(await listManagedExtensionsByType(env, 'theme'), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/themes/upload' && m === 'POST') { await withAdmin(request, env); return json(await uploadExtension(request, env, 'theme'), 201, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/plugins/manage' && m === 'GET') { await withAdmin(request, env); return json(await listManagedExtensionsByType(env, 'plugin'), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/plugins/upload' && m === 'POST') { await withAdmin(request, env); return json(await uploadExtension(request, env, 'plugin'), 201, env, { 'cache-control': 'no-store' }); }
 
   // Admin CRUD
   if (path === '/api/debug-colo' && m === 'GET') { await withAdmin(request, env); return debugColo(env, url); }
@@ -265,6 +273,15 @@ async function dispatchStatic(env, url, request, ctx) {
   const extensionMatch = path.match(/^\/api\/extensions\/([^/]+)$/);
   if (extensionMatch && m === 'PATCH') { await withAdmin(request, env); return json(await updateExtension(pathParam(extensionMatch[1]), request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (extensionMatch && m === 'DELETE') { await withAdmin(request, env); return json(await deleteExtension(pathParam(extensionMatch[1]), env), 200, env, { 'cache-control': 'no-store' }); }
+
+  const managedExtensionMatch = path.match(/^\/api\/(themes|plugins)\/([^/]+)$/);
+  if (managedExtensionMatch) {
+    await withAdmin(request, env);
+    const expectedType = managedExtensionMatch[1] === 'themes' ? 'theme' : 'plugin';
+    const extensionId = pathParam(managedExtensionMatch[2]);
+    if (m === 'PATCH') return json(await updateExtension(extensionId, request, env, expectedType), 200, env, { 'cache-control': 'no-store' });
+    if (m === 'DELETE') return json(await deleteExtension(extensionId, env, expectedType), 200, env, { 'cache-control': 'no-store' });
+  }
 
   return null;
 }
