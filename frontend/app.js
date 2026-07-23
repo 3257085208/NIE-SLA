@@ -19,8 +19,10 @@ import {
   fmtTime,
   formatDuration,
   formatGb,
+  formatLocationLabel,
   formatMachineUptime,
   minMax,
+  normalizeCityName,
   pad,
   percent,
   timeAgoSec,
@@ -53,6 +55,7 @@ import {
   nodegetStatusDotClass,
   nodegetTopbarToolsHtml,
 } from './js/themes/nodeget-cards.js?v=20260721-flag-harmony';
+import { buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js';
 
 const $ = (sel) => document.querySelector(sel);
 const FRONTEND_THEME_KEY = 'nstatus.frontendTheme';
@@ -561,6 +564,16 @@ function regionMeta(code) {
   return map[code] || { flag: '', label: code };
 }
 
+function targetCityName(t = {}) {
+  return normalizeCityName(t?.city || t?.location_city || '');
+}
+
+function targetLocationLabel(t = {}) {
+  const country = countryByCode(t?.location);
+  const countryName = country?.name || String(t?.location || '').trim();
+  return formatLocationLabel(countryName, targetCityName(t), t?.location || '');
+}
+
 function renderCardSidebar(data) {
   const targets = data.targets || [];
   const checked = targets.filter(targetHasStatus);
@@ -787,6 +800,10 @@ function renderGroups(data) {
 
     els.groups.innerHTML = renderCardDetailPage(detailTarget, days, summaries);
     document.querySelector('[data-card-back]')?.addEventListener('click', closeCardDetail);
+    document.querySelector('.nq-report-btn')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openNodeQualityReport(event.currentTarget.dataset.nqTarget, event.currentTarget.dataset.nqName || detailTarget.name);
+    });
     const detailCard = document.querySelector('.node-detail-summary .service');
     selectService(detailTarget.id, detailTarget.name, detailCard, { detail: true }).catch(() => {});
     return;
@@ -831,9 +848,14 @@ function renderGroups(data) {
     });
   });
 
-  document.querySelectorAll('.service').forEach((el) => {
+document.querySelectorAll('.service').forEach((el) => {
     el.addEventListener('click', (event) => {
       event.stopPropagation();
+      const nqButton = event.target.closest('.nq-report-btn');
+      if (nqButton) {
+        openNodeQualityReport(nqButton.dataset.nqTarget, nqButton.dataset.nqName || el.dataset.name);
+        return;
+      }
       if (state.frontendTheme === 'cards') {
         openCardDetail(el.dataset.id);
         return;
@@ -915,15 +937,18 @@ function renderService(t, days, summaries) {
   const hasLatency = targetHasPublicLatency(t);
   const latencyHtml = hasLatency ? serviceLatencySourcesHtml(t) : '';
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'service-traffic-progress');
+  const nqButton = targetHasNodeQuality(t)
+    ? `<button type="button" class="nq-report-btn" data-nq-target="${escapeAttr(t.id)}" data-nq-name="${escapeAttr(t.name)}" title="查看 NodeQuality 报告">NQ</button>`
+    : '';
   // Metadata badges
   let metaBadges = '';
   if (t.provider) metaBadges += `<span class="meta-badge meta-provider">${escapeHtml(t.provider)}</span>`;
   if (t.line_type) metaBadges += `<span class="meta-badge meta-line">${escapeHtml(t.line_type)}</span>`;
-  if (t.location) {
+  if (t.location || targetCityName(t)) {
     const country = countryByCode(t.location);
     const locationFlag = country ? nodegetFlagHtml(country.code) : '';
-    const locationText = country ? country.name : t.location;
-    metaBadges += `<span class="meta-badge meta-loc">${locationFlag}${escapeHtml(locationText)}</span>`;
+    const locationText = targetLocationLabel(t);
+    if (locationText) metaBadges += `<span class="meta-badge meta-loc">${locationFlag}${escapeHtml(locationText)}</span>`;
   }
   if (t.machine_uptime_sec) metaBadges += `<span class="meta-badge meta-uptime">运行时长 ${escapeHtml(formatMachineUptime(t.machine_uptime_sec))}</span>`;
   if (t.tags) {
@@ -964,6 +989,7 @@ function renderService(t, days, summaries) {
           ${renderBars(t.id, days, summaries)}
         </div>
         ${trafficProgress}
+        ${nqButton}
       </div>
     </div>
   `;
@@ -981,13 +1007,17 @@ function renderServiceCard(t, days, summaries) {
   const region = targetRegionCode(t);
   const regionFlag = nodegetFlagHtml(region, 'node-region-flag');
   const osLine = cardOsLine(info);
-  const titleMeta = nodegetCardMetaLine([region !== 'OTHER' ? regionMeta(region).label : regionShort(t)]);
+  const locationLabel = targetLocationLabel(t);
+  const titleMeta = nodegetCardMetaLine([locationLabel || (region !== 'OTHER' ? regionMeta(region).label : regionShort(t))]);
   const age = m.updated_at || t.last_metrics_at ? timeAgoSec(Math.floor(new Date(m.updated_at || t.last_metrics_at).getTime() / 1000)) : '-';
   const latencySamples = cardLatencySamples(t, days, summaries);
   const hasLatency = targetHasPublicLatency(t);
   const latencyRows = cardLatencySourceRows(t, latencySamples);
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'node-traffic-progress');
   const slaBars = trafficProgress ? 20 : 30;
+  const nqButton = targetHasNodeQuality(t)
+    ? `<button type="button" class="nq-report-btn" data-nq-target="${escapeAttr(t.id)}" data-nq-name="${escapeAttr(t.name)}" title="查看 NodeQuality 报告">NQ</button>`
+    : '';
 
   return `
     <div class="service node-card card-soft node-card-hover ${statusClass}${selectedClass}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(t.name)}">
@@ -1023,9 +1053,56 @@ function renderServiceCard(t, days, summaries) {
         <span>↑ ${escapeHtml(fmtBytesPerSec(m.net?.tx_bytes_sec || 0))}</span>
         <span>◷ ${escapeHtml(formatMachineUptime(m.uptime_sec || t.machine_uptime_sec || 0))}</span>
         <em>${escapeHtml(age)}</em>
+        ${nqButton}
       </div>
     </div>
   `;
+}
+
+async function openNodeQualityReport(targetId, targetName = '') {
+  if (!targetId) return;
+  closeNodeQualityReport();
+  const root = document.createElement('div');
+  root.className = 'nq-modal-root';
+  root.innerHTML = '<div class="nq-modal-backdrop"><div class="nq-modal nq-modal-loading" role="dialog" aria-modal="true"><div class="nq-modal-head"><strong>NodeQuality</strong><button type="button" class="nq-close" data-nq-close aria-label="关闭">×</button></div><div class="nq-loading">正在加载报告...</div></div></div>';
+  document.body.appendChild(root);
+  const load = async () => {
+    try {
+      const response = await fetch(api(`/api/nq/${encodeURIComponent(targetId)}`), { cache: 'no-store' });
+      const report = await response.json();
+      if (!response.ok || !report.ok) throw new Error(report.error || `HTTP ${response.status}`);
+      report.name ||= targetName;
+      root.innerHTML = buildNqModalHtml(report);
+      bindNodeQualityModal(root);
+    } catch (error) {
+      root.innerHTML = `<div class="nq-modal-backdrop"><div class="nq-modal" role="dialog" aria-modal="true"><div class="nq-modal-head"><strong>NodeQuality</strong><button type="button" class="nq-close" data-nq-close aria-label="关闭">×</button></div><div class="nq-empty">报告加载失败：${escapeHtml(error.message)}</div></div></div>`;
+      bindNodeQualityModal(root);
+    }
+  };
+  root.addEventListener('click', (event) => {
+    if (event.target.closest('[data-nq-close]') || event.target.classList.contains('nq-modal-backdrop')) closeNodeQualityReport();
+  });
+  await load();
+}
+
+function bindNodeQualityModal(root) {
+  root.querySelectorAll('.nq-tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const id = tab.dataset.nqTab;
+      root.querySelectorAll('.nq-tab').forEach((item) => item.classList.toggle('active', item === tab));
+      root.querySelectorAll('.nq-panel').forEach((panel) => panel.classList.toggle('active', panel.dataset.nqPanel === id));
+    });
+  });
+}
+
+function closeNodeQualityReport() {
+  document.querySelector('.nq-modal-root')?.remove();
+}
+
+if (document.addEventListener) {
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeNodeQualityReport();
+  });
 }
 
 function cardResourceMetric(label, value, sub, tone) {
@@ -1546,8 +1623,11 @@ function renderVPSInfo() {
   if (info.total_mem_mb) systemItems.push(vpsItem('内存', fmtSizeMB(info.total_mem_mb)));
   if (info.total_swap_mb) systemItems.push(vpsItem('Swap', fmtSizeMB(info.total_swap_mb)));
   if (info.total_disk_gb) systemItems.push(vpsItem('磁盘', `${info.total_disk_gb} GB`));
-  if (info.city || info.region || info.country) {
-    const loc = [info.city, info.region, info.country].filter(Boolean).join(', ');
+  const configuredLocation = targetLocationLabel(selectedTarget || {});
+  if (configuredLocation) {
+    systemItems.push(vpsItem('位置', configuredLocation));
+  } else if (info.city || info.region || info.country) {
+    const loc = formatLocationLabel(info.country || info.region || '', info.city || '', [info.city, info.region, info.country].filter(Boolean).join(' · '));
     systemItems.push(vpsItem('位置', loc));
   }
 
@@ -1570,12 +1650,35 @@ function renderVPSInfo() {
   if (latest.updated_at) networkItems.push(vpsItem('更新', new Date(latest.updated_at).toLocaleString('zh-CN', { hour12: false })));
   const temperatureItems = temperatureSensorItems(info);
 
+  const summaryBits = [];
+  if (latest.hostname) summaryBits.push(latest.hostname);
+  if (configuredLocation) summaryBits.push(configuredLocation);
+  else if (info.os) summaryBits.push(info.os);
+  if (info.cpu_model) summaryBits.push(info.cpu_model);
+  if (uptimeSec > 0) summaryBits.push(formatMachineUptime(uptimeSec));
+  const summary = summaryBits.slice(0, 3).join(' · ') || '系统与网络信息';
   bar.innerHTML = `
-    <section class="vps-info-section"><h4>系统信息</h4>${systemItems.join('')}</section>
-    <section class="vps-info-section"><h4>网络与负载</h4>${networkItems.join('')}</section>
-    ${temperatureItems.length ? `<section class="vps-info-section vps-temperature-section"><h4>温度传感器</h4>${temperatureItems.join('')}</section>` : ''}
+    <button type="button" class="vps-info-toggle" id="vpsInfoToggle" aria-expanded="false">
+      <span class="vps-info-toggle-label">VPS 详情</span>
+      <span class="vps-info-toggle-summary">${escapeHtml(summary)}</span>
+      <span class="vps-info-toggle-icon" aria-hidden="true"></span>
+    </button>
+    <div class="vps-info-body" id="vpsInfoBody">
+      <section class="vps-info-section"><h4>系统信息</h4>${systemItems.join('')}</section>
+      <section class="vps-info-section"><h4>网络与负载</h4>${networkItems.join('')}</section>
+      ${temperatureItems.length ? `<section class="vps-info-section vps-temperature-section"><h4>温度传感器</h4>${temperatureItems.join('')}</section>` : ''}
+    </div>
   `;
   bar.hidden = false;
+  bar.classList.add('is-collapsible');
+  bar.classList.remove('is-expanded');
+  const toggle = bar.querySelector('#vpsInfoToggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      const expanded = bar.classList.toggle('is-expanded');
+      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+  }
 }
 
 function temperatureSensorItems(info = {}) {
@@ -1673,14 +1776,17 @@ async function updatePingChart() {
   const allX = datasets.flatMap(ds => (ds.data || []).map(p => p.x)).filter(Number.isFinite);
   const { min: xMin, max: xMax } = minMax(allX);
   if (allX.length) {
-    const span = xMax - xMin || 300;
-    const pad = Math.max(60, Math.round(span * 0.025));
-    state.chartZoomFullMin = xMin - pad;
-    state.chartZoomFullMax = xMax + pad;
+    const min = xMin === xMax ? xMin - 150 : xMin;
+    const max = xMin === xMax ? xMax + 150 : xMax;
+    state.chartZoomFullMin = min;
+    state.chartZoomFullMax = max;
+    state.chart.options.scales.x.min = min;
+    state.chart.options.scales.x.max = max;
+  } else {
+    delete state.chart.options.scales.x.min;
+    delete state.chart.options.scales.x.max;
   }
   const totalPings = pings.length;
-  delete state.chart.options.scales.x.min;
-  delete state.chart.options.scales.x.max;
   tuneChartAnimation(totalPings);
   state.chart.update();
   updateChartZoomButton();
@@ -2149,12 +2255,16 @@ function updateMetricsChart() {
   const allX = allDatasets.flatMap(ds => (ds.data || []).map(p => p.x)).filter(Number.isFinite);
   if (allX.length) {
     const { min: xMin, max: xMax } = minMax(allX);
-    const pad = Math.max(60, Math.round((xMax - xMin) * 0.025));
-    state.chartZoomFullMin = xMin - pad;
-    state.chartZoomFullMax = xMax + pad;
+    const min = xMin === xMax ? xMin - 150 : xMin;
+    const max = xMin === xMax ? xMax + 150 : xMax;
+    state.chartZoomFullMin = min;
+    state.chartZoomFullMax = max;
+    state.chart.options.scales.x.min = min;
+    state.chart.options.scales.x.max = max;
+  } else {
+    delete state.chart.options.scales.x.min;
+    delete state.chart.options.scales.x.max;
   }
-  delete state.chart.options.scales.x.min;
-  delete state.chart.options.scales.x.max;
   state.chart.options.scales.y.beginAtZero = metric !== 'load';
   state.chart.options.scales.y.grace = metric === 'load' ? '30%' : '18%';
   if (metric === 'cpu' || metric === 'mem' || metric === 'disk') {
@@ -2418,11 +2528,14 @@ function applyChartFullRange(rows) {
   if (!xs.length) {
     delete xScale.min;
     delete xScale.max;
+    state.chartZoomFullMin = null;
+    state.chartZoomFullMax = null;
     updateChartZoomButton();
     return;
   }
 
   const range = minMax(xs);
+  // Keep the visible domain tight to data edges so zoom-out never reintroduces blank gutters.
   const min = range.min === range.max ? range.min - 150 : range.min;
   const max = range.min === range.max ? range.max + 150 : range.max;
   state.chartZoomFullMin = min;
@@ -2470,9 +2583,10 @@ function handleChartWheel(event) {
     nextMin = nextMax - nextSpan;
   }
 
+  // Always keep explicit bounds so Chart.js cannot auto-pad blank ends after zoom-out.
   if (nextSpan >= fullSpan * 0.995) {
-    delete chart.options.scales.x.min;
-    delete chart.options.scales.x.max;
+    chart.options.scales.x.min = fullMin;
+    chart.options.scales.x.max = fullMax;
   } else {
     chart.options.scales.x.min = nextMin;
     chart.options.scales.x.max = nextMax;
@@ -2764,6 +2878,8 @@ function targetSearchText(t) {
     t.group_name,
     t.provider,
     t.location,
+    t.city,
+    targetLocationLabel(t),
     country?.name,
     country?.englishName,
     t.line_type,

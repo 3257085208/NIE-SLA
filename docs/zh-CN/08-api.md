@@ -40,8 +40,11 @@ Token 与 `agent_id` 绑定。身份不匹配返回 401/403。
 | GET | `/api/agent/pings?agent_id=ID&hours=6` | Ping 历史 |
 | GET | `/api/latency?target_id=ID&hours=24` | 外部 Latency 节点历史 |
 | GET | `/api/colo-echo` | 当前请求 colo 调试 |
+| GET | `/api/nq/:target_id` | 启用 TCP/VPS 探针的解析后 NodeQuality 报告 |
 
 版本化开发接口使用 `/api/v1`，完整兼容约定见 [14 主题、插件与开发者 API](14-extensions-developer-guide.md)。
+
+`/api/nq/:target_id` 也兼容 `/api/nodequality/:target_id`。响应包含报告时间、原报告链接、ANSI 文本 tabs 和图片 tabs，不包含后台保存的原始全文；无报告、HTTP 目标或已禁用目标返回 `404`。
 
 ## Agent 接口
 

@@ -15,6 +15,9 @@ Admin endpoints use `Authorization: Bearer ADMIN_TOKEN` and optionally `x-admin-
 | GET | `/api/agent/pings?agent_id=ID` | Agent pings |
 | GET | `/api/latency?target_id=ID&hours=24` | External Latency Agent history |
 | GET | `/api/colo-echo` | Cloudflare colo echo |
+| GET | `/api/nq/:target_id` | Parsed NodeQuality report for an enabled TCP/VPS target |
+
+`/api/nq/:target_id` is also available as `/api/nodequality/:target_id`. The response contains the extracted report time, original report link, ANSI tabs, and image tabs; the stored raw report is never returned. Missing reports, HTTP targets, and disabled targets return `404`.
 
 ## Admin Endpoints
 

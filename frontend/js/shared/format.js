@@ -16,7 +16,6 @@ export function formatDuration(sec) {
 
   return `${s}s`;
 }
-
 export function formatGb(gb) {
   const n = Number(gb || 0);
   return n >= 100 ? `${n.toFixed(0)} GB` : `${n.toFixed(1)} GB`;
@@ -145,4 +144,22 @@ export function downsample(arr, maxPoints) {
     out.push(avg);
   }
   return out;
+}
+
+export function normalizeCityName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').slice(0, 64);
+}
+
+export function formatLocationLabel(countryName, city, fallback = '') {
+  const country = String(countryName || '').trim();
+  const cityName = normalizeCityName(city);
+  if (country && cityName) {
+    const countryKey = country.toLocaleLowerCase('zh-CN');
+    const cityKey = cityName.toLocaleLowerCase('zh-CN');
+    if (cityKey === countryKey || cityKey.includes(countryKey) || countryKey.includes(cityKey)) {
+      return cityName;
+    }
+    return `${country} · ${cityName}`;
+  }
+  return country || cityName || String(fallback || '').trim();
 }

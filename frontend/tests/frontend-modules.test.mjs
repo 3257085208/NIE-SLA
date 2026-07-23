@@ -22,6 +22,8 @@ import {
   filterProviders,
   normalizeCountryCode,
 } from '../js/shared/target-catalogs.js';
+import { formatLocationLabel, normalizeCityName } from '../js/shared/format.js';
+import { buildNqModalHtml, renderNqAnsiHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
 
 const rows = normalizeChartRows([
   { checked_at: 30, ok: 1, latency_ms: 20 },
@@ -111,3 +113,17 @@ assert.equal(filterCountries('新加坡')[0].code, 'SG');
 assert.equal(filterProviders('rack')[0], 'RackNerd');
 
 console.log('frontend module tests passed');
+
+assert.equal(normalizeCityName('  Los  Angeles  '), 'Los Angeles');
+assert.equal(formatLocationLabel('美国', 'Los Angeles'), '美国 · Los Angeles');
+assert.equal(formatLocationLabel('日本', '东京'), '日本 · 东京');
+assert.equal(formatLocationLabel('香港', '香港'), '香港');
+assert.equal(formatLocationLabel('', 'Singapore'), 'Singapore');
+assert.equal(formatLocationLabel('德国', ''), '德国');
+console.log('location label helpers ok');
+assert.equal(targetHasNodeQuality({ type: 'tcp', has_nq: 1 }), true);
+assert.equal(targetHasNodeQuality({ type: 'tcp', nq: { has_report: true } }), true);
+assert.equal(targetHasNodeQuality({ type: 'http', has_nq: 1 }), false);
+assert.match(renderNqAnsiHtml('\u001b[31mred\u001b[0m'), /color:#ef4444/);
+assert.match(buildNqModalHtml({ report_time: '2026-07-23 22:41:36 CST', tabs: [{ id: 'network', kind: 'image', image: 'https://example.com/network.webp' }] }), /network\.webp/);
+console.log('NodeQuality frontend helpers ok');

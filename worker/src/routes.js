@@ -11,6 +11,7 @@ import { getAlertSettings, updateAlertSettings, sendTestAlert, runAlertChecks } 
 import { isAgentApiPath } from './route-policy.js';
 import { developerApiPreflight, developerApiUrl, getDeveloperApiManifest, withDeveloperApiHeaders } from './developer-api.js';
 import { deleteExtension, getExtensionFile, listManagedExtensions, listManagedExtensionsByType, listPublicExtensions, updateExtension, uploadExtension } from './extensions.js';
+import { publicNodeQualityReport } from './nodequality.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
@@ -98,6 +99,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/v1/pings', rl: 'public' },
   { method: 'GET', path: '/api/v1/latency', rl: 'public' },
   { method: 'GET', path: '/api/extensions', rl: 'public' },
+  { method: 'GET', path: '/api/nq/:id', rl: 'public' },
 
   // Agent endpoints
   { method: 'GET', path: '/api/agent/targets', rl: 'write' },
@@ -178,6 +180,17 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/v1/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(json(await getPublicLatency(env, developerApiUrl(url, '/api/latency')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/extensions' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny(); return json(await listPublicExtensions(env), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  const nqMatch = path.match(/^\/api\/(?:nq|nodequality)\/([^/]+)$/);
+  if (nqMatch && m === 'GET') {
+    if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny();
+    await ensureV6Schema(env);
+    const id = pathParam(nqMatch[1]);
+    const target = await env.DB.prepare(`SELECT id, name, type, enabled, nq_report, nq_updated_at FROM targets WHERE id = ?`).bind(id).first().catch(() => null);
+    if (!target || target.type !== 'tcp' || Number(target.enabled || 0) !== 1) return json({ ok: false, error: '未找到 NodeQuality 报告' }, 404, env);
+    const report = publicNodeQualityReport(target);
+    if (!report) return json({ ok: false, error: '该探针尚未上传 NodeQuality 报告' }, 404, env);
+    return json(report, 200, env, { 'cache-control': 'public, max-age=30' });
+  }
   const extensionFileMatch = path.match(/^\/api\/extensions\/file\/([^/]+)\/(.+)$/);
   if (extensionFileMatch && m === 'GET') { if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true })) return deny(); return getExtensionFile(env, pathParam(extensionFileMatch[1]), pathParam(extensionFileMatch[2])); }
 

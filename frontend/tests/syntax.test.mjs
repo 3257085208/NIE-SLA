@@ -42,8 +42,8 @@ assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector
 assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260722-extension-split/, 'admin CSS cache key must publish separate extension controls');
-assert.match(adminHtml, /js\/admin\.js\?v=20260722-extension-split/, 'admin JS cache key must publish separate extension controls');
+assert.match(adminHtml, /admin\.css\?v=20260723-city-mobile-chart/, 'admin CSS cache key must publish city/mobile/chart fixes');
+assert.match(adminHtml, /js\/admin\.js\?v=20260723-city-mobile-chart/, 'admin JS cache key must publish city/mobile/chart fixes');
 assert.match(adminHtml, /id="pg-themes"[\s\S]*id="themeZip"[\s\S]*id="themeTable"/, 'admin must provide an independent theme page and upload path');
 assert.match(adminHtml, /id="pg-plugins"[\s\S]*id="pluginZip"[\s\S]*id="pluginTable"/, 'admin must provide an independent plugin page and upload path');
 assert.match(adminSource, /"\/api\/themes"/, 'admin must use the dedicated theme API');
@@ -58,6 +58,14 @@ assert.match(appSource, /apac:\s*'亚太'/, 'probe region labels must be fully C
 assert.match(appSource, /wnam:\s*'北美西部'/, 'Western North America label must stay Chinese');
 assert.doesNotMatch(appSource, /apac:\s*'APAC'/, 'probe region labels must not mix English abbreviations');
 assert.doesNotMatch(appSource, /wnam:\s*'美国西部'/, 'region labels must use the shared Chinese wording');
+assert.match(appSource, /function targetLocationLabel/, 'status page must format country + city labels');
+assert.match(appSource, /vps-info-toggle/, 'mobile VPS details must be collapsible');
+assert.match(appSource, /openNodeQualityReport/, 'frontend must open NodeQuality reports');
+assert.match(appSource, /targetHasNodeQuality/, 'frontend must expose NQ only for targets with reports');
+assert.match(adminSource, /mNqReport/, 'admin target editor must accept NodeQuality reports');
+assert.match(appSource, /Always keep explicit bounds/, 'chart zoom-out must keep explicit x bounds');
+assert.match(adminSource, /id="mCity"/, 'admin target editor must accept a city field');
+assert.match(adminSource, /city:\s*\(byId\("mCity"\)/, 'admin save payload must include city');
 assert.match(latencyAgentSource, /"User-Agent": USER_AGENT/, 'Latency agent must avoid Cloudflare rejecting Python urllib requests');
 assert.match(latencyAgentSource, /sys\.argv\[1:\] == \["--once"\]/, 'Latency agent must support an installation preflight cycle');
 assert.match(latencyAgentSource, /def update_if_needed\(\):/, 'Latency agent must support automatic updates');

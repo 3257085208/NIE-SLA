@@ -604,6 +604,17 @@ function targetActionsHtml(target) {
   ].join("");
 }
 
+function nodeQualityEditorValue(target = {}) {
+  const raw = target.nq_report;
+  if (!raw) return '';
+  try {
+    const report = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return String(report?.raw || '').trim();
+  } catch (_) {
+    return String(raw || '').trim();
+  }
+}
+
 function targetRowHtml(target, index) {
   const status = statusMap.get(target.id) || {};
   const state = targetStatus(status, target);
@@ -771,7 +782,7 @@ function targetGroupCell(target) {
   const parts = [
     sharedDisplayGroupName(target.group_name),
     target.provider ? `商家:${target.provider}` : "",
-    target.location ? `地区:${target.location}` : "",
+    target.location || target.city ? `地区:${[target.location, target.city].filter(Boolean).join(" · ")}` : "",
     target.line_type ? `线路:${target.line_type}` : "",
   ].filter(Boolean);
   return parts.join(" · ");
@@ -1065,6 +1076,7 @@ function targetModalHtml(target, isEdit) {
     <div class="form-grid">
       ${inputField("标签", "mTags", target.tags || "", 'placeholder="逗号分隔"')}
       ${countryCatalogField(target.location || "")}
+      ${formField("城市", `<input id="mCity" value="${escapeHtml(target.city || "")}" placeholder="例如 Los Angeles / 东京" maxlength="64"><p class="hint">可选。前台显示为「国家 · 城市」。</p>`)}
       ${searchableCatalogField({
         label: "商家",
         searchId: "mProviderSearch",
@@ -1074,6 +1086,7 @@ function targetModalHtml(target, isEdit) {
       })}
       ${formField("线路类型", `<select id="mLineType">${lineTypeOptionsHtml(target.line_type || "")}</select>`)}
     </div>
+    ${formField("NodeQuality 报告", `<textarea id="mNqReport" rows="8" placeholder="粘贴 NodeQuality 原始报告（包含 ::: tab-item、ANSI 文本和图片链接）">${escapeHtml(nodeQualityEditorValue(target))}</textarea><p class="hint">保存后前台 VPS 卡片会显示 NQ 按钮。再次保存空白内容会清除报告。</p>`)}
 
     <div class="form-grid">
       ${formField("到期时间", `<input id="mExpires" type="date" value="${dateInput(target.expires_at)}">`)}
@@ -1180,8 +1193,10 @@ async function saveTarget(edit) {
     no_public_ip: byId("mType").value === "tcp" && !!byId("mNoPublicIp")?.checked,
     tags: byId("mTags")?.value.trim() || "",
     location: byId("mLocation")?.value || "",
+    city: (byId("mCity")?.value || "").trim().slice(0, 64),
     provider: byId("mProvider")?.value || "",
     line_type: byId("mLineType")?.value || "",
+    nq_report: (byId("mNqReport")?.value || "").trim(),
     expires_at: byId("mExpires")?.value || null,
     price,
     billing_cycle: byId("mBilling")?.value || "",
