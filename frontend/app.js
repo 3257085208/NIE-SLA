@@ -1093,6 +1093,15 @@ function bindNodeQualityModal(root) {
       const id = tab.dataset.nqTab;
       root.querySelectorAll('.nq-tab').forEach((item) => item.classList.toggle('active', item === tab));
       root.querySelectorAll('.nq-panel').forEach((panel) => panel.classList.toggle('active', panel.dataset.nqPanel === id));
+      const panels = root.querySelector('.nq-panels');
+      if (panels) {
+        panels.scrollTop = 0;
+        panels.scrollLeft = 0;
+        panels.querySelectorAll('.nq-ansi').forEach((ansi) => {
+          ansi.scrollTop = 0;
+          ansi.scrollLeft = 0;
+        });
+      }
     });
   });
 }

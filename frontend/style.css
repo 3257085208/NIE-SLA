@@ -1383,7 +1383,7 @@ body:not(.is-loaded) .incident-log {
 .nq-panels { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; background: #111827; }
 .nq-panel { display: none; min-width: 0; }
 .nq-panel.active { display: block; }
-.nq-ansi { margin: 0; color: #e5e7eb; white-space: pre; overflow: auto; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.nq-ansi { margin: 0; color: #e5e7eb; white-space: pre; overflow: auto; tab-size: 8; font: 12px/1.4 "Noto Sans Mono CJK SC", "Sarasa Mono SC", "SFMono-Regular", Menlo, Consolas, monospace; font-variant-ligatures: none; }
 .nq-image { display: block; max-width: 100%; height: auto; margin: 0 auto; background: #fff; }
 .nq-empty, .nq-loading { padding: 42px 18px; color: #64748b; text-align: center; background: #fff; }
 @media (max-width: 760px) {

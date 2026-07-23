@@ -29,6 +29,7 @@ const publicReport = publicNodeQualityReport({ id: 'vps-a', name: 'VPS A', nq_re
 assert.equal(publicReport.ok, true);
 assert.equal('raw' in publicReport, false);
 assert.equal(publicReport.tabs.length, 4);
+assert.equal(publicReport.image_proxy_base, '/api/nq/vps-a/image');
 
 assert.throws(() => normalizeNodeQualityReport('x'.repeat(120_001)), /过长/);
 assert.equal(parseNodeQualityMarkdown('![image](javascript:alert(1))').tabs[0].id, 'basic');

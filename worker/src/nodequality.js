@@ -1,3 +1,5 @@
+import { assertPublicHttpUrl } from './utils.js';
+
 // NodeQuality report parsing and normalization for VPS targets.
 const MAX_REPORT_CHARS = 120_000;
 const TAB_ALIASES = {
@@ -236,7 +238,8 @@ function isSafeHttpUrl(value) {
 
 function isSafeImageUrl(value) {
   if (!isSafeHttpUrl(value)) return false;
-  const u = new URL(value);
+  let u;
+  try { u = assertPublicHttpUrl(value); } catch (_) { return false; }
   // Block obvious script-like payloads; allow common image hosts / report CDNs.
   return !/[<>"']/.test(value) && u.pathname.length < 1024;
 }
@@ -303,6 +306,7 @@ export function publicNodeQualityReport(target = {}) {
       report_time: report.report_time || extractReportTime(report.raw || '') || null,
       updated_at: target?.nq_updated_at ? Number(target.nq_updated_at) : null,
       link: report.link || extractNodeQualityLink(report.raw || '') || null,
+      image_proxy_base: target.id ? `/api/nq/${encodeURIComponent(String(target.id))}/image` : null,
       tabs: Array.isArray(report.tabs) ? report.tabs.map((tab) => ({
         id: String(tab.id || ''),
         title: String(tab.title || defaultTabTitle(tab.id) || ''),
@@ -320,6 +324,7 @@ export function publicNodeQualityReport(target = {}) {
       report_time: extractReportTime(text) || null,
       updated_at: target?.nq_updated_at ? Number(target.nq_updated_at) : null,
       link: extractNodeQualityLink(text) || null,
+      image_proxy_base: target.id ? `/api/nq/${encodeURIComponent(String(target.id))}/image` : null,
       tabs: [{ id: 'basic', title: '基本信息', kind: 'ansi', content: sanitizeAnsiContent(text) }],
     };
   }

@@ -100,6 +100,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/v1/latency', rl: 'public' },
   { method: 'GET', path: '/api/extensions', rl: 'public' },
   { method: 'GET', path: '/api/nq/:id', rl: 'public' },
+  { method: 'GET', path: '/api/nq/:id/image/:tab', rl: 'public' },
 
   // Agent endpoints
   { method: 'GET', path: '/api/agent/targets', rl: 'write' },
@@ -180,6 +181,40 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/v1/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(json(await getPublicLatency(env, developerApiUrl(url, '/api/latency')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/extensions' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny(); return json(await listPublicExtensions(env), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  const nqImageMatch = path.match(/^\/api\/(?:nq|nodequality)\/([^/]+)\/image\/([^/]+)$/);
+  if (nqImageMatch && m === 'GET') {
+    if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny();
+    await ensureV6Schema(env);
+    const id = pathParam(nqImageMatch[1]);
+    const tabId = pathParam(nqImageMatch[2]);
+    const target = await env.DB.prepare(`SELECT id, name, type, enabled, nq_report, nq_updated_at FROM targets WHERE id = ?`).bind(id).first().catch(() => null);
+    if (!target || target.type !== 'tcp' || Number(target.enabled || 0) !== 1) return new Response('Not found', { status: 404 });
+    const report = publicNodeQualityReport(target);
+    const imageTab = report?.tabs?.find((tab) => tab.id === tabId && tab.kind === 'image' && tab.image);
+    if (!imageTab) return new Response('Not found', { status: 404 });
+    let upstream;
+    try {
+      upstream = await fetch(imageTab.image, {
+        redirect: 'follow',
+        headers: {
+          accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          referer: `${url.origin}/`,
+          'user-agent': 'NStatus NodeQuality image proxy',
+        },
+      });
+    } catch (_) {
+      return new Response('Image upstream unavailable', { status: 502 });
+    }
+    const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
+    if (!upstream.ok || !contentType.startsWith('image/')) return new Response('Image upstream unavailable', { status: 502 });
+    const headers = new Headers({
+      'cache-control': 'public, max-age=3600',
+      'content-type': contentType,
+      'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff',
+    });
+    return new Response(upstream.body, { status: 200, headers });
+  }
   const nqMatch = path.match(/^\/api\/(?:nq|nodequality)\/([^/]+)$/);
   if (nqMatch && m === 'GET') {
     if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny();

@@ -66,6 +66,7 @@ assert.match(appSource, /targetHasNodeQuality/, 'frontend must expose NQ only fo
 assert.match(appSource, /event\.target\.closest\('\.nq-close'\)\s*\|\|\s*event\.target\.classList\.contains\('nq-modal-backdrop'\)/, 'NQ tabs must not close the modal');
 assert.match(styleSource, /\.nq-modal\s*\{[\s\S]*width:\s*min\(920px/, 'NQ modal should have a restrained desktop width');
 assert.match(styleSource, /\.nq-panels\s*\{[\s\S]*flex:\s*1 1 auto[\s\S]*overscroll-behavior:\s*contain/, 'NQ report content must scroll without covering tabs');
+assert.match(appSource, /panels\.scrollTop\s*=\s*0/, 'switching NQ tabs must reset vertical scroll');
 assert.match(adminSource, /mNqReport/, 'admin target editor must accept NodeQuality reports');
 assert.match(appSource, /Always keep explicit bounds/, 'chart zoom-out must keep explicit x bounds');
 assert.match(adminSource, /id="mCity"/, 'admin target editor must accept a city field');
