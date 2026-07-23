@@ -63,12 +63,49 @@ function stripNqAnsi(value = '') {
   return String(value || '').replace(/\u001b\[[0-9;]*m/g, '');
 }
 
-function nqMediaColumns(lines, label) {
+function nqMediaHeader(lines) {
+  const label = '服务商：';
+  const line = lines.find((item) => stripNqAnsi(item).includes(label));
+  if (!line) return { names: [], starts: [] };
+  const plain = stripNqAnsi(line);
+  const bodyStart = plain.indexOf(label) + label.length;
+  const body = plain.slice(bodyStart);
+  const names = [];
+  const starts = [];
+  const matcher = /\S+/g;
+  let match;
+  while ((match = matcher.exec(body))) {
+    names.push(match[0]);
+    starts.push(bodyStart + match.index);
+  }
+  return { names, starts };
+}
+
+function nqMediaRow(lines, label, starts) {
   const line = lines.find((item) => stripNqAnsi(item).includes(label));
   if (!line) return [];
   const plain = stripNqAnsi(line);
-  const index = plain.indexOf(label);
-  return plain.slice(index + label.length).trim().split(/\s+/).filter(Boolean);
+  const bodyStart = plain.indexOf(label) + label.length;
+  const values = Array.from({ length: starts.length }, () => '');
+  const tokens = [...plain.slice(bodyStart).matchAll(/\S+/g)];
+  let previousColumn = -1;
+  for (const token of tokens) {
+    const absoluteStart = bodyStart + token.index;
+    let bestColumn = -1;
+    let bestDistance = Infinity;
+    starts.forEach((start, index) => {
+      if (index <= previousColumn) return;
+      const distance = Math.abs(start - absoluteStart);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestColumn = index;
+      }
+    });
+    if (bestColumn < 0) break;
+    values[bestColumn] = token[0];
+    previousColumn = bestColumn;
+  }
+  return values;
 }
 
 function nqMediaStatusClass(value) {
@@ -79,10 +116,10 @@ function nqMediaStatusClass(value) {
 }
 
 function renderNqMediaBlock(lines) {
-  const providers = nqMediaColumns(lines, '服务商：');
-  const statuses = nqMediaColumns(lines, '状态：');
-  const regions = nqMediaColumns(lines, '地区：');
-  const methods = nqMediaColumns(lines, '方式：');
+  const { names: providers, starts } = nqMediaHeader(lines);
+  const statuses = nqMediaRow(lines, '状态：', starts);
+  const regions = nqMediaRow(lines, '地区：', starts);
+  const methods = nqMediaRow(lines, '方式：', starts);
   const columnCount = Math.max(providers.length, statuses.length, regions.length, methods.length);
   if (!columnCount) return renderNqAnsiHtml(lines.join('\n'));
   const cell = (value, className = '') => `<span class="nq-media-cell ${className}">${escapeHtml(value || '—')}</span>`;
