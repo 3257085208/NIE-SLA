@@ -1352,6 +1352,7 @@ body:not(.is-loaded) .incident-log {
 .nq-modal {
   width: min(920px, calc(100vw - 32px));
   max-height: min(88vh, 900px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1361,6 +1362,7 @@ body:not(.is-loaded) .incident-log {
   box-shadow: 0 24px 70px rgba(15, 23, 42, .3);
 }
 .nq-modal-head {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1373,12 +1375,12 @@ body:not(.is-loaded) .incident-log {
 .nq-modal-head strong { color: #0f172a; font-size: 17px; }
 .nq-modal-head span { color: #64748b; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nq-close { border: 0; background: transparent; color: #64748b; font-size: 26px; line-height: 1; cursor: pointer; padding: 2px 6px; }
-.nq-modal-meta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 18px; color: #475569; font-size: 12px; background: #fff; }
+.nq-modal-meta { display: flex; flex: 0 0 auto; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 18px; color: #475569; font-size: 12px; background: #fff; }
 .nq-modal-meta a { color: #047857; font-weight: 700; }
-.nq-tabs { display: flex; gap: 2px; overflow-x: auto; padding: 0 18px; background: #fff; border-bottom: 1px solid #cbd5e1; }
+.nq-tabs { display: flex; flex: 0 0 auto; position: relative; z-index: 2; gap: 2px; overflow-x: auto; padding: 0 18px; background: #fff; border-bottom: 1px solid #cbd5e1; }
 .nq-tab { border: 0; border-bottom: 3px solid transparent; padding: 11px 14px 9px; background: transparent; color: #64748b; font: 700 13px/1.2 var(--font), "Noto Sans SC", sans-serif; cursor: pointer; white-space: nowrap; }
 .nq-tab.active { color: #0f172a; border-bottom-color: #059669; }
-.nq-panels { min-height: 0; overflow: auto; padding: 16px; background: #111827; }
+.nq-panels { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 16px; background: #111827; }
 .nq-panel { display: none; min-width: 0; }
 .nq-panel.active { display: block; }
 .nq-ansi { margin: 0; color: #e5e7eb; white-space: pre; overflow: auto; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
