@@ -64,7 +64,7 @@ assert.match(appSource, /vps-info-toggle/, 'mobile VPS details must be collapsib
 assert.match(appSource, /openNodeQualityReport/, 'frontend must open NodeQuality reports');
 assert.match(appSource, /targetHasNodeQuality/, 'frontend must expose NQ only for targets with reports');
 assert.match(appSource, /event\.target\.closest\('\.nq-close'\)\s*\|\|\s*event\.target\.classList\.contains\('nq-modal-backdrop'\)/, 'NQ tabs must not close the modal');
-assert.match(styleSource, /\.nq-modal\s*\{[\s\S]*width:\s*min\(920px/, 'NQ modal should have a restrained desktop width');
+assert.match(styleSource, /\.nq-modal\s*\{[\s\S]*width:\s*min\(860px/, 'NQ modal should have a restrained desktop width');
 assert.match(styleSource, /\.nq-panels\s*\{[\s\S]*flex:\s*1 1 auto[\s\S]*overscroll-behavior:\s*contain/, 'NQ report content must scroll without covering tabs');
 assert.match(appSource, /panels\.scrollTop\s*=\s*0/, 'switching NQ tabs must reset vertical scroll');
 assert.match(adminSource, /mNqReport/, 'admin target editor must accept NodeQuality reports');

@@ -1350,7 +1350,7 @@ body:not(.is-loaded) .incident-log {
   background: rgba(15, 23, 42, .58);
 }
 .nq-modal {
-  width: min(920px, calc(100vw - 32px));
+  width: min(860px, calc(100vw - 32px));
   max-height: min(88vh, 900px);
   min-height: 0;
   display: flex;
