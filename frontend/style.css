@@ -1403,6 +1403,18 @@ body:not(.is-loaded) .incident-log {
 .nq-panel.active { display: block; }
 .nq-image-panel.active { display: flex; align-items: flex-start; justify-content: center; min-height: 0; overflow: auto; }
 .nq-ansi { margin: 0; color: #e5e7eb; white-space: pre; overflow: auto; tab-size: 8; font: 12px/1.4 "Noto Sans Mono CJK SC", "Sarasa Mono SC", "SFMono-Regular", Menlo, Consolas, monospace; font-variant-ligatures: none; }
+.nq-media-block { display: block; margin: 4px 0 8px; white-space: normal; font: 12px/1.35 "Noto Sans Mono CJK SC", "Sarasa Mono SC", "SFMono-Regular", Menlo, Consolas, monospace; }
+.nq-media-title { display: block; margin: 2px 0 5px; color: #e5e7eb; font-weight: 700; }
+.nq-media-scroll { display: block; overflow-x: auto; padding-bottom: 4px; }
+.nq-media-grid { display: grid; min-width: max-content; color: #a3e635; }
+.nq-media-cell { display: flex; align-items: center; justify-content: center; min-height: 28px; padding: 3px 5px; color: #a3e635; text-align: center; white-space: nowrap; }
+.nq-media-label { justify-content: flex-start; color: #22d3ee; text-align: left; }
+.nq-media-head { color: #22d3ee; font-style: italic; }
+.nq-media-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 42px; padding: 2px 6px; border-radius: 2px; color: #fff; font-size: 12px; font-weight: 800; font-style: normal; }
+.nq-media-badge.success { background: #16a34a; }
+.nq-media-badge.danger { background: #dc2626; }
+.nq-media-badge.warning { background: #ca8a04; }
+.nq-media-badge.neutral { background: #475569; }
 .nq-image { display: block; width: min(100%, 760px); max-width: 100%; height: auto; margin: 0 auto; background: #fff; }
 .nq-empty, .nq-loading { padding: 42px 18px; color: #64748b; text-align: center; background: #fff; }
 @media (max-width: 760px) {
@@ -1417,6 +1429,9 @@ body:not(.is-loaded) .incident-log {
   .nq-tab { padding: 9px 10px 8px; font-size: 12px; }
   .nq-panels { padding: 7px; }
   .nq-ansi { font-size: 10px; line-height: 1.35; }
+  .nq-media-block { font-size: 10px; }
+  .nq-media-cell { min-height: 25px; padding: 2px 4px; }
+  .nq-media-badge { min-width: 36px; padding: 2px 5px; font-size: 10px; }
   .nq-report-btn { height: 20px; padding: 2px 6px; font-size: 9px; }
   .nq-image { width: 100%; }
 }

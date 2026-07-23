@@ -59,6 +59,72 @@ export function renderNqAnsiHtml(content = '') {
   return html;
 }
 
+function stripNqAnsi(value = '') {
+  return String(value || '').replace(/\u001b\[[0-9;]*m/g, '');
+}
+
+function nqMediaColumns(lines, label) {
+  const line = lines.find((item) => stripNqAnsi(item).includes(label));
+  if (!line) return [];
+  const plain = stripNqAnsi(line);
+  const index = plain.indexOf(label);
+  return plain.slice(index + label.length).trim().split(/\s+/).filter(Boolean);
+}
+
+function nqMediaStatusClass(value) {
+  if (/解锁|可用/.test(value)) return 'success';
+  if (/失败|屏蔽|禁会员|阻断/.test(value)) return 'danger';
+  if (/DNS|部分|未知/.test(value)) return 'warning';
+  return 'neutral';
+}
+
+function renderNqMediaBlock(lines) {
+  const providers = nqMediaColumns(lines, '服务商：');
+  const statuses = nqMediaColumns(lines, '状态：');
+  const regions = nqMediaColumns(lines, '地区：');
+  const methods = nqMediaColumns(lines, '方式：');
+  const columnCount = Math.max(providers.length, statuses.length, regions.length, methods.length);
+  if (!columnCount) return renderNqAnsiHtml(lines.join('\n'));
+  const cell = (value, className = '') => `<span class="nq-media-cell ${className}">${escapeHtml(value || '—')}</span>`;
+  const row = (label, values, className = '') => [
+    cell(label, 'nq-media-label'),
+    ...Array.from({ length: columnCount }, (_, index) => cell(values[index], className)),
+  ].join('');
+  const statusCells = [
+    cell('状态', 'nq-media-label'),
+    ...Array.from({ length: columnCount }, (_, index) => {
+      const value = statuses[index] || '—';
+      return `<span class="nq-media-cell"><b class="nq-media-badge ${nqMediaStatusClass(value)}">${escapeHtml(value)}</b></span>`;
+    }),
+  ].join('');
+  return `<span class="nq-media-block">
+    <span class="nq-media-title">五、流媒体及 AI 服务解锁检测</span>
+    <span class="nq-media-scroll"><span class="nq-media-grid" style="grid-template-columns:86px repeat(${columnCount}, minmax(76px, 1fr));">
+      ${row('服务商', providers, 'nq-media-head')}
+      ${statusCells}
+      ${row('地区', regions)}
+      ${row('方式', methods)}
+    </span></span>
+  </span>`;
+}
+
+export function renderNqReportHtml(content = '') {
+  const lines = String(content || '').split('\n');
+  const heading = '五、流媒体及AI服务解锁检测';
+  let cursor = 0;
+  let html = '';
+  while (cursor < lines.length) {
+    const start = lines.findIndex((line, index) => index >= cursor && stripNqAnsi(line).includes(heading));
+    if (start < 0) break;
+    const end = lines.findIndex((line, index) => index > start && stripNqAnsi(line).startsWith('六、邮局连通性及黑名单检测'));
+    if (end < 0) break;
+    html += renderNqAnsiHtml(lines.slice(cursor, start).join('\n'));
+    html += renderNqMediaBlock(lines.slice(start, end));
+    cursor = end;
+  }
+  return html + renderNqAnsiHtml(lines.slice(cursor).join('\n'));
+}
+
 export function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -86,7 +152,7 @@ export function buildNqModalHtml(report) {
         : tab.image;
       return `<div class="nq-panel nq-image-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><img class="nq-image" src="${escapeHtml(imageSrc)}" data-nq-original="${escapeHtml(tab.image)}" alt="${escapeHtml(nqTabTitle(tab))}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></div>`;
     }
-    return `<div class="nq-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><pre class="nq-ansi">${renderNqAnsiHtml(tab.content || '')}</pre></div>`;
+    return `<div class="nq-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><pre class="nq-ansi">${renderNqReportHtml(tab.content || '')}</pre></div>`;
   }).join('');
   return `
     <div class="nq-modal-backdrop" data-nq-close>

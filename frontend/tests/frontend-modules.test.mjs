@@ -23,7 +23,7 @@ import {
   normalizeCountryCode,
 } from '../js/shared/target-catalogs.js';
 import { formatLocationLabel, normalizeCityName } from '../js/shared/format.js';
-import { buildNqModalHtml, renderNqAnsiHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
+import { buildNqModalHtml, renderNqAnsiHtml, renderNqReportHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
 
 const rows = normalizeChartRows([
   { checked_at: 30, ok: 1, latency_ms: 20 },
@@ -125,5 +125,6 @@ assert.equal(targetHasNodeQuality({ type: 'tcp', has_nq: 1 }), true);
 assert.equal(targetHasNodeQuality({ type: 'tcp', nq: { has_report: true } }), true);
 assert.equal(targetHasNodeQuality({ type: 'http', has_nq: 1 }), false);
 assert.match(renderNqAnsiHtml('\u001b[31mred\u001b[0m'), /color:#ef4444/);
+assert.match(renderNqReportHtml('五、流媒体及AI服务解锁检测\n服务商： TikTok Netflix\n状态： 解锁 失败\n地区： [TW] []\n方式： DNS\n六、邮局连通性及黑名单检测'), /nq-media-grid[\s\S]*nq-media-badge success[\s\S]*nq-media-badge danger/);
 assert.match(buildNqModalHtml({ report_time: '2026-07-23 22:41:36 CST', tabs: [{ id: 'network', kind: 'image', image: 'https://example.com/network.webp' }] }), /network\.webp/);
 console.log('NodeQuality frontend helpers ok');
