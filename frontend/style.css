@@ -209,6 +209,7 @@ button { border: 0; cursor: pointer; }
   align-items: center;
   min-width: 0;
   gap: 8px;
+  line-height: 1.25;
 }
 .service-title-text {
   min-width: 0;
@@ -1342,6 +1343,10 @@ body:not(.is-loaded) .incident-log {
 .meta-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; white-space: nowrap; }
 .nq-report-btn {
   flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
   border: 1px solid #0f766e;
   border-radius: 4px;
   padding: 3px 7px;
@@ -1363,7 +1368,7 @@ body:not(.is-loaded) .incident-log {
   background: rgba(15, 23, 42, .58);
 }
 .nq-modal {
-  width: min(780px, calc(100vw - 24px));
+  width: min(640px, calc(100vw - 32px));
   max-height: min(88vh, 900px);
   min-height: 0;
   display: flex;
@@ -1398,7 +1403,7 @@ body:not(.is-loaded) .incident-log {
 .nq-panel.active { display: block; }
 .nq-image-panel.active { display: flex; align-items: flex-start; justify-content: center; min-height: 0; overflow: auto; }
 .nq-ansi { margin: 0; color: #e5e7eb; white-space: pre; overflow: auto; tab-size: 8; font: 12px/1.4 "Noto Sans Mono CJK SC", "Sarasa Mono SC", "SFMono-Regular", Menlo, Consolas, monospace; font-variant-ligatures: none; }
-.nq-image { display: block; width: auto; max-width: 100%; max-height: min(58vh, 620px); height: auto; object-fit: contain; margin: 0 auto; background: #fff; }
+.nq-image { display: block; width: min(100%, 760px); max-width: 100%; height: auto; margin: 0 auto; background: #fff; }
 .nq-empty, .nq-loading { padding: 42px 18px; color: #64748b; text-align: center; background: #fff; }
 @media (max-width: 760px) {
   .nq-modal-backdrop { align-items: stretch; padding: 8px; }
@@ -1412,7 +1417,8 @@ body:not(.is-loaded) .incident-log {
   .nq-tab { padding: 9px 10px 8px; font-size: 12px; }
   .nq-panels { padding: 7px; }
   .nq-ansi { font-size: 10px; line-height: 1.35; }
-  .nq-image { max-height: min(52vh, 460px); }
+  .nq-report-btn { height: 20px; padding: 2px 6px; font-size: 9px; }
+  .nq-image { width: 100%; }
 }
 .meta-provider { padding: 0 6px 0 0; border-right: 1px solid var(--line-strong); border-radius: 0; color: var(--text); font-family: var(--font), "Noto Sans SC", "PingFang SC", sans-serif; font-size: 11px; font-weight: 800; }
 .meta-line { border: 1px solid var(--line-strong); background: var(--paper); color: var(--soft); font-weight: 700; }
