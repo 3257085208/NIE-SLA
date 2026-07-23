@@ -977,7 +977,10 @@ function renderService(t, days, summaries) {
   return `
     <div class="service ${statusClass}${selectedClass}${hasLatency ? '' : ' no-latency'}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(t.name)}">
       <div class="service-name">
-        ${escapeHtml(t.name)}
+        <span class="service-title-line">
+          <span class="service-title-text">${escapeHtml(t.name)}</span>
+          ${nqButton}
+        </span>
         ${metaHtml ? `<span class="service-target">${metaHtml}</span>` : ''}
         ${metaBadges ? `<span class="service-meta">${metaBadges}</span>` : ''}
       </div>
@@ -989,7 +992,6 @@ function renderService(t, days, summaries) {
           ${renderBars(t.id, days, summaries)}
         </div>
         ${trafficProgress}
-        ${nqButton}
       </div>
     </div>
   `;
@@ -1025,7 +1027,10 @@ function renderServiceCard(t, days, summaries) {
         <span class="node-dot ${nodegetStatusDotClass(statusClass)}"></span>
         <span class="node-logo">${nodegetOsLogoHtml(info)}</span>
         <div class="service-name">
-          ${escapeHtml(t.name)}
+          <span class="service-title-line">
+            <span class="service-title-text">${escapeHtml(t.name)}</span>
+            ${nqButton}
+          </span>
           ${titleMeta ? `<span class="service-target">${escapeHtml(titleMeta)}</span>` : ''}
         </div>
         <span class="node-flag">${regionFlag}</span>
@@ -1053,7 +1058,6 @@ function renderServiceCard(t, days, summaries) {
         <span>↑ ${escapeHtml(fmtBytesPerSec(m.net?.tx_bytes_sec || 0))}</span>
         <span>◷ ${escapeHtml(formatMachineUptime(m.uptime_sec || t.machine_uptime_sec || 0))}</span>
         <em>${escapeHtml(age)}</em>
-        ${nqButton}
       </div>
     </div>
   `;

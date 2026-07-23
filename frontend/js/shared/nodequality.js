@@ -84,7 +84,7 @@ export function buildNqModalHtml(report) {
       const imageSrc = report?.image_proxy_base
         ? `${String(report.image_proxy_base).replace(/\/+$/, '')}/${encodeURIComponent(tab.id || `tab-${index}`)}`
         : tab.image;
-      return `<div class="nq-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><img class="nq-image" src="${escapeHtml(imageSrc)}" data-nq-original="${escapeHtml(tab.image)}" alt="${escapeHtml(nqTabTitle(tab))}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></div>`;
+      return `<div class="nq-panel nq-image-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><img class="nq-image" src="${escapeHtml(imageSrc)}" data-nq-original="${escapeHtml(tab.image)}" alt="${escapeHtml(nqTabTitle(tab))}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></div>`;
     }
     return `<div class="nq-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><pre class="nq-ansi">${renderNqAnsiHtml(tab.content || '')}</pre></div>`;
   }).join('');
