@@ -152,7 +152,7 @@ export function buildNqModalHtml(report) {
         : tab.image;
       return `<div class="nq-panel nq-image-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><img class="nq-image" src="${escapeHtml(imageSrc)}" data-nq-original="${escapeHtml(tab.image)}" alt="${escapeHtml(nqTabTitle(tab))}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></div>`;
     }
-    return `<div class="nq-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><pre class="nq-ansi">${renderNqReportHtml(tab.content || '')}</pre></div>`;
+    return `<div class="nq-panel nq-ansi-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><pre class="nq-ansi">${renderNqReportHtml(tab.content || '')}</pre></div>`;
   }).join('');
   return `
     <div class="nq-modal-backdrop" data-nq-close>

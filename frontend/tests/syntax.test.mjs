@@ -68,6 +68,7 @@ assert.match(styleSource, /\.nq-modal\s*\{[\s\S]*width:\s*min\(640px/, 'NQ modal
 assert.match(appSource, /service-title-line[\s\S]*nqButton/, 'classic VPS cards must place NQ beside the name');
 assert.match(styleSource, /\.nq-image\s*\{[\s\S]*width:\s*min\(100%,\s*760px\)/, 'NQ images must use a readable content width');
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-image\s*\{\s*width:\s*100%/, 'NQ images must fill the available mobile content width');
+assert.match(styleSource, /\.nq-ansi-panel\s*\{[\s\S]*-webkit-overflow-scrolling:\s*touch/, 'ANSI reports must support touch scrolling on iPhone');
 assert.match(styleSource, /\.nq-panels\s*\{[\s\S]*flex:\s*1 1 auto[\s\S]*overscroll-behavior:\s*contain/, 'NQ report content must scroll without covering tabs');
 assert.match(appSource, /panels\.scrollTop\s*=\s*0/, 'switching NQ tabs must reset vertical scroll');
 assert.match(adminSource, /mNqReport/, 'admin target editor must accept NodeQuality reports');
