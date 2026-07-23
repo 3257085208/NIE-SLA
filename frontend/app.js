@@ -1080,7 +1080,9 @@ async function openNodeQualityReport(targetId, targetName = '') {
     }
   };
   root.addEventListener('click', (event) => {
-    if (event.target.closest('[data-nq-close]') || event.target.classList.contains('nq-modal-backdrop')) closeNodeQualityReport();
+    // Only the close button or empty backdrop closes the dialog. A tab is
+    // inside the backdrop, so closest('[data-nq-close]') would close it too.
+    if (event.target.closest('.nq-close') || event.target.classList.contains('nq-modal-backdrop')) closeNodeQualityReport();
   });
   await load();
 }

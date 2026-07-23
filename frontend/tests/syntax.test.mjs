@@ -23,6 +23,7 @@ const [appSource, adminSource, adminCss, adminHtml, latencyAgentSource, latencyI
   readFile(path.join(root, 'latency-agent.py'), 'utf8'),
   readFile(path.join(root, 'install-latency.sh'), 'utf8'),
 ]);
+const styleSource = await readFile(path.join(root, 'style.css'), 'utf8');
 assert.match(adminSource, /showInstallProgress\(t\);[\s\S]*apiAdmin\(/, 'deploy must show feedback before requesting the command');
 assert.match(adminSource, /data-retry-install/, 'deploy failures must offer a retry action');
 assert.match(adminSource, /data-target-id=/, 'deploy buttons must carry a stable target id');
@@ -62,6 +63,8 @@ assert.match(appSource, /function targetLocationLabel/, 'status page must format
 assert.match(appSource, /vps-info-toggle/, 'mobile VPS details must be collapsible');
 assert.match(appSource, /openNodeQualityReport/, 'frontend must open NodeQuality reports');
 assert.match(appSource, /targetHasNodeQuality/, 'frontend must expose NQ only for targets with reports');
+assert.match(appSource, /event\.target\.closest\('\.nq-close'\)\s*\|\|\s*event\.target\.classList\.contains\('nq-modal-backdrop'\)/, 'NQ tabs must not close the modal');
+assert.match(styleSource, /\.nq-modal\s*\{[\s\S]*width:\s*min\(920px/, 'NQ modal should have a restrained desktop width');
 assert.match(adminSource, /mNqReport/, 'admin target editor must accept NodeQuality reports');
 assert.match(appSource, /Always keep explicit bounds/, 'chart zoom-out must keep explicit x bounds');
 assert.match(adminSource, /id="mCity"/, 'admin target editor must accept a city field');
