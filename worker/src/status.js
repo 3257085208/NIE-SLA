@@ -141,7 +141,7 @@ async function buildStatusPayload(env, url = null) {
     const displayUrl = row.type === 'http' ? publicUrl(row.url, env) : row.url;
     const displayTarget = row.type === 'http' ? displayUrl : displayHost;
     const agentState = metricsMap[sanitizeAgentId(targetRow.id)] || null;
-    const hasNq = Number(targetRow.has_nq || 0) === 1 || Boolean(targetRow.nq_updated_at);
+    const hasNq = targetRow.type === 'tcp' && (Number(targetRow.has_nq || 0) === 1 || Boolean(targetRow.nq_updated_at));
     const publicRow = { ...row, no_public_ip: noPublicIp ? 1 : 0, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || '自动', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, has_nq: hasNq, nq: hasNq ? { has_report: true, updated_at: targetRow.nq_updated_at ? Number(targetRow.nq_updated_at) : null } : null, ...agentStatusFields(agentState, env) };
     delete publicRow.nq_report;
     publicRow.latency_sources = noPublicIp ? [] : [
