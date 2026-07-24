@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./admin.css?v=20260724-appearance1" />
+    <link rel="stylesheet" href="./admin.css?v=20260724-theme-runtime1" />
   </head>
   <body>
     <div class="login-bg" id="loginPage">
@@ -142,14 +142,14 @@
             <div class="page-intro">
               <span class="page-kicker">THEMES / 05</span>
               <h2>主题</h2>
-              <p>安装并管理仅用于调整前台视觉样式的主题包。</p>
+              <p>安装 CSS 主题或拥有完整布局自由度的交互画布主题。</p>
             </div>
             <div class="extension-upload-actions">
               <input id="themeZip" type="file" accept=".zip,application/zip" hidden />
               <button class="btn btn-primary" id="uploadThemeBtn">上传主题 ZIP</button>
             </div>
           </div>
-          <div class="extension-security-note">主题包只允许加载 CSS，不具备脚本、网络请求或管理权限。只安装来源可信且已审阅的主题。</div>
+          <div class="extension-security-note">CSS 主题只调整主页面样式；交互画布主题在隔离 iframe 中运行，可自行布局并读取脱敏只读数据，但不能访问后台 Token、主页面 DOM 或任意联网。</div>
           <div id="themeTable"><div class="loading">加载中...</div></div>
         </section>
         <section class="page" id="pg-plugins">
@@ -241,7 +241,7 @@
 
     <script
       type="module"
-      src="./js/admin.js?v=20260724-appearance1"
+      src="./js/admin.js?v=20260724-theme-runtime1"
     ></script>
   </body>
 </html>

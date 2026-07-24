@@ -174,7 +174,7 @@ async function publicFrontend(env) {
     const settings = await getPublicSettings(env);
     return { theme: settings.frontend_theme || 'classic', appearance: settings.appearance };
   } catch (_) {
-    return { theme: String(env.PUBLIC_FRONTEND_THEME || '').toLowerCase() === 'cards' ? 'cards' : 'classic', appearance: { site_name: env.PUBLIC_SITE_NAME || '聶.NET' } };
+    return { theme: 'classic', appearance: { site_name: env.PUBLIC_SITE_NAME || '聶.NET' } };
   }
 }
 

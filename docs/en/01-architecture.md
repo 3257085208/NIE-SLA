@@ -16,7 +16,7 @@ The Worker provides public APIs, admin APIs, cron scheduling, D1/R2 persistence,
 
 ## Frontend
 
-The Pages frontend contains the public dashboard, classic and card themes, the admin panel, install scripts, and Agent binaries used by one-line deployment commands.
+The Pages frontend contains the classic dashboard, the sandboxed theme/plugin runtime, the admin panel, install scripts, and Agent binaries used by one-line deployment commands. The card dashboard is distributed as an optional theme ZIP.
 
 ## Agent
 

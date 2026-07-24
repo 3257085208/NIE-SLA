@@ -1,32 +1,33 @@
 # 14 主题、插件与开发者 API
 
-NStatus 扩展系统允许管理员在后台上传 ZIP 包，并在不替换生产前端代码的情况下启用第三方主题或插件。v1 的设计目标是可移植、可回退和最小权限。
+NStatus 扩展系统允许管理员在后台上传 ZIP 包，并在不替换生产前端代码的情况下启用第三方主题或插件。v1 同时提供低风险 CSS 主题和高自由度的隔离交互画布。
 
 ## 能力与边界
 
 | 类型 | 能力 | 安全边界 |
 | --- | --- | --- |
-| 原版主题 | 后台选择 `classic` 或 `cards` | 内置代码 |
-| 第三方主题 | 覆盖公开前端 CSS | 不能包含可执行主题脚本 |
+| 原版主题 | 稳定的 `classic` 基础布局 | 内置代码 |
+| CSS 主题 | 覆盖公开前端 CSS，可选择 `classic` 或卡片布局基座 | 不能执行脚本 |
+| 交互画布主题 | 在独立页面中自行实现完整布局、交互与图表 | 无同源权限的 sandbox iframe，只能走只读消息 API |
 | 第三方插件 | 增加独立面板并读取公开状态快照 | 在无 `allow-same-origin` 的 sandbox iframe 内运行 |
 | 开发者 API | 构建替代前端、机器人、面板和只读集成 | `/api/v1` 只读，无管理写权限 |
 
-第三方主题只允许 CSS。第三方插件不能直接访问主页面 DOM、`sessionStorage`、后台 Token 或管理接口，且插件页面 CSP 禁止主动联网。插件通过 `postMessage` 接收主页面已经获得的脱敏公开状态。
+交互画布主题和第三方插件都不能直接访问主页面 DOM、`sessionStorage`、后台 Token 或管理接口，且 iframe CSP 禁止主动联网。它们通过 `postMessage` 接收脱敏公开状态；交互主题还可以请求白名单内的只读开发者 API。
 
 ## 安装与回退
 
 1. 后台进入“主题”或“插件”页面；两种包使用独立入口和存储路径。
-2. 点击对应的“上传主题 ZIP”或“上传插件 ZIP”，选择不超过 2 MB 的包。
+2. 点击对应的“上传主题 ZIP”或“上传插件 ZIP”，选择不超过 8 MB 的包。
 3. Worker 校验清单、路径、文件类型、文件数和解压体积，然后将文件写入 R2。
 4. 新上传的扩展默认停用，管理员确认名称、作者和版本后手动启用。
 5. 插件可以同时启用多个；第三方主题最多启用一个。
-6. 停用第三方主题后，前端立即回到“设置”页选择的原版 `classic` 或 `cards` 主题。
+6. 停用第三方主题后，前端立即回到内置 `classic` 主题。
 
 相同 `id` 的新 ZIP 会替换旧版本并保留其启用状态。删除扩展会删除注册记录和该版本的 R2 文件。
 
 主题和插件建议各自维护为独立源码仓库。平台通用包格式、安全边界与 API 以本文为准；更严格的工程目录、命令、测试、版本和发布标准分别见 [15 主题工程与开发标准](15-theme-development-standard.md) 和 [16 插件工程与开发标准](16-plugin-development-standard.md)。
 
-本规范参考了 NodeGet 将主题作为独立项目、使用显式清单、固定构建产物和标准开发命令的工程组织思路，但没有复制其实现。NStatus 扩展格式与 NodeGet 不兼容：v1 主题只能执行 CSS，插件只能在 sandbox iframe 中获得 `status:read`，不能直接访问 DOM、管理 Token、网络或写接口。
+本规范参考了 NodeGet 将主题作为独立项目、使用显式清单、固定构建产物和标准开发命令的工程组织思路，但没有复制其实现。NStatus 扩展格式与 NodeGet 不兼容：CSS 主题不能执行脚本，交互主题与插件只能在 sandbox iframe 中获得 `status:read`，不能直接访问 DOM、管理 Token、网络或写接口。
 
 ## ZIP 通用规范
 
@@ -40,13 +41,16 @@ assets/logo.webp
 
 通用限制：
 
-- ZIP 最大 2 MB，解压后最大 5 MB。
-- 最多 100 个文件，单文件最大 1 MB。
+- ZIP 最大 8 MB，解压后最大 16 MB。
+- 最多 300 个文件，单文件最大 4 MB。
 - 禁止绝对路径、空路径、`..`、反斜杠路径和目录穿越。
 - 允许扩展名：`.css`、`.html`、`.js`、`.json`、`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.svg`、`.woff`、`.woff2`。
 - `id` 必须匹配 `[a-z][a-z0-9-]{2,48}`，发布后应保持不变。
 - `version` 必须使用 SemVer，例如 `1.2.0`。
 - `schema` 固定为 `nstatus-extension-v1`。
+- 推荐声明 HTTPS `repository`、`homepage`、SPDX 风格 `license` 和包内 `preview`。
+- 可声明精确的 `files` 数组；其中可包含或省略根 `manifest.json`，平台会自动归一化。其余条目必须与 ZIP 内文件完全一致，不能夹带未列出的文件。
+- Worker 会为每次上传计算并保存完整 ZIP 的 SHA-256，后台显示其前 16 位用于核对发布物。
 
 在示例目录内创建包：
 
@@ -68,6 +72,7 @@ zip -r ../minimal-green-theme.zip .
   "name": "My Status Theme",
   "version": "1.0.0",
   "type": "theme",
+  "mode": "css",
   "author": "Developer Name",
   "description": "Short description",
   "base_theme": "classic",
@@ -77,14 +82,50 @@ zip -r ../minimal-green-theme.zip .
 
 字段规则：
 
-- `base_theme` 只能是 `classic` 或 `cards`，表示 CSS 覆盖之前使用哪个内置结构。
+- `mode` 默认为 `css`；CSS 主题必须声明 1 到 4 个 `styles`。
+- `base_theme` 可为 `classic` 或 `cards`。`cards` 是只向主题包开放的布局基座，不再是后台可直接选择的内置主题。
 - `styles` 必须包含 1 到 4 个 ZIP 内存在的 CSS 文件，按数组顺序加载。
-- v1 主题没有 `entry`，也不允许 JavaScript 生命周期。
+- CSS 主题没有 `entry`，也不允许 JavaScript 生命周期。
 - 主题应优先覆盖稳定 CSS 变量，而不是依赖深层 DOM：`--bg`、`--paper`、`--text`、`--soft`、`--muted`、`--line`、`--line-strong`、`--green`、`--green-dark`、`--green-soft`、`--red`、`--yellow`、`--blue`、`--radius`、`--shadow`、`--shadow-hover`、`--font`。
 - 需要按扩展定向样式时使用 `body[data-extension-theme="EXTENSION_ID"]`。
 - 必须同时检查桌面和移动端，不能隐藏状态、错误、Token 警告或可访问性焦点。
 
 完整最小示例位于 `examples/extensions/theme-minimal/`。
+
+官方卡片主题源包位于 `examples/extensions/theme-cards/`。将该目录中的 `manifest.json` 与 `theme.css` 放在 ZIP 根目录上传，即可启用原卡片布局。
+
+### 交互画布主题
+
+需要完全自定义 DOM、布局、交互或图表时使用隔离画布：
+
+```json
+{
+  "schema": "nstatus-extension-v1",
+  "id": "my-canvas-theme",
+  "name": "My Canvas Theme",
+  "version": "1.0.0",
+  "type": "theme",
+  "mode": "canvas",
+  "entry": "index.html",
+  "permissions": ["status:read"],
+  "height": 900
+}
+```
+
+画布 iframe 使用 `sandbox="allow-scripts"`，没有 `allow-same-origin`。主题发送 `{ type: "nstatus:ready" }` 后会收到与插件相同的 `nstatus:status` 消息；内容高度变化时发送 `{ type: "nstatus:resize", height }`。
+
+主题需要历史数据时发送受控请求：
+
+```js
+parent.postMessage({
+  type: 'nstatus:request',
+  request_id: 'metrics-1',
+  resource: 'metrics',
+  query: { agent_id: 'vps-a', hours: 6 }
+}, '*');
+```
+
+允许的 `resource` 只有 `status`、`checks`、`metrics`、`pings`、`latency`。父页面返回 `nstatus:response`，并强制使用 `/api/v1/*`、`credentials: omit`；主题不能指定 URL、方法、请求头或管理端点。完整示例位于 `examples/extensions/theme-canvas/`。
 
 ## 插件开发规范
 
@@ -173,7 +214,7 @@ DEVELOPER_API_ORIGINS = "https://theme-dev.example.com,http://localhost:5173"
 
 - `manifest.json` 在 ZIP 根目录且版本已提升。
 - 没有 Token、私有 IP、生产域名、用户数据或构建缓存。
-- 主题在 `classic`/`cards` 基础结构和移动端均验证。
+- CSS 主题在其声明的基础结构和移动端验证；交互主题在 320、375、768、1280、1440 宽度验证。
 - 插件只消费收到的 `payload`，不假设所有字段存在。
 - 所有文本通过 `textContent` 写入；不要把 API 字段直接拼接到 `innerHTML`。
 - 停用、删除、同 ID 升级和回退到原版均已测试。

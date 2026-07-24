@@ -3684,6 +3684,22 @@ body[data-frontend-theme="cards"] .group-by-bar { display: none; }
 .group-by-label select{min-width:120px}
 tr.group-sep td{background:rgba(127,127,127,.12);font-size:13px;padding:8px 10px}
 
+.extension-theme-canvas {
+  width: 100%;
+  min-height: 100vh;
+  background: var(--appearance-bg, var(--bg));
+}
+.extension-theme-canvas iframe {
+  display: block;
+  width: 100%;
+  min-height: 100vh;
+  border: 0;
+  background: transparent;
+}
+body[data-extension-theme-mode="canvas"] > .topbar,
+body[data-extension-theme-mode="canvas"] > .main,
+body[data-extension-theme-mode="canvas"] > .footer { display: none; }
+
 @media (max-width: 560px) {
   .group-by-bar {
     width: 100%;

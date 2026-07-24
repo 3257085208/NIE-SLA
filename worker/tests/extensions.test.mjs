@@ -22,6 +22,8 @@ const themeZip = extensionZip({
 const theme = await uploadExtension(uploadRequest(themeZip, 'themes'), env, 'theme');
 assert.equal(theme.extension.enabled, false);
 assert.equal(theme.extension.storage_root, 'themes/v1');
+assert.equal(theme.extension.mode, 'css');
+assert.match(theme.extension.package_sha256, /^[a-f0-9]{64}$/);
 assert.ok(env.ARCHIVE.keys().some(key => key.startsWith('themes/v1/ocean-theme/')));
 await assert.rejects(() => uploadExtension(uploadRequest(themeZip, 'plugins'), env, 'plugin'), /只接受 plugin 包/);
 const collidingPluginZip = extensionZip({
@@ -30,6 +32,53 @@ const collidingPluginZip = extensionZip({
 await assert.rejects(() => uploadExtension(uploadRequest(collidingPluginZip, 'plugins'), env, 'plugin'), /已被主题使用/);
 await updateExtension('ocean-theme', jsonRequest({ enabled: true }), env);
 assert.equal((await listPublicExtensions(env)).active_theme.id, 'ocean-theme');
+
+const canvasThemeZip = extensionZip({
+  schema: 'nstatus-extension-v1', id: 'canvas-theme', name: 'Canvas Theme', version: '1.0.0', type: 'theme',
+  mode: 'canvas', entry: 'index.html', permissions: ['status:read'], height: 99999,
+}, {
+  'index.html': '<!doctype html><script src="theme.js"></script>',
+  'theme.js': 'parent.postMessage({type:"nstatus:ready"}, "*");',
+});
+const canvasTheme = await uploadExtension(uploadRequest(canvasThemeZip, 'themes'), env, 'theme');
+assert.equal(canvasTheme.extension.mode, 'canvas');
+assert.equal(canvasTheme.extension.height, 12000);
+await updateExtension('canvas-theme', jsonRequest({ enabled: true }), env, 'theme');
+const publicCanvasTheme = (await listPublicExtensions(env)).active_theme;
+assert.equal(publicCanvasTheme.id, 'canvas-theme');
+assert.equal(publicCanvasTheme.entry, 'index.html');
+assert.deepEqual(publicCanvasTheme.permissions, ['status:read']);
+assert.equal((await getExtensionFile(env, 'canvas-theme', 'index.html')).headers.get('content-security-policy').includes("connect-src 'none'"), true);
+
+const privilegedCanvasZip = extensionZip({
+  schema: 'nstatus-extension-v1', id: 'unsafe-canvas', name: 'Unsafe Canvas', version: '1.0.0', type: 'theme',
+  mode: 'canvas', entry: 'index.html', permissions: ['admin:write'],
+}, { 'index.html': '<!doctype html><p>unsafe</p>' });
+await assert.rejects(() => uploadExtension(uploadRequest(privilegedCanvasZip, 'themes'), env, 'theme'), /只支持 status:read/);
+
+const mismatchedFilesZip = extensionZip({
+  schema: 'nstatus-extension-v1', id: 'files-mismatch', name: 'Files Mismatch', version: '1.0.0', type: 'theme',
+  styles: ['theme.css'], files: ['theme.css', 'missing.css'],
+}, { 'theme.css': 'body{}' });
+await assert.rejects(() => uploadExtension(uploadRequest(mismatchedFilesZip, 'themes'), env, 'theme'), /files 清单/);
+
+const explicitManifestZip = extensionZip({
+  schema: 'nstatus-extension-v1', id: 'explicit-files', name: 'Explicit Files', version: '1.0.0', type: 'theme',
+  mode: 'css', styles: ['theme.css'], files: ['manifest.json', 'theme.css'],
+}, { 'theme.css': 'body{}' });
+assert.equal((await uploadExtension(uploadRequest(explicitManifestZip, 'themes'), env, 'theme')).ok, true);
+
+const unknownModeZip = extensionZip({
+  schema: 'nstatus-extension-v1', id: 'unknown-mode', name: 'Unknown Mode', version: '1.0.0', type: 'theme',
+  mode: 'native', styles: ['theme.css'],
+}, { 'theme.css': 'body{}' });
+await assert.rejects(() => uploadExtension(uploadRequest(unknownModeZip, 'themes'), env, 'theme'), /mode 只能是 css 或 canvas/);
+
+const permissionlessCanvasZip = extensionZip({
+  schema: 'nstatus-extension-v1', id: 'no-permission', name: 'No Permission', version: '1.0.0', type: 'theme',
+  mode: 'canvas', entry: 'index.html', permissions: [],
+}, { 'index.html': '<!doctype html><p>missing permission</p>' });
+await assert.rejects(() => uploadExtension(uploadRequest(permissionlessCanvasZip, 'themes'), env, 'theme'), /必须声明 status:read/);
 
 const pluginZip = extensionZip({
   schema: 'nstatus-extension-v1',
@@ -66,7 +115,7 @@ await updateExtension('mono-theme', jsonRequest({ enabled: true }), env);
 const managed = await listManagedExtensions(env);
 assert.equal(managed.extensions.find(item => item.id === 'mono-theme').enabled, true);
 assert.equal(managed.extensions.find(item => item.id === 'ocean-theme').enabled, false);
-assert.deepEqual((await listManagedExtensionsByType(env, 'theme')).extensions.map(item => item.type), ['theme', 'theme']);
+assert.deepEqual((await listManagedExtensionsByType(env, 'theme')).extensions.map(item => item.type), ['theme', 'theme', 'theme', 'theme']);
 assert.deepEqual((await listManagedExtensionsByType(env, 'plugin')).extensions.map(item => item.type), ['plugin']);
 await assert.rejects(() => updateExtension('hello-plugin', jsonRequest({ enabled: false }), env, 'theme'), /主题不存在/);
 await assert.rejects(() => deleteExtension('mono-theme', env, 'plugin'), /插件不存在/);
@@ -96,11 +145,13 @@ const traversalZip = extensionZip({
 }, { 'theme.css': 'body{}', '../escape.js': 'nope' });
 await assert.rejects(() => uploadExtension(uploadRequest(traversalZip), env), /路径无效/);
 
-for (const example of ['theme-minimal', 'plugin-status-summary']) {
+for (const example of ['theme-minimal', 'theme-cards', 'theme-canvas', 'plugin-status-summary']) {
   const root = path.resolve(import.meta.dirname, '..', '..', 'examples', 'extensions', example);
-  const names = example === 'theme-minimal'
+  const names = example === 'theme-minimal' || example === 'theme-cards'
     ? ['manifest.json', 'theme.css']
-    : ['manifest.json', 'index.html', 'plugin.css', 'plugin.js'];
+    : example === 'theme-canvas'
+      ? ['manifest.json', 'index.html', 'theme.css', 'theme.js']
+      : ['manifest.json', 'index.html', 'plugin.css', 'plugin.js'];
   const packageFiles = Object.fromEntries(await Promise.all(names.map(async name => [name, new Uint8Array(await readFile(path.join(root, name)))])));
   const uploaded = await uploadExtension(uploadRequest(zipSync(packageFiles)), env);
   assert.equal(uploaded.ok, true, `${example} must remain a valid package example`);

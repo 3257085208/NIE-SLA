@@ -4,10 +4,10 @@ import { getMeta, setMeta } from './admin/settings.js';
 import { nowSec, parseBoolean } from './utils.js';
 
 const REGISTRY_KEY = 'extensions:registry:v1';
-const ZIP_MAX_BYTES = 2 * 1024 * 1024;
-const EXPANDED_MAX_BYTES = 5 * 1024 * 1024;
-const FILE_MAX_BYTES = 1024 * 1024;
-const FILE_MAX_COUNT = 100;
+const ZIP_MAX_BYTES = 8 * 1024 * 1024;
+const EXPANDED_MAX_BYTES = 16 * 1024 * 1024;
+const FILE_MAX_BYTES = 4 * 1024 * 1024;
+const FILE_MAX_COUNT = 300;
 const ALLOWED_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.woff', '.woff2']);
 
 export async function listPublicExtensions(env) {
@@ -39,9 +39,9 @@ export async function listManagedExtensionsByType(env, type) {
 export async function uploadExtension(request, env, expectedType = '') {
   requireExtensionStorage(env);
   const contentLength = Number(request.headers.get('content-length') || 0);
-  if (contentLength > ZIP_MAX_BYTES) throw new ApiError(413, '扩展 ZIP 不能超过 2 MB');
+  if (contentLength > ZIP_MAX_BYTES) throw new ApiError(413, `扩展 ZIP 不能超过 ${ZIP_MAX_BYTES / 1024 / 1024} MB`);
   const bytes = new Uint8Array(await request.arrayBuffer());
-  if (!bytes.length || bytes.length > ZIP_MAX_BYTES) throw new ApiError(413, '扩展 ZIP 不能为空且不能超过 2 MB');
+  if (!bytes.length || bytes.length > ZIP_MAX_BYTES) throw new ApiError(413, `扩展 ZIP 不能为空且不能超过 ${ZIP_MAX_BYTES / 1024 / 1024} MB`);
 
   let expandedBytes = 0;
   let fileCount = 0;
@@ -69,6 +69,7 @@ export async function uploadExtension(request, env, expectedType = '') {
   try { manifest = JSON.parse(strFromU8(files['manifest.json'])); }
   catch (_) { throw new ApiError(400, 'manifest.json 不是有效 JSON'); }
   const extension = validateManifest(manifest, files);
+  extension.package_sha256 = await sha256Bytes(bytes);
   const requiredType = expectedType ? cleanExtensionType(expectedType) : '';
   if (requiredType && extension.type !== requiredType) {
     throw new ApiError(400, requiredType === 'theme' ? '主题上传入口只接受 theme 包' : '插件上传入口只接受 plugin 包');
@@ -159,17 +160,46 @@ function validateManifest(value, files) {
   if (!name) throw new ApiError(400, '扩展名称不能为空');
   if (!/^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/i.test(version)) throw new ApiError(400, '扩展版本必须使用 SemVer');
   if (!['theme', 'plugin'].includes(type)) throw new ApiError(400, '扩展类型只能是 theme 或 plugin');
-  const record = { id, name, version, description, author, type, files: Object.keys(files).sort() };
+  const repository = extensionUrl(value.repository);
+  const homepage = extensionUrl(value.homepage);
+  const license = String(value.license || '').trim().slice(0, 32);
+  if (license && !/^[A-Za-z0-9][A-Za-z0-9.+-]*$/.test(license)) throw new ApiError(400, 'license 必须使用 SPDX 风格标识');
+  const preview = value.preview ? cleanPackagePath(value.preview) : '';
+  if (preview && (!files[preview] || !/\.(?:png|jpe?g|gif|webp|svg)$/i.test(preview))) throw new ApiError(400, 'preview 必须指向包内图片');
+  const fileNames = Object.keys(files).sort();
+  if (Array.isArray(value.files)) {
+    const declared = [...new Set([...value.files.map(cleanPackagePath), 'manifest.json'])].sort();
+    if (declared.length !== fileNames.length || declared.some((name, index) => name !== fileNames[index])) throw new ApiError(400, 'files 清单必须与 ZIP 文件完全一致');
+  }
+  const record = { id, name, version, description, author, type, repository, homepage, license, preview, files: fileNames };
   if (type === 'theme') {
-    const styles = Array.isArray(value.styles) ? value.styles.map(cleanPackagePath) : [];
-    if (!styles.length || styles.length > 4 || styles.some(path => !path.endsWith('.css') || !files[path])) throw new ApiError(400, '主题必须声明 1 到 4 个有效 CSS styles');
-    record.styles = [...new Set(styles)];
-    record.base_theme = value.base_theme === 'classic' ? 'classic' : 'cards';
+    if (value.mode != null && !['css', 'canvas'].includes(String(value.mode))) throw new ApiError(400, '主题 mode 只能是 css 或 canvas');
+    const mode = value.mode === 'canvas' ? 'canvas' : 'css';
+    record.mode = mode;
+    if (mode === 'canvas') {
+      const entry = cleanPackagePath(value.entry || 'index.html');
+      if (!entry.endsWith('.html') || !files[entry]) throw new ApiError(400, '交互主题 entry 必须指向 ZIP 内的 HTML 文件');
+      const permissions = Array.isArray(value.permissions) ? value.permissions.map(String) : [];
+      if (permissions.some(permission => permission !== 'status:read')) throw new ApiError(400, '交互主题只支持 status:read 权限');
+      if (!permissions.includes('status:read')) throw new ApiError(400, '交互主题必须声明 status:read 权限');
+      record.entry = entry;
+      record.permissions = [...new Set(permissions)];
+      const requestedHeight = Number(value.height || 900);
+      record.height = Number.isFinite(requestedHeight) ? Math.max(400, Math.min(12000, requestedHeight)) : 900;
+      record.base_theme = 'classic';
+      record.styles = [];
+    } else {
+      const styles = Array.isArray(value.styles) ? value.styles.map(cleanPackagePath) : [];
+      if (!styles.length || styles.length > 4 || styles.some(path => !path.endsWith('.css') || !files[path])) throw new ApiError(400, 'CSS 主题必须声明 1 到 4 个有效 styles');
+      record.styles = [...new Set(styles)];
+      record.base_theme = value.base_theme === 'cards' ? 'cards' : 'classic';
+    }
   } else {
     const entry = cleanPackagePath(value.entry || 'index.html');
     if (!entry.endsWith('.html') || !files[entry]) throw new ApiError(400, '插件 entry 必须指向 ZIP 内的 HTML 文件');
     const permissions = Array.isArray(value.permissions) ? value.permissions.map(String) : [];
     if (permissions.some(permission => permission !== 'status:read')) throw new ApiError(400, 'v1 插件只支持 status:read 权限');
+    if (!permissions.includes('status:read')) throw new ApiError(400, 'v1 插件必须声明 status:read 权限');
     record.entry = entry;
     record.permissions = [...new Set(permissions)];
     const requestedHeight = Number(value.height || 360);
@@ -226,9 +256,21 @@ function publicExtension(item) {
     version: item.version,
     description: item.description,
     author: item.author,
+    repository: item.repository || '',
+    homepage: item.homepage || '',
+    license: item.license || '',
+    preview: item.preview || '',
+    package_sha256: item.package_sha256 || '',
     type: item.type,
     revision: item.revision,
-    ...(item.type === 'theme' ? { styles: item.styles, base_theme: item.base_theme } : { entry: item.entry, permissions: item.permissions, height: item.height }),
+    ...(item.type === 'theme'
+      ? {
+          mode: item.mode || 'css',
+          styles: item.styles || [],
+          base_theme: item.base_theme || 'classic',
+          ...(item.mode === 'canvas' ? { entry: item.entry, permissions: item.permissions || [], height: item.height } : {}),
+        }
+      : { entry: item.entry, permissions: item.permissions, height: item.height }),
   };
 }
 
@@ -262,4 +304,21 @@ function contentType(path) {
     '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
     '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.woff': 'font/woff', '.woff2': 'font/woff2',
   })[extension] || 'application/octet-stream';
+}
+
+function extensionUrl(value) {
+  const raw = String(value || '').trim().slice(0, 500);
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' || url.username || url.password) throw new Error();
+    return url.toString();
+  } catch (_) {
+    throw new ApiError(400, '扩展主页与仓库地址必须使用 HTTPS');
+  }
+}
+
+async function sha256Bytes(bytes) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return [...digest].map(value => value.toString(16).padStart(2, '0')).join('');
 }

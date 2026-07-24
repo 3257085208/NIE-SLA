@@ -259,6 +259,9 @@ function loadPlugins() { return loadManagedExtensions("plugins"); }
 function extensionCardHtml(extension, resource) {
   const type = extension.type === "theme" ? "主题" : "插件";
   const state = extension.enabled ? "已启用" : "未启用";
+  const runtime = extension.type === "theme"
+    ? (extension.mode === "canvas" ? "交互画布" : `CSS · ${extension.base_theme === "cards" ? "卡片布局" : "经典布局"}`)
+    : "隔离面板";
   return `<article class="extension-card${extension.enabled ? " active" : ""}">
     <div class="extension-card-head">
       <div><span>${escapeHtml(type)}</span><h3>${escapeHtml(extension.name)}</h3></div>
@@ -269,6 +272,9 @@ function extensionCardHtml(extension, resource) {
       <div><dt>ID</dt><dd><code>${escapeHtml(extension.id)}</code></dd></div>
       <div><dt>版本</dt><dd>${escapeHtml(extension.version)}</dd></div>
       <div><dt>作者</dt><dd>${escapeHtml(extension.author || "未署名")}</dd></div>
+      <div><dt>模式</dt><dd>${escapeHtml(runtime)}</dd></div>
+      <div><dt>许可</dt><dd>${escapeHtml(extension.license || "未声明")}</dd></div>
+      <div><dt>SHA</dt><dd><code title="${escapeHtml(extension.package_sha256 || "")}">${escapeHtml((extension.package_sha256 || "未提供").slice(0, 16))}${extension.package_sha256 ? "…" : ""}</code></dd></div>
     </dl>
     <div class="extension-card-actions">
       <button class="btn btn-sm ${extension.enabled ? "" : "btn-primary"}" data-extension-action="toggle" data-extension-resource="${resource}" data-extension-id="${escapeHtml(extension.id)}" data-extension-enabled="${extension.enabled ? "1" : "0"}">${extension.enabled ? "停用" : "启用"}</button>
@@ -285,7 +291,7 @@ async function uploadExtensionPackage(resource, file) {
   const inputId = isTheme ? "themeZip" : "pluginZip";
   const button = byId(isTheme ? "uploadThemeBtn" : "uploadPluginBtn");
   if (!file.name.toLowerCase().endsWith(".zip")) return toast(`请选择 ZIP ${displayName}包`, "err");
-  if (file.size > 2 * 1024 * 1024) return toast(`${displayName} ZIP 不能超过 2 MB`, "err");
+  if (file.size > 8 * 1024 * 1024) return toast(`${displayName} ZIP 不能超过 8 MB`, "err");
   button.disabled = true;
   button.textContent = "正在校验并上传...";
   try {
@@ -1711,34 +1717,10 @@ async function saveAppearance(reset) {
 async function loadTheme() {
   try {
     const d = await api("/api/settings");
-    const cur = d.frontend_theme || "classic";
-    byId("sTheme").innerHTML =
-      '<p class="hint">选择首页展示风格；原版 UI 保留，卡片风格为额外主题。</p><div class="seg" id="themeBtns"><button class="btn ' +
-      (cur === "classic" ? "on" : "") +
-      '" data-theme="classic">原版列表</button><button class="btn ' +
-      (cur === "cards" ? "on" : "") +
-      '" data-theme="cards">卡片风格</button></div>';
-    document
-      .querySelectorAll("#themeBtns button")
-      .forEach((b) => (b.onclick = () => saveTheme(b.dataset.theme)));
+    const builtIn = d.themes?.[0]?.name || "原版列表";
+    byId("sTheme").innerHTML = `<p class="hint">内置只保留稳定基础布局。卡片布局及其他视觉方案请在“主题”页面上传 ZIP 并启用；停用扩展主题会自动回到这里。</p><div class="seg"><button class="btn on" type="button" disabled>${escapeHtml(builtIn)}</button></div>`;
   } catch (e) {
     errBox("sTheme", e);
-  }
-}
-async function saveTheme(theme) {
-  try {
-    const d = await api("/api/settings", {
-      method: "PATCH",
-      body: JSON.stringify({ frontend_theme: theme }),
-    });
-    toast(
-      "前端样式已切换为 " +
-        (d.frontend_theme === "cards" ? "卡片风格" : "原版列表"),
-      "ok",
-    );
-    loadTheme();
-  } catch (e) {
-    toast(e.message, "err");
   }
 }
 async function loadAgentUpdate() {

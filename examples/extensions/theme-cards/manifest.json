@@ -1,0 +1,15 @@
+{
+  "schema": "nstatus-extension-v1",
+  "id": "nstatus-cards",
+  "name": "NStatus Cards",
+  "version": "1.0.0",
+  "type": "theme",
+  "mode": "css",
+  "author": "NIE-SLA",
+  "description": "Official card dashboard theme with region filters, VPS metrics and detail views.",
+  "repository": "https://github.com/3257085208/NIE-SLA",
+  "license": "AGPL-3.0",
+  "base_theme": "cards",
+  "styles": ["theme.css"],
+  "files": ["theme.css"]
+}

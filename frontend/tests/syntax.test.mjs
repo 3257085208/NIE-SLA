@@ -15,11 +15,13 @@ for (const file of files) {
   assert.equal(result.status, 0, `${path.relative(root, file)} syntax failed:\n${result.stderr}`);
 }
 
-const [appSource, adminSource, adminCss, adminHtml, latencyAgentSource, latencyInstallerSource] = await Promise.all([
+const [appSource, adminSource, adminCss, adminHtml, indexHtml, extensionsSource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
   readFile(path.join(root, 'app.js'), 'utf8'),
   readFile(path.join(root, 'js', 'admin.js'), 'utf8'),
   readFile(path.join(root, 'admin.css'), 'utf8'),
   readFile(path.join(root, 'admin.html'), 'utf8'),
+  readFile(path.join(root, 'index.html'), 'utf8'),
+  readFile(path.join(root, 'js', 'extensions.js'), 'utf8'),
   readFile(path.join(root, 'latency-agent.py'), 'utf8'),
   readFile(path.join(root, 'install-latency.sh'), 'utf8'),
 ]);
@@ -43,8 +45,14 @@ assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector
 assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260724-appearance1/, 'admin CSS cache key must publish appearance controls');
-assert.match(adminHtml, /js\/admin\.js\?v=20260724-appearance1/, 'admin JS cache key must publish appearance controls');
+assert.match(adminHtml, /admin\.css\?v=20260724-theme-runtime1/, 'admin CSS cache key must publish theme runtime controls');
+assert.match(adminHtml, /js\/admin\.js\?v=20260724-theme-runtime1/, 'admin JS cache key must publish theme runtime controls');
+assert.match(indexHtml, /body data-frontend-theme="classic"/, 'classic must be the only built-in default theme');
+assert.match(indexHtml, /id="themeCanvas"/, 'frontend must provide a sandboxed full-layout theme mount');
+assert.doesNotMatch(adminSource, /data-theme="cards"/, 'cards must not remain a built-in settings choice');
+assert.match(extensionsSource, /THEME_API_RESOURCES = new Set\(\['status', 'checks', 'metrics', 'pings', 'latency'\]\)/, 'canvas themes must use the read-only resource allowlist');
+assert.match(extensionsSource, /frame\.sandbox = 'allow-scripts'/, 'canvas themes must run without same-origin access');
+assert.match(extensionsSource, /credentials: 'omit'/, 'canvas theme read-only requests must not carry browser credentials');
 assert.match(adminHtml, /id="sAppearance"/, 'admin must provide a centralized appearance editor');
 assert.match(adminHtml, /id="pg-themes"[\s\S]*id="themeZip"[\s\S]*id="themeTable"/, 'admin must provide an independent theme page and upload path');
 assert.match(adminHtml, /id="pg-plugins"[\s\S]*id="pluginZip"[\s\S]*id="pluginTable"/, 'admin must provide an independent plugin page and upload path');

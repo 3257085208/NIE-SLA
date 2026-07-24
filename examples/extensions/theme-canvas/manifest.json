@@ -1,0 +1,15 @@
+{
+  "schema": "nstatus-extension-v1",
+  "id": "canvas-starter",
+  "name": "Canvas Starter",
+  "version": "1.0.0",
+  "type": "theme",
+  "mode": "canvas",
+  "author": "Example Developer",
+  "description": "A sandboxed full-layout theme starter.",
+  "license": "MIT",
+  "entry": "index.html",
+  "permissions": ["status:read"],
+  "height": 900,
+  "files": ["index.html", "theme.css", "theme.js"]
+}

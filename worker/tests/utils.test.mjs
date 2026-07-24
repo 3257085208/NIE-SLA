@@ -239,6 +239,9 @@ assert.deepEqual(await requireLatencyAgentForId(agentRequest(latencyToken), late
 
 const settingsEnv = fakeD1Env();
 assert.equal((await getPublicSettings(settingsEnv)).agent_auto_update, false);
+assert.deepEqual((await getPublicSettings(settingsEnv)).themes, [{ id: 'classic', name: '原版列表' }]);
+await updatePublicSettings(new Request('https://example.com', { method: 'PATCH', body: JSON.stringify({ frontend_theme: 'cards' }) }), settingsEnv);
+assert.equal((await getPublicSettings(settingsEnv)).frontend_theme, 'classic');
 assert.equal(normalizeFrontendAppearance({ site_name: ' Demo ', brand_logo_url: 'javascript:bad', accent_color: 'red' }).site_name, 'Demo');
 assert.equal(normalizeFrontendAppearance({ site_name: ' Demo ', brand_logo_url: 'javascript:bad', accent_color: 'red' }).brand_logo_url, '');
 assert.equal(normalizeFrontendAppearance({ site_name: ' Demo ', brand_logo_url: 'javascript:bad', accent_color: 'red' }).accent_color, '#2ea36d');

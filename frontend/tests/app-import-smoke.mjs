@@ -30,7 +30,7 @@ class ElementStub {
 }
 
 const body = new ElementStub();
-body.dataset = { frontendTheme: 'cards' };
+body.dataset = { frontendTheme: 'classic' };
 globalThis.document = {
   body,
   querySelector() { return null; },

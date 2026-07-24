@@ -65,14 +65,14 @@ requestAnimationFrame(() => document.body.classList.add('is-loaded'));
 
 function initialFrontendTheme() {
   const bodyTheme = document.body?.dataset.frontendTheme;
-  if (bodyTheme === 'cards' || bodyTheme === 'classic') return bodyTheme;
+  if (bodyTheme === 'classic') return bodyTheme;
 
   try {
     const savedTheme = localStorage.getItem(FRONTEND_THEME_KEY);
-    if (savedTheme === 'cards' || savedTheme === 'classic') return savedTheme;
+    if (savedTheme === 'classic') return savedTheme;
   } catch (_) {}
 
-  return 'cards';
+  return 'classic';
 }
 
 const state = {
@@ -400,7 +400,7 @@ function statusGroupsRenderKey(data) {
 }
 
 function applyFrontendTheme(data) {
-  const raw = extensionBaseTheme() || data?.frontend?.theme || data?.frontend_theme || 'classic';
+  const raw = extensionBaseTheme() || 'classic';
   const theme = raw === 'cards' ? 'cards' : 'classic';
   state.frontendTheme = theme;
   document.body.dataset.frontendTheme = theme;

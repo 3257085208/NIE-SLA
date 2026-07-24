@@ -10,6 +10,8 @@
 nstatus-theme-example/
   src/
     theme.css
+    index.html            # canvas 模式使用
+    theme.js              # canvas 模式使用
     assets/
   manifest.json
   package.json
@@ -24,7 +26,7 @@ nstatus-theme-example/
 
 ## 2. Manifest 与兼容性
 
-必填字段为 `schema`、`id`、`name`、`version`、`type`、`styles`；`type` 固定为 `theme`。推荐填写 `author`、`description` 和 `base_theme`。
+通用必填字段为 `schema`、`id`、`name`、`version`、`type`；`type` 固定为 `theme`。CSS 模式需要 `styles`，交互画布模式需要 `entry` 与 `permissions`。
 
 ```json
 {
@@ -33,6 +35,7 @@ nstatus-theme-example/
   "name": "Example Theme",
   "version": "1.0.0",
   "type": "theme",
+  "mode": "css",
   "author": "Developer",
   "description": "A restrained NStatus theme.",
   "base_theme": "classic",
@@ -41,9 +44,11 @@ nstatus-theme-example/
 ```
 
 - `id` 发布后永久稳定；分叉项目必须使用新 ID。
-- `base_theme` 只能是 `classic` 或 `cards`。
+- `mode` 可为 `css` 或 `canvas`；省略时按 `css` 处理。
+- CSS 模式的 `base_theme` 可为 `classic` 或 `cards`，后者是主题专用布局基座。
 - `styles` 按顺序加载，限 1 到 4 个包内 CSS 文件。
-- v1 不允许主题 JavaScript、远程 CSS、远程字体或运行时网络请求。
+- canvas 模式必须提供包内 HTML `entry`，权限仅允许 `status:read`，高度限制为 400 到 12000。
+- canvas 脚本只能在无同源权限的 sandbox iframe 中执行；所有资源必须在包内，不能主动联网。
 - 兼容版本内只能新增可选样式；依赖新的 DOM 或变量时提升主题次版本并写入变更记录。
 
 ## 3. 编码与设计标准
@@ -55,6 +60,8 @@ nstatus-theme-example/
 - 在 320、375、768、1280 和 1440 像素宽度验证，无横向溢出、遮挡或文本截断。
 - 尊重 `prefers-reduced-motion`；动画不能影响状态读取。
 - 字体必须提供系统回退，不允许为装饰引入大体积字体。
+- canvas 模式必须使用 `textContent` 或安全 DOM API 渲染 API 字符串，并忽略未知字段。
+- canvas 模式必须实现 `nstatus:ready`、`nstatus:status` 和动态高度 `nstatus:resize`；历史数据只能使用规定的 `nstatus:request` 白名单。
 
 ## 4. 标准命令
 
@@ -73,7 +80,7 @@ npm run package
 ## 5. 测试与发布验收
 
 - ZIP 安装、默认停用、启用、停用、删除和同 ID 升级均通过。
-- 在 `classic`/`cards` 基础结构、桌面/移动端、浅色/深色系统偏好下检查。
+- CSS 模式在声明的基础结构检查；canvas 模式独立检查桌面/移动端、浅色/深色系统偏好。
 - 状态正常、离线、延迟、待检查以及长商家名/标签均不破版。
 - 包内没有绝对 URL、凭据、私有基础设施或未授权素材。
 - `version` 使用 SemVer：修复为 PATCH，兼容新增为 MINOR，破坏性变化为 MAJOR。
@@ -83,4 +90,10 @@ npm run package
 
 ## 6. NodeGet 参考边界
 
-NStatus借鉴 NodeGet 的独立主题仓库、显式配置/清单、标准构建命令和固定产物目录。两者运行模型不同，NodeGet 主题不能直接上传到 NStatus；移植时必须移除脚本能力和私有 API 依赖，并重新按本规范完成无障碍、安全及回退测试。
+本规范对照过 Komari、NodeGet 与哪吒的公开实现：
+
+- Komari：采用根清单、预览图、主题配置表单、远程市场源和下载包 SHA-256；NStatus 采用其中的元数据、包指纹和未来可扩展配置表单思路。
+- NodeGet：把主题视为可使用任意框架构建的完整静态应用，并生成显式文件列表、配置文件和发布 ZIP；NStatus 的 canvas 模式采用完整静态应用思路，但使用隔离消息 API 取代主题 Token。
+- 哪吒：使用带仓库、作者和版本的前端模板清单；NStatus 将这些信息放进每个独立包的 Manifest，而不是把第三方主题编译进主程序。
+
+NStatus 不照搬任意脚本同源运行、把访问 Token 写入主题配置、或未经哈希验证的远程安装。NodeGet/Komari 主题不能直接上传；移植脚本主题时必须改为 canvas 消息协议、移除私有 API 依赖，并重新完成无障碍、安全及回退测试。

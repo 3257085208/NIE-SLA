@@ -66,7 +66,7 @@ https://YOUR-PAGES/bin/SHA256SUMS
 
 ## 主题与插件
 
-后台“主题”和“插件”是两个独立页面，分别使用 `/api/themes/*` 与 `/api/plugins/*` 上传和管理 `nstatus-extension-v1` ZIP。主题以 CSS 覆盖原版 `classic`/`cards`，插件在 sandbox iframe 中通过只读消息 API 获取公开状态；停用第三方主题会回退到设置页选择的原版主题。
+后台“主题”和“插件”是两个独立页面，分别使用 `/api/themes/*` 与 `/api/plugins/*` 上传和管理 `nstatus-extension-v1` ZIP。内置只保留 `classic`；官方卡片布局也通过主题 ZIP 启用。主题支持低风险 CSS 模式和隔离的全布局 canvas 模式，插件继续在 sandbox iframe 中通过只读消息 API 获取公开状态；停用主题会回退到 `classic`。
 
 包格式与 `/api/v1` 见[扩展开发指南](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/14-extensions-developer-guide.md)，独立仓库、工程命令、测试、SemVer、许可证与发布标准见[主题规范](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/15-theme-development-standard.md)和[插件规范](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/16-plugin-development-standard.md)。
 

@@ -1,6 +1,8 @@
 let registry = { active_theme: null, plugins: [] };
 let latestStatus = null;
 const pluginFrames = new Map();
+let themeFrameRecord = null;
+const THEME_API_RESOURCES = new Set(['status', 'checks', 'metrics', 'pings', 'latency']);
 
 export async function initializeFrontendExtensions() {
   try {
@@ -8,7 +10,7 @@ export async function initializeFrontendExtensions() {
     const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
     registry = data;
-    mountTheme(data.active_theme);
+    await mountTheme(data.active_theme);
     mountPlugins(data.plugins || []);
   } catch (error) {
     console.warn('NStatus extensions unavailable:', error);
@@ -17,18 +19,41 @@ export async function initializeFrontendExtensions() {
 }
 
 export function extensionBaseTheme() {
-  return registry.active_theme?.base_theme || '';
+  return registry.active_theme?.mode === 'canvas' ? '' : (registry.active_theme?.base_theme || '');
 }
 
 export function publishExtensionStatus(status) {
   latestStatus = status;
   for (const frame of pluginFrames.keys()) sendStatus(frame);
+  sendThemeStatus();
 }
 
-function mountTheme(theme) {
+async function mountTheme(theme) {
   document.querySelectorAll('link[data-nstatus-extension-theme]').forEach(node => node.remove());
   document.body.dataset.extensionTheme = theme?.id || '';
+  document.body.dataset.extensionThemeMode = '';
+  themeFrameRecord = null;
+  const canvas = document.getElementById('themeCanvas');
+  if (canvas) {
+    canvas.hidden = true;
+    canvas.replaceChildren();
+  }
   if (!theme) return;
+  if (theme.mode === 'canvas') {
+    if (!canvas || !theme.entry) return;
+    const frame = document.createElement('iframe');
+    frame.title = theme.name;
+    frame.sandbox = 'allow-scripts';
+    frame.referrerPolicy = 'no-referrer';
+    frame.height = String(clampCanvasHeight(theme.height));
+    frame.src = extensionFileUrl(theme, theme.entry);
+    frame.addEventListener('load', () => sendThemeStatus());
+    canvas.appendChild(frame);
+    canvas.hidden = false;
+    document.body.dataset.extensionThemeMode = 'canvas';
+    themeFrameRecord = { frame, theme, window: frame.contentWindow };
+    return;
+  }
   for (const path of theme.styles || []) {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
@@ -74,11 +99,66 @@ function mountPlugins(plugins) {
 }
 
 window.addEventListener('message', event => {
+  const themeRecord = themeFrameRecord && event.source === themeFrameRecord.window ? themeFrameRecord : null;
+  if (themeRecord && event.data && typeof event.data === 'object') {
+    if (event.data.type === 'nstatus:ready') sendThemeStatus();
+    if (event.data.type === 'nstatus:resize') themeRecord.frame.height = String(clampCanvasHeight(event.data.height));
+    if (event.data.type === 'nstatus:request') handleThemeRequest(themeRecord, event.data);
+    return;
+  }
   const record = pluginFrames.get(event.source);
   if (!record || !event.data || typeof event.data !== 'object') return;
   if (event.data.type === 'nstatus:ready') sendStatus(event.source);
   if (event.data.type === 'nstatus:resize') record.frame.height = String(clampHeight(event.data.height));
 });
+
+function sendThemeStatus() {
+  if (!themeFrameRecord?.window || !latestStatus) return;
+  themeFrameRecord.window.postMessage({
+    type: 'nstatus:status',
+    api_version: 'v1',
+    payload: latestStatus,
+  }, '*');
+}
+
+async function handleThemeRequest(record, message) {
+  const requestId = String(message.request_id || '').slice(0, 80);
+  const resource = String(message.resource || '').trim().toLowerCase();
+  if (!requestId || !THEME_API_RESOURCES.has(resource) || !record.theme.permissions?.includes('status:read')) {
+    sendThemeResponse(record, requestId, false, null, '不允许的只读主题请求');
+    return;
+  }
+  try {
+    const query = new URLSearchParams();
+    const entries = Object.entries(message.query && typeof message.query === 'object' ? message.query : {}).slice(0, 20);
+    for (const [key, value] of entries) {
+      if (!/^[a-z][a-z0-9_]{0,39}$/i.test(key) || !['string', 'number', 'boolean'].includes(typeof value)) continue;
+      query.set(key, String(value).slice(0, 200));
+    }
+    const suffix = query.size ? `?${query}` : '';
+    const apiBase = String(window.NSTATUS_API_BASE || '').replace(/\/+$/, '');
+    const response = await fetch(`${apiBase}/api/v1/${resource}${suffix}`, {
+      cache: 'no-store',
+      credentials: 'omit',
+      headers: { accept: 'application/json' },
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload?.error || `HTTP ${response.status}`);
+    sendThemeResponse(record, requestId, true, payload, '');
+  } catch (error) {
+    sendThemeResponse(record, requestId, false, null, String(error?.message || error).slice(0, 240));
+  }
+}
+
+function sendThemeResponse(record, requestId, ok, payload, error) {
+  record.window?.postMessage({
+    type: 'nstatus:response',
+    api_version: 'v1',
+    request_id: requestId,
+    ok,
+    ...(ok ? { payload } : { error }),
+  }, '*');
+}
 
 function sendStatus(targetWindow) {
   if (!targetWindow || !latestStatus) return;
@@ -96,4 +176,8 @@ function extensionFileUrl(extension, path) {
 
 function clampHeight(value) {
   return Math.max(200, Math.min(1200, Number(value || 360)));
+}
+
+function clampCanvasHeight(value) {
+  return Math.max(400, Math.min(12000, Number(value || 900)));
 }

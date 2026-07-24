@@ -76,7 +76,7 @@ export function convertPriceToCny(amount, currency, rates) {
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
-const FRONTEND_THEMES = new Set(['classic', 'cards']);
+const FRONTEND_THEMES = new Set(['classic']);
 
 export const DEFAULT_FRONTEND_APPEARANCE = Object.freeze({
   site_name: '聶.NET', site_subtitle: '', hero_subtitle: '', page_title: '', favicon_url: '', brand_home_url: './',
@@ -238,7 +238,6 @@ export async function getPublicSettings(env) {
     traffic: trafficPeriod(env),
     themes: [
       { id: 'classic', name: '原版列表' },
-      { id: 'cards', name: '卡片风格' },
     ],
   };
 }
