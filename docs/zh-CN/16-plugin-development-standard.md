@@ -44,7 +44,7 @@ nstatus-plugin-example/
 - v1 唯一权限是 `status:read`，高度范围为 200 到 1200。
 - iframe 只有 `sandbox="allow-scripts"`，没有同源、弹窗、表单或顶层导航权限。
 - CSP 禁止联网、内联脚本和表单；JavaScript、CSS、图片与字体必须随包提供。
-- 插件永远不能获取 Admin Token、Agent Token、管理接口、主页面 DOM 或浏览器存储。
+- 插件永远不能获取管理员密码、Session、Agent Token、管理接口、主页面 DOM 或浏览器存储。
 
 ## 3. 编码标准
 

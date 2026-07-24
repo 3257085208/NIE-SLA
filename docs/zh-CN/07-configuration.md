@@ -11,6 +11,9 @@
 | `TIMEZONE_OFFSET_MINUTES` | `480` | UTC+8，影响每日桶和归档 |
 | `CONCURRENCY` | `40` | 单轮并发目标数 |
 | `MAX_TARGETS_PER_RUN` | `60` | 单轮最大目标数 |
+| `FAST_STATUS_ENABLED` | `true` | 启用 R2 轻量当前状态探测 |
+| `FAST_STATUS_INTERVAL_SEC` | `60` | 当前状态探测间隔，限制 60–300 秒 |
+| `FAST_STATUS_MAX_TARGETS` | `50` | 每分钟最多快速探测目标数，限制 1–50 |
 | `CHECKS_DEFAULT_LIMIT` | `864` | 明细默认上限 |
 | `CHECKS_WINDOW_HOURS` | `72` | 明细默认窗口 |
 | `PUBLIC_MASK_IPS` | `true` | 公开接口掩码 IP |
@@ -52,17 +55,18 @@
 
 | 名称 | 必需 | 用途 |
 | --- | --- | --- |
-| `ADMIN_TOKEN` | 是 | 后台认证 |
+| `ADMIN_PASSWORD` | 新部署必需 | 后台密码；旧部署可暂时回退 `ADMIN_TOKEN` |
 | `AGENT_TOKEN` | 是 | 派生 scoped Token |
 | `TOTP_ENCRYPTION_KEY` | 启用 TOTP 时 | 加密 TOTP secret |
-| `ALERT_ENCRYPTION_KEY` | 后台保存 TG Token 时 | 加密报警 secret |
+| `ALERT_ENCRYPTION_KEY` | 后台保存告警密钥时 | 加密报警 secret；默认回退 TOTP 密钥 |
 | `TELEGRAM_BOT_TOKEN` | 可选 | 环境配置 TG Bot |
-| `TELEGRAM_CHAT_ID` | 可选 | 环境配置 Chat ID |
+| `RESEND_API_KEY` | 可选 | 环境配置 Resend 邮件 API |
+| `GITHUB_OAUTH_CLIENT_SECRET` | 可选 | GitHub OAuth App secret |
 
 写入：
 
 ```bash
-npx wrangler secret put ADMIN_TOKEN
+npx wrangler secret put ADMIN_PASSWORD
 ```
 
 列出 secret 名称不会显示值：
@@ -70,6 +74,20 @@ npx wrangler secret put ADMIN_TOKEN
 ```bash
 npx wrangler secret list
 ```
+
+## 后台认证与告警 vars
+
+| 名称 | 默认 | 说明 |
+| --- | --- | --- |
+| `ADMIN_USERNAME` | `admin` | 后台账号 |
+| `GITHUB_OAUTH_CLIENT_ID` | 空 | GitHub OAuth Client ID |
+| `GITHUB_OAUTH_ALLOWED_USERS` | 空 | GitHub 用户名白名单，英文逗号分隔 |
+| `GITHUB_OAUTH_CALLBACK_ORIGIN` | 当前 API Origin | 可选；固定 OAuth callback 的 HTTPS Origin |
+| `ALERT_EMAIL_FROM` | 空 | Resend 发件人 |
+| `ALERT_EMAIL_TO` | 空 | 收件人，英文逗号分隔 |
+| `ALERT_EMAIL_REPLY_TO` | 空 | 可选 Reply-To |
+
+GitHub 登录必须同时配置 Client ID、Client Secret 和非空白名单，否则登录按钮不会显示。callback 默认使用发起登录请求的 API Origin；仅在反向代理无法保留公开 Origin 时设置 `GITHUB_OAUTH_CALLBACK_ORIGIN`。授权完成后再按 `PUBLIC_SITE_ORIGIN` 返回管理页。
 
 ## Agent 环境变量
 

@@ -54,7 +54,7 @@ npx wrangler d1 execute nstatus-db --remote --command \
 2. `duration_ms` 是否接近 Worker 生命周期或超时上限。
 3. 目标数量是否超过 `MAX_TARGETS_PER_RUN`。
 4. `CONCURRENCY` 是否仍是旧值 8。
-5. 是否在每次 5 分钟 Cron 中执行大量 R2/D1 清理。
+5. 是否在每分钟 Cron 中执行大量 R2/D1 清理。
 
 当前推荐 `CONCURRENCY=40`，维护任务每小时执行。不要把真实失败的 `ok=0` 当成漏检；只有 `missed=true`/synthetic 记录才是调度缺口。
 
@@ -209,4 +209,4 @@ npx wrangler pages deploy . --project-name YOUR_PROJECT --branch main
 - 最近 Cron 诊断。
 - Agent 日志相关 50–200 行。
 
-绝不要提供完整安装命令、Admin Token、Agent Token、TOTP secret 或 Telegram Bot Token。
+绝不要提供完整安装命令、管理员密码/Session、Agent Token、TOTP secret、Telegram Bot Token 或 Resend API Key。

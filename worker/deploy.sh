@@ -12,22 +12,6 @@ echo -e "\n${BOLD}NStatus Deployment${NC}\n"
 command -v node &>/dev/null || { echo "Need Node.js 18+"; exit 1; }
 npx wrangler --version &>/dev/null || { echo "Need wrangler: npm i -g wrangler"; exit 1; }
 put_secret() { local name="$1" value="$2"; printf '%s' "$value" | npx wrangler secret put "$name" >/dev/null 2>&1; }
-curl_config_escape() {
-  local s="${1-}"
-  s=${s//\\/\\\\}
-  s=${s//"/\\"}
-  printf '%s' "$s"
-}
-curl_admin() {
-  local token="$1" cfg rc
-  shift
-  cfg=$(mktemp) || return 1
-  chmod 0600 "$cfg" 2>/dev/null || true
-  printf 'header = "Authorization: Bearer %s"\n' "$(curl_config_escape "$token")" > "$cfg"
-  if curl --config "$cfg" "$@"; then rc=0; else rc=$?; fi
-  rm -f "$cfg"
-  return $rc
-}
 
 ok "Node.js + Wrangler ready"
 
@@ -42,6 +26,8 @@ ok "Wrangler authenticated"
 echo ""
 read -rp "  Site name [NStatus]: " SITE_NAME
 SITE_NAME="${SITE_NAME:-NStatus}"
+read -rp "  Admin username [admin]: " ADMIN_USER
+ADMIN_USER="${ADMIN_USER:-admin}"
 read -rp "  Timezone offset minutes [480]: " TZ
 TZ="${TZ:-480}"
 
@@ -71,13 +57,13 @@ fi
 
 # 6. Secrets
 echo ""
-read -rsp "  Admin token (leave empty to keep existing): " ADMIN_TOK
+read -rsp "  Admin password (leave empty to keep existing): " ADMIN_PASS
 echo
-if [[ -n "$ADMIN_TOK" ]]; then
-  put_secret ADMIN_TOKEN "$ADMIN_TOK"
-  ok "ADMIN_TOKEN set"
+if [[ -n "$ADMIN_PASS" ]]; then
+  put_secret ADMIN_PASSWORD "$ADMIN_PASS"
+  ok "ADMIN_PASSWORD set"
 else
-  ok "ADMIN_TOKEN skipped"
+  ok "ADMIN_PASSWORD skipped"
 fi
 
 read -rsp "  Agent token (leave empty to keep existing): " AGENT_TOK
@@ -115,10 +101,11 @@ compatibility_date = "2026-06-17"
 workers_dev = true
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["* * * * *"]
 
 [vars]
 PUBLIC_SITE_NAME = "$SITE_NAME"
+ADMIN_USERNAME = "$ADMIN_USER"
 PUBLIC_WORKER_URL = "$WORKER_DOMAIN"
 PUBLIC_AGENT_API_BASE = "$WORKER_DOMAIN"
 TIMEZONE_OFFSET_MINUTES = "$TZ"
@@ -137,6 +124,9 @@ PING_HISTORY_RETENTION_HOURS = "6"
 RATE_LIMIT_D1 = "true"
 MISSED_WRITE_BACKFILL_MAX_BUCKETS = "6"
 ALERT_MAX_MESSAGES_PER_RUN = "30"
+FAST_STATUS_ENABLED = "true"
+FAST_STATUS_INTERVAL_SEC = "60"
+FAST_STATUS_MAX_TARGETS = "50"
 
 [[d1_databases]]
 binding = "DB"
@@ -163,7 +153,7 @@ npx wrangler deploy
 ok "Worker deployed"
 
 # 10. Frontend config
-cd ../frontend 2>/dev/null || { echo "  Run from worker/ directory"; exit 1; }
+cd ../../frontend 2>/dev/null || { echo "  Production frontend sibling not found; run from the private worker/ directory"; exit 1; }
 echo "window.NSTATUS_API_BASE = '$WORKER_DOMAIN';" > config.js
 ok "Frontend config written"
 
@@ -174,24 +164,9 @@ PAGES_NAME="${PAGES_NAME:-nstatus}"
 npx wrangler pages deploy ./ --project-name="$PAGES_NAME"
 ok "Frontend deployed"
 
-# 12. Seed data
-echo ""
-read -rp "  Add sample targets? [Y/n]: " SEED
-if [[ "${SEED,,}" != "n" ]]; then
-  cd ../worker
-  TOKEN="$ADMIN_TOK"
-  if [[ -n "$TOKEN" ]]; then
-    curl_admin "$TOKEN" -s -X POST "$WORKER_DOMAIN/api/targets" \
-      -H "Content-Type: application/json" \
-      -d '{"name":"Example Site","group_name":"Web","type":"http","url":"https://example.com","expected_status":"200,301,302"}' > /dev/null 2>&1
-    ok "Sample target added"
-  fi
-fi
-
 echo -e "\n${GREEN}${BOLD}Deployment complete!${NC}"
 echo "  Status page: https://${PAGES_NAME}.pages.dev"
 echo "  API:         $WORKER_DOMAIN"
 echo ""
 echo "  Next steps:"
-echo "    Add targets:  curl -X POST $WORKER_DOMAIN/api/targets ..."
-echo "    Install agent: curl -fsSL https://YOUR_PAGES.pages.dev/install.sh | sudo sh"
+echo "    Open /admin, sign in, add a target, then copy its generated Agent command."

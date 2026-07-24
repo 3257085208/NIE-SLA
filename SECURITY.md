@@ -8,13 +8,14 @@ Security fixes target the current `main` branch and latest GitHub Release. Upgra
 
 Do not open a public Issue for a vulnerability that exposes authentication, another deployment, or private infrastructure. Use GitHub Security Advisories for this repository when available, or contact the repository owner through a private channel listed on their GitHub profile.
 
-Include the affected commit/version, minimal reproduction, impact, and suggested mitigation. Remove real Token values, TOTP secrets, Telegram credentials, Cloudflare IDs, domains, IP addresses, Agent install commands, and production payloads.
+Include the affected commit/version, minimal reproduction, impact, and suggested mitigation. Remove real passwords, Session values, Token values, TOTP secrets, Telegram/Resend credentials, Cloudflare IDs, domains, IP addresses, Agent install commands, and production payloads.
 
 ## Deployment Responsibilities
 
-- Generate independent random values for `ADMIN_TOKEN`, `AGENT_TOKEN`, and encryption keys.
+- Generate independent random values for `ADMIN_PASSWORD`, `AGENT_TOKEN`, and encryption keys.
 - Keep secrets in Wrangler Secrets, never `[vars]`, `.env`, source files, screenshots, or Issue logs.
 - Enable TOTP for administrative access.
+- Keep GitHub OAuth disabled unless a precise callback and explicit username allowlist are configured.
 - Use HTTPS for every public Worker, Pages, and Agent endpoint.
 - Use the scoped Token generated for each target; never distribute the global Agent Token.
 - Validate GitHub Release checksums and pin the manifest hash in generated install commands.

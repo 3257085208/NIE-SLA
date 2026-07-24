@@ -1,27 +1,10 @@
-const TOKEN_KEY = "nstatus_admin_t";
-const TOKEN_TS_KEY = "nstatus_admin_ts";
 const SESSION_KEY = "nstatus_admin_session";
 const SESSION_EXP_KEY = "nstatus_admin_session_exp";
-const TOKEN_TTL_MS = 86_400_000;
 
 export function createAdminClient({ apiBase, onUnauthorized }) {
-  let token = loadToken();
-
-  function loadToken() {
-    const sessionValue = sessionStorage.getItem(TOKEN_KEY);
-    const sessionSavedAt = Number(sessionStorage.getItem(TOKEN_TS_KEY) || 0);
-    if (sessionValue && sessionSavedAt && Date.now() - sessionSavedAt < TOKEN_TTL_MS)
-      return sessionValue;
-
-    // One-time migration removes long-lived master credentials from localStorage.
-    const legacyValue = localStorage.getItem(TOKEN_KEY);
-    const legacySavedAt = Number(localStorage.getItem(TOKEN_TS_KEY) || 0);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(TOKEN_TS_KEY);
-    if (!legacyValue || !legacySavedAt || Date.now() - legacySavedAt >= TOKEN_TTL_MS) return "";
-    sessionStorage.setItem(TOKEN_KEY, legacyValue);
-    sessionStorage.setItem(TOKEN_TS_KEY, String(legacySavedAt));
-    return legacyValue;
+  for (const storage of [sessionStorage, localStorage]) {
+    storage.removeItem("nstatus_admin_t");
+    storage.removeItem("nstatus_admin_ts");
   }
 
   function activeSessionId() {
@@ -43,26 +26,7 @@ export function createAdminClient({ apiBase, onUnauthorized }) {
     sessionStorage.removeItem(SESSION_EXP_KEY);
   }
 
-  function setToken(value) {
-    token = String(value || "").trim();
-  }
-
-  function persistToken() {
-    if (!token) return;
-    sessionStorage.setItem(TOKEN_KEY, token);
-    sessionStorage.setItem(TOKEN_TS_KEY, String(Date.now()));
-  }
-
-  function clearPersistedToken() {
-    token = "";
-    sessionStorage.removeItem(TOKEN_KEY);
-    sessionStorage.removeItem(TOKEN_TS_KEY);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(TOKEN_TS_KEY);
-  }
-
   function clearAuth() {
-    clearPersistedToken();
     saveSession("", "");
   }
 
@@ -78,23 +42,18 @@ export function createAdminClient({ apiBase, onUnauthorized }) {
 
   async function api(path, options = {}) {
     const noAuthReset = Boolean(options.noAuthReset);
-    const forceToken = Boolean(options.forceToken);
     const config = { ...options };
     delete config.noAuthReset;
-    delete config.forceToken;
     const session = activeSessionId();
-    // After TOTP login, prefer short-lived session only — do not keep shipping master ADMIN_TOKEN.
-    const sendToken = forceToken || !session;
     config.headers = {
       "Content-Type": "application/json",
-      ...(sendToken && token ? { Authorization: `Bearer ${token}` } : {}),
       ...(session ? { "x-admin-session": session } : {}),
       ...(options.headers || {}),
     };
     const { response, data } = await fetchJson(`${apiBase}${path}`, config);
     if (response.status === 401 && !noAuthReset) {
       clearAuth();
-      onUnauthorized?.(data.error || "Token 失效，请重新登录");
+      onUnauthorized?.(data.error || "会话失效，请重新登录");
       throw new Error(data.error || "未授权");
     }
     if (!response.ok || data.ok === false) throw new Error(data.error || `HTTP ${response.status}`);
@@ -139,18 +98,32 @@ export function createAdminClient({ apiBase, onUnauthorized }) {
     });
   }
 
+  function apiAuth(path, options = {}, ms = 12_000) {
+    return withTimeout(ms, "登录请求超时，请检查 Worker/CORS", async (signal) => {
+      const { response, data } = await fetchJson(`${apiBase}${path}`, {
+        ...options,
+        signal,
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers || {}),
+        },
+      });
+      if (!response.ok || data.ok === false)
+        throw new Error(data.error || `HTTP ${response.status}`);
+      return data;
+    });
+  }
+
   return {
     api,
-    clearPersistedToken,
     hasSession: () => Boolean(activeSessionId()),
     activeSessionId,
     apiAdmin,
     apiPublic,
+    apiAuth,
     apiTimeout,
     clearAuth,
-    getToken: () => token,
-    persistToken,
     saveSession,
-    setToken,
   };
 }

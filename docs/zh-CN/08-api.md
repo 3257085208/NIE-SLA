@@ -14,12 +14,13 @@ curl -fsSL https://YOUR-API/api/status
 
 ### Admin
 
+账号密码或 GitHub OAuth 只用于登录，登录成功后所有 Admin 接口统一使用：
+
 ```http
-Authorization: Bearer ADMIN_TOKEN
-X-Admin-Session: TOTP_SESSION
+X-Admin-Session: ADMIN_SESSION
 ```
 
-未启用 TOTP 时不需要 session；启用后管理接口要求两者。不要把 Header 命令提交到 Shell 历史或公开日志。
+密码不会作为 Bearer Token 重复发送。Session 原文只保存在当前标签页，D1 保存 SHA-256 哈希与过期时间。
 
 ### Agent
 
@@ -68,6 +69,11 @@ Token 与 `agent_id` 绑定。身份不匹配返回 401/403。
 
 | 方法 | 路径 |
 | --- | --- |
+| GET | `/api/auth/config` |
+| POST | `/api/auth/login` |
+| GET | `/api/auth/github/start` |
+| GET | `/api/auth/github/callback` |
+| POST | `/api/auth/github/complete` |
 | GET | `/api/login` |
 | POST | `/api/totp/setup` |
 | POST | `/api/totp/verify` |
@@ -83,16 +89,24 @@ Token 与 `agent_id` 绑定。身份不匹配返回 401/403。
 | POST | `/api/probe-now` |
 | POST | `/api/sync-targets` |
 
-创建 TCP 示例（占位 Token）：
+账号密码登录示例：
+
+```bash
+curl -X POST https://YOUR-API/api/auth/login \
+  -H 'Content-Type: application/json' \
+  --data '{"username":"admin","password":"YOUR_PASSWORD"}'
+```
+
+返回中的 `session_id` 只应放在临时环境变量或安全客户端中。创建 TCP 示例：
 
 ```bash
 curl -X POST https://YOUR-API/api/targets \
-  -H 'Authorization: Bearer YOUR_ADMIN_TOKEN' \
+  -H 'X-Admin-Session: YOUR_ADMIN_SESSION' \
   -H 'Content-Type: application/json' \
   --data '{"name":"Example VPS","group_name":"VPS","type":"tcp","target_host":"probe.example.com","target_port":443,"probe_region":"apac"}'
 ```
 
-启用 TOTP 后还需 `X-Admin-Session`。更推荐使用后台，避免 Token 留在 Shell 历史。
+启用 TOTP 时登录请求还需提交 `totp`。更推荐使用后台，避免密码或 Session 留在 Shell 历史。
 
 ### 设置、报警和维护
 
@@ -100,7 +114,7 @@ curl -X POST https://YOUR-API/api/targets \
 | --- | --- | --- |
 | GET/PATCH | `/api/settings` | 公开主题、前端外观与文案、自动更新等 |
 | GET/PATCH | `/api/alerts/settings` | 报警设置 |
-| POST | `/api/alerts/test` | 测试 Telegram |
+| POST | `/api/alerts/test` | 测试 Telegram 或邮件；body 使用 `channel` |
 | POST | `/api/alerts/check` | 立即计算报警 |
 | GET | `/api/stats` | 存储统计 |
 | POST | `/api/maintenance/cleanup` | 手动清理 |

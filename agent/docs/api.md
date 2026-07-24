@@ -11,7 +11,9 @@
 | GET | `/api/agent/pings?agent_id=xxx&hours=24` | TCP ping data |
 | GET | `/api/colo-echo` | Current CF colo |
 
-## Admin Endpoints (ADMIN_TOKEN)
+## Admin Endpoints (admin session)
+
+Call `POST /api/auth/login` with the configured username and password, then send the returned value as `x-admin-session`. Passwords are never accepted by CRUD endpoints.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -22,7 +24,8 @@
 | POST | `/api/probe-now` | Trigger immediate probe |
 | POST | `/api/sync-targets` | Sync TARGETS_JSON |
 | POST | `/api/archive` | Manual daily archive |
-| GET | `/api/login` | Validate admin token and return TOTP login state |
+| POST | `/api/auth/login` | Username/password login; also verifies TOTP when enabled |
+| GET | `/api/login` | Validate the current admin session |
 | GET | `/api/settings` | Read public dashboard/admin settings |
 | PATCH | `/api/settings` | Update public dashboard/admin settings |
 | GET | `/api/stats` | Read system statistics |

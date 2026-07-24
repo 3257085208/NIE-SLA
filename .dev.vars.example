@@ -1,3 +1,4 @@
-ADMIN_TOKEN=replace-with-a-random-32-byte-value
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=replace-with-a-strong-unique-password
 AGENT_TOKEN=replace-with-a-different-random-32-byte-value
 TOTP_ENCRYPTION_KEY=replace-with-another-random-32-byte-value

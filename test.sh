@@ -53,6 +53,8 @@ for f in "$ROOT/worker/src"/*.js; do
 done
 run_check "worker utility tests" node "$ROOT/worker/tests/utils.test.mjs"
 run_check "worker hardening tests" node "$ROOT/worker/tests/hardening.test.mjs"
+run_check "admin authentication tests" node "$ROOT/worker/tests/admin-auth.test.mjs"
+run_check "email alert tests" node "$ROOT/worker/tests/alerts.test.mjs"
 run_check "external Latency agent tests" node "$ROOT/worker/tests/latency-agents.test.mjs"
 run_check "extension package tests" node "$ROOT/worker/tests/extensions.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then

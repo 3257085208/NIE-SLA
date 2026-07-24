@@ -153,8 +153,8 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
   const stats7 = statsFromDailySummaries(daily, day, 7);
   const statusChangedAt = previous && Number(previous.ok) === okInt ? (previous.status_changed_at || checkedAt) : checkedAt;
   const outage = buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous);
-  const stateUpdate = { target_id: target.id, checked_at: bucketAt, ok: okInt, latency_ms: latency, status_code: statusCode, error, probe_region: probeRegion, cf_colo: cfColo, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, avg_latency_24h: stats24.avgLatency, last_fail_at: okInt ? (previous?.last_fail_at || null) : checkedAt, current_outage_started_at: outage.currentOutageStartedAt, last_recover_at: outage.lastRecoverAt, status_changed_at: statusChangedAt, daily };
-  await applyProbeWriteBatch(env, target.id, bucketAt, bucketWrites, stateUpdate, outage.write);
+  const stateUpdate = { target_id: target.id, checked_at: checkedAt, ok: okInt, latency_ms: latency, status_code: statusCode, error, probe_region: probeRegion, cf_colo: cfColo, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, avg_latency_24h: stats24.avgLatency, last_fail_at: okInt ? (previous?.last_fail_at || null) : checkedAt, current_outage_started_at: outage.currentOutageStartedAt, last_recover_at: outage.lastRecoverAt, status_changed_at: statusChangedAt, daily };
+  await applyProbeWriteBatch(env, target.id, checkedAt, bucketWrites, stateUpdate, outage.write);
   return { history_points: Number(daily[day]?.total || 0), missed_points: missedPoints.length, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, incident: outage.action, storage: 'd1', state_update: stateUpdate };
 }
 
@@ -207,6 +207,86 @@ export async function runDueTargets(env) {
   } finally {
     await releaseProbeRunLease(env, lease);
   }
+}
+
+export async function runFastStatusTargets(env) {
+  if (!parseBoolean(env.FAST_STATUS_ENABLED ?? true, true)) return { ok: true, skipped: true, reason: 'disabled', count: 0, results: [] };
+  if (!env.DB || !env.ARCHIVE) return { ok: true, skipped: true, reason: 'r2_required', count: 0, results: [] };
+  const intervalSec = clamp(Number(env.FAST_STATUS_INTERVAL_SEC || 60), 60, 300);
+  const maxTargets = clamp(Number(env.FAST_STATUS_MAX_TARGETS || 50), 1, 50);
+  const now = nowSec();
+  const rows = await env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0 ORDER BY group_name, name`).all();
+  const state = await readR2State(env);
+  const d1Latest = await readLatestStatusMap(env, (rows.results || []).map((target) => target.id));
+  const previousById = buildPreviousStateMap(rows.results || [], state, d1Latest);
+  const targets = (rows.results || [])
+    .filter((target) => Number(previousById.get(target.id)?.checked_at || 0) <= now - intervalSec)
+    .sort((a, b) => Number(previousById.get(a.id)?.checked_at || 0) - Number(previousById.get(b.id)?.checked_at || 0))
+    .slice(0, maxTargets);
+  if (!targets.length) return { ok: true, count: 0, results: [] };
+
+  const lease = await acquireProbeRunLease(env, 120);
+  if (!lease) return { ok: true, count: 0, results: [], skipped: true, reason: 'probe_run_in_progress' };
+  try {
+    const concurrency = clamp(Number(env.CONCURRENCY || 20), 1, 40);
+    const results = [];
+    for (let i = 0; i < targets.length; i += concurrency) {
+      const chunk = targets.slice(i, i + concurrency);
+      const settled = await Promise.allSettled(chunk.map((target) => runFastStatusTarget(env, target, previousById.get(target.id) || null)));
+      for (const item of settled) results.push(item.status === 'fulfilled' ? item.value : { ok: false, error: String(item.reason?.message || item.reason) });
+    }
+    await mergeR2StateUpdates(env, results.map((item) => item.state_update).filter(Boolean));
+    return {
+      ok: true,
+      count: targets.length,
+      interval_sec: intervalSec,
+      results: results.map(({ state_update, ...result }) => result),
+    };
+  } finally {
+    await releaseProbeRunLease(env, lease);
+  }
+}
+
+async function runFastStatusTarget(env, target, previous) {
+  const checkedAt = nowSec();
+  const result = await probeTargetForCurrentStatus(env, target);
+  const ok = result.ok ? 1 : 0;
+  const wasDown = previous && Number(previous.ok) === 0;
+  const isDown = ok === 0;
+  const stateUpdate = {
+    ...(previous || {}),
+    target_id: target.id,
+    checked_at: checkedAt,
+    ok,
+    latency_ms: Number.isFinite(result.latency_ms) ? Math.round(result.latency_ms) : null,
+    status_code: result.status_code == null ? null : Number(result.status_code),
+    error: result.error ? String(result.error).slice(0, 500) : null,
+    probe_region: target.probe_region || 'auto',
+    cf_colo: result.cf_colo || null,
+    last_fail_at: isDown ? (wasDown ? previous?.last_fail_at || checkedAt : checkedAt) : previous?.last_fail_at || null,
+    current_outage_started_at: isDown ? (wasDown ? previous?.current_outage_started_at || checkedAt : checkedAt) : null,
+    last_recover_at: !isDown && wasDown ? checkedAt : previous?.last_recover_at || null,
+    status_changed_at: previous && Number(previous.ok) === ok ? previous.status_changed_at || checkedAt : checkedAt,
+  };
+  return { target_id: target.id, name: target.name, ...result, state_update: stateUpdate, storage: 'r2-current-status' };
+}
+
+async function probeTargetForCurrentStatus(env, target) {
+  const region = target.probe_region || 'auto';
+  if (region !== 'auto' && env.REGION_PROXY && ALLOWED_REGIONS.has(region)) {
+    const version = sanitizeId(env.REGION_PROXY_VERSION || 'v9');
+    const targetKey = sanitizeId(target.id || target.name || target.target_host || target.url || 'target');
+    const id = env.REGION_PROXY.idFromName(`probe-region-${region}-${version}-${targetKey}`);
+    const stub = env.REGION_PROXY.get(id, { locationHint: region });
+    const timeoutMs = clamp(Number(target.timeout_ms || DEFAULT_TIMEOUT_MS), 500, 30000) + clamp(Number(env.REGION_PROXY_EXTRA_TIMEOUT_MS || 1500), 250, 10000);
+    const response = await withTimeout(
+      stub.fetch('https://nstatus.internal/probe-current-status', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target }) }),
+      timeoutMs,
+    );
+    if (!response.ok) throw new Error(`Region proxy error: HTTP ${response.status}`);
+    return response.json();
+  }
+  return probeTarget(target, await enrichCfContext({}, env));
 }
 
 async function acquireProbeRunLease(env, ttlSec = 180) {

@@ -1,5 +1,6 @@
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA } from './utils.js';
-import { json, constantTimeEqual } from './auth.js';
+import { json } from './auth.js';
+import { validateAdminSession } from './totp.js';
 import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
 import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, convertPriceToCny, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
 import { summarizeTraffic, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
@@ -10,7 +11,8 @@ export async function getStatusCached(request, env, url, ctx = null) {
   const ttl = clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300);
   const wantsFresh = url.searchParams.get('fresh') === '1' || url.searchParams.get('cache') === '0';
   const wantsLite = url.searchParams.get('lite') === '1';
-  if (!ttl || (wantsFresh && isAdminRequest(request, env))) return getStatusFresh(env, url);
+  const adminRequest = wantsFresh ? await isAdminRequest(request, env) : false;
+  if (!ttl || (wantsFresh && adminRequest)) return getStatusFresh(env, url);
   const cacheUrl = new URL(url.origin + url.pathname);
   cacheUrl.searchParams.set('days', String(clamp(Number(url.searchParams.get('days') || 30), 1, 90)));
   cacheUrl.searchParams.set('privacy', publicCachePrivacyVersion(env));
@@ -19,7 +21,7 @@ export async function getStatusCached(request, env, url, ctx = null) {
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
   if (cached) return withCacheState(cached, ttl, 'hit');
-  const canUseSnapshot = !wantsFresh || !isAdminRequest(request, env);
+  const canUseSnapshot = !wantsFresh || !adminRequest;
   const res = canUseSnapshot ? (await getStatusSnapshot(env, url)) || await getStatusFresh(env, url) : await getStatusFresh(env, url);
   const cachedRes = withCacheState(res, ttl, 'miss');
   if (cachedRes.ok) await putCachedResponse(cache, cacheKey, cachedRes, ctx, 'status');
@@ -48,12 +50,10 @@ async function putCachedResponse(cache, cacheKey, response, ctx, label) {
   await task;
 }
 
-function isAdminRequest(request, env) {
-  const configured = env.ADMIN_TOKEN;
-  if (!configured) return false;
-  const auth = request.headers.get('authorization') || '';
-  const token = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
-  return constantTimeEqual(token, configured);
+async function isAdminRequest(request, env) {
+  const sessionId = String(request.headers.get('x-admin-session') || '').trim();
+  if (!sessionId) return false;
+  return Boolean((await validateAdminSession(env, sessionId)).valid);
 }
 
 export async function getStatusFresh(env, url) {

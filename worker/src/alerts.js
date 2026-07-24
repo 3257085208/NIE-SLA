@@ -1,13 +1,20 @@
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, isPrivateHost } from './utils.js';
 import { summarizeTraffic, trafficSettingsFromTarget } from './traffic.js';
 import { safeJson } from './auth.js';
+import { readR2State } from './storage.js';
 
 const SETTINGS_KEY = 'alert_settings';
 const TG_TOKEN_KEY = 'alert_telegram_bot_token';
+const RESEND_KEY = 'alert_resend_api_key';
 const SECRET_PREFIX = 'enc:v1:';
 const DEFAULT_SETTINGS = {
   enabled: false,
+  telegram_enabled: true,
   telegram_chat_id: '',
+  email_enabled: false,
+  email_from: '',
+  email_to: '',
+  email_reply_to: '',
   offline_minutes: 10,
   repeat_minutes: 360,
   notify_online: true,
@@ -44,21 +51,30 @@ const NUMERIC_FIELDS = new Set([
   'traffic_remaining_gb',
 ]);
 
-const BOOLEAN_FIELDS = new Set(['enabled', 'notify_online']);
+const BOOLEAN_FIELDS = new Set(['enabled', 'telegram_enabled', 'email_enabled', 'notify_online']);
 
 export async function getAlertSettings(env, options = {}) {
   const stored = await readStoredSettings(env);
   const settings = normalizeAlertSettings(stored);
   const token = await telegramToken(env);
+  const resendKey = await resendApiKey(env);
   const chatId = telegramChatId(env, settings);
   const out = {
     ...settings,
     telegram_chat_id: chatId || settings.telegram_chat_id || '',
     telegram_bot_token_set: Boolean(token),
     telegram_bot_token_source: String(env.TELEGRAM_BOT_TOKEN || env.TG_BOT_TOKEN || '').trim() ? 'env' : (token ? 'db' : 'none'),
+    email_from: emailFrom(env, settings),
+    email_to: emailTo(env, settings).join(', '),
+    email_reply_to: emailReplyTo(env, settings),
+    resend_api_key_set: Boolean(resendKey),
+    resend_api_key_source: String(env.RESEND_API_KEY || '').trim() ? 'env' : (resendKey ? 'db' : 'none'),
     last_result: await readAlertLastResult(env),
   };
-  if (options.includeSecret) out.telegram_bot_token = token;
+  if (options.includeSecret) {
+    out.telegram_bot_token = token;
+    out.resend_api_key = resendKey;
+  }
   return out;
 }
 
@@ -74,18 +90,27 @@ export async function updateAlertSettings(request, env) {
     if (token) await setMeta(env, TG_TOKEN_KEY, await encryptSecret(token, env));
   }
   if (parseBoolean(body?.telegram_bot_token_clear, false)) await setMeta(env, TG_TOKEN_KEY, '');
+  if (Object.prototype.hasOwnProperty.call(body || {}, 'resend_api_key')) {
+    const key = String(body.resend_api_key || '').trim();
+    if (key) await setMeta(env, RESEND_KEY, await encryptSecret(key, env));
+  }
+  if (parseBoolean(body?.resend_api_key_clear, false)) await setMeta(env, RESEND_KEY, '');
   return { ok: true, ...(await getAlertSettings(env)) };
 }
 
 export async function sendTestAlert(request, env) {
   const body = await safeJson(request).catch(() => ({}));
   const settings = await getAlertSettings(env, { includeSecret: true });
-  const result = await sendTelegram(env, settings, [
+  const text = [
     `NStatus 测试报警`,
     `站点：${String(env.PUBLIC_SITE_NAME || 'NStatus')}`,
     `时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}`,
     body?.message ? `备注：${String(body.message).slice(0, 200)}` : '',
-  ].filter(Boolean).join('\n'));
+  ].filter(Boolean).join('\n');
+  const channel = String(body?.channel || 'telegram').trim().toLowerCase();
+  const result = channel === 'email'
+    ? await sendEmail(env, settings, text, 'NStatus 测试报警')
+    : await sendTelegram(env, settings, text);
   return { ok: result.ok, error: result.error || undefined };
 }
 
@@ -93,7 +118,8 @@ export async function runAlertChecks(env, options = {}) {
   if (!env.DB) return { ok: true, skipped: true, reason: 'no_db' };
   const settings = await getAlertSettings(env, { includeSecret: true });
   if (!settings.enabled && !options.force) return finishAlertRun(env, { ok: true, skipped: true, reason: 'disabled' });
-  if (!settings.telegram_bot_token || !telegramChatId(env, settings)) return finishAlertRun(env, { ok: true, skipped: true, reason: 'telegram_not_configured' });
+  const channels = configuredAlertChannels(env, settings);
+  if (!channels.length) return finishAlertRun(env, { ok: true, skipped: true, reason: 'channels_not_configured' });
   await ensureAlertStateTable(env);
 
   const [targetRows, metricRows, trafficRows, latestRows] = await Promise.all([
@@ -117,6 +143,11 @@ export async function runAlertChecks(env, options = {}) {
   const latestByTarget = new Map();
   for (const row of latestRows.results || []) {
     if (row.target_id) latestByTarget.set(String(row.target_id), row);
+  }
+  const r2State = await readR2State(env).catch(() => ({ targets: {} }));
+  for (const [targetId, state] of Object.entries(r2State.targets || {})) {
+    const current = latestByTarget.get(targetId);
+    if (!current || Number(state?.checked_at || 0) > Number(current?.checked_at || 0)) latestByTarget.set(targetId, state);
   }
 
   const now = nowSec();
@@ -144,24 +175,37 @@ export async function runAlertChecks(env, options = {}) {
 
   const sent = [];
   const errors = [];
-  const batches = buildTelegramAlertBatches(messages);
+  const batches = buildAlertBatches(messages);
+  let telegramMessages = 0;
+  let emailMessages = 0;
   for (const batch of batches) {
-    const result = await sendTelegram(env, settings, batch.text);
-    if (result.ok) {
+    const results = [];
+    if (channels.includes('telegram')) {
+      const result = await sendTelegram(env, settings, batch.text);
+      results.push({ channel: 'telegram', ...result });
+      if (result.ok) telegramMessages++;
+    }
+    if (channels.includes('email')) {
+      const result = await sendEmail(env, settings, batch.text, `NStatus 报警汇总（${batch.items.length} 条）`);
+      results.push({ channel: 'email', ...result });
+      if (result.ok) emailMessages++;
+    }
+    if (results.some((result) => result.ok)) {
       for (const item of batch.items) {
         await item.commit();
         sent.push({ target_id: item.targetId, rule_key: item.ruleKey });
       }
-    } else {
+    }
+    for (const result of results.filter((item) => !item.ok)) {
       for (const item of batch.items) {
-        errors.push({ target_id: item.targetId, rule_key: item.ruleKey, error: result.error });
+        errors.push({ target_id: item.targetId, rule_key: item.ruleKey, channel: result.channel, error: result.error });
       }
     }
   }
-  return finishAlertRun(env, { ok: errors.length === 0, checked: (targetRows.results || []).length, queued: messages.length, sent: sent.length, telegram_messages: batches.length, errors });
+  return finishAlertRun(env, { ok: errors.length === 0, checked: (targetRows.results || []).length, queued: messages.length, sent: sent.length, telegram_messages: telegramMessages, email_messages: emailMessages, errors });
 }
 
-function buildTelegramAlertBatches(messages, maxChars = 3600) {
+function buildAlertBatches(messages, maxChars = 3600) {
   if (!messages.length) return [];
   const batches = [];
   let current = [];
@@ -472,6 +516,43 @@ async function sendTelegram(env, settings, text) {
   }
 }
 
+async function sendEmail(env, settings, text, subject = 'NStatus 报警') {
+  const apiKey = settings.resend_api_key || await resendApiKey(env);
+  const from = emailFrom(env, settings);
+  const to = emailTo(env, settings);
+  const replyTo = emailReplyTo(env, settings);
+  if (!apiKey || !from || !to.length) return { ok: false, error: '缺少 Resend API Key、发件人或收件人' };
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+        'user-agent': 'NIE-SLA',
+      },
+      body: JSON.stringify({
+        from,
+        to,
+        subject: String(subject || 'NStatus 报警').slice(0, 160),
+        text: String(text || '').slice(0, 20_000),
+        ...(replyTo ? { reply_to: replyTo } : {}),
+      }),
+    });
+    if (response.ok) return { ok: true };
+    const data = await response.text().catch(() => '');
+    return { ok: false, error: `Resend HTTP ${response.status}: ${data.slice(0, 200)}` };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+function configuredAlertChannels(env, settings) {
+  const channels = [];
+  if (settings.telegram_enabled && settings.telegram_bot_token && telegramChatId(env, settings)) channels.push('telegram');
+  if (settings.email_enabled && settings.resend_api_key && emailFrom(env, settings) && emailTo(env, settings).length) channels.push('email');
+  return channels;
+}
+
 async function finishAlertRun(env, result) {
   try {
     await setMeta(env, 'alert_last_result', JSON.stringify({
@@ -487,7 +568,11 @@ function sanitizeAlertErrors(errors) {
   return (Array.isArray(errors) ? errors : []).slice(0, 10).map((item) => ({
     target_id: item?.target_id || '',
     rule_key: item?.rule_key || '',
-    error: String(item?.error || '').replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot<redacted>').slice(0, 300),
+    channel: item?.channel || '',
+    error: String(item?.error || '')
+      .replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot<redacted>')
+      .replace(/re_[A-Za-z0-9_-]+/g, 're_<redacted>')
+      .slice(0, 300),
   }));
 }
 
@@ -509,6 +594,45 @@ function telegramChatId(env, settings) {
   return String(env.TELEGRAM_CHAT_ID || env.TG_CHAT_ID || settings?.telegram_chat_id || '').trim();
 }
 
+async function resendApiKey(env) {
+  const fromEnv = String(env.RESEND_API_KEY || '').trim();
+  if (fromEnv) return fromEnv;
+  const stored = String(await getMeta(env, RESEND_KEY) || '').trim();
+  if (!stored) return '';
+  if (stored.startsWith(SECRET_PREFIX)) {
+    try { return await decryptSecret(stored.slice(SECRET_PREFIX.length), env); } catch (_) { return ''; }
+  }
+  try { await setMeta(env, RESEND_KEY, await encryptSecret(stored, env)); } catch (_) {}
+  return stored;
+}
+
+function emailFrom(env, settings) {
+  const text = String(env.ALERT_EMAIL_FROM || settings?.email_from || '').trim().replace(/[\r\n]/g, '');
+  const display = text.match(/^([^<>]{1,80})\s+<([^<>]+)>$/);
+  if (display) {
+    const address = normalizeEmailAddress(display[2]);
+    return address ? `${display[1].trim()} <${address}>` : '';
+  }
+  return normalizeEmailAddress(text);
+}
+
+function emailTo(env, settings) {
+  return String(env.ALERT_EMAIL_TO || settings?.email_to || '')
+    .split(',')
+    .map(normalizeEmailAddress)
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+function emailReplyTo(env, settings) {
+  return normalizeEmailAddress(env.ALERT_EMAIL_REPLY_TO || settings?.email_reply_to || '');
+}
+
+function normalizeEmailAddress(value) {
+  const text = String(value || '').trim().replace(/[\r\n]/g, '');
+  return /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(text) ? text : '';
+}
+
 async function readStoredSettings(env) {
   if (!env.DB) return {};
   try {
@@ -528,7 +652,7 @@ async function readAlertLastResult(env) {
 
 function pickSettings(body) {
   const out = {};
-  for (const key of [...NUMERIC_FIELDS, ...BOOLEAN_FIELDS, 'telegram_chat_id']) {
+  for (const key of [...NUMERIC_FIELDS, ...BOOLEAN_FIELDS, 'telegram_chat_id', 'email_from', 'email_to', 'email_reply_to']) {
     if (Object.prototype.hasOwnProperty.call(body || {}, key)) out[key] = body[key];
   }
   return out;
@@ -719,7 +843,7 @@ async function encryptSecret(secret, env) {
 
 async function decryptSecret(payload, env) {
   const combined = base64ToBytes(payload);
-  if (combined.length <= 12) throw new Error('加密的 Telegram Token 无效');
+  if (combined.length <= 12) throw new Error('加密的告警密钥无效');
   const iv = combined.slice(0, 12);
   const encrypted = combined.slice(12);
   const decrypted = await crypto.subtle.decrypt(
@@ -732,7 +856,7 @@ async function decryptSecret(payload, env) {
 
 async function secretKey(env, usages) {
   const material = String(env.ALERT_ENCRYPTION_KEY || env.TOTP_ENCRYPTION_KEY || '').trim();
-  if (!material) throw new Error('将 Telegram Token 保存到 D1 需要配置 ALERT_ENCRYPTION_KEY 或 TOTP_ENCRYPTION_KEY');
+  if (!material) throw new Error('将告警密钥保存到 D1 需要配置 ALERT_ENCRYPTION_KEY 或 TOTP_ENCRYPTION_KEY');
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM', length: 256 }, false, usages);
 }

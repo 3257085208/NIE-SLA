@@ -2,7 +2,7 @@
 
 ## Authentication
 
-Admin endpoints use `Authorization: Bearer ADMIN_TOKEN` and optionally `x-admin-session` after TOTP. Agent endpoints use `Authorization: Bearer AGENT_TOKEN`.
+Password and GitHub OAuth login endpoints issue a short-lived admin session. Admin endpoints use `x-admin-session`; passwords are never replayed as API bearer tokens. Agent endpoints continue to use scoped bearer tokens.
 
 ## Public Endpoints
 
@@ -23,12 +23,17 @@ Admin endpoints use `Authorization: Bearer ADMIN_TOKEN` and optionally `x-admin-
 
 | Method | Path | Description |
 | --- | --- | --- |
+| GET | `/api/auth/config` | Available login providers |
+| POST | `/api/auth/login` | Username/password and optional TOTP login |
+| GET | `/api/auth/github/start` | Start optional GitHub OAuth |
+| GET | `/api/auth/github/callback` | GitHub OAuth callback |
+| POST | `/api/auth/github/complete` | Exchange a one-time OAuth ticket for a session |
 | GET/POST | `/api/targets` | List/create targets |
 | PATCH/DELETE | `/api/targets/:id` | Update/delete target |
 | POST | `/api/probe-now` | Run probes now |
 | GET/PATCH | `/api/settings` | Public settings |
 | GET/PATCH | `/api/alerts/settings` | Alert settings |
-| POST | `/api/alerts/test` | Send test Telegram message |
+| POST | `/api/alerts/test` | Send a Telegram or email test |
 | POST | `/api/alerts/check` | Evaluate alerts now |
 | GET/POST | `/api/ping-targets` | Ping target management |
 | POST | `/api/totp/setup` | Setup TOTP |

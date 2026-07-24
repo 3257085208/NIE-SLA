@@ -1,12 +1,5 @@
 import { sanitizeAgentId, sha256Hex } from './utils.js';
 
-export function requireAdmin(request, env) {
-  const configured = env.ADMIN_TOKEN;
-  if (!configured) throw new ApiError(500, '未配置身份验证');
-  const token = bearerToken(request);
-  if (!token || !constantTimeEqual(token, configured)) throw new ApiError(401, '未授权');
-}
-
 export function requireAgent(request, env) {
   const configured = env.AGENT_TOKEN;
   if (!configured) throw new ApiError(500, '未配置身份验证');

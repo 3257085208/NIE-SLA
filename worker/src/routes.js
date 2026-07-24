@@ -1,5 +1,5 @@
 import { ALLOWED_REGIONS, clamp, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
-import { requireAdmin, requireAgent, requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
+import { requireAgent, requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
 import { listTargets, createTarget, updateTarget, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency } from './admin.js';
@@ -12,20 +12,15 @@ import { isAgentApiPath } from './route-policy.js';
 import { developerApiPreflight, developerApiUrl, getDeveloperApiManifest, withDeveloperApiHeaders } from './developer-api.js';
 import { deleteExtension, getExtensionFile, listManagedExtensions, listManagedExtensionsByType, listPublicExtensions, updateExtension, uploadExtension } from './extensions.js';
 import { publicNodeQualityReport } from './nodequality.js';
+import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, passwordLogin, startGitHubOAuth } from './admin-auth.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
 async function withAdmin(request, env) {
-  // When TOTP is enabled, admin APIs accept short-lived sessions only (no master token).
-  // When TOTP is off, master ADMIN_TOKEN remains the sole gate.
-  const totp = await checkTOTP(env);
-  if (totp.totp_enabled) {
-    const presentedSession = String(request.headers.get('x-admin-session') || '').trim();
-    const session = presentedSession ? await validateAdminSession(env, presentedSession) : null;
-    if (!session?.valid) throw new ApiError(401, '需要有效的管理会话，请重新登录并完成 TOTP');
-    return;
-  }
-  requireAdmin(request, env);
+  const presentedSession = String(request.headers.get('x-admin-session') || '').trim();
+  const session = presentedSession ? await validateAdminSession(env, presentedSession) : null;
+  if (!session?.valid) throw new ApiError(401, '需要有效的管理会话，请重新登录');
+  return session;
 }
 
 async function loginState(request, env) {
@@ -33,25 +28,20 @@ async function loginState(request, env) {
   const totp = await checkTOTP(env);
   const presentedSession = String(request.headers.get('x-admin-session') || '').trim();
   const session = presentedSession ? await validateAdminSession(env, presentedSession) : null;
-  const sessionValid = !!(totp.totp_enabled && session && session.valid);
+  const sessionValid = Boolean(session?.valid);
   return {
     totp_enabled: !!totp.totp_enabled,
     totp_required: !!totp.totp_enabled,
     session_valid: sessionValid,
     session_id: sessionValid ? presentedSession : null,
     session_expires_at: sessionValid ? session.expires_at : null,
-    auth_mode: totp.totp_enabled ? (sessionValid ? 'session' : 'totp_required') : 'token',
+    auth_mode: sessionValid ? 'session' : 'login_required',
+    provider: sessionValid ? session.provider : null,
+    subject: sessionValid ? session.subject : null,
   };
 }
 
-/** Login probe: master token OR valid session (for post-TOTP bootstrap without re-sending master token). */
 async function loginGate(request, env) {
-  const token = (request.headers.get('authorization') || '');
-  const hasBearer = /^bearer\s+\S+/i.test(token);
-  if (hasBearer) {
-    requireAdmin(request, env);
-    return loginState(request, env);
-  }
   const presentedSession = String(request.headers.get('x-admin-session') || '').trim();
   if (presentedSession) {
     const session = await validateAdminSession(env, presentedSession);
@@ -66,7 +56,7 @@ async function loginGate(request, env) {
       auth_mode: 'session',
     };
   }
-  throw new ApiError(401, '未授权');
+  throw new ApiError(401, '会话无效或已过期');
 }
 
 async function sessionMatches(storedSession, presentedSession) {
@@ -119,6 +109,11 @@ const ROUTES = [
   { method: 'POST', path: '/api/totp/disable', rl: 'write' },
 
   // Login
+  { method: 'GET', path: '/api/auth/config', rl: 'public' },
+  { method: 'POST', path: '/api/auth/login', rl: 'write' },
+  { method: 'GET', path: '/api/auth/github/start', rl: 'write' },
+  { method: 'GET', path: '/api/auth/github/callback', rl: 'write' },
+  { method: 'POST', path: '/api/auth/github/complete', rl: 'write' },
   { method: 'GET', path: '/api/login', rl: 'write' },
 
   // Settings & alerts
@@ -262,11 +257,16 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/latency-agent/update-policy' && m === 'GET') { const nodeId = url.searchParams.get('node_id') || ''; await requireLatencyAgentForId(request, env, nodeId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getLatencyAgentUpdatePolicy(env), 200, env, { 'cache-control': 'no-store' }); }
 
   // TOTP
-  if (path === '/api/totp/setup' && m === 'POST') { requireAdmin(request, env); return setupTOTP(env); }
-  if (path === '/api/totp/verify' && m === 'POST') { requireAdmin(request, env); return verifyTOTP(request, env); }
+  if (path === '/api/totp/setup' && m === 'POST') { await withAdmin(request, env); return setupTOTP(env); }
+  if (path === '/api/totp/verify' && m === 'POST') { await withAdmin(request, env); return verifyTOTP(request, env); }
   if (path === '/api/totp/disable' && m === 'POST') { await withAdmin(request, env); return disableTOTP(env); }
 
   // Login
+  if (path === '/api/auth/config' && m === 'GET') return json(adminAuthConfig(env), 200, env, { 'cache-control': 'no-store' });
+  if (path === '/api/auth/login' && m === 'POST') return json(await passwordLogin(request, env), 200, env, { 'cache-control': 'no-store' });
+  if (path === '/api/auth/github/start' && m === 'GET') return startGitHubOAuth(request, env);
+  if (path === '/api/auth/github/callback' && m === 'GET') return finishGitHubOAuth(request, env);
+  if (path === '/api/auth/github/complete' && m === 'POST') return json(await completeGitHubOAuth(request, env), 200, env, { 'cache-control': 'no-store' });
   if (path === '/api/login' && m === 'GET') { return json({ ok: true, ...(await loginGate(request, env)) }, 200, env); }
 
   // Settings

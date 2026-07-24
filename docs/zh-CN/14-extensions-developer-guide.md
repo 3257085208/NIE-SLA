@@ -237,4 +237,4 @@ DEVELOPER_API_ORIGINS = "https://theme-dev.example.com,http://localhost:5173"
 - 停用、删除、同 ID 升级和回退到原版均已测试。
 - 第三方包应提供源码、许可证、校验值和变更记录，管理员安装前应审阅。
 
-扩展包不是 Cloudflare Worker 插件，也不能执行管理操作。需要写入目标、触发探测或读取私密配置的集成，必须等待未来的 scoped API Key 权限模型，不能复用 `ADMIN_TOKEN`。
+扩展包不是 Cloudflare Worker 插件，也不能执行管理操作。需要写入目标、触发探测或读取私密配置的集成，必须等待未来的 scoped API Key 权限模型，不能复用管理员密码或 Session。

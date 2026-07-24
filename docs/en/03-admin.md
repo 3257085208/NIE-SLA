@@ -2,7 +2,7 @@
 
 ## Login and TOTP
 
-The admin panel is usually available at `https://your-frontend/admin.html`. Log in with `ADMIN_TOKEN`, then enable TOTP from Settings. TOTP secrets are encrypted with `TOTP_ENCRYPTION_KEY` before being stored in D1.
+The admin panel is usually available at `https://your-frontend/admin`. Log in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`, then enable TOTP from Settings. Passwords are only sent to the login endpoint; admin APIs use a short-lived session whose hash is stored in D1. Optional GitHub OAuth uses an explicit username allowlist and cannot bypass TOTP. TOTP secrets are encrypted with `TOTP_ENCRYPTION_KEY` before being stored in D1.
 
 ## Targets
 

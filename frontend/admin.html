@@ -17,13 +17,26 @@
         <h2>聶.NET 管理后台</h2>
         <p class="login-sub">状态、探针与基础设施配置中心</p>
         <div class="err" id="loginErr"></div>
-        <div class="f">
-          <label>管理员 Token</label
-          ><input
-            type="password"
-            id="loginToken"
-            placeholder="输入 ADMIN_TOKEN"
-          />
+        <div id="passwordLoginFields">
+          <div class="f">
+            <label>管理员账号</label
+            ><input
+              type="text"
+              id="loginUsername"
+              placeholder="输入账号"
+              value="admin"
+              autocomplete="username"
+            />
+          </div>
+          <div class="f">
+            <label>密码</label
+            ><input
+              type="password"
+              id="loginPassword"
+              placeholder="输入密码"
+              autocomplete="current-password"
+            />
+          </div>
         </div>
         <div class="f" id="totpRow" style="display: none">
           <label>TOTP 验证码</label
@@ -47,6 +60,12 @@
         >
           登录
         </button>
+        <div class="login-oauth" id="githubLoginWrap" hidden>
+          <span>或</span>
+          <button class="btn login-github" id="githubLoginBtn" type="button">
+            使用 GitHub 登录
+          </button>
+        </div>
       </div>
     </div>
     <div id="app" style="display: none">
@@ -201,7 +220,7 @@
             </div>
             <div class="col col-wide">
               <div class="card">
-                <h3>Telegram 报警</h3>
+                <h3>报警通知</h3>
                 <div id="sAlerts">加载中...</div>
               </div>
             </div>

@@ -32,5 +32,5 @@
 
 | Secret | Used By |
 |--------|---------|
-| `ADMIN_TOKEN` | Admin API authentication |
+| `ADMIN_PASSWORD` | Admin login password |
 | `AGENT_TOKEN` | Agent authentication |

@@ -27,15 +27,12 @@ curl_config_escape() {
 }
 
 curl_api() {
-    local token="$1" totp="${2:-}" cfg rc
+    local session="$1" cfg rc
     shift 2
     cfg=$(mktemp) || return 1
     chmod 0600 "$cfg" 2>/dev/null || true
     {
-        printf 'header = "Authorization: Bearer %s"\n' "$(curl_config_escape "$token")"
-        if [[ -n "$totp" ]]; then
-            printf 'header = "x-totp-code: %s"\n' "$(curl_config_escape "$totp")"
-        fi
+        printf 'header = "x-admin-session: %s"\n' "$(curl_config_escape "$session")"
     } > "$cfg"
     if curl --config "$cfg" "$@"; then
         rc=0
@@ -44,6 +41,27 @@ curl_api() {
     fi
     rm -f "$cfg"
     return $rc
+}
+
+json_escape() {
+    local s="${1-}"
+    s=${s//\\/\\\\}; s=${s//"/\\"}; s=${s//$'\n'/\\n}; s=${s//$'\r'/\\r}; s=${s//$'\t'/\\t}
+    printf '%s' "$s"
+}
+
+admin_login() {
+    local api="$1" username="$2" password="$3" totp="${4:-}" body response session
+    body="{\"username\":\"$(json_escape "$username")\",\"password\":\"$(json_escape "$password")\""
+    [[ -n "$totp" ]] && body="$body,\"totp\":\"$(json_escape "$totp")\""
+    body="$body}"
+    response=$(printf '%s' "$body" | curl -sS --max-time 10 "${api}/api/auth/login" \
+        -H "Content-Type: application/json" --data-binary @-) || return 1
+    session=$(printf '%s' "$response" | grep -o '"session_id":"[^"]*"' | head -1 | sed 's/"session_id":"//;s/"//') || true
+    if [[ -z "$session" ]]; then
+        err "登录失败: $(printf '%s' "$response" | head -c 200)"
+        return 1
+    fi
+    printf '%s' "$session"
 }
 
 shell_quote() {
@@ -544,11 +562,13 @@ do_status() {
 do_admin() {
     read_env
     local api="${NSTATUS_API_BASE:-}"
-    local tok=""
+    local username="admin" password="" session=""
     local totp=""
-    read -rsp "  Admin Token: " tok </dev/tty
+    read -rp "  管理员账号 [admin]: " username </dev/tty
+    username="${username:-admin}"
+    read -rsp "  管理员密码: " password </dev/tty
     echo
-    [[ -z "$tok" ]] && { err "Token 不能为空"; return 1; }
+    [[ -z "$password" ]] && { err "密码不能为空"; return 1; }
 
     read -rp "  TOTP 验证码 (未配置则留空): " totp </dev/tty
     if [[ -n "$totp" ]] && ! [[ "$totp" =~ ^[0-9]{6}$ ]]; then
@@ -556,21 +576,16 @@ do_admin() {
         return 1
     fi
 
+    session=$(admin_login "$api" "$username" "$password" "$totp") || return 1
+    password=""
     local check
-    if [[ -n "$totp" ]]; then
-        check=$(curl_api "$tok" "${totp:-}" -sS --max-time 10 "${api}/api/targets" \
-                    -H "Accept: application/json" \
-                    2>&1) || true
-    else
-        check=$(curl_api "$tok" "${totp:-}" -sS --max-time 10 "${api}/api/targets" \
-                    -H "Accept: application/json" 2>&1) || true
-    fi
+    check=$(curl_api "$session" "" -sS --max-time 10 "${api}/api/targets" -H "Accept: application/json" 2>&1) || true
     if [[ -z "$check" ]]; then
         err "API 不可达: ${api}"
         return 1
     fi
     if ! echo "$check" | grep -q '"ok": true'; then
-        err "Token 或 TOTP 验证码无效: $(echo "$check" | head -c 200)"
+        err "管理会话无效: $(echo "$check" | head -c 200)"
         return 1
     fi
     ok "验证通过"
@@ -583,8 +598,8 @@ do_admin() {
         echo
         read -rp "  选择: " sel </dev/tty
         case "${sel:-q}" in
-            1) do_admin_targets "$api" "$tok" "$totp" ;;
-            2) do_admin_pings "$api" "$tok" "$totp" ;;
+            1) do_admin_targets "$api" "$session" "" ;;
+            2) do_admin_pings "$api" "$session" "" ;;
             q|Q) break ;;
             *) warn "无效选择" ;;
         esac
@@ -808,12 +823,16 @@ do_admin_pings() {
 do_totp_setup() {
     read_env
     local api="${NSTATUS_API_BASE:-}"
-    local tok=""
-    read -rsp "  Admin Token: " tok </dev/tty
+    local username="admin" password="" session=""
+    read -rp "  管理员账号 [admin]: " username </dev/tty
+    username="${username:-admin}"
+    read -rsp "  管理员密码: " password </dev/tty
     echo
-    [[ -z "$tok" ]] && { err "Token 不能为空"; return 1; }
+    [[ -z "$password" ]] && { err "密码不能为空"; return 1; }
+    session=$(admin_login "$api" "$username" "$password" "") || return 1
+    password=""
 
-    local result=$(curl_api "$tok" "${totp:-}" -sS --max-time 10 "${api}/api/totp/setup" \
+    local result=$(curl_api "$session" "" -sS --max-time 10 "${api}/api/totp/setup" \
         -X POST 2>&1) || true
 
     if ! echo "$result" | grep -q '"ok": true'; then
@@ -838,7 +857,7 @@ do_totp_setup() {
     read -rp "  输入当前验证码确认: " code </dev/tty
     [[ -z "$code" ]] && { err "验证码不能为空"; return 1; }
 
-    local verify=$(curl_api "$tok" "${totp:-}" -sS --max-time 10 "${api}/api/totp/verify" \
+    local verify=$(curl_api "$session" "" -sS --max-time 10 "${api}/api/totp/verify" \
         -X POST  \
         -H "Content-Type: application/json" \
         -d "{\"code\":\"$code\"}" 2>&1) || true

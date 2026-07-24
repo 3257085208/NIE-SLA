@@ -43,16 +43,10 @@ globalThis.fetch = async (url, options) => {
   });
 };
 const client = createAdminClient({ apiBase: 'https://api.example' });
-client.setToken('secret');
 client.saveSession('session', Math.floor(Date.now() / 1000) + 60);
-// Session-only mode: master token is not sent when a valid session exists.
 await client.api('/api/targets');
 assert.equal(lastRequest.url, 'https://api.example/api/targets');
 assert.equal(lastRequest.options.headers.Authorization, undefined);
-assert.equal(lastRequest.options.headers['x-admin-session'], 'session');
-// Login/TOTP still force master token.
-await client.api('/api/login', { forceToken: true });
-assert.equal(lastRequest.options.headers.Authorization, 'Bearer secret');
 assert.equal(lastRequest.options.headers['x-admin-session'], 'session');
 
 let unauthorized = '';
@@ -61,9 +55,9 @@ const denied = createAdminClient({
   apiBase: 'https://api.example',
   onUnauthorized: (message) => { unauthorized = message; },
 });
-denied.setToken('bad');
-await assert.rejects(() => denied.api('/api/login'), /未授权/);
-assert.equal(denied.getToken(), '');
+denied.saveSession('bad-session', Math.floor(Date.now() / 1000) + 60);
+await assert.rejects(() => denied.api('/api/targets'), /未授权/);
+assert.equal(denied.hasSession(), false);
 assert.equal(unauthorized, '未授权');
 
 console.log('frontend module tests passed');

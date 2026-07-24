@@ -28,18 +28,19 @@ NIE-SLA 把公开状态页、Cloudflare HTTP/TCP 检查和 VPS 系统数据放�
 
 1. 点击上方 **Deploy to Cloudflare**。
 2. 按页面提示登录 GitHub 和 Cloudflare 并完成授权。
-3. 填写三个不同的随机 Secret。
+3. 填写后台账号、后台密码和两段独立密钥。
 4. 等待构建完成，打开 Cloudflare 给出的 `workers.dev` 地址。
 
 需要填写：
 
-| Secret | 用途 |
+| 配置 | 用途 |
 | --- | --- |
-| `ADMIN_TOKEN` | 后台登录口令 |
+| `ADMIN_USERNAME` | 后台管理员账号，默认可用 `admin` |
+| `ADMIN_PASSWORD` | 后台管理员密码，建议至少 20 位 |
 | `AGENT_TOKEN` | 生成每台 Agent 的独立凭据 |
 | `TOTP_ENCRYPTION_KEY` | 加密 TOTP 密钥 |
 
-三项都建议使用密码管理器生成至少 32 字节的随机值，不能相同，也不要公开。
+密码与两段密钥必须不同，也不要公开。
 
 部署成功后，管理后台地址为：
 
@@ -47,14 +48,14 @@ NIE-SLA 把公开状态页、Cloudflare HTTP/TCP 检查和 VPS 系统数据放�
 https://你的项目.你的账号.workers.dev/admin
 ```
 
-使用 `ADMIN_TOKEN` 登录，然后按后台 UI 操作：
+使用账号密码登录，然后按后台 UI 操作：
 
 1. 打开“探针”。
 2. 新增一台 VPS。
 3. 点击该节点的部署按钮。
 4. 复制 Linux 或 Windows 命令到对应机器执行。
 
-首台 VPS 正常上报后，再按需配置 Ping、Latency Agent、Telegram、流量、主题和插件。
+首台 VPS 正常上报后，再按需配置 Ping、Latency Agent、GitHub 登录、Telegram/邮件告警、流量、主题和插件。
 
 完整步骤见 [Cloudflare 一键部署](docs/zh-CN/02-deployment.md)。
 
@@ -62,16 +63,16 @@ https://你的项目.你的账号.workers.dev/admin
 
 | 功能 | 说明 |
 | --- | --- |
-| Cloudflare 探测 | HTTP、TCP、状态码、延迟、可选区域探测 |
+| Cloudflare 探测 | 分钟级当前状态、5 分钟 SLA、HTTP/TCP、状态码、延迟与可选区域 |
 | Rust Agent | 单文件程序，Linux 多架构与 Windows amd64 |
 | VPS 数据 | CPU、内存、磁盘、负载、网络、IO、连接数、进程和线程 |
 | 温度 | 支持 CPU、GPU、主板、硬盘和芯片组传感器 |
 | 高频历史 | 本地 1 秒采样，默认 5 分钟批量上传到 R2 |
 | 网络测量 | VPS TCP Ping、Cloudflare Latency、外部 Latency Agent |
 | 节点管理 | 流量、价格、到期日、币种、标签、位置和 NodeQuality 报告 |
-| 告警 | Telegram 离线、恢复、资源、流量和到期提醒 |
+| 告警 | Telegram 与邮件发送离线、恢复、资源、流量和到期提醒 |
 | 扩展 | 后台分别上传主题 ZIP 和插件 ZIP |
-| 安全 | 每节点 scoped Token、可选 TOTP、更新文件 SHA-256 校验 |
+| 安全 | 账号密码 Session、GitHub OAuth 白名单、TOTP、每节点 scoped Token、SHA-256 更新校验 |
 
 ## 监控链路
 
@@ -96,6 +97,16 @@ Agent 在线不代表目标端口一定能被 Cloudflare 访问，反过来也�
 
 NIE-SLA 不提供 Web Shell 或任意命令执行。它的 Agent 权限只用于采集、Ping、配置刷新和经过校验的更新。
 
+## 状态与 SLA 分层
+
+NIE-SLA 不用增加 5 倍 D1 写入来换取更快的状态：
+
+- **当前状态层**：Cron 每分钟运行，最多快速探测 50 个目标，结果合并为一次 R2 状态写入。
+- **SLA 历史层**：每 5 分钟持久化 D1 检查桶，用于日格、可用率和长期统计。
+- **Agent 指标层**：VPS 本地 1 秒采样，默认 5 分钟批量上传 R2，失败批次进入有界队列。
+
+因此，离线状态和报警通常可在约 1 分钟粒度变化，历史写入仍维持原有免费额度模型。
+
 ## 数据存储
 
 ```text
@@ -110,7 +121,7 @@ Cloudflare Worker + Static Assets
 Rust Agent on VPS
 ```
 
-Agent 在本地保持 1 秒采样，默认每 5 分钟上传一批。原始 Metrics 与 Ping 主要写入 R2，不把每个采样点逐行写进 D1。
+原始 Metrics 与 Ping 主要写入 R2，不把每个采样点逐行写进 D1。D1 负责关系配置、SLA 桶、事件、会话哈希、限流与告警状态。
 
 ## 免费额度
 
@@ -128,9 +139,11 @@ Agent 在本地保持 1 秒采样，默认每 5 分钟上传一批。原始 Metr
 
 ## 安全要点
 
-- `ADMIN_TOKEN`、`AGENT_TOKEN` 和 `TOTP_ENCRYPTION_KEY` 必须不同。
+- `ADMIN_PASSWORD`、`AGENT_TOKEN` 和 `TOTP_ENCRYPTION_KEY` 必须不同。
+- 密码只进入登录端点；后台 API 统一使用 24 小时 Session，D1 只保存 Session SHA-256 哈希。
+- GitHub OAuth 默认关闭；启用时必须同时配置 Client ID、Client Secret 和 GitHub 用户名白名单。
+- OAuth state 有时效并绑定 HttpOnly Cookie，登录票据短期、一次使用，TOTP 不能被 OAuth 绕过。
 - 每台 Agent 使用与 Target 绑定的独立 Token。
-- 后台支持 TOTP，Session 在 D1 中只保存哈希。
 - 安装与自动更新会校验 manifest 和二进制 SHA-256。
 - 公共接口会裁剪敏感字段并可掩码 IP/端口。
 - 主题和插件包会检查 ZIP 路径、Manifest、内容类型、大小和哈希。
@@ -142,9 +155,9 @@ Agent 在本地保持 1 秒采样，默认每 5 分钟上传一批。原始 Metr
 | 文档 | 内容 |
 | --- | --- |
 | [一键部署](docs/zh-CN/02-deployment.md) | Cloudflare 按钮部署与首次添加 VPS |
-| [后台使用](docs/zh-CN/03-admin.md) | Target、排序、TOTP、设置和更新 |
+| [后台使用](docs/zh-CN/03-admin.md) | 登录、GitHub OAuth、Target、TOTP、设置和更新 |
 | [Agent](docs/zh-CN/04-agent.md) | 安装、日志、升级和卸载 |
-| [告警](docs/zh-CN/06-alerts.md) | Telegram 与阈值 |
+| [告警](docs/zh-CN/06-alerts.md) | Telegram、Resend 邮件、阈值与冷却 |
 | [API](docs/zh-CN/08-api.md) | Public、Admin 与 Agent API |
 | [运维排障](docs/zh-CN/09-operations.md) | 离线、漏检、限流和历史 |
 | [External Latency Agent](docs/zh-CN/13-external-latency-agents.md) | 多网络测量节点 |

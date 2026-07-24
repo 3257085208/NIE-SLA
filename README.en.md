@@ -10,23 +10,25 @@ You do not need Node.js, Wrangler, a database, or a separate control server.
 
 1. Click **Deploy to Cloudflare**.
 2. Sign in to GitHub and Cloudflare and follow the authorization screens.
-3. Enter three different random Secrets.
+3. Enter an admin username, an admin password, and two independent secrets.
 4. Wait for the build, then open the provided `workers.dev` URL.
 
-| Secret | Purpose |
+| Configuration | Purpose |
 | --- | --- |
-| `ADMIN_TOKEN` | Admin login |
+| `ADMIN_USERNAME` | Admin username, normally `admin` |
+| `ADMIN_PASSWORD` | Unique admin password with at least 20 characters |
 | `AGENT_TOKEN` | Derives a separate credential for each Agent |
 | `TOTP_ENCRYPTION_KEY` | Encrypts TOTP secrets |
 
 Use at least 32 random bytes for each value and store them in a password manager.
 
-Open `/admin`, log in with `ADMIN_TOKEN`, add a VPS under **Agents**, and run the generated Linux or Windows command on that machine. The rest of the setup is available in the admin UI.
+Open `/admin`, log in with the username and password, add a VPS under **Agents**, and run the generated Linux or Windows command on that machine. The rest of the setup is available in the admin UI.
 
 See [Deploy to Cloudflare](docs/en/02-deployment.md) for the complete browser flow.
 
 ## Features
 
+- One-minute current status with five-minute persistent SLA buckets.
 - Cloudflare HTTP and TCP checks with optional regional execution.
 - Single-binary Rust Agent for Linux and Windows.
 - CPU, memory, disk, load, network, IO, connection, process, and thread metrics.
@@ -35,9 +37,9 @@ See [Deploy to Cloudflare](docs/en/02-deployment.md) for the complete browser fl
 - D1 for configuration and state; R2 for raw metrics, Ping, and snapshots.
 - Per-VPS TCP Ping and optional external Latency Agents.
 - Traffic quotas, billing metadata, expiry dates, tags, locations, and NodeQuality reports.
-- Telegram alerts for availability, resources, traffic, and expiry.
+- Telegram and Resend email alerts for availability, resources, traffic, and expiry.
 - Uploadable theme and plugin ZIP packages.
-- Per-node scoped tokens, optional TOTP, and SHA-256 verified updates.
+- Username/password sessions, optional allowlisted GitHub OAuth and TOTP, per-node scoped tokens, and SHA-256 verified updates.
 
 ## Monitoring Paths
 
@@ -53,6 +55,12 @@ These paths are independent. An online Agent does not guarantee that a public TC
 ## Scope
 
 Dedicated uptime tools are simpler for website-only checks. Traditional centralized monitors are a better fit for web terminals and remote commands. NIE-SLA combines Cloudflare-side availability with VPS telemetry while deliberately excluding web shells and arbitrary command execution.
+
+## Status and SLA Layers
+
+The one-minute cron performs lightweight current-status probes and merges them into one R2 state object. Five-minute D1 buckets remain the source of SLA history and daily availability. This improves status and alert latency without multiplying persistent SLA writes by five.
+
+Admin passwords are accepted only by the login endpoint. Admin APIs use a 24-hour session whose SHA-256 hash is stored in D1. Optional GitHub OAuth requires an explicit username allowlist, short-lived state and one-time tickets, and cannot bypass TOTP.
 
 ## Free-Tier Planning
 

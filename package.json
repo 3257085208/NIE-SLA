@@ -34,8 +34,11 @@
     "docs_url": "https://github.com/3257085208/NIE-SLA/blob/main/docs/zh-CN/02-deployment.md",
     "publish": true,
     "bindings": {
-      "ADMIN_TOKEN": {
-        "description": "后台最高权限口令。请使用密码管理器生成至少 32 字节随机值，不要与其他服务复用。"
+      "ADMIN_USERNAME": {
+        "description": "后台管理员账号。默认可以填写 admin。"
+      },
+      "ADMIN_PASSWORD": {
+        "description": "后台管理员密码。请使用密码管理器生成至少 20 位随机密码，不要与其他服务复用。"
       },
       "AGENT_TOKEN": {
         "description": "Agent 主密钥，用于派生每台节点的独立 Token。请使用另一个至少 32 字节随机值。"

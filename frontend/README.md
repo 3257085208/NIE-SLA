@@ -13,7 +13,7 @@
 | `style.css` | 公开页面样式和主题 |
 | `admin.html` | 管理后台入口 |
 | `js/admin.js` | 后台 UI 编排 |
-| `js/admin/api.js` | Token、TOTP session 与 API 客户端 |
+| `js/admin/api.js` | 账号密码/GitHub 登录后的 Session API 客户端 |
 | `js/shared/` | 共享纯函数 |
 | `functions/api/[[path]].js` | Pages 到 Worker 的 API 代理 |
 | `config.js` | API Base 配置 |
@@ -30,7 +30,7 @@
 window.NSTATUS_API_BASE = "https://YOUR-WORKER.example";
 ```
 
-不要在该文件放 Admin Token 或 Agent Token。它会公开下载到每个访客浏览器。
+不要在该文件放管理员密码、Session 或 Agent Token。它会公开下载到每个访客浏览器。
 
 ## 部署
 
@@ -112,7 +112,7 @@ nstatus-metrics-windows-amd64.exe
 
 ## 后台认证
 
-后台不会把凭据写进源码。Admin Token 与 TOTP session 保存在当前标签页 `sessionStorage`，关闭标签页后失效。启用 TOTP 后，管理 API 同时要求 Token 和有效 session。
+后台不会把凭据写进源码。账号密码只发送到登录端点且不会保存；登录成功后的 Session 保存在当前标签页 `sessionStorage`，关闭标签页后失效。管理 API 只接受有效 Session。可选 GitHub OAuth 使用账号白名单和一次性票据，启用 TOTP 后仍需第二因素。
 
 ## 本地检查
 
@@ -127,7 +127,7 @@ nstatus-metrics-windows-amd64.exe
 ## 安全
 
 - 动态 HTML 必须转义。
-- 不在 localStorage 长期保存 Admin Token。
+- 不在 localStorage 保存管理员密码或 Session。
 - 不在静态文件中放 secret。
 - 完整 Agent 安装命令包含 scoped Token，禁止公开。
 - Pages 自定义域名和 Worker API 都使用 HTTPS。

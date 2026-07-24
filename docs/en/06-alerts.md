@@ -1,27 +1,21 @@
-# 06 Telegram Alerts
+# 06 Alerts
 
-Alerts are evaluated by Worker cron, not WebSocket. This keeps quota usage predictable and is accurate enough for minute-level offline detection.
+Worker cron evaluates alert rules every minute. Telegram and email share the same thresholds, recovery notifications, repeat cooldown, and D1 deduplication state.
 
-## Setup
+Supported rules include Agent offline/recovery, Cloudflare probe failure/recovery, CPU, memory, disk, load, disk and network rates, process/thread count, expiry, and remaining traffic.
 
-1. Create a bot with `@BotFather`.
-2. Obtain the bot token.
-3. Obtain a chat id for your user/group/channel.
-4. Enter both in Settings -> Telegram Alerts. A bot token saved through the admin panel is encrypted before being written to D1; you can also use Worker secret `TELEGRAM_BOT_TOKEN`.
-5. Send a test message.
+## Telegram
 
-## Alert Types
+Create a bot with `@BotFather`, obtain the token and chat ID, then configure Telegram under **Settings → Alerts**. Tokens saved in Admin are encrypted with `ALERT_ENCRYPTION_KEY` or `TOTP_ENCRYPTION_KEY`. The `TELEGRAM_BOT_TOKEN` Worker secret is also supported.
 
-- Offline after N minutes without an Agent report.
-- Optional online/recovery notification.
-- CPU, memory, disk, load1, disk read/write, network rx/tx, process count, and thread count thresholds.
-- Expiry N days before the configured expiry date.
-- Traffic remaining below N% or N GB.
+## Email
 
-## Per-VPS Overrides
+Email uses the Resend HTTPS API. Verify a sending domain, create an API key, enable email in Admin, and enter the API key, sender, and comma-separated recipients. Senders may use `NStatus <status@example.com>` format.
 
-Each target can disable alerts or override expiry and traffic thresholds. Empty override fields use global settings.
+Environment configuration is also supported through `RESEND_API_KEY`, `ALERT_EMAIL_FROM`, `ALERT_EMAIL_TO`, and `ALERT_EMAIL_REPLY_TO`.
 
-## State and Cooldown
+## Timing
 
-D1 table `alert_state` stores active/resolved status per target and rule. Repeat cooldown prevents Telegram spam while an alert remains active.
+The current-status layer probes about once per minute and merges one R2 state object. SLA history remains in five-minute D1 buckets. This gives faster status and alerts without multiplying persistent SLA writes.
+
+If both channels are enabled, a successful delivery to either channel commits deduplication state. A failed channel is recorded in the last run result without causing the healthy channel to resend every minute.

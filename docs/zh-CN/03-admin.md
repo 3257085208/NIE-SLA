@@ -4,12 +4,13 @@
 
 ## 登录流程
 
-1. 输入 `ADMIN_TOKEN`。
-2. 前端请求 `/api/login`。
-3. 未启用 TOTP 时直接进入后台。
-4. 已启用 TOTP 时输入 6 位验证码。
-5. Worker 验证后签发随机 session，D1 只保存 session 哈希和过期时间。
-6. 前端将 Token/session 放入当前标签页 `sessionStorage`。
+1. 输入 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD`。
+2. 前端只向 `/api/auth/login` 发送一次账号密码。
+3. 已启用 TOTP 时再输入 6 位验证码。
+4. Worker 签发随机 session，D1 只保存 session 哈希、来源和过期时间。
+5. 前端只把 session 放入当前标签页 `sessionStorage`，不保存密码。
+
+可选 GitHub 登录使用 OAuth 用户名白名单、短期 state 和一次性票据，最终也换成相同的后台 session。启用 TOTP 时 GitHub 登录不能绕过第二因素。
 
 关闭标签页、主动退出或 session 过期后需要重新登录。连续输错可能触发 D1 限流，出现“请求过于频繁”。等待限流窗口结束，不要持续重试。
 
@@ -162,7 +163,7 @@ Ping 目标由 Agent 定期拉取。格式通常为域名/IP与端口。Agent �
 - 是否参与报警。
 - 单机报警阈值覆盖。
 
-详见 [05 流量与账单](05-traffic-billing.md) 和 [06 Telegram 报警](06-alerts.md)。
+详见 [05 流量与账单](05-traffic-billing.md) 和 [06 Telegram 与邮件报警](06-alerts.md)。
 
 ## 立即检查
 
@@ -173,7 +174,7 @@ Ping 目标由 Agent 定期拉取。格式通常为域名/IP与端口。Agent �
 ## 后台安全习惯
 
 - 在自己的设备登录。
-- 不把 Admin Token 保存到密码以外的普通笔记。
+- 使用密码管理器保存后台密码，不在普通笔记、截图或脚本中记录。
 - 使用 TOTP。
 - 操作完成后退出。
 - 浏览器扩展较多的环境建议使用单独浏览器配置文件。

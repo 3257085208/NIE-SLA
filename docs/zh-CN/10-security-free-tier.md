@@ -2,20 +2,20 @@
 
 ## 威胁模型
 
-需要保护：Admin Token、Agent 主 Token、节点 scoped Token、TOTP secret/session、Telegram Bot Token、VPS 地址和历史指标。
+需要保护：管理员密码和 Session、Agent 主 Token、节点 scoped Token、TOTP secret、Telegram Bot Token、Resend API Key、VPS 地址和历史指标。
 
 主要风险：
 
 - 仓库或日志泄露 Token。
 - XSS/恶意扩展读取后台凭据。
 - 节点失陷后冒充其他节点。
-- 暴力猜测 Admin Token/TOTP。
+- 暴力猜测后台账号密码或 TOTP。
 - 安装下载被替换。
 - 高频指标耗尽 D1/R2/Worker 额度。
 
 ## 已采用的控制
 
-- Token 常量时间比较。
+- 账号密码与 Token 使用常量时间比较，管理 Session 在 D1 中只保存 SHA-256 哈希。
 - 每节点 scoped Token，绑定 Agent ID。
 - Admin 可启用 TOTP。
 - TOTP secret 使用 AES-GCM 加密。
@@ -50,7 +50,7 @@ scoped Token 只能以对应 Agent ID 上报，不能直接获得 Admin 权限�
 
 TOTP 保护登录和管理 API，不防止同源 XSS、已控制浏览器、恶意扩展或设备本身失陷。前端仍必须坚持输出转义和依赖审计。
 
-第三方扩展虽然被隔离，仍属于供应链输入。只安装有可审计源码、许可证、版本 tag、显式文件清单和发布 SHA-256 的包；启用前核对后台记录的哈希，不要把 `ADMIN_TOKEN`、Agent Token 或生产数据写入主题配置。完整边界见 [主题、插件与开发者 API](14-extensions-developer-guide.md)。
+第三方扩展虽然被隔离，仍属于供应链输入。只安装有可审计源码、许可证、版本 tag、显式文件清单和发布 SHA-256 的包；启用前核对后台记录的哈希，不要把管理员密码、Session、Agent Token 或生产数据写入主题配置。完整边界见 [主题、插件与开发者 API](14-extensions-developer-guide.md)。
 
 ## 免费额度思路
 
@@ -64,7 +64,7 @@ TOTP 保护登录和管理 API，不防止同源 XSS、已控制浏览器、恶�
 
 系统通过以下方式降成本：
 
-- CF 探测固定 5 分钟，而不是每秒。
+- 当前状态每分钟轻量探测并合并写 R2；SLA 历史固定 5 分钟写 D1，而不是每秒持久化。
 - Agent 1 秒采样但批量上传。
 - 高频历史进入 R2，不逐点写 D1。
 - D1 保存最新状态和聚合。

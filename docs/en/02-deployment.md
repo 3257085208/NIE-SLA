@@ -1,91 +1,46 @@
 # Deploy to Cloudflare
 
-The recommended installation runs entirely in the browser. You do not need a VPS, Node.js, Wrangler, or a local terminal for the control plane.
+The recommended deployment runs in the browser. Prepare a GitHub account, a Cloudflare account, and these values:
 
-## Before You Start
-
-Prepare:
-
-- A Cloudflare account.
-- A GitHub account.
-- Three different random values, each at least 32 bytes long.
-
-| Secret | Purpose |
+| Name | Value |
 | --- | --- |
-| `ADMIN_TOKEN` | Admin login |
-| `AGENT_TOKEN` | Derives a separate credential for each Agent |
-| `TOTP_ENCRYPTION_KEY` | Encrypts TOTP secrets |
-
-Store them in a password manager. Do not post them in issues, screenshots, forums, or public repositories.
-
-## 1. Open the Deploy Page
+| `ADMIN_USERNAME` | Admin username, for example `admin` |
+| `ADMIN_PASSWORD` | Unique password with at least 20 characters |
+| `AGENT_TOKEN` | Independent random value of at least 32 bytes |
+| `TOTP_ENCRYPTION_KEY` | A different random value of at least 32 bytes |
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
 
-## 2. Authorize GitHub and Cloudflare
+Authorize GitHub and Cloudflare, enter the four values, and start the deployment. Cloudflare builds the Worker and frontend and creates D1, R2, the Durable Object, and the one-minute cron trigger.
 
-Follow the page prompts to sign in to GitHub, allow Cloudflare to fork the repository, sign in to Cloudflare, and select the target account.
+If the result is `https://project.account.workers.dev`, open `https://project.account.workers.dev/admin` and sign in with the configured username and password. Enable TOTP from Settings, add a VPS under Agents, and run the generated command on that VPS.
 
-## 3. Enter the Secrets
+Current status uses a lightweight one-minute R2 layer. SLA history remains in five-minute D1 buckets to protect free-tier write capacity.
 
-Paste the three different values into:
+## Optional GitHub Login
 
-```text
-ADMIN_TOKEN
-AGENT_TOKEN
-TOTP_ENCRYPTION_KEY
-```
-
-Cloudflare stores them as Secrets. They are not committed to the repository.
-
-## 4. Wait for Deployment
-
-Cloudflare creates the Worker, D1 database, R2 bucket, Durable Object, cron trigger, Agent release assets, status page, and admin panel. When the build succeeds, open the provided `workers.dev` URL.
-
-## 5. Open the Admin Panel
-
-If the status page is:
+Create a GitHub OAuth App under **Settings → Developer settings → OAuth Apps**. Set the callback URL to:
 
 ```text
-https://your-project.your-account.workers.dev
+https://your-status-domain.example/api/auth/github/callback
 ```
 
-the admin panel is:
+Then add these Worker variables/secrets in Cloudflare:
 
 ```text
-https://your-project.your-account.workers.dev/admin
+GITHUB_OAUTH_CLIENT_ID
+GITHUB_OAUTH_CLIENT_SECRET
+GITHUB_OAUTH_ALLOWED_USERS
 ```
 
-Log in with `ADMIN_TOKEN`. Enabling TOTP after the first login is recommended.
+`GITHUB_OAUTH_ALLOWED_USERS` is a comma-separated list of GitHub usernames. GitHub login never grants access to users outside this list and still requires TOTP when TOTP is enabled.
 
-## 6. Add a VPS
+## Optional Email Alerts
 
-In Admin:
+Verify a sending domain in Resend and create an API key. In **Settings → Alerts**, enable email, enter the Resend API key, sender, and recipients, save, and send a test email. Multiple recipients are comma-separated.
 
-1. Open **Agents**.
-2. Add a target with its name, host, and port.
-3. Save it and open its deployment action.
-4. Choose Linux or Windows.
-5. Run the generated command on that VPS.
+## Upgrade Compatibility
 
-Each command contains a node-specific credential. Do not reuse one node's command on another machine or publish the full command.
+On an existing deployment, the default username is `admin`. If `ADMIN_PASSWORD` is not set yet, the existing `ADMIN_TOKEN` is accepted as the temporary password. Set a dedicated `ADMIN_PASSWORD` after the upgrade.
 
-The public page will show metrics after the first successful report. Cloudflare availability checks and Agent reports are independent monitoring paths.
-
-## Optional Setup
-
-The admin UI includes site appearance, TOTP, Telegram alerts, traffic and billing data, Ping targets, external Latency Agents, NodeQuality reports, themes, and plugins. Configure them after the first node reports successfully.
-
-To use a custom domain, open the deployed Worker in Cloudflare Dashboard and add it under **Domains & Routes**. The status page and `/admin` continue to use the same origin.
-
-## Updates
-
-The deploy flow creates a GitHub fork. Sync its `main` branch with upstream, then redeploy the latest commit from Cloudflare. Agent automatic updates are controlled from Admin and should be tested on one VPS first.
-
-## Troubleshooting
-
-- Build failure: open the Cloudflare build log and fix the first error, then redeploy.
-- No Agent data: verify the command was run on the matching VPS, then use `sudo cftz status` and `sudo cftz log 100`.
-- External Latency Agent not reporting: run its generated deployment command and confirm that the response contains `accepted` greater than zero.
-
-See [Admin](03-admin.md), [Agent](04-agent.md), [Alerts](06-alerts.md), [External Latency Agents](12-external-latency-agents.md), and [Extensions](13-extensions-developer-guide.md) for feature-specific instructions.
+See [Admin](03-admin.md), [Agent](04-agent.md), [Alerts](06-alerts.md), [External Latency Agents](12-external-latency-agents.md), and [Extensions](13-extensions-developer-guide.md).

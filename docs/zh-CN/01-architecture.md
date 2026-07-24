@@ -26,12 +26,12 @@ Pages 不保存业务状态。刷新页面后，目标、状态和图表数据�
 Worker 是控制面和 API：
 
 - 处理公开状态接口。
-- 验证 Admin/Agent Token 与 TOTP session。
-- 每 5 分钟调度 HTTP/TCP 探测。
+- 验证管理 Session、Agent Token 与 TOTP。
+- 每分钟刷新当前 HTTP/TCP 状态，每 5 分钟保存 SLA 桶。
 - 接收 Agent 指标和 Ping 批次。
 - 更新 D1 最新状态与聚合桶。
 - 写入和读取 R2 高频历史。
-- 判断 Telegram 报警。
+- 计算并发送 Telegram/邮件报警。
 - 生成每个节点专用的 Agent 安装命令。
 
 ### D1
@@ -149,7 +149,7 @@ Agent 上传、R2 历史写入、状态快照和 Pages 静态部署也不是同�
 ## 安全边界
 
 - 浏览器公开接口只能读取脱敏数据。
-- Admin API 需要 Admin Token；启用 TOTP 后还需要有效 session。
+- Admin API 只接受登录后签发的短期 Session；密码只进入登录端点，启用 TOTP 后登录还需要验证码。
 - 每台 VPS 使用从主 Agent Token 派生的 scoped Token。
 - scoped Token 只允许以绑定的 `agent_id` 上报。
 - Agent Token 使用常量时间比较。

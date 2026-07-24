@@ -19,7 +19,7 @@ npx wrangler d1 create nstatus-db
 npx wrangler r2 bucket create nstatus-archive
 
 # Set secrets
-npx wrangler secret put ADMIN_TOKEN
+npx wrangler secret put ADMIN_PASSWORD
 npx wrangler secret put AGENT_TOKEN
 npx wrangler secret put TOTP_ENCRYPTION_KEY
 
@@ -46,19 +46,7 @@ npx wrangler pages deploy ./ --project-name=nstatus
 
 ## Step 4: Add Targets
 
-```bash
-# HTTP website
-curl -X POST https://your-worker.workers.dev/api/targets \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"My Site","group_name":"Web","type":"http","url":"https://example.com","expected_status":"200,301,302"}'
-
-# TCP port
-curl -X POST https://your-worker.workers.dev/api/targets \
-  -H "Authorization: Bearer $ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"My VPS","group_name":"VPS","type":"tcp","target_host":"1.2.3.4","target_port":22,"probe_region":"apac"}'
-```
+Open `/admin`, sign in with the configured username and password, add a target, and use its deployment button. The UI obtains an admin Session and never exposes the password to CRUD endpoints.
 
 ## Step 5: Install Agent
 

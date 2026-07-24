@@ -45,15 +45,14 @@ const adminClient = createAdminClient({
 const {
   api,
   apiAdmin,
+  apiAuth,
   apiPublic,
   apiTimeout,
   clearAuth,
-  clearPersistedToken,
   hasSession,
-  persistToken,
   saveSession,
-  setToken,
 } = adminClient;
+let githubTicket = "";
 let targets = [],
   adminGroupBy = localStorage.getItem("nstatus.adminGroupBy") || "group",
   statusMap = new Map(),
@@ -84,15 +83,16 @@ function toast(m, t = "info") {
   e.className = "toast " + t + " show";
   toastTimer = setTimeout(() => e.classList.remove("show"), t === "err" ? 6000 : 3200);
 }
-function showLogin(message = "", { requireTotp = false } = {}) {
+function showLogin(message = "", { requireTotp = false, provider = "password" } = {}) {
   byId("loginPage").style.display = "flex";
   byId("app").style.display = "none";
+  byId("passwordLoginFields").style.display = provider === "github" ? "none" : "block";
   byId("totpRow").style.display = requireTotp ? "block" : "none";
   byId("loginBtn").textContent = requireTotp ? "验证并登录" : "登录";
   byId("loginMsg").style.display = requireTotp ? "block" : "none";
-  byId("loginMsg").textContent = requireTotp ? "需要 TOTP 验证码" : "";
-  if (adminClient.getToken() && !byId("loginToken").value)
-    byId("loginToken").value = adminClient.getToken();
+  byId("loginMsg").textContent = requireTotp
+    ? provider === "github" ? "GitHub 已验证，请输入 TOTP 验证码" : "需要 TOTP 验证码"
+    : "";
   if (message) {
     byId("loginErr").textContent = message;
     byId("loginErr").style.display = "block";
@@ -101,8 +101,8 @@ function showLogin(message = "", { requireTotp = false } = {}) {
   }
 }
 
-function showTotpPrompt(message = "需要 TOTP 验证码") {
-  showLogin("", { requireTotp: true });
+function showTotpPrompt(message = "需要 TOTP 验证码", provider = "password") {
+  showLogin("", { requireTotp: true, provider });
   byId("loginMsg").textContent = message;
   byId("loginTotp").focus();
 }
@@ -142,82 +142,70 @@ function formatDuration(s) {
   return Math.floor(s / 86400) + "天" + Math.floor((s % 86400) / 3600) + "小时";
 }
 async function login() {
-  if (
-    byId("totpRow").style.display !== "none" &&
-    byId("loginTotp").value.trim()
-  ) {
-    await verifyLoginTotp();
+  const code = byId("loginTotp").value.trim();
+  if (byId("totpRow").style.display !== "none" && !/^\d{6}$/.test(code)) {
+    toast("请输入 6 位验证码", "err");
     return;
   }
-
-  const adminToken = byId("loginToken").value.trim();
-  if (!adminToken) return;
-  setToken(adminToken);
-  saveSession("", "");
   byId("loginBtn").disabled = true;
   byId("loginErr").style.display = "none";
   byId("loginMsg").style.display = "block";
-  byId("loginMsg").textContent = "验证 Token...";
+  byId("loginMsg").textContent = githubTicket ? "验证 GitHub 登录..." : "验证账号...";
   try {
-    const d = await apiTimeout("/api/login", { method: "GET", forceToken: true });
-    if (d.session_valid) {
-      if (d.session_id && d.session_expires_at)
-        saveSession(d.session_id, d.session_expires_at);
-      // Session-only mode after TOTP: drop master token from storage/header path.
-      if (d.auth_mode === "session" || d.totp_required) clearPersistedToken();
-      else persistToken();
-      showApp();
-      return;
-    }
+    const d = githubTicket
+      ? await apiAuth("/api/auth/github/complete", {
+          method: "POST",
+          body: JSON.stringify({ ticket: githubTicket, totp: code }),
+        })
+      : await passwordLogin(code);
     if (d.totp_required) {
-      persistToken(); // keep token briefly for TOTP verify only
-      showTotpPrompt();
+      showTotpPrompt(undefined, githubTicket ? "github" : "password");
       return;
     }
-    persistToken();
+    if (!d.session_id || !d.session_expires_at) throw new Error("登录响应缺少会话");
+    saveSession(d.session_id, d.session_expires_at);
+    githubTicket = "";
+    byId("loginPassword").value = "";
+    byId("loginTotp").value = "";
     showApp();
   } catch (e) {
-    clearAuth();
     byId("loginErr").textContent = e.message;
     byId("loginErr").style.display = "block";
   } finally {
     byId("loginBtn").disabled = false;
   }
 }
-async function verifyLoginTotp() {
-  if (!adminClient.getToken()) setToken(byId("loginToken").value);
-  if (!adminClient.getToken()) {
-    showLogin("请先输入 ADMIN_TOKEN");
-    return;
-  }
-
-  const code = byId("loginTotp").value.trim();
-  if (!/^\d{6}$/.test(code)) {
-    toast("请输入 6 位验证码", "err");
-    return;
-  }
-
-  byId("loginBtn").disabled = true;
-  byId("loginMsg").style.display = "block";
-  byId("loginMsg").textContent = "验证 TOTP...";
+async function passwordLogin(totp) {
+  const username = byId("loginUsername").value.trim();
+  const password = byId("loginPassword").value;
+  if (!username || !password) throw new Error("请输入账号和密码");
+  return apiAuth("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password, totp }),
+  });
+}
+async function loadAuthConfig() {
   try {
-    const d = await apiTimeout("/api/totp/verify", {
-      method: "POST",
-      body: JSON.stringify({ code }),
-      forceToken: true,
-    });
-    if (d.session_id && d.expires_at) saveSession(d.session_id, d.expires_at);
-    clearPersistedToken();
-    toast("验证通过", "ok");
-    showApp();
-  } catch (e) {
-    byId("loginErr").textContent = e.message;
-    byId("loginErr").style.display = "block";
-    toast(e.message, "err");
-  } finally {
-    byId("loginBtn").disabled = false;
-    byId("loginMsg").textContent = "需要 TOTP 验证码";
+    const config = await apiPublic("/api/auth/config");
+    byId("githubLoginWrap").hidden = !config.github_enabled;
+  } catch (_) {
+    byId("githubLoginWrap").hidden = true;
   }
+}
+async function completeGitHubRedirect() {
+  const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const ticket = params.get("github_ticket") || "";
+  const error = params.get("github_error") || "";
+  if (!ticket && !error) return false;
+  history.replaceState(null, "", `${location.pathname}${location.search}`);
+  if (error) {
+    showLogin(error);
+    return true;
+  }
+  githubTicket = ticket;
+  showLogin("", { provider: "github" });
+  await login();
+  return true;
 }
 function nav(p) {
   document
@@ -1136,9 +1124,9 @@ function targetModalHtml(target, isEdit) {
       `
       <label class="switch-line">
         <input type="checkbox" id="mAlertEnabled"${checkedAttr(alertEnabled)}>
-        <span>启用此探针的 Telegram 报警</span>
+        <span>启用此探针的报警规则</span>
       </label>
-      <p class="hint">以下阈值留空时使用“设置 → Telegram 报警”的全局规则。</p>`,
+      <p class="hint">以下阈值留空时使用“设置 → 报警通知”的全局规则。</p>`,
     )}
 
     <div class="form-grid">
@@ -1779,7 +1767,8 @@ async function loadAlerts() {
     const d = await api("/api/alerts/settings");
     box.innerHTML = alertSettingsHtml(d);
     byId("saveAlerts").onclick = saveAlerts;
-    byId("testAlert").onclick = testAlert;
+    byId("testTelegramAlert").onclick = () => testAlert("telegram");
+    byId("testEmailAlert").onclick = () => testAlert("email");
     byId("runAlertCheck").onclick = runAlertCheck;
   } catch (e) {
     errBox("sAlerts", e);
@@ -1790,16 +1779,40 @@ function alertSettingsHtml(d) {
   const tokenHint = d.telegram_bot_token_set
     ? `已配置${d.telegram_bot_token_source === "env" ? "（环境变量）" : "（后台保存）"}；留空不修改`
     : "未配置，请填写 Bot Token";
+  const resendHint = d.resend_api_key_set
+    ? `已配置${d.resend_api_key_source === "env" ? "（环境变量）" : "（后台保存）"}；留空不修改`
+    : "未配置，请填写 Resend API Key";
   return `
     <div class="traffic-settings alert-settings">
       <label class="switch-line">
         <input type="checkbox" id="aEnabled"${checkedAttr(d.enabled)}>
-        <span>启用 Telegram 报警</span>
+        <span>启用报警规则</span>
       </label>
-      <div class="form-grid">
-        ${formField("Bot Token", `<input id="aToken" type="password" placeholder="${escapeHtml(tokenHint)}">`)}
-        ${formField("Chat ID", `<input id="aChat" value="${escapeHtml(d.telegram_chat_id || "")}" placeholder="-100xxxxxxxxxx">`)}
-      </div>
+      <fieldset class="alert-channel">
+        <legend>Telegram</legend>
+        <label class="switch-line">
+          <input type="checkbox" id="aTelegramEnabled"${checkedAttr(d.telegram_enabled)}>
+          <span>发送 Telegram 通知</span>
+        </label>
+        <div class="form-grid">
+          ${formField("Bot Token", `<input id="aToken" type="password" placeholder="${escapeHtml(tokenHint)}">`)}
+          ${formField("Chat ID", `<input id="aChat" value="${escapeHtml(d.telegram_chat_id || "")}" placeholder="-100xxxxxxxxxx">`)}
+        </div>
+      </fieldset>
+      <fieldset class="alert-channel">
+        <legend>电子邮件 · Resend</legend>
+        <label class="switch-line">
+          <input type="checkbox" id="aEmailEnabled"${checkedAttr(d.email_enabled)}>
+          <span>发送电子邮件通知</span>
+        </label>
+        <div class="form-grid alert-email-grid">
+          ${formField("Resend API Key", `<input id="aResendKey" type="password" placeholder="${escapeHtml(resendHint)}">`)}
+          ${formField("发件人", `<input id="aEmailFrom" type="email" value="${escapeHtml(d.email_from || "")}" placeholder="NStatus &lt;status@example.com&gt;">`)}
+          ${formField("收件人", `<input id="aEmailTo" value="${escapeHtml(d.email_to || "")}" placeholder="owner@example.com">`)}
+          ${formField("Reply-To（可选）", `<input id="aEmailReplyTo" type="email" value="${escapeHtml(d.email_reply_to || "")}" placeholder="reply@example.com">`)}
+        </div>
+        <p class="hint">多个收件人用英文逗号分隔；发件域名必须已在 Resend 验证。</p>
+      </fieldset>
       <div class="form-grid">
         ${formField("离线超过 N 分钟", `<input id="aOffline" type="number" min="1" step="1" value="${escapeHtml(d.offline_minutes)}">`)}
         ${formField("重复提醒冷却分钟", `<input id="aRepeat" type="number" min="0" step="1" value="${escapeHtml(d.repeat_minutes)}">`)}
@@ -1832,7 +1845,8 @@ function alertSettingsHtml(d) {
 
       <div class="ma alert-actions">
         <button class="btn" id="runAlertCheck">立即检查</button>
-        <button class="btn btn-blue" id="testAlert">测试 TG</button>
+        <button class="btn btn-blue" id="testTelegramAlert">测试 Telegram</button>
+        <button class="btn btn-blue" id="testEmailAlert">测试邮件</button>
         <button class="btn btn-primary" id="saveAlerts">保存报警设置</button>
       </div>
     </div>`;
@@ -1842,7 +1856,12 @@ function alertSettingsPayload() {
   const token = (byId("aToken")?.value || "").trim();
   const payload = {
     enabled: !!byId("aEnabled")?.checked,
+    telegram_enabled: !!byId("aTelegramEnabled")?.checked,
     telegram_chat_id: byId("aChat")?.value.trim() || "",
+    email_enabled: !!byId("aEmailEnabled")?.checked,
+    email_from: byId("aEmailFrom")?.value.trim() || "",
+    email_to: byId("aEmailTo")?.value.trim() || "",
+    email_reply_to: byId("aEmailReplyTo")?.value.trim() || "",
     offline_minutes: Number(byId("aOffline")?.value) || 10,
     repeat_minutes: Number(byId("aRepeat")?.value) || 0,
     notify_online: !!byId("aNotifyOnline")?.checked,
@@ -1861,6 +1880,8 @@ function alertSettingsPayload() {
     traffic_remaining_gb: Number(byId("aTrafficGb")?.value) || 0,
   };
   if (token) payload.telegram_bot_token = token;
+  const resendKey = (byId("aResendKey")?.value || "").trim();
+  if (resendKey) payload.resend_api_key = resendKey;
   return payload;
 }
 
@@ -1890,11 +1911,11 @@ async function saveAlerts() {
   }
 }
 
-async function testAlert() {
+async function testAlert(channel) {
   try {
     if ((await saveAlerts()) === false) return;
-    await api("/api/alerts/test", { method: "POST", body: "{}" });
-    toast("测试报警已发送", "ok");
+    await api("/api/alerts/test", { method: "POST", body: JSON.stringify({ channel }) });
+    toast(channel === "email" ? "测试邮件已发送" : "测试 Telegram 已发送", "ok");
   } catch (e) {
     toast(e.message, "err");
   }
@@ -1952,10 +1973,8 @@ async function verifyTotp() {
       method: "POST",
       body: JSON.stringify({ code }),
       noAuthReset: true,
-      forceToken: true,
     });
     if (d.session_id && d.expires_at) saveSession(d.session_id, d.expires_at);
-    clearPersistedToken();
     toast("已启用", "ok");
     loadTotp();
   } catch (e) {
@@ -1980,12 +1999,16 @@ function closeModal() {
   byId("modal").innerHTML = "";
 }
 byId("loginBtn").onclick = login;
-byId("loginToken").onkeydown = (e) => {
+byId("loginUsername").onkeydown = (e) => {
+  if (e.key === "Enter") login();
+};
+byId("loginPassword").onkeydown = (e) => {
   if (e.key === "Enter") login();
 };
 byId("loginTotp").onkeydown = (e) => {
-  if (e.key === "Enter") verifyLoginTotp();
+  if (e.key === "Enter") login();
 };
+byId("githubLoginBtn").onclick = () => location.assign(`${API}/api/auth/github/start`);
 byId("logoutBtn").onclick = () => {
   clearAuth();
   location.reload();
@@ -2076,11 +2099,14 @@ byId("latencyTable").onclick = (e) => {
   if (button.dataset.a === "latency-toggle") toggleLatencyNode(node);
   if (button.dataset.a === "latency-delete") deleteLatencyNode(node);
 };
-if (adminClient.getToken() || hasSession())
-  api("/api/login", { method: "GET", forceToken: Boolean(adminClient.getToken()) })
+loadAuthConfig();
+if (await completeGitHubRedirect()) {
+  // OAuth completion owns the initial login state.
+} else if (hasSession())
+  api("/api/login", { method: "GET" })
     .then((d) => {
-      if (d.session_valid || !d.totp_required) showApp();
-      else showTotpPrompt();
+      if (d.session_valid) showApp();
+      else showLogin();
     })
     .catch(() => showLogin());
 else showLogin();

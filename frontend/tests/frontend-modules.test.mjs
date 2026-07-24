@@ -64,13 +64,13 @@ globalThis.fetch = async (url, options) => {
 };
 
 const client = createAdminClient({ apiBase: 'https://api.example' });
-client.setToken('secret');
 client.saveSession('session', Math.floor(Date.now() / 1000) + 60);
 await client.api('/api/targets');
 assert.equal(lastRequest.options.headers.Authorization, undefined);
 assert.equal(lastRequest.options.headers['x-admin-session'], 'session');
-await client.api('/api/login', { forceToken: true });
-assert.equal(lastRequest.options.headers.Authorization, 'Bearer secret');
+await client.apiAuth('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'secret' }) });
+assert.equal(lastRequest.options.headers.Authorization, undefined);
+assert.equal(lastRequest.options.headers['x-admin-session'], undefined);
 const installResponse = await client.apiAdmin('/api/agent/install-command?target_id=vps-a', {}, 1_000);
 assert.equal(installResponse.ok, true);
 assert.match(lastRequest.url, /\/api\/agent\/install-command\?target_id=vps-a$/);

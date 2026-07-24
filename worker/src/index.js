@@ -1,4 +1,4 @@
-import { enrichCfContext, probeTarget, saveCheck, runDueTargets } from './probe.js';
+import { enrichCfContext, probeTarget, saveCheck, runDueTargets, runFastStatusTargets } from './probe.js';
 import { writeStatusSnapshot } from './status.js';
 import { archiveYesterdayOncePerLocalDay, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates } from './admin.js';
 import { cleanupRateLimitsD1 } from './ratelimit.js';
@@ -63,13 +63,15 @@ async function runScheduledTasks(env, cron) {
   // Availability checks are the time-sensitive task; maintenance must never
   // consume the cron execution window before probes have run.
   try { results.probe = await measure('probe', () => runDueTargets(env)); } catch (err) { results.probe_error = String(err?.message || err); }
+  try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env)); } catch (err) { results.fast_status_error = String(err?.message || err); }
   if (results.probe_error || shouldRunScheduledFollowups(results.probe)) {
     try { await recordProbeResult(env, cron, results.probe, results.probe_error, timings.probe); } catch (_) {}
   }
-  if (!shouldRunScheduledFollowups(results.probe)) {
+  const hasCurrentStatus = Number(results.fast_status?.count || 0) > 0;
+  if (!shouldRunScheduledFollowups(results.probe) && !hasCurrentStatus) {
     results.followups = { ok: true, skipped: true, reason: results.probe_error ? 'probe_failed' : 'no_targets_due' };
     results.timings_ms = timings;
-    if (results.probe_error) {
+    if (results.probe_error || results.fast_status_error) {
       try { await recordScheduledResult(env, cron, results); } catch (_) {}
     }
     return results;

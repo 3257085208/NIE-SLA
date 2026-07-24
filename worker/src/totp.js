@@ -47,7 +47,7 @@ export async function verifyTOTP(request, env) {
       await deleteMeta(env, PENDING_SECRET_KEY);
     }
 
-    const session = await createSession(env);
+    const session = await createAdminSession(env, { provider: 'totp-setup', subject: 'admin' });
     return json({ ok: true, totp_enabled: true, session_id: session.session_id, expires_at: session.expires_at }, 200, env);
   } catch (err) {
     console.error('verifyTOTP error:', String(err?.message || err));
@@ -64,9 +64,6 @@ export async function disableTOTP(env) {
 
   await deleteMeta(env, ACTIVE_SECRET_KEY);
   await deleteMeta(env, PENDING_SECRET_KEY);
-  await deleteMeta(env, SESSION_ID_KEY);
-  await deleteMeta(env, SESSION_EXPIRES_KEY);
-  await deleteMeta(env, SESSIONS_KEY);
   return json({ ok: true }, 200, env);
 }
 
@@ -76,14 +73,20 @@ export async function checkTOTP(env) {
   return { ok: true, totp_enabled: !!secret };
 }
 
-async function createSession(env) {
+export async function createAdminSession(env, { provider = 'password', subject = 'admin' } = {}) {
   const sessionId = crypto.randomUUID().replace(/-/g, '');
   const expiresAt = nowSec() + 86400;
   const tokenHash = HASHED_SESSION_PREFIX + await sha256Hex(sessionId);
   const now = nowSec();
   let sessions = await readSessions(env);
   sessions = sessions.filter((s) => Number(s.expires_at || 0) > now);
-  sessions.push({ token_hash: tokenHash, expires_at: expiresAt, created_at: now });
+  sessions.push({
+    token_hash: tokenHash,
+    expires_at: expiresAt,
+    created_at: now,
+    provider: String(provider || 'password').slice(0, 32),
+    subject: String(subject || 'admin').slice(0, 100),
+  });
   while (sessions.length > MAX_ADMIN_SESSIONS) sessions.shift();
   await setMeta(env, SESSIONS_KEY, JSON.stringify(sessions));
   // Keep legacy single-session keys pointing at the newest session for older clients.
@@ -120,12 +123,24 @@ export async function validateAdminSession(env, sessionId) {
     const stored = String(entry.token_hash || '');
     if (!stored) continue;
     if (stored.startsWith(HASHED_SESSION_PREFIX)) {
-      if (stored === presentedHash) return { valid: true, expires_at: exp };
+      if (stored === presentedHash) return { valid: true, expires_at: exp, provider: entry.provider || 'legacy', subject: entry.subject || 'admin' };
     } else if (stored === presented) {
-      return { valid: true, expires_at: exp };
+      return { valid: true, expires_at: exp, provider: entry.provider || 'legacy', subject: entry.subject || 'admin' };
     }
   }
   return { valid: false, expires_at: null };
+}
+
+export async function verifyActiveTOTP(env, code) {
+  const normalized = String(code || '').trim();
+  if (!/^\d{6}$/.test(normalized) || !env.DB) return false;
+  const storedSecret = await getMeta(env, ACTIVE_SECRET_KEY);
+  if (!storedSecret) return false;
+  const stored = await readStoredSecret(storedSecret, env);
+  if (stored.needsMigration) {
+    await setMeta(env, ACTIVE_SECRET_KEY, await encryptSecret(stored.secret, env));
+  }
+  return verifyCode(stored.secret, normalized);
 }
 
 async function readCode(request) {
