@@ -1,4 +1,4 @@
-# CloudflareStatus / 聶.NET 前端
+# NIE-SLA Frontend / NIE-SLA 前端
 
 本目录是 NIE-SLA 的 Cloudflare Pages 前端，同时包含公开状态页、管理后台、Pages Functions API 代理、Agent 安装脚本和发布二进制。
 
