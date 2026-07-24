@@ -2,7 +2,7 @@
 
 ## Rust VPS Metrics Agent
 
-The NStatus Agent is a small Rust binary that collects system metrics and sends them outbound to the Worker. It does not listen on any port.
+The NIE-SLA Agent is a small Rust binary that collects system metrics and sends them outbound to the Worker. It does not listen on any port.
 
 ### One-Line Install
 
@@ -34,7 +34,7 @@ iwr https://your-pages-domain.example/install.ps1 -OutFile $env:TEMP\nstatus-ins
 & $env:TEMP\nstatus-install.ps1 -Api "https://your-worker.example.com" -Token "AGENT_TOKEN"
 ```
 
-The installer stores files in `C:\ProgramData\NStatus` and registers a startup Scheduled Task named `NStatusMetrics`.
+The installer stores files in `C:\ProgramData\NIE-SLA` and registers a startup Scheduled Task named `NStatusMetrics`.
 
 ### What It Collects
 

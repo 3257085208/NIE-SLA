@@ -1,6 +1,6 @@
 # 15 Plugin Engineering Standard
 
-NStatus plugins are sandboxed, read-only frontend panels. They are not Worker plugins or Admin extensions.
+NIE-SLA plugins are sandboxed, read-only frontend panels. They are not Worker plugins or Admin extensions.
 
 ## Repository contract
 
@@ -24,5 +24,3 @@ Plugins run with `sandbox="allow-scripts"` and a CSP that blocks networking, inl
 - Test origin filtering, XSS payloads, missing data, repeat delivery, resize bounds, narrow layouts, keyboard use, and offline CSP behavior.
 
 Publish the license, source tag, changelog, reproducible build instructions, and ZIP SHA-256. Test type-separated upload rejection, disabled-by-default installation, enable/disable, upgrade, and deletion. Strip source-map paths, credentials, production data, `.env`, snapshots, and caches.
-
-This standard borrows NodeGet's independent-module, manifest, command, and build-output conventions. The runtime is deliberately incompatible: NodeGet components must be rewritten as message-driven read-only panels without direct DOM, network, or write access.

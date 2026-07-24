@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# NStatus one-command deployment
+# NIE-SLA one-command deployment
 # Usage: bash deploy.sh
 set -euo pipefail
 
 GREEN='\033[0;32m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 ok()  { echo -e "  ${GREEN}[OK]${NC} $*"; }
 
-echo -e "\n${BOLD}NStatus Deployment${NC}\n"
+echo -e "\n${BOLD}NIE-SLA Deployment${NC}\n"
 
 # 1. Prerequisites
 command -v node &>/dev/null || { echo "Need Node.js 18+"; exit 1; }
@@ -24,8 +24,8 @@ ok "Wrangler authenticated"
 
 # 3. Configuration
 echo ""
-read -rp "  Site name [NStatus]: " SITE_NAME
-SITE_NAME="${SITE_NAME:-NStatus}"
+read -rp "  Site name [NIE-SLA]: " SITE_NAME
+SITE_NAME="${SITE_NAME:-NIE-SLA}"
 read -rp "  Admin username [admin]: " ADMIN_USER
 ADMIN_USER="${ADMIN_USER:-admin}"
 read -rp "  Timezone offset minutes [480]: " TZ

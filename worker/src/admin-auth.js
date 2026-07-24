@@ -1,6 +1,6 @@
 import { ApiError, constantTimeEqual, json, safeJson } from './auth.js';
 import { sha256Hex } from './utils.js';
-import { checkTOTP, createAdminSession, verifyActiveTOTP } from './totp.js';
+import { checkTOTP, createAdminSession, revokeAllAdminSessions, verifyActiveTOTP } from './totp.js';
 
 const OAUTH_STATES_KEY = 'github_oauth_states';
 const OAUTH_TICKETS_KEY = 'github_oauth_tickets';
@@ -8,11 +8,17 @@ const OAUTH_STATE_COOKIE = 'nstatus_oauth_state';
 const OAUTH_STATE_TTL_SEC = 600;
 const OAUTH_TICKET_TTL_SEC = 300;
 const MAX_PENDING_OAUTH = 10;
+const ADMIN_CREDENTIALS_KEY = 'admin_credentials_v1';
+const PASSWORD_ALGORITHM = 'pbkdf2-sha256';
+const PASSWORD_ITERATIONS = 210_000;
+const MIN_PASSWORD_LENGTH = 12;
+const MAX_PASSWORD_LENGTH = 256;
 
-export function adminAuthConfig(env) {
+export async function adminAuthConfig(env) {
+  const credentials = await resolveAdminCredentials(env);
   return {
     ok: true,
-    password_enabled: Boolean(adminPassword(env)),
+    password_enabled: Boolean(credentials),
     github_enabled: githubEnabled(env),
   };
 }
@@ -22,11 +28,9 @@ export async function passwordLogin(request, env) {
   const body = await safeJson(request, 8_192);
   const username = String(body.username || '').trim();
   const password = String(body.password || '');
-  const expectedUsername = adminUsername(env);
-  const expectedPassword = adminPassword(env);
-
-  const usernameValid = constantTimeEqual(username, expectedUsername);
-  const passwordValid = expectedPassword && constantTimeEqual(password, expectedPassword);
+  const credentials = await resolveAdminCredentials(env);
+  const usernameValid = credentials && constantTimeEqual(username, credentials.username);
+  const passwordValid = credentials && await verifyPassword(password, credentials);
   if (!usernameValid || !passwordValid) throw new ApiError(401, '账号或密码错误');
 
   const totp = await checkTOTP(env);
@@ -38,6 +42,64 @@ export async function passwordLogin(request, env) {
 
   const session = await createAdminSession(env, { provider: 'password', subject: username });
   return loginResult(session, totp.totp_enabled, 'password', username);
+}
+
+export async function getAdminAccount(env) {
+  const credentials = await resolveAdminCredentials(env);
+  if (!credentials) throw new ApiError(503, '尚未配置管理员账号密码');
+  return {
+    ok: true,
+    username: credentials.username,
+    credentials_source: credentials.source,
+    password_min_length: MIN_PASSWORD_LENGTH,
+  };
+}
+
+export async function updateAdminAccount(request, env) {
+  if (!env.DB) throw new ApiError(500, '修改账号需要 D1 数据库');
+  const body = await safeJson(request, 16_384);
+  const currentPassword = String(body.current_password || '');
+  const username = normalizeUsername(body.username);
+  const password = String(body.new_password || '');
+  const confirmPassword = String(body.confirm_password || '');
+  const current = await resolveAdminCredentials(env);
+
+  if (!current || !await verifyPassword(currentPassword, current)) throw new ApiError(401, '当前密码错误');
+  validateNewCredentials(username, password, confirmPassword);
+
+  const totp = await checkTOTP(env);
+  if (totp.totp_enabled && !await verifyActiveTOTP(env, String(body.totp || '').trim())) {
+    throw new ApiError(401, '需要有效的 TOTP 验证码');
+  }
+
+  const record = await createAdminCredentialRecord(username, password);
+  await setMeta(env, ADMIN_CREDENTIALS_KEY, JSON.stringify(record));
+  await revokeAllAdminSessions(env);
+  await Promise.all([
+    writePending(env, OAUTH_STATES_KEY, []),
+    writePending(env, OAUTH_TICKETS_KEY, []),
+  ]);
+  const session = await createAdminSession(env, { provider: 'password-reset', subject: username });
+  return {
+    ...loginResult(session, totp.totp_enabled, 'password-reset', username),
+    credentials_source: 'db',
+  };
+}
+
+export async function createAdminCredentialRecord(username, password) {
+  const normalizedUsername = normalizeUsername(username);
+  validateNewCredentials(normalizedUsername, String(password || ''), String(password || ''));
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const passwordHash = await derivePasswordHash(password, salt, PASSWORD_ITERATIONS);
+  return {
+    version: 1,
+    username: normalizedUsername,
+    algorithm: PASSWORD_ALGORITHM,
+    iterations: PASSWORD_ITERATIONS,
+    salt: bytesToBase64(salt),
+    password_hash: bytesToBase64(passwordHash),
+    updated_at: nowSec(),
+  };
 }
 
 export async function startGitHubOAuth(request, env) {
@@ -143,12 +205,93 @@ function loginResult(session, totpEnabled, provider, subject) {
   };
 }
 
-function adminUsername(env) {
+function envAdminUsername(env) {
   return String(env.ADMIN_USERNAME || 'admin').trim() || 'admin';
 }
 
-function adminPassword(env) {
+function envAdminPassword(env) {
   return String(env.ADMIN_PASSWORD || env.ADMIN_TOKEN || '');
+}
+
+async function resolveAdminCredentials(env) {
+  if (env.DB) {
+    const row = await env.DB.prepare('SELECT value FROM app_meta WHERE key = ?').bind(ADMIN_CREDENTIALS_KEY).first().catch(() => null);
+    if (row?.value) {
+      try {
+        const record = JSON.parse(row.value);
+        if (validCredentialRecord(record)) return { ...record, source: 'db' };
+      } catch (_) {}
+    }
+  }
+  const password = envAdminPassword(env);
+  return password ? { username: envAdminUsername(env), password, source: 'env' } : null;
+}
+
+async function verifyPassword(password, credentials) {
+  const candidate = String(password || '');
+  if (credentials?.source === 'db') {
+    try {
+      const salt = base64ToBytes(credentials.salt);
+      const expected = base64ToBytes(credentials.password_hash);
+      const actual = await derivePasswordHash(candidate, salt, Number(credentials.iterations));
+      return constantTimeEqual(bytesToBase64(actual), bytesToBase64(expected));
+    } catch (_) {
+      return false;
+    }
+  }
+  return Boolean(credentials?.password) && constantTimeEqual(candidate, credentials.password);
+}
+
+async function derivePasswordHash(password, salt, iterations) {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(String(password || '')),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+  return new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
+    key,
+    256,
+  ));
+}
+
+function validCredentialRecord(record) {
+  return record
+    && record.version === 1
+    && record.algorithm === PASSWORD_ALGORITHM
+    && normalizeUsername(record.username) === record.username
+    && Number.isInteger(record.iterations)
+    && record.iterations >= 100_000
+    && record.iterations <= 1_000_000
+    && /^[A-Za-z0-9+/]{20,}={0,2}$/.test(String(record.salt || ''))
+    && /^[A-Za-z0-9+/]{40,}={0,2}$/.test(String(record.password_hash || ''));
+}
+
+function validateNewCredentials(username, password, confirmation) {
+  if (!username) throw new ApiError(400, '账号需为 3-64 位字母、数字或 . _ @ -');
+  if (password.length < MIN_PASSWORD_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
+    throw new ApiError(400, `新密码长度需为 ${MIN_PASSWORD_LENGTH}-${MAX_PASSWORD_LENGTH} 位`);
+  }
+  if (password !== confirmation) throw new ApiError(400, '两次输入的新密码不一致');
+  if (constantTimeEqual(username.toLowerCase(), password.toLowerCase())) throw new ApiError(400, '密码不能与账号相同');
+}
+
+function normalizeUsername(value) {
+  const username = String(value || '').trim();
+  return /^[A-Za-z0-9._@-]{3,64}$/.test(username) ? username : '';
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (const value of bytes) binary += String.fromCharCode(value);
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  const binary = atob(String(value || ''));
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
 function githubEnabled(env) {
@@ -281,6 +424,12 @@ async function readPending(env, key) {
 async function writePending(env, key, entries) {
   await env.DB.prepare('INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at')
     .bind(key, JSON.stringify(entries.slice(-MAX_PENDING_OAUTH)), nowSec())
+    .run();
+}
+
+async function setMeta(env, key, value) {
+  await env.DB.prepare('INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at')
+    .bind(key, String(value), nowSec())
     .run();
 }
 

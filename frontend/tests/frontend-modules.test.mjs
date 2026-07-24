@@ -11,7 +11,7 @@ import {
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
 import { groupByDimension, groupByMenuHtml, groupKeyFor, priceBandKey } from '../js/shared/grouping.js';
-import { nodegetFlagHtml } from '../js/themes/nodeget-cards.js';
+import { cardThemeFlagHtml } from '../js/themes/card-theme.js';
 import { canShowTemperature, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
 import {
   CURRENCIES,
@@ -87,10 +87,10 @@ assert.equal(Object.keys(groupByDimension(targets, 'line_type')).length, 2);
 assert.equal(priceBandKey({ price: 8 }), '5 – 10');
 assert.match(groupByMenuHtml('location'), /role="listbox"/);
 assert.match(groupByMenuHtml('location'), /data-group-value="location"[^>]*>国家\/地区<\/button>/);
-assert.match(nodegetFlagHtml('HK'), /assets\/flags\/4x3\/hk\.svg/);
-assert.match(nodegetFlagHtml('HK'), /width="18" height="13"/);
+assert.match(cardThemeFlagHtml('HK'), /assets\/flags\/4x3\/hk\.svg/);
+assert.match(cardThemeFlagHtml('HK'), /width="18" height="13"/);
 assert.equal(countryFlagAsset('HK'), './assets/flags/4x3/hk.svg');
-assert.doesNotMatch(nodegetFlagHtml('HK'), /flagcdn\.com/);
+assert.doesNotMatch(cardThemeFlagHtml('HK'), /flagcdn\.com/);
 assert.equal(isVirtualized({ virtualization: 'kvm' }), true);
 assert.equal(isVirtualized({ virtualization: 'bare-metal' }), false);
 assert.equal(canShowTemperature({ virtualization: 'docker' }), false);

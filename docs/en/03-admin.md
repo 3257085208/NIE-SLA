@@ -29,3 +29,17 @@ The classic list is built in. Additional layouts, including the official card th
 ## Install Commands
 
 The Deploy button generates a per-target install command containing API base, download base, Agent token, Agent ID, and label. Do not publish generated commands because they contain secrets.
+# Administrator credentials
+
+Use **Settings → Administrator account** to change the username and password. The current password is required, and an active TOTP code is also required when TOTP is enabled. The new password is stored as a randomly salted PBKDF2-SHA256 record in D1; plaintext credentials are never stored. Other admin sessions are revoked after a successful change.
+
+For lockout recovery, use the Cloudflare control plane from a trusted machine:
+
+```bash
+cd worker
+npm install
+npx wrangler login
+npm run admin:reset -- --remote
+```
+
+Add `--disable-totp` only when the TOTP secret has also been lost. The tool never accepts a password command-line argument, keeping it out of shell history and process listings.

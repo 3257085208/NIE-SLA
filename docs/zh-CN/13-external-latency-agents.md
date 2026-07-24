@@ -113,7 +113,7 @@ npx wrangler d1 execute nstatus-db --remote --command \
 3. 在原节点重新执行完整安装命令。
 4. 必须看到 `{"ok":true,...,"accepted":...}`，再认为升级完成。
 
-旧 Python `urllib` 默认 User-Agent 可能被 Cloudflare Browser Integrity Check 以 1010 拦截，请求甚至不会进入 Worker。当前脚本显式发送 `NStatus-Latency/1.0`，通过 `--once` 在安装阶段立即发现 API、Token 或边缘安全策略问题，并在重装前清理旧服务与残留进程。
+旧 Python `urllib` 默认 User-Agent 可能被 Cloudflare Browser Integrity Check 以 1010 拦截，请求甚至不会进入 Worker。当前脚本显式发送 `NIE-SLA-Latency/1.0`，通过 `--once` 在安装阶段立即发现 API、Token 或边缘安全策略问题，并在重装前清理旧服务与残留进程。
 
 ## 常见故障
 

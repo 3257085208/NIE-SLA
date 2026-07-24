@@ -1626,6 +1626,7 @@ async function deletePing(p) {
 async function loadSettings() {
   loadSysInfo();
   loadTotp();
+  loadAccount();
   loadTheme();
   loadAgentUpdate();
   loadTraffic();
@@ -1797,7 +1798,14 @@ function alertSettingsHtml(d) {
         <div class="form-grid">
           ${formField("Bot Token", `<input id="aToken" type="password" placeholder="${escapeHtml(tokenHint)}">`)}
           ${formField("Chat ID", `<input id="aChat" value="${escapeHtml(d.telegram_chat_id || "")}" placeholder="-100xxxxxxxxxx">`)}
+          ${formField("消息格式", `<select id="aTelegramFormat"><option value="plain"${selectedAttr(d.telegram_format === "plain")}>纯文本</option><option value="html"${selectedAttr(d.telegram_format === "html")}>HTML</option><option value="markdownv2"${selectedAttr(d.telegram_format === "markdownv2")}>MarkdownV2</option></select>`)}
+          ${formField("Topic / Thread ID（可选）", `<input id="aTelegramThread" inputmode="numeric" value="${escapeHtml(d.telegram_message_thread_id || "")}" placeholder="论坛话题 ID">`)}
         </div>
+        <div class="alert-option-row">
+          <label class="switch-line"><input type="checkbox" id="aTelegramPreview"${checkedAttr(d.telegram_disable_web_preview)}><span>关闭链接预览</span></label>
+          <label class="switch-line"><input type="checkbox" id="aTelegramSilent"${checkedAttr(d.telegram_silent)}><span>静默发送</span></label>
+        </div>
+        ${formField("Telegram 消息模板", `<textarea id="aTelegramTemplate" class="alert-template" rows="7">${escapeHtml(d.telegram_template || "")}</textarea>`)}
       </fieldset>
       <fieldset class="alert-channel">
         <legend>电子邮件 · Resend</legend>
@@ -1807,12 +1815,16 @@ function alertSettingsHtml(d) {
         </label>
         <div class="form-grid alert-email-grid">
           ${formField("Resend API Key", `<input id="aResendKey" type="password" placeholder="${escapeHtml(resendHint)}">`)}
-          ${formField("发件人", `<input id="aEmailFrom" type="email" value="${escapeHtml(d.email_from || "")}" placeholder="NStatus &lt;status@example.com&gt;">`)}
+          ${formField("发件人", `<input id="aEmailFrom" type="email" value="${escapeHtml(d.email_from || "")}" placeholder="NIE-SLA &lt;status@example.com&gt;">`)}
           ${formField("收件人", `<input id="aEmailTo" value="${escapeHtml(d.email_to || "")}" placeholder="owner@example.com">`)}
           ${formField("Reply-To（可选）", `<input id="aEmailReplyTo" type="email" value="${escapeHtml(d.email_reply_to || "")}" placeholder="reply@example.com">`)}
+          ${formField("邮件格式", `<select id="aEmailFormat"><option value="text"${selectedAttr(d.email_format === "text")}>纯文本</option><option value="html"${selectedAttr(d.email_format === "html")}>HTML</option></select>`)}
+          ${formField("邮件主题模板", `<input id="aEmailSubjectTemplate" value="${escapeHtml(d.email_subject_template || "")}">`)}
         </div>
+        ${formField("邮件正文模板", `<textarea id="aEmailTemplate" class="alert-template" rows="8">${escapeHtml(d.email_template || "")}</textarea>`)}
         <p class="hint">多个收件人用英文逗号分隔；发件域名必须已在 Resend 验证。</p>
       </fieldset>
+      <p class="hint alert-placeholder-hint">模板占位符：<code>{{title}}</code> <code>{{message}}</code> <code>{{site_name}}</code> <code>{{time}}</code> <code>{{alert_count}}</code> <code>{{channel}}</code>。正文必须包含且只能包含一个 <code>{{message}}</code>，其余占位符也不要重复。</p>
       <div class="form-grid">
         ${formField("离线超过 N 分钟", `<input id="aOffline" type="number" min="1" step="1" value="${escapeHtml(d.offline_minutes)}">`)}
         ${formField("重复提醒冷却分钟", `<input id="aRepeat" type="number" min="0" step="1" value="${escapeHtml(d.repeat_minutes)}">`)}
@@ -1858,10 +1870,18 @@ function alertSettingsPayload() {
     enabled: !!byId("aEnabled")?.checked,
     telegram_enabled: !!byId("aTelegramEnabled")?.checked,
     telegram_chat_id: byId("aChat")?.value.trim() || "",
+    telegram_format: byId("aTelegramFormat")?.value || "plain",
+    telegram_template: byId("aTelegramTemplate")?.value || "",
+    telegram_message_thread_id: byId("aTelegramThread")?.value.trim() || "",
+    telegram_disable_web_preview: !!byId("aTelegramPreview")?.checked,
+    telegram_silent: !!byId("aTelegramSilent")?.checked,
     email_enabled: !!byId("aEmailEnabled")?.checked,
     email_from: byId("aEmailFrom")?.value.trim() || "",
     email_to: byId("aEmailTo")?.value.trim() || "",
     email_reply_to: byId("aEmailReplyTo")?.value.trim() || "",
+    email_format: byId("aEmailFormat")?.value || "text",
+    email_subject_template: byId("aEmailSubjectTemplate")?.value || "",
+    email_template: byId("aEmailTemplate")?.value || "",
     offline_minutes: Number(byId("aOffline")?.value) || 10,
     repeat_minutes: Number(byId("aRepeat")?.value) || 0,
     notify_online: !!byId("aNotifyOnline")?.checked,
@@ -1954,6 +1974,69 @@ async function loadTotp() {
     byId("initTotp") && (byId("initTotp").onclick = initTotp);
   } catch (e) {
     errBox("sTotp", e);
+  }
+}
+async function loadAccount() {
+  const box = byId("sAccount");
+  if (!box) return;
+  try {
+    const [account, loginState] = await Promise.all([
+      api("/api/auth/account"),
+      api("/api/login"),
+    ]);
+    const source = account.credentials_source === "db" ? "后台账号" : "环境变量（首次修改后迁移）";
+    box.innerHTML = `
+      <div class="account-form">
+        ${formField("管理员账号", `<input id="accountUsername" autocomplete="username" value="${escapeHtml(account.username || "admin")}">`)}
+        ${formField("当前密码", '<input id="accountCurrentPassword" type="password" autocomplete="current-password">')}
+        ${formField("新密码", `<input id="accountNewPassword" type="password" minlength="${escapeHtml(account.password_min_length || 12)}" maxlength="256" autocomplete="new-password">`)}
+        ${formField("确认新密码", `<input id="accountConfirmPassword" type="password" minlength="${escapeHtml(account.password_min_length || 12)}" maxlength="256" autocomplete="new-password">`)}
+        ${loginState.totp_enabled ? formField("TOTP 验证码", '<input id="accountTotp" inputmode="numeric" maxlength="6" autocomplete="one-time-code">') : ""}
+      </div>
+      <p class="hint">当前来源：${escapeHtml(source)}。保存后其他设备会退出登录。</p>
+      <button class="btn btn-primary btn-sm" id="saveAccount">更新账号密码</button>`;
+    byId("saveAccount").onclick = saveAccount;
+  } catch (error) {
+    errBox("sAccount", error);
+  }
+}
+
+async function saveAccount() {
+  const button = byId("saveAccount");
+  const username = byId("accountUsername")?.value.trim() || "";
+  const currentPassword = byId("accountCurrentPassword")?.value || "";
+  const newPassword = byId("accountNewPassword")?.value || "";
+  const confirmPassword = byId("accountConfirmPassword")?.value || "";
+  const totp = byId("accountTotp")?.value.trim() || "";
+  if (!currentPassword || !newPassword || !confirmPassword) return toast("请完整填写当前密码和新密码", "err");
+  if (newPassword !== confirmPassword) return toast("两次输入的新密码不一致", "err");
+  if (totp && !/^\d{6}$/.test(totp)) return toast("TOTP 验证码必须是 6 位数字", "err");
+  button.disabled = true;
+  button.textContent = "更新中...";
+  try {
+    const result = await api("/api/auth/account", {
+      method: "PATCH",
+      body: JSON.stringify({
+        username,
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+        totp,
+      }),
+      noAuthReset: true,
+    });
+    if (!result.session_id || !result.session_expires_at) throw new Error("未收到新的管理会话");
+    saveSession(result.session_id, result.session_expires_at);
+    byId("loginUsername").value = username;
+    toast("账号密码已更新，其他设备已退出", "ok");
+    loadAccount();
+  } catch (error) {
+    toast(error.message, "err");
+  } finally {
+    if (document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = "更新账号密码";
+    }
   }
 }
 async function initTotp() {

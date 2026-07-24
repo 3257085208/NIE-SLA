@@ -924,7 +924,7 @@ fn ping_json(p: &PingResult) -> serde_json::Value {
 impl HttpClient {
     fn new() -> Self {
         let config = ureq::Agent::config_builder()
-            .user_agent(format!("NStatus-Agent/{}", AGENT_VERSION))
+            .user_agent(format!("NIE-SLA-Agent/{}", AGENT_VERSION))
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_send_request(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
@@ -1395,7 +1395,7 @@ fn json_string(value: &str) -> String {
 }
 
 fn print_help() {
-    println!("NStatus Agent v{}", AGENT_VERSION);
+    println!("NIE-SLA Agent v{}", AGENT_VERSION);
     println!("Usage: nstatus-metrics --api URL --token TOKEN [--once]");
     println!(
         "Environment: NSTATUS_API_BASE, NSTATUS_AGENT_TOKEN, NSTATUS_AGENT_ID, NSTATUS_AGENT_LABEL, NSTATUS_PING_TARGET_REFRESH_SEC"

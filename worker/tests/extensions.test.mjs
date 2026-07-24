@@ -212,8 +212,10 @@ assert.deepEqual(corruptRegistryEnv.ARCHIVE.keys(), [], 'a corrupt registry must
 
 for (const example of ['theme-minimal', 'theme-cards', 'theme-canvas', 'plugin-status-summary']) {
   const root = path.resolve(import.meta.dirname, '..', '..', 'examples', 'extensions', example);
-  const names = example === 'theme-minimal' || example === 'theme-cards'
-    ? ['manifest.json', 'theme.css']
+  const names = example === 'theme-cards'
+    ? ['manifest.json', 'theme.css', 'LICENSE']
+    : example === 'theme-minimal'
+      ? ['manifest.json', 'theme.css']
     : example === 'theme-canvas'
       ? ['manifest.json', 'index.html', 'theme.css', 'theme.js']
       : ['manifest.json', 'index.html', 'plugin.css', 'plugin.js'];

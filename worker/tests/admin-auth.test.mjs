@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, passwordLogin, startGitHubOAuth } from '../src/admin-auth.js';
+import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from '../src/admin-auth.js';
 import { disableTOTP, validateAdminSession } from '../src/totp.js';
 
 function memoryDb() {
@@ -37,7 +37,7 @@ function jsonRequest(url, body) {
 
 {
   const env = { DB: memoryDb(), ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
-  assert.deepEqual(adminAuthConfig(env), { ok: true, password_enabled: true, github_enabled: false });
+  assert.deepEqual(await adminAuthConfig(env), { ok: true, password_enabled: true, github_enabled: false });
   const login = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
     username: 'owner',
     password: 'correct horse battery staple',
@@ -52,6 +52,59 @@ function jsonRequest(url, body) {
   await assert.rejects(
     passwordLogin(jsonRequest('https://status.example/api/auth/login', { username: 'owner', password: 'wrong' }), env),
     /账号或密码错误/,
+  );
+}
+
+{
+  const env = { DB: memoryDb(), ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
+  const oldLogin = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
+    username: 'owner',
+    password: 'correct horse battery staple',
+  }), env);
+  const changed = await updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {
+    username: 'new.owner',
+    current_password: 'correct horse battery staple',
+    new_password: 'a much stronger replacement password',
+    confirm_password: 'a much stronger replacement password',
+  }), env);
+  assert.equal(changed.credentials_source, 'db');
+  assert.equal((await getAdminAccount(env)).username, 'new.owner');
+  assert.equal((await validateAdminSession(env, oldLogin.session_id)).valid, false, 'changing credentials must revoke older sessions');
+  assert.equal((await validateAdminSession(env, changed.session_id)).valid, true, 'the browser receives a replacement session');
+  await assert.rejects(
+    passwordLogin(jsonRequest('https://status.example/api/auth/login', {
+      username: 'owner',
+      password: 'correct horse battery staple',
+    }), env),
+    /账号或密码错误/,
+  );
+  const newLogin = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
+    username: 'new.owner',
+    password: 'a much stronger replacement password',
+  }), env);
+  assert.equal(newLogin.session_valid, true);
+  const stored = JSON.parse(env.DB.meta.get('admin_credentials_v1'));
+  assert.equal(stored.algorithm, 'pbkdf2-sha256');
+  assert.ok(stored.password_hash && !JSON.stringify(stored).includes('replacement password'));
+  await assert.rejects(
+    updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {
+      username: 'new.owner',
+      current_password: 'wrong password',
+      new_password: 'another sufficiently long password',
+      confirm_password: 'another sufficiently long password',
+    }), env),
+    /当前密码错误/,
+  );
+
+  env.DB.meta.set('totp_secret', 'JBSWY3DPEHPK3PXP');
+  await assert.rejects(
+    updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {
+      username: 'new.owner',
+      current_password: 'a much stronger replacement password',
+      new_password: 'another sufficiently long password',
+      confirm_password: 'another sufficiently long password',
+    }), env),
+    /需要有效的 TOTP 验证码/,
   );
 }
 
@@ -73,7 +126,7 @@ function jsonRequest(url, body) {
     GITHUB_OAUTH_ALLOWED_USERS: 'AllowedUser, second-user',
     PUBLIC_SITE_ORIGIN: 'https://status.example',
   };
-  assert.equal(adminAuthConfig(env).github_enabled, true);
+  assert.equal((await adminAuthConfig(env)).github_enabled, true);
   const start = await startGitHubOAuth(new Request('https://status.example/api/auth/github/start'), env);
   assert.equal(start.status, 302);
   const authorize = new URL(start.headers.get('location'));

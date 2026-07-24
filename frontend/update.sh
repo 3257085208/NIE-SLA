@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# NStatus Agent 一键更新脚本
+# NIE-SLA Agent 一键更新脚本
 set -euo pipefail
 
 GREEN='\033[0;32m'
@@ -61,7 +61,7 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-title "NStatus Agent 更新"
+title "NIE-SLA Agent 更新"
 
 # 检测架构
 case "$(uname -m)" in

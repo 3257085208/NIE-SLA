@@ -15,7 +15,8 @@
 
 ## 已采用的控制
 
-- 账号密码与 Token 使用常量时间比较，管理 Session 在 D1 中只保存 SHA-256 哈希。
+- 后台密码迁移后使用随机盐 PBKDF2-SHA256 派生，登录比较采用常量时间；管理 Session 在 D1 中只保存 SHA-256 哈希。
+- 修改管理员凭据会注销其他 Session；忘记密码只能通过已登录的 Cloudflare 控制面强制重置，不提供公网 Reset Token。
 - 每节点 scoped Token，绑定 Agent ID。
 - Admin 可启用 TOTP。
 - TOTP secret 使用 AES-GCM 加密。

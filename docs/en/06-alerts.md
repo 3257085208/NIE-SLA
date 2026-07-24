@@ -10,9 +10,17 @@ Create a bot with `@BotFather`, obtain the token and chat ID, then configure Tel
 
 ## Email
 
-Email uses the Resend HTTPS API. Verify a sending domain, create an API key, enable email in Admin, and enter the API key, sender, and comma-separated recipients. Senders may use `NStatus <status@example.com>` format.
+Email uses the Resend HTTPS API. Verify a sending domain, create an API key, enable email in Admin, and enter the API key, sender, and comma-separated recipients. Senders may use `NIE-SLA <status@example.com>` format.
 
 Environment configuration is also supported through `RESEND_API_KEY`, `ALERT_EMAIL_FROM`, `ALERT_EMAIL_TO`, and `ALERT_EMAIL_REPLY_TO`.
+
+## Formats and templates
+
+Telegram supports plain text, HTML, and MarkdownV2, plus Topic/Thread ID, silent delivery, and link-preview control. Email supports separate subject/body templates and plain-text or HTML bodies.
+
+Both channels support `{{title}}`, `{{message}}`, `{{site_name}}`, `{{time}}`, `{{alert_count}}`, and `{{channel}}`. Dynamic values are escaped for the selected markup format. Templates cannot change the destination URL or authentication headers: Telegram remains restricted to the official Bot API and email to Resend.
+
+Telegram and email body templates must contain exactly one `{{message}}`; every other placeholder may also appear at most once. Unknown or repeated placeholders are rejected when settings are saved, preventing oversized messages and broken markup.
 
 ## Timing
 

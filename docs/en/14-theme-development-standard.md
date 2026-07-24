@@ -1,6 +1,6 @@
 # 14 Theme Engineering Standard
 
-This document defines the source-to-ZIP contract for third-party NStatus themes. Read [13 Extensions and Developer API](13-extensions-developer-guide.md) for the platform package and API contract.
+This document defines the source-to-ZIP contract for third-party NIE-SLA themes. Read [13 Extensions and Developer API](13-extensions-developer-guide.md) for the platform package and API contract.
 
 ## Repository contract
 
@@ -25,5 +25,3 @@ Prefer documented CSS variables and scope specific selectors under `body[data-ex
 - Publish source, license, changelog, reproducible build steps, tagged version, and ZIP SHA-256.
 
 Use PATCH for compatible fixes, MINOR for compatible additions, and MAJOR for breaking changes. A release is accepted only when source commit, test result, manifest version, archive name, and checksum agree.
-
-The project borrows independent repositories, explicit manifests/file lists, generated preference metadata, reproducible ZIPs, and checksum-bound distribution ideas from Komari and NodeGet. The runtime remains intentionally incompatible: executable layouts run only in the NStatus sandbox and communicate through its read-only message protocol.

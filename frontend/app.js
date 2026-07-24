@@ -44,17 +44,17 @@ import {
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
 import {
-  mountNodegetDetailChecksPanel,
-  nodegetDetailPageHtml,
-} from './js/themes/nodeget-detail.js';
+  mountCardThemeDetailChecksPanel,
+  cardThemeDetailPageHtml,
+} from './js/themes/card-detail.js';
 import {
-  nodegetAvatarHtml,
-  nodegetCardMetaLine,
-  nodegetFlagHtml,
-  nodegetOsLogoHtml,
-  nodegetStatusDotClass,
-  nodegetTopbarToolsHtml,
-} from './js/themes/nodeget-cards.js?v=20260721-flag-harmony';
+  cardThemeAvatarHtml,
+  cardThemeMetaLine,
+  cardThemeFlagHtml,
+  cardThemeOsBadgeHtml,
+  cardThemeStatusDotClass,
+  cardThemeTopbarToolsHtml,
+} from './js/themes/card-theme.js?v=20260721-flag-harmony';
 import { buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 
@@ -453,7 +453,7 @@ function applyAppearance(raw) {
     if (avatar) {
       avatar.innerHTML = state.appearance.brand_avatar_url
         ? `<img src="${escapeAttr(state.appearance.brand_avatar_url)}" alt="">`
-        : nodegetAvatarHtml();
+        : cardThemeAvatarHtml();
     }
   }
   const right = document.querySelector('.topbar-cf');
@@ -525,14 +525,14 @@ function syncCardTopbar(enabled) {
     avatar.setAttribute('aria-hidden', 'true');
     avatar.innerHTML = state.appearance.brand_avatar_url
       ? `<img src="${escapeAttr(state.appearance.brand_avatar_url)}" alt="">`
-      : nodegetAvatarHtml();
+      : cardThemeAvatarHtml();
     brand.insertBefore(avatar, brand.firstChild);
   }
 
   if (!tools) {
     tools = document.createElement('div');
     tools.className = 'card-top-tools';
-    tools.innerHTML = nodegetTopbarToolsHtml();
+    tools.innerHTML = cardThemeTopbarToolsHtml();
   }
 
   if (!state.searchInTopbar) {
@@ -598,7 +598,7 @@ function cardRegionButton(region) {
   const active = state.cardRegion === region.code;
   return `
     <button type="button" class="card-region-pill ${active ? 'active' : ''}" data-region="${escapeAttr(region.code)}">
-      ${nodegetFlagHtml(region.code)}
+      ${cardThemeFlagHtml(region.code)}
       <strong>${escapeHtml(region.label)}</strong>
       <em>${Number(region.count || 0)}</em>
     </button>
@@ -1037,7 +1037,7 @@ function renderService(t, days, summaries) {
   if (t.line_type) metaBadges += `<span class="meta-badge meta-line">${escapeHtml(t.line_type)}</span>`;
   if (t.location || targetCityName(t)) {
     const country = countryByCode(t.location);
-    const locationFlag = country ? nodegetFlagHtml(country.code) : '';
+    const locationFlag = country ? cardThemeFlagHtml(country.code) : '';
     const locationText = targetLocationLabel(t);
     if (locationText) metaBadges += `<span class="meta-badge meta-loc">${locationFlag}${escapeHtml(locationText)}</span>`;
   }
@@ -1098,10 +1098,10 @@ function renderServiceCard(t, days, summaries) {
   const m = t.agent_metrics || {};
   const info = m.vps_info || {};
   const region = targetRegionCode(t);
-  const regionFlag = nodegetFlagHtml(region, 'node-region-flag');
+  const regionFlag = cardThemeFlagHtml(region, 'node-region-flag');
   const osLine = cardOsLine(info);
   const locationLabel = targetLocationLabel(t);
-  const titleMeta = nodegetCardMetaLine([locationLabel || (region !== 'OTHER' ? regionMeta(region).label : regionShort(t))]);
+  const titleMeta = cardThemeMetaLine([locationLabel || (region !== 'OTHER' ? regionMeta(region).label : regionShort(t))]);
   const age = m.updated_at || t.last_metrics_at ? timeAgoSec(Math.floor(new Date(m.updated_at || t.last_metrics_at).getTime() / 1000)) : '-';
   const latencySamples = cardLatencySamples(t, days, summaries);
   const hasLatency = targetHasPublicLatency(t);
@@ -1115,8 +1115,8 @@ function renderServiceCard(t, days, summaries) {
   return `
     <div class="service node-card card-soft node-card-hover ${statusClass}${selectedClass}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(t.name)}">
       <div class="node-card-head">
-        <span class="node-dot ${nodegetStatusDotClass(statusClass)}"></span>
-        <span class="node-logo">${nodegetOsLogoHtml(info)}</span>
+        <span class="node-dot ${cardThemeStatusDotClass(statusClass)}"></span>
+        <span class="node-logo">${cardThemeOsBadgeHtml(info)}</span>
         <div class="service-name">
           <span class="service-title-line">
             <span class="service-title-text">${escapeHtml(t.name)}</span>
@@ -1237,7 +1237,7 @@ function cardResourceMetric(label, value, sub, tone) {
 }
 
 function renderCardDetailPage(target, days, summaries) {
-  return nodegetDetailPageHtml(renderServiceCard(target, days, summaries), targetExpiryValueHtml(target));
+  return cardThemeDetailPageHtml(renderServiceCard(target, days, summaries), targetExpiryValueHtml(target));
 }
 
 function openCardDetail(id) {
@@ -1541,7 +1541,7 @@ async function selectService(id, name, el, options = {}) {
   el?.classList.add('selected');
   attachInlineChart(detailMode ? document.querySelector('.node-detail-chart-slot') || el : el);
   if (detailMode) {
-    mountNodegetDetailChecksPanel(
+    mountCardThemeDetailChecksPanel(
       els.checksPanel,
       document.querySelector('.node-detail-checks-slot'),
     );

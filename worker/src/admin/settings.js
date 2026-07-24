@@ -31,7 +31,7 @@ export async function fetchExchangeRates(env) {
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
     const res = await fetch('https://api.exchangerate-api.com/v4/latest/CNY', {
-      headers: { 'User-Agent': 'NStatus/1.0' },
+      headers: { 'User-Agent': 'NIE-SLA/1.0' },
       signal: controller.signal,
     });
     if (!res.ok) return null;

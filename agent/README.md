@@ -1,6 +1,6 @@
-# NStatus Agent
+# NIE-SLA Agent
 
-This directory contains the Rust Agent, Linux/Windows installers, service templates, helper scripts, and release binaries used by NIE-SLA / NStatus.
+This directory contains the Rust Agent, Linux/Windows installers, service templates, helper scripts, and release binaries used by NIE-SLA.
 
 - 中文完整文档：[../README.zh-CN.md](../README.zh-CN.md)
 - English documentation: [../README.en.md](../README.en.md)

@@ -1,4 +1,4 @@
-# Contributing to NStatus
+# Contributing to NIE-SLA
 
 ## Project Structure
 

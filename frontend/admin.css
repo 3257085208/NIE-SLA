@@ -492,7 +492,8 @@ th {
   margin-bottom: 4px;
 }
 .f input,
-.f select {
+.f select,
+.f textarea {
   width: 100%;
   padding: 9px 10px;
   border: 1px solid var(--line-dark);
@@ -786,6 +787,27 @@ th {
 }
 .alert-channel .form-grid {
   margin-top: 10px;
+}
+.alert-option-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 20px;
+  margin: 8px 0 2px;
+}
+.alert-template {
+  min-height: 118px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.alert-placeholder-hint code {
+  display: inline-block;
+  margin: 2px 4px 2px 0;
+}
+.account-form {
+  display: grid;
+  gap: 0;
 }
 .alert-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));

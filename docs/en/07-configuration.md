@@ -4,7 +4,7 @@
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `PUBLIC_SITE_NAME` | `NStatus` | Public site name |
+| `PUBLIC_SITE_NAME` | `NIE-SLA` | Public site name |
 | `ADMIN_USERNAME` | `admin` | Admin username |
 | `PUBLIC_WORKER_URL` | empty | Public Worker URL |
 | `PUBLIC_AGENT_INSTALL_BASE` | auto | Installer/download base |

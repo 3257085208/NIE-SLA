@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NStatus external probe agent.
+NIE-SLA external probe agent.
 
 This is intended for a small home node such as OrangePi Zero 3. It pulls the
 target list from the Worker with AGENT_TOKEN, checks targets locally, then
@@ -28,7 +28,7 @@ DEFAULT_AGENT_LABEL = "External Probe"
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="NStatus OrangePi external probe agent")
+    parser = argparse.ArgumentParser(description="NIE-SLA OrangePi external probe agent")
     parser.add_argument("--api", default=os.getenv("NSTATUS_API_BASE", "").rstrip("/"), help="Worker API base URL, e.g. https://sla-api.example.com")
     parser.add_argument("--token", default=os.getenv("NSTATUS_AGENT_TOKEN", ""), help="AGENT_TOKEN secret")
     parser.add_argument("--agent-id", default=os.getenv("NSTATUS_AGENT_ID", DEFAULT_AGENT_ID))
@@ -123,7 +123,7 @@ def check_http(target: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(expected, list):
         expected = []
 
-    req = urllib.request.Request(url, method=method, headers={"User-Agent": "NStatus-External-Agent/1.0"})
+    req = urllib.request.Request(url, method=method, headers={"User-Agent": "NIE-SLA-External-Agent/1.0"})
     started = time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as res:
@@ -164,7 +164,7 @@ def api_json(
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
-        "User-Agent": "NStatus-External-Agent/1.0",
+        "User-Agent": "NIE-SLA-External-Agent/1.0",
     }
 
     if payload is not None:

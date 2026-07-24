@@ -26,6 +26,8 @@ Worker 每分钟计算一次报警规则。Telegram 与电子邮件共用相同�
 
 Bot Token 可以保存在 Worker secret `TELEGRAM_BOT_TOKEN`，也可以在后台填写。后台保存时会使用 `ALERT_ENCRYPTION_KEY` 或 `TOTP_ENCRYPTION_KEY` 加密后写入 D1。
 
+Telegram 支持纯文本、HTML、MarkdownV2 三种格式，还可以设置群组 Topic / Thread ID、静默发送、链接预览和独立消息模板。
+
 ## 电子邮件
 
 邮件通过 Resend HTTPS API 发送，不使用 SMTP 端口。
@@ -40,12 +42,33 @@ Bot Token 可以保存在 Worker secret `TELEGRAM_BOT_TOKEN`，也可以在后�
 发件人示例：
 
 ```text
-NStatus <status@example.com>
+NIE-SLA <status@example.com>
 ```
 
 多个收件人用英文逗号分隔。最多读取 10 个有效地址。
 
 Resend API Key 也可以使用 Worker secret `RESEND_API_KEY`，并通过 `ALERT_EMAIL_FROM`、`ALERT_EMAIL_TO`、`ALERT_EMAIL_REPLY_TO` 提供地址。后台填写的 API Key 会加密后写入 D1。
+
+邮件可以分别设置主题模板与正文模板，正文支持纯文本或 HTML。HTML 模式会转义报警产生的动态内容，管理员自行填写的模板标记会保留。
+
+## 自定义模板
+
+Telegram 和邮件使用独立模板。可用占位符：
+
+| 占位符 | 内容 |
+|---|---|
+| `{{title}}` | 本批通知标题 |
+| `{{message}}` | 报警正文或测试正文 |
+| `{{site_name}}` | 站点名称 |
+| `{{time}}` | 发送时间 |
+| `{{alert_count}}` | 本批报警数量 |
+| `{{channel}}` | `telegram` 或 `email` |
+
+选择 HTML 或 MarkdownV2 时，系统只转义占位符注入的动态值；模板本身的格式标记由管理员控制。保存后应分别发送 Telegram 和邮件测试，确认目标客户端的实际显示。
+
+Telegram 和邮件正文必须包含且只能包含一个 `{{message}}`，其他占位符也只能各出现一次。后台会在保存时拒绝未知或重复的占位符，避免超出 Telegram 长度限制或截断 HTML/Markdown 标记。
+
+模板不能执行 JavaScript，也不能修改请求 URL、认证头或收件目标。Telegram 固定请求官方 Bot API，邮件固定请求 Resend API，避免把后台通知配置变成任意网络请求入口。
 
 ## 一分钟当前状态与五分钟 SLA
 

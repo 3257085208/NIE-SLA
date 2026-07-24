@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compatibility wrapper for one-line NStatus Agent installs.
+# Compatibility wrapper for one-line NIE-SLA Agent installs.
 # Required env:
 #   NSTATUS_API_BASE or NSTATUS_API
 #   NSTATUS_AGENT_TOKEN or NSTATUS_TOKEN

@@ -9,7 +9,7 @@ window.addEventListener('message', (event) => {
 
 function render(status) {
   const rows = Array.isArray(status.targets) ? status.targets : [];
-  siteName.textContent = status.name || 'NStatus';
+  siteName.textContent = status.name || 'NIE-SLA';
   summary.textContent = `${rows.length} 个服务`;
   targets.replaceChildren(...rows.map((target) => {
     const card = document.createElement('article');

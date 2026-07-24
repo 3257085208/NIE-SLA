@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent NStatus external Latency probe node."""
+"""Independent NIE-SLA external Latency probe node."""
 
 import concurrent.futures
 import hashlib
@@ -18,7 +18,7 @@ NODE_ID = os.environ["NSTATUS_LATENCY_NODE_ID"]
 INTERVAL = max(30, min(600, int(os.environ.get("NSTATUS_LATENCY_INTERVAL_SEC", "60"))))
 UPDATE_INTERVAL = max(300, min(86400, int(os.environ.get("NSTATUS_LATENCY_UPDATE_CHECK_SEC", "3600"))))
 INSTALL_BASE = os.environ["NSTATUS_LATENCY_INSTALL_BASE"].rstrip("/")
-USER_AGENT = os.environ.get("NSTATUS_LATENCY_USER_AGENT", "NStatus-Latency/1.0")
+USER_AGENT = os.environ.get("NSTATUS_LATENCY_USER_AGENT", "NIE-SLA-Latency/1.0")
 SCRIPT_PATH = os.path.realpath(__file__)
 SCRIPT_VERSION = "4"
 

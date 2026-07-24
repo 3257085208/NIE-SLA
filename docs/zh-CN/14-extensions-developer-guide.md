@@ -1,6 +1,6 @@
 # 14 主题、插件与开发者 API
 
-NStatus 扩展系统允许管理员在后台上传 ZIP 包，并在不替换生产前端代码的情况下启用第三方主题或插件。v1 同时提供低风险 CSS 主题和高自由度的隔离交互画布。
+NIE-SLA 扩展系统允许管理员在后台上传 ZIP 包，并在不替换生产前端代码的情况下启用第三方主题或插件。v1 同时提供低风险 CSS 主题和高自由度的隔离交互画布。
 
 ## 能力与边界
 
@@ -27,8 +27,6 @@ NStatus 扩展系统允许管理员在后台上传 ZIP 包，并在不替换生�
 
 主题和插件建议各自维护为独立源码仓库。平台通用包格式、安全边界与 API 以本文为准；更严格的工程目录、命令、测试、版本和发布标准分别见 [15 主题工程与开发标准](15-theme-development-standard.md) 和 [16 插件工程与开发标准](16-plugin-development-standard.md)。
 
-本规范参考了 NodeGet 将主题作为独立项目、使用显式清单、固定构建产物和标准开发命令的工程组织思路，但没有复制其实现。NStatus 扩展格式与 NodeGet 不兼容：CSS 主题不能执行脚本，交互主题与插件只能在 sandbox iframe 中获得 `status:read`，不能直接访问 DOM、管理 Token、网络或写接口。
-
 ## ZIP 通用规范
 
 ZIP 根目录必须直接包含 `manifest.json`，不能再套一层目录：
@@ -45,7 +43,7 @@ assets/logo.webp
 - 最多 300 个文件，单文件最大 4 MB。
 - `manifest.json` 最大 64 KiB，必须是严格 UTF-8 JSON。
 - 禁止绝对路径、空路径、`..`、反斜杠路径、目录穿越、重复文件名、控制字符、非 NFC Unicode、尾部空格/点和超过 8 层的路径。
-- 允许扩展名：`.css`、`.html`、`.js`、`.json`、`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.svg`、`.woff`、`.woff2`。
+- 允许扩展名：`.css`、`.html`、`.js`、`.json`、`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.svg`、`.woff`、`.woff2`；无扩展名文件仅允许 ZIP 根目录的 `LICENSE` 和 `NOTICE` 文本。
 - `id` 必须匹配 `[a-z][a-z0-9-]{2,48}`，发布后应保持不变。
 - `classic`、`cards`、`admin`、`api`、`themes`、`plugins`、`extensions` 是系统保留 ID。
 - `version` 必须使用 SemVer，例如 `1.2.0`。
@@ -73,8 +71,6 @@ zip -r ../minimal-green-theme.zip .
 - 新版本写入独立 R2 revision。只有所有文件成功后才切换注册表；文件写入或注册表保存失败会删除新 revision，旧版本继续可用。注册表切换后才清理旧 revision。
 - 扩展默认停用。管理员应核对作者、源码 tag、许可证、版本和发布页 SHA-256 后再启用；同 ID 升级也应重新审查权限与文件清单。
 - 当前版本故意不提供“输入 URL/市场地址后由 Worker 下载并安装”。这避免把一个尚未充分约束的 SSRF 与供应链入口暴露给生产环境。
-
-这些边界对照了公开项目中的成熟做法：Komari 对主题包、单文件、总解压量和 Manifest 分别限额，并在市场安装中绑定 SHA-256、限制响应体、校验每次重定向并对 DNS 失败采用 fail-closed；哪吒的受限 HTTP 客户端拒绝重定向、过滤内网地址并把连接固定到已校验 IP，更新接口也使用期望 SHA；NodeGet 将主题维护为独立工程，生成显式文件清单和可复现 ZIP。NStatus 采用其中的限额、校验、最小权限和独立发布思想，但不复制它们的运行时。
 
 未来若增加远程市场，合并前必须同时实现：仅公网 HTTPS、DNS 全地址校验与连接固定、每一跳重定向重新校验、重定向次数/超时/响应体上限、目录清单与包 SHA 强绑定、下载后仍执行本章全部本地 ZIP 校验。任何一项失败都必须拒绝安装，不能回退到不安全下载。
 
@@ -217,7 +213,7 @@ curl -fsSL https://YOUR-API/api/v1
 | GET | `/api/v1/pings?agent_id=ID&hours=6` | Agent TCP Ping 历史 |
 | GET | `/api/v1/latency?target_id=ID&hours=24` | 外部 Latency 历史 |
 
-响应带 `X-NStatus-API-Version: v1`。v1 可以增加可选字段，但不会静默删除或重命名已有字段。客户端必须忽略未知字段并处理 `null`。
+响应带 `X-NIE-SLA-API-Version: v1`。v1 可以增加可选字段，但不会静默删除或重命名已有字段。客户端必须忽略未知字段并处理 `null`。
 
 服务端调用不受浏览器 CORS 影响。浏览器替代前端需要将精确 HTTPS Origin 加入 Worker 变量：
 

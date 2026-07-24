@@ -1,6 +1,6 @@
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, isPrivateHost } from './utils.js';
 import { summarizeTraffic, trafficSettingsFromTarget } from './traffic.js';
-import { safeJson } from './auth.js';
+import { ApiError, safeJson } from './auth.js';
 import { readR2State } from './storage.js';
 
 const SETTINGS_KEY = 'alert_settings';
@@ -8,14 +8,26 @@ const TG_TOKEN_KEY = 'alert_telegram_bot_token';
 const RESEND_KEY = 'alert_resend_api_key';
 const ALERT_STATE_CACHE = Symbol('alert_state_cache');
 const SECRET_PREFIX = 'enc:v1:';
+const DEFAULT_TELEGRAM_TEMPLATE = '{{title}}\n{{message}}\n\n{{site_name}} · {{time}}';
+const DEFAULT_EMAIL_SUBJECT_TEMPLATE = '{{site_name}} · {{title}}';
+const DEFAULT_EMAIL_TEMPLATE = '{{message}}\n\n站点：{{site_name}}\n时间：{{time}}';
+const TEMPLATE_KEYS = ['title', 'message', 'site_name', 'time', 'alert_count', 'channel'];
 const DEFAULT_SETTINGS = {
   enabled: false,
   telegram_enabled: true,
   telegram_chat_id: '',
+  telegram_format: 'plain',
+  telegram_template: DEFAULT_TELEGRAM_TEMPLATE,
+  telegram_message_thread_id: '',
+  telegram_disable_web_preview: true,
+  telegram_silent: false,
   email_enabled: false,
   email_from: '',
   email_to: '',
   email_reply_to: '',
+  email_format: 'text',
+  email_subject_template: DEFAULT_EMAIL_SUBJECT_TEMPLATE,
+  email_template: DEFAULT_EMAIL_TEMPLATE,
   offline_minutes: 10,
   repeat_minutes: 360,
   notify_online: true,
@@ -52,7 +64,14 @@ const NUMERIC_FIELDS = new Set([
   'traffic_remaining_gb',
 ]);
 
-const BOOLEAN_FIELDS = new Set(['enabled', 'telegram_enabled', 'email_enabled', 'notify_online']);
+const BOOLEAN_FIELDS = new Set([
+  'enabled',
+  'telegram_enabled',
+  'telegram_disable_web_preview',
+  'telegram_silent',
+  'email_enabled',
+  'notify_online',
+]);
 
 export async function getAlertSettings(env, options = {}) {
   const stored = await readStoredSettings(env);
@@ -82,6 +101,7 @@ export async function getAlertSettings(env, options = {}) {
 export async function updateAlertSettings(request, env) {
   if (!env.DB) return { ok: false, error: '缺少 D1 的 DB 绑定' };
   const body = await safeJson(request);
+  validateNotificationTemplates(body);
   const previous = await readStoredSettings(env);
   const next = normalizeAlertSettings({ ...previous, ...pickSettings(body) });
   await setMeta(env, SETTINGS_KEY, JSON.stringify(next));
@@ -103,15 +123,15 @@ export async function sendTestAlert(request, env) {
   const body = await safeJson(request).catch(() => ({}));
   const settings = await getAlertSettings(env, { includeSecret: true });
   const text = [
-    `NStatus 测试报警`,
-    `站点：${String(env.PUBLIC_SITE_NAME || 'NStatus')}`,
+    `NIE-SLA 测试报警`,
+    `站点：${String(env.PUBLIC_SITE_NAME || 'NIE-SLA')}`,
     `时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}`,
     body?.message ? `备注：${String(body.message).slice(0, 200)}` : '',
   ].filter(Boolean).join('\n');
   const channel = String(body?.channel || 'telegram').trim().toLowerCase();
   const result = channel === 'email'
-    ? await sendEmail(env, settings, text, 'NStatus 测试报警')
-    : await sendTelegram(env, settings, text);
+    ? await sendEmail(env, settings, text, 'NIE-SLA 测试报警', 1)
+    : await sendTelegram(env, settings, text, 'NIE-SLA 测试报警', 1);
   return { ok: result.ok, error: result.error || undefined };
 }
 
@@ -187,13 +207,14 @@ export async function runAlertChecks(env, options = {}) {
   let emailMessages = 0;
   for (const batch of batches) {
     const results = [];
+    const title = `NIE-SLA 报警汇总（${batch.items.length} 条）`;
     if (channels.includes('telegram')) {
-      const result = await sendTelegram(env, settings, batch.text);
+      const result = await sendTelegram(env, settings, batch.text, title, batch.items.length);
       results.push({ channel: 'telegram', ...result });
       if (result.ok) telegramMessages++;
     }
     if (channels.includes('email')) {
-      const result = await sendEmail(env, settings, batch.text, `NStatus 报警汇总（${batch.items.length} 条）`);
+      const result = await sendEmail(env, settings, batch.text, title, batch.items.length);
       results.push({ channel: 'email', ...result });
       if (result.ok) emailMessages++;
     }
@@ -212,12 +233,12 @@ export async function runAlertChecks(env, options = {}) {
   return finishAlertRun(env, { ok: errors.length === 0, checked: (targetRows.results || []).length, queued: messages.length, sent: sent.length, telegram_messages: telegramMessages, email_messages: emailMessages, errors });
 }
 
-function buildAlertBatches(messages, maxChars = 3600) {
+function buildAlertBatches(messages, maxChars = 2400) {
   if (!messages.length) return [];
   const batches = [];
   let current = [];
   let currentText = '';
-  const headerFor = (start, count = 0) => `NStatus 报警汇总（${messages.length} 条${messages.length > 1 ? `，${start + 1}-${start + count}` : ''}）`;
+  const headerFor = (start, count = 0) => `NIE-SLA 报警汇总（${messages.length} 条${messages.length > 1 ? `，${start + 1}-${start + count}` : ''}）`;
 
   const flush = () => {
     if (!current.length) return;
@@ -534,18 +555,30 @@ function alertStateKey(targetId, ruleKey) {
   return `${String(targetId || '')}\u0000${String(ruleKey || '')}`;
 }
 
-async function sendTelegram(env, settings, text) {
+async function sendTelegram(env, settings, text, title = 'NIE-SLA 报警', alertCount = 1) {
   const token = settings.telegram_bot_token || await telegramToken(env);
   const chatId = telegramChatId(env, settings);
   if (!token || !chatId) return { ok: false, error: '缺少 Telegram Bot Token 或 Chat ID' };
   try {
+    const format = normalizeTelegramFormat(settings.telegram_format);
+    const rendered = renderNotificationTemplate(
+      settings.telegram_template || DEFAULT_TELEGRAM_TEMPLATE,
+      notificationContext(env, title, text, 'telegram', alertCount),
+      format,
+      'telegram',
+    ).slice(0, 3900);
+    const threadId = String(settings.telegram_message_thread_id || '').trim();
     const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         chat_id: chatId,
-        text: String(text || '').slice(0, 3900),
-        disable_web_page_preview: true,
+        text: rendered,
+        ...(format === 'html' ? { parse_mode: 'HTML' } : {}),
+        ...(format === 'markdownv2' ? { parse_mode: 'MarkdownV2' } : {}),
+        ...(threadId ? { message_thread_id: Number(threadId) } : {}),
+        disable_web_page_preview: settings.telegram_disable_web_preview !== false,
+        disable_notification: Boolean(settings.telegram_silent),
       }),
     });
     if (res.ok) return { ok: true };
@@ -556,13 +589,27 @@ async function sendTelegram(env, settings, text) {
   }
 }
 
-async function sendEmail(env, settings, text, subject = 'NStatus 报警') {
+async function sendEmail(env, settings, text, title = 'NIE-SLA 报警', alertCount = 1) {
   const apiKey = settings.resend_api_key || await resendApiKey(env);
   const from = emailFrom(env, settings);
   const to = emailTo(env, settings);
   const replyTo = emailReplyTo(env, settings);
   if (!apiKey || !from || !to.length) return { ok: false, error: '缺少 Resend API Key、发件人或收件人' };
   try {
+    const context = notificationContext(env, title, text, 'email', alertCount);
+    const subject = renderNotificationTemplate(
+      settings.email_subject_template || DEFAULT_EMAIL_SUBJECT_TEMPLATE,
+      context,
+      'plain',
+      'subject',
+    ).replace(/[\r\n]+/g, ' ').trim().slice(0, 160) || 'NIE-SLA 报警';
+    const format = normalizeEmailFormat(settings.email_format);
+    const content = renderNotificationTemplate(
+      settings.email_template || DEFAULT_EMAIL_TEMPLATE,
+      context,
+      format,
+      'email',
+    ).slice(0, 20_000);
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -573,8 +620,8 @@ async function sendEmail(env, settings, text, subject = 'NStatus 报警') {
       body: JSON.stringify({
         from,
         to,
-        subject: String(subject || 'NStatus 报警').slice(0, 160),
-        text: String(text || '').slice(0, 20_000),
+        subject,
+        ...(format === 'html' ? { html: content } : { text: content }),
         ...(replyTo ? { reply_to: replyTo } : {}),
       }),
     });
@@ -692,7 +739,20 @@ async function readAlertLastResult(env) {
 
 function pickSettings(body) {
   const out = {};
-  for (const key of [...NUMERIC_FIELDS, ...BOOLEAN_FIELDS, 'telegram_chat_id', 'email_from', 'email_to', 'email_reply_to']) {
+  for (const key of [
+    ...NUMERIC_FIELDS,
+    ...BOOLEAN_FIELDS,
+    'telegram_chat_id',
+    'telegram_format',
+    'telegram_template',
+    'telegram_message_thread_id',
+    'email_from',
+    'email_to',
+    'email_reply_to',
+    'email_format',
+    'email_subject_template',
+    'email_template',
+  ]) {
     if (Object.prototype.hasOwnProperty.call(body || {}, key)) out[key] = body[key];
   }
   return out;
@@ -704,9 +764,106 @@ function normalizeAlertSettings(input = {}) {
     if (!Object.prototype.hasOwnProperty.call(input || {}, key)) continue;
     if (BOOLEAN_FIELDS.has(key)) out[key] = parseBoolean(input[key], fallback);
     else if (NUMERIC_FIELDS.has(key)) out[key] = normalizeNumber(key, input[key], fallback);
-    else out[key] = String(input[key] || '').trim();
+    else out[key] = normalizeStringSetting(key, input[key], fallback);
   }
   return out;
+}
+
+function normalizeStringSetting(key, value, fallback) {
+  const text = String(value ?? '').replace(/\r/g, '');
+  if (key === 'telegram_format') return normalizeTelegramFormat(text);
+  if (key === 'email_format') return normalizeEmailFormat(text);
+  if (key === 'telegram_message_thread_id') return /^-?\d{1,20}$/.test(text.trim()) ? text.trim() : '';
+  if (key === 'telegram_template') return normalizeBodyTemplate(text, fallback, 1500);
+  if (key === 'email_subject_template') return (text.trim() || fallback).slice(0, 300);
+  if (key === 'email_template') return normalizeBodyTemplate(text, fallback, 12_000);
+  return text.trim().slice(0, key === 'email_to' ? 1000 : 320);
+}
+
+function validateNotificationTemplates(body) {
+  validateTemplateField(body, 'telegram_template', 1500, true);
+  validateTemplateField(body, 'email_subject_template', 300, false);
+  validateTemplateField(body, 'email_template', 12_000, true);
+}
+
+function validateTemplateField(body, key, maxLength, requireMessage) {
+  if (!Object.prototype.hasOwnProperty.call(body || {}, key)) return;
+  const template = String(body[key] ?? '').replace(/\r/g, '').trim();
+  if (!template) return;
+  if (template.length > maxLength) throw new ApiError(400, `${templateLabel(key)}过长`);
+  const placeholders = [...template.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)].map((match) => match[1]);
+  const unknown = placeholders.find((name) => !TEMPLATE_KEYS.includes(name));
+  if (unknown) throw new ApiError(400, `未知模板占位符：{{${unknown}}}`);
+  for (const name of TEMPLATE_KEYS) {
+    if (placeholders.filter((item) => item === name).length > 1) {
+      throw new ApiError(400, `占位符 {{${name}}} 只能出现一次`);
+    }
+  }
+  if (requireMessage && !placeholders.includes('message')) {
+    throw new ApiError(400, `${templateLabel(key)}必须包含 {{message}}`);
+  }
+}
+
+function normalizeBodyTemplate(value, fallback, maxLength) {
+  const template = String(value || '').trim();
+  if (!template) return fallback;
+  try {
+    validateTemplateField({ template }, 'template', maxLength, true);
+    return template;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function templateLabel(key) {
+  return key === 'telegram_template' ? 'Telegram 模板' : key === 'email_subject_template' ? '邮件主题模板' : '邮件正文模板';
+}
+
+function normalizeTelegramFormat(value) {
+  const format = String(value || '').trim().toLowerCase();
+  return ['plain', 'html', 'markdownv2'].includes(format) ? format : 'plain';
+}
+
+function normalizeEmailFormat(value) {
+  return String(value || '').trim().toLowerCase() === 'html' ? 'html' : 'text';
+}
+
+function notificationContext(env, title, message, channel, alertCount) {
+  return {
+    title: String(title || 'NIE-SLA 报警'),
+    message: String(message || ''),
+    site_name: String(env.PUBLIC_SITE_NAME || 'NIE-SLA'),
+    time: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }),
+    alert_count: String(Math.max(0, Number(alertCount || 0))),
+    channel: String(channel || ''),
+  };
+}
+
+export function renderNotificationTemplate(template, context, format = 'plain', target = 'telegram') {
+  const normalizedFormat = target === 'email' ? normalizeEmailFormat(format) : normalizeTelegramFormat(format);
+  return String(template || '').replace(/\{\{(title|message|site_name|time|alert_count|channel)\}\}/g, (_, key) => {
+    const value = String(context?.[key] ?? '');
+    if (normalizedFormat === 'html') {
+      const escaped = escapeMarkup(value);
+      return target === 'email' && key === 'message' ? escaped.replace(/\n/g, '<br>\n') : escaped;
+    }
+    if (normalizedFormat === 'markdownv2') return escapeMarkdownV2(value);
+    return value;
+  });
+}
+
+function escapeMarkup(value) {
+  return String(value || '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[char]);
+}
+
+function escapeMarkdownV2(value) {
+  return String(value || '').replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
 }
 
 function normalizeNumber(key, value, fallback) {

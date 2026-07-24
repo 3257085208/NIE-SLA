@@ -12,7 +12,7 @@ import { isAgentApiPath } from './route-policy.js';
 import { developerApiPreflight, developerApiUrl, getDeveloperApiManifest, withDeveloperApiHeaders } from './developer-api.js';
 import { deleteExtension, getExtensionFile, listManagedExtensions, listManagedExtensionsByType, listPublicExtensions, updateExtension, uploadExtension } from './extensions.js';
 import { publicNodeQualityReport } from './nodequality.js';
-import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, passwordLogin, startGitHubOAuth } from './admin-auth.js';
+import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from './admin-auth.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
@@ -111,6 +111,8 @@ const ROUTES = [
   // Login
   { method: 'GET', path: '/api/auth/config', rl: 'public' },
   { method: 'POST', path: '/api/auth/login', rl: 'write' },
+  { method: 'GET', path: '/api/auth/account', rl: 'write' },
+  { method: 'PATCH', path: '/api/auth/account', rl: 'write' },
   { method: 'GET', path: '/api/auth/github/start', rl: 'write' },
   { method: 'GET', path: '/api/auth/github/callback', rl: 'write' },
   { method: 'POST', path: '/api/auth/github/complete', rl: 'write' },
@@ -194,7 +196,7 @@ async function dispatchStatic(env, url, request, ctx) {
         headers: {
           accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
           referer: `${url.origin}/`,
-          'user-agent': 'NStatus NodeQuality image proxy',
+          'user-agent': 'NIE-SLA NodeQuality image proxy',
         },
       });
     } catch (_) {
@@ -262,8 +264,10 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/totp/disable' && m === 'POST') { await withAdmin(request, env); return disableTOTP(env); }
 
   // Login
-  if (path === '/api/auth/config' && m === 'GET') return json(adminAuthConfig(env), 200, env, { 'cache-control': 'no-store' });
+  if (path === '/api/auth/config' && m === 'GET') return json(await adminAuthConfig(env), 200, env, { 'cache-control': 'no-store' });
   if (path === '/api/auth/login' && m === 'POST') return json(await passwordLogin(request, env), 200, env, { 'cache-control': 'no-store' });
+  if (path === '/api/auth/account' && m === 'GET') { await withAdmin(request, env); return json(await getAdminAccount(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/auth/account' && m === 'PATCH') { await withAdmin(request, env); if (!await rateLimitD1(env, 'admin-account-update', 3, 600)) return deny(); return json(await updateAdminAccount(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/auth/github/start' && m === 'GET') return startGitHubOAuth(request, env);
   if (path === '/api/auth/github/callback' && m === 'GET') return finishGitHubOAuth(request, env);
   if (path === '/api/auth/github/complete' && m === 'POST') return json(await completeGitHubOAuth(request, env), 200, env, { 'cache-control': 'no-store' });

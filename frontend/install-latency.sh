@@ -65,7 +65,7 @@ echo "Validating Latency API access and submitting an initial probe..."
 
 cat > /etc/systemd/system/nstatus-latency-agent.service <<'EOF'
 [Unit]
-Description=NStatus External Latency Agent
+Description=NIE-SLA External Latency Agent
 After=network-online.target
 Wants=network-online.target
 

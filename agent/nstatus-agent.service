@@ -1,5 +1,5 @@
 [Unit]
-Description=NStatus external probe agent
+Description=NIE-SLA external probe agent
 After=network-online.target
 Wants=network-online.target
 

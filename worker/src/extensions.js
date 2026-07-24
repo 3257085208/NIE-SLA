@@ -13,6 +13,7 @@ const PATH_MAX_DEPTH = 8;
 const ZIP_CONTENT_TYPES = new Set(['application/zip', 'application/x-zip-compressed', 'application/octet-stream']);
 const RESERVED_EXTENSION_IDS = new Set(['admin', 'api', 'cards', 'classic', 'extensions', 'plugins', 'themes']);
 const ALLOWED_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.woff', '.woff2']);
+const ALLOWED_ROOT_TEXT_FILES = new Set(['LICENSE', 'NOTICE']);
 
 export async function listPublicExtensions(env) {
   const registry = await loadRegistry(env);
@@ -252,6 +253,7 @@ function validateManifest(value, files) {
 function validatePackageFile(path, data) {
   const clean = cleanPackagePath(path);
   if (clean !== path || !data?.length || data.length > FILE_MAX_BYTES) throw new ApiError(400, `扩展文件无效：${path}`);
+  if (ALLOWED_ROOT_TEXT_FILES.has(clean)) return;
   const dot = clean.lastIndexOf('.');
   const extension = dot >= 0 ? clean.slice(dot).toLowerCase() : '';
   if (!ALLOWED_EXTENSIONS.has(extension)) throw new ApiError(400, `不允许的扩展文件类型：${path}`);
@@ -360,6 +362,7 @@ function requireExtensionStorage(env) {
 }
 
 function contentType(path) {
+  if (ALLOWED_ROOT_TEXT_FILES.has(path)) return 'text/plain; charset=utf-8';
   const extension = path.slice(path.lastIndexOf('.')).toLowerCase();
   return ({
     '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',

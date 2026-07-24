@@ -78,7 +78,7 @@ When enabled, it downloads the current script from the HTTPS Pages install origi
 
 If an older node remains at "Never reported", generate a fresh command from the current admin panel and run the full installer again. Restarting the old service is not sufficient.
 
-Older Python `urllib` defaults may be rejected by Cloudflare Browser Integrity Check with error 1010 before the request reaches the Worker. The current script sends an explicit `NStatus-Latency/1.0` User-Agent and runs `--once` during installation so API, token, or edge-policy failures are visible immediately.
+Older Python `urllib` defaults may be rejected by Cloudflare Browser Integrity Check with error 1010 before the request reaches the Worker. The current script sends an explicit `NIE-SLA-Latency/1.0` User-Agent and runs `--once` during installation so API, token, or edge-policy failures are visible immediately.
 
 ## Troubleshooting
 

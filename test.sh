@@ -8,6 +8,7 @@ export ROOT_WIN
 PASS=0
 FAIL=0
 CARGO_BIN="${CARGO_BIN:-cargo}"
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python || true)}"
 TMP_DIR="${TMPDIR:-/tmp}"
 # Keep linker intermediates out of Unicode/OneDrive paths without sharing stale
 # artifacts between repositories or test runs.
@@ -54,7 +55,9 @@ done
 run_check "worker utility tests" node "$ROOT/worker/tests/utils.test.mjs"
 run_check "worker hardening tests" node "$ROOT/worker/tests/hardening.test.mjs"
 run_check "admin authentication tests" node "$ROOT/worker/tests/admin-auth.test.mjs"
+run_check "admin reset tests" node "$ROOT/worker/tests/reset-admin.test.mjs"
 run_check "email alert tests" node "$ROOT/worker/tests/alerts.test.mjs"
+run_check "admin reset tool" node --check "$ROOT/worker/scripts/reset-admin.mjs"
 run_check "external Latency agent tests" node "$ROOT/worker/tests/latency-agents.test.mjs"
 run_check "extension package tests" node "$ROOT/worker/tests/extensions.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
@@ -67,7 +70,7 @@ echo ""
 echo "=== Frontend JS Syntax ==="
 run_check "app.js" node --check "$ROOT/frontend/app.js"
 run_check "config.js" node --check "$ROOT/frontend/config.js"
-run_shell "frontend modules" "python - <<'PY'
+run_shell "frontend modules" "'$PYTHON_BIN' - <<'PY'
 from pathlib import Path
 import os, subprocess
 root = Path(os.environ['ROOT_WIN'])
@@ -82,7 +85,7 @@ for rel in [
     'frontend/js/shared/format.js',
     'frontend/js/shared/html.js',
     'frontend/js/shared/traffic.js',
-    'frontend/js/themes/nodeget-detail.js',
+    'frontend/js/themes/card-detail.js',
     'frontend/functions/api/[[path]].js',
 ]:
     subprocess.check_call(['node', '--check', str(root / rel)])
@@ -122,6 +125,7 @@ run_shell "linux reinstall replaces legacy agent" "cd '$ROOT' && grep -q 'stop_e
 run_shell "linux agent keeps secrets root-owned" "cd '$ROOT' && grep -q 'chown \"root:\${agent_group}\" \"\$ENV_FILE\"' agent/setup.sh && grep -q 'EnvironmentFile=\${ENV_FILE}' agent/setup.sh && ! grep -q 'chown -R \"\$AGENT_USER\" \"\$WORK_DIR\"' agent/setup.sh"
 run_shell "manual updates verify policy and checksums" "cd '$ROOT' && grep -q 'manifest_sha256' agent/cftz && grep -q 'Agent binary checksum mismatch' agent/cftz && ! grep -q 'download_binary_unverified' agent/cftz"
 run_shell "cftz hides auth header args" "cd '$ROOT' && ! grep -R \"Authorization: Bearer \\\${tok}\" cftz agent/cftz frontend/cftz"
+run_shell "admin reset never accepts password args" "cd '$ROOT' && ! grep -E \"argumentValue\\(['\\\"]--password|--password[= ]\" worker/scripts/reset-admin.mjs"
 run_shell "no stale pages install host" "cd '$ROOT' && ! git grep -n \"nstatus-5fi.pages.dev\" -- agent frontend cftz docs README.md"
 run_shell "single audit status source" "cd '$ROOT' && test -f docs/audit-status.md && test ! -e BUG_REPORT.md && test ! -e FINAL_STATUS.md && test ! -e DEEP_SECURITY_AUDIT.md && test ! -e ONE_CLICK_DEPLOY.md"
 run_shell "missed write backfill enabled" "cd '$ROOT' && grep -q 'MISSED_WRITE_BACKFILL_MAX_BUCKETS = \"6\"' worker/wrangler.toml && ! grep -q 'MISSED_WRITE_BACKFILL_MAX_BUCKETS = \"0\"' worker/wrangler.toml"

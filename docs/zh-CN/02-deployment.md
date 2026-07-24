@@ -175,6 +175,8 @@ Agent 自动更新由后台开关控制，建议先用一台 VPS 验证新版本
 
 默认账号是 `admin`。如果还没有设置 `ADMIN_PASSWORD`，旧 `ADMIN_TOKEN` 会暂时作为登录密码，登录后应尽快在 Cloudflare 中设置新的 `ADMIN_PASSWORD`。
 
+登录后可在“设置 → 管理员账号”修改账号和密码。保存后凭据迁移到 D1 的 PBKDF2 哈希记录，环境变量不再覆盖它。忘记密码时在可信电脑进入 `worker` 目录执行 `npm run admin:reset -- --remote`；同时遗失 TOTP 时追加 `--disable-totp`。完整步骤见 [后台管理](03-admin.md)。
+
 ### 后台能看到 VPS，但没有 Agent 数据
 
 确认在对应 VPS 执行了该节点生成的部署命令，然后运行：

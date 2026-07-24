@@ -14,6 +14,36 @@
 
 关闭标签页、主动退出或 session 过期后需要重新登录。连续输错可能触发 D1 限流，出现“请求过于频繁”。等待限流窗口结束，不要持续重试。
 
+## 修改管理员账号密码
+
+打开“设置 → 管理员账号”，填写当前密码、新账号和新密码；启用 TOTP 时还要填写当前验证码。新密码至少 12 位，建议由密码管理器生成 20 位以上随机值。
+
+首次保存会把凭据从 Worker 环境变量迁移到 D1。D1 只保存随机盐和 PBKDF2-SHA256 派生结果，不保存明文密码。修改成功后会注销其他管理会话，当前页面会换发一枚新 Session。
+
+之后即使 `ADMIN_USERNAME` 或 `ADMIN_PASSWORD` 仍保留在 Worker 配置中，登录也优先使用 D1 凭据。环境变量继续作为初次部署来源，但不能覆盖已经迁移的账号。
+
+## 忘记密码时强制重置
+
+强制重置走 Cloudflare 控制面，不开放公网“忘记密码”接口，因此不需要额外维护长期 Reset Token。
+
+在可信电脑上进入项目的 `worker` 目录，登录对应 Cloudflare 账号后执行：
+
+```bash
+npm install
+npx wrangler login
+npm run admin:reset -- --remote
+```
+
+命令会隐藏输入新密码，把 PBKDF2 记录写入绑定的 `nstatus-db`，并注销所有后台 Session。不要把密码写进命令行参数或聊天记录。
+
+如果同时遗失 TOTP，再执行：
+
+```bash
+npm run admin:reset -- --remote --disable-totp
+```
+
+自定义 D1 名称时可附加 `--database 数据库名`。本地 Wrangler 数据使用 `--local`，生产恢复必须使用 `--remote`。
+
 ## 启用 TOTP
 
 进入“设置 → TOTP”：

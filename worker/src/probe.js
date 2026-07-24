@@ -23,7 +23,7 @@ async function probeHttp(target, cf) {
   const started = Date.now();
   try {
     const followRedirects = target.follow_redirects !== false && target.follow_redirects !== 0 && String(target.follow_redirects ?? 'true') !== 'false';
-    const res = await fetch(target.url, { method, redirect: followRedirects ? 'follow' : 'manual', cache: 'no-store', signal: controller.signal, headers: { 'user-agent': 'NStatus/0.1 Cloudflare Worker Monitor', 'accept': '*/*' } });
+    const res = await fetch(target.url, { method, redirect: followRedirects ? 'follow' : 'manual', cache: 'no-store', signal: controller.signal, headers: { 'user-agent': 'NIE-SLA/0.1 Cloudflare Worker Monitor', 'accept': '*/*' } });
     const latency = Date.now() - started;
     const ok = expected.length ? expected.includes(res.status) : res.status >= 200 && res.status < 400;
     return { ok, latency_ms: latency, status_code: res.status, error: ok ? null : `Unexpected HTTP ${res.status}`, cf_colo: cf.colo || null };
@@ -94,7 +94,7 @@ async function getExecutionColoViaEcho(env = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('colo-echo-timeout'), clamp(Number(env.COLO_ECHO_TIMEOUT_MS || 800), 100, 3000));
   try {
-    const res = await fetch(`${base}/api/colo-echo?t=${Date.now()}`, { cache: 'no-store', signal: controller.signal, headers: { 'user-agent': 'NStatus-Colo-Echo/1.0', 'accept': 'application/json' } });
+    const res = await fetch(`${base}/api/colo-echo?t=${Date.now()}`, { cache: 'no-store', signal: controller.signal, headers: { 'user-agent': 'NIE-SLA-Colo-Echo/1.0', 'accept': 'application/json' } });
     if (!res.ok) return '';
     const data = await res.json().catch(() => null);
     const colo = String(data?.colo || '').trim().toUpperCase();
@@ -110,7 +110,7 @@ export async function getRuntimeColo(env) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('trace-timeout'), clamp(Number(env?.TRACE_COLO_TIMEOUT_MS || 800), 100, 3000));
   try {
-    const res = await fetch(`https://www.cloudflare.com/cdn-cgi/trace?t=${Date.now()}`, { cache: 'no-store', signal: controller.signal, headers: { 'user-agent': 'NStatus-Colo-Probe/1.2' } });
+    const res = await fetch(`https://www.cloudflare.com/cdn-cgi/trace?t=${Date.now()}`, { cache: 'no-store', signal: controller.signal, headers: { 'user-agent': 'NIE-SLA-Colo-Probe/1.2' } });
     const m = (await res.text()).match(/^colo=([A-Z0-9]+)$/m);
     return m ? m[1] : '';
   } catch (_) { return ''; } finally { clearTimeout(timer); }

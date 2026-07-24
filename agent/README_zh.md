@@ -1,6 +1,6 @@
-# NStatus Agent 中文手册
+# NIE-SLA Agent 中文手册
 
-NStatus Agent 是 NIE-SLA 的 VPS 侧 Rust 采集器。它只主动向 Worker 发起 HTTPS 请求，不监听管理端口。
+NIE-SLA Agent 是 NIE-SLA 的 VPS 侧 Rust 采集器。它只主动向 Worker 发起 HTTPS 请求，不监听管理端口。
 
 完整系统文档请从仓库根目录的 [中文主手册](../README.zh-CN.md) 开始。本文只讲 Agent。
 

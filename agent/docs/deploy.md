@@ -34,7 +34,7 @@ npx wrangler secret put TOTP_ENCRYPTION_KEY
 npx wrangler deploy
 ```
 
-Verify: `curl https://your-worker.workers.dev/` → `{"ok":true,"name":"NStatus","version":"1.0.0"}`
+Verify: `curl https://your-worker.workers.dev/` → `{"ok":true,"name":"NIE-SLA","version":"1.0.0"}`
 
 ## Step 3: Deploy Frontend
 

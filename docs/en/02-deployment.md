@@ -39,6 +39,8 @@ GITHUB_OAUTH_ALLOWED_USERS
 
 Verify a sending domain in Resend and create an API key. In **Settings → Alerts**, enable email, enter the Resend API key, sender, and recipients, save, and send a test email. Multiple recipients are comma-separated.
 
+After login, **Settings → Administrator account** can migrate the initial environment credentials to a salted D1 password record. If the credentials are lost, run `npm run admin:reset -- --remote` from the `worker` directory after `npx wrangler login`; add `--disable-totp` only when the second factor is also unavailable.
+
 ## Upgrade Compatibility
 
 On an existing deployment, the default username is `admin`. If `ADMIN_PASSWORD` is not set yet, the existing `ADMIN_TOKEN` is accepted as the temporary password. Set a dedicated `ADMIN_PASSWORD` after the upgrade.

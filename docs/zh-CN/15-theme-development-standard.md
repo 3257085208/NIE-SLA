@@ -1,6 +1,6 @@
 # 15 主题工程与开发标准
 
-本文规定 NStatus 第三方主题从源码仓库到可上传 ZIP 的工程标准。平台包格式与公共 API 先阅读 [14 主题、插件与开发者 API](14-extensions-developer-guide.md)。
+本文规定 NIE-SLA 第三方主题从源码仓库到可上传 ZIP 的工程标准。平台包格式与公共 API 先阅读 [14 主题、插件与开发者 API](14-extensions-developer-guide.md)。
 
 ## 1. 仓库与目录
 
@@ -37,7 +37,7 @@ nstatus-theme-example/
   "type": "theme",
   "mode": "css",
   "author": "Developer",
-  "description": "A restrained NStatus theme.",
+  "description": "A restrained NIE-SLA theme.",
   "base_theme": "classic",
   "styles": ["theme.css"]
 }
@@ -87,13 +87,3 @@ npm run package
 - 发布必须带 `LICENSE`、`README`、`CHANGELOG` 和 ZIP SHA-256；第三方素材需列明许可证。
 
 只有源码提交、测试结果、Manifest 版本、ZIP 文件名和校验值一致时才可发布。
-
-## 6. NodeGet 参考边界
-
-本规范对照过 Komari、NodeGet 与哪吒的公开实现：
-
-- Komari：采用根清单、预览图、主题配置表单、远程市场源和下载包 SHA-256；NStatus 采用其中的元数据、包指纹和未来可扩展配置表单思路。
-- NodeGet：把主题视为可使用任意框架构建的完整静态应用，并生成显式文件列表、配置文件和发布 ZIP；NStatus 的 canvas 模式采用完整静态应用思路，但使用隔离消息 API 取代主题 Token。
-- 哪吒：使用带仓库、作者和版本的前端模板清单；NStatus 将这些信息放进每个独立包的 Manifest，而不是把第三方主题编译进主程序。
-
-NStatus 不照搬任意脚本同源运行、把访问 Token 写入主题配置、或未经哈希验证的远程安装。NodeGet/Komari 主题不能直接上传；移植脚本主题时必须改为 canvas 消息协议、移除私有 API 依赖，并重新完成无障碍、安全及回退测试。

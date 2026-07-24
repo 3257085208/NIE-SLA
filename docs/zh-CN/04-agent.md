@@ -140,7 +140,7 @@ sudo cftz update
 后台 Windows 命令会下载 `install.ps1`，校验 Windows amd64 二进制并创建计划任务。常见检查：
 
 ```powershell
-Get-ScheduledTask | Where-Object TaskName -Match 'NStatus'
+Get-ScheduledTask | Where-Object TaskName -Match 'NIE-SLA'
 Get-Process | Where-Object ProcessName -Match 'nstatus'
 ```
 

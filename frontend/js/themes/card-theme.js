@@ -1,13 +1,11 @@
 import { escapeAttr, escapeHtml } from '../shared/html.js';
 import { countryFlagAsset } from '../shared/target-catalogs.js';
 
-const ASSET_ROOT = './assets/nodeget';
-
-export function nodegetAvatarHtml() {
-  return `<img src="${ASSET_ROOT}/logo.png" alt="" loading="lazy">`;
+export function cardThemeAvatarHtml() {
+  return '<span class="brand-avatar-mark" aria-hidden="true">NIE</span>';
 }
 
-export function nodegetTopbarToolsHtml() {
+export function cardThemeTopbarToolsHtml() {
   return `
     <button type="button" class="card-tool sort-tool" aria-label="默认排序">⇅ <span>默认</span></button>
     <span class="card-view-switch" aria-label="视图模式">
@@ -19,26 +17,26 @@ export function nodegetTopbarToolsHtml() {
   `;
 }
 
-export function nodegetFlagHtml(code, extraClass = '') {
+export function cardThemeFlagHtml(code, extraClass = '') {
   const key = String(code || '').trim().toUpperCase();
   if (!/^[A-Z]{2}$/.test(key)) return '';
   const cls = ['region-flag', extraClass].filter(Boolean).join(' ');
   return `<img class="${escapeAttr(cls)}" src="${escapeAttr(countryFlagAsset(key))}" alt="${escapeAttr(key)}" title="${escapeAttr(key)}" width="18" height="13" loading="lazy">`;
 }
 
-export function nodegetOsLogoHtml(info = {}) {
+export function cardThemeOsBadgeHtml(info = {}) {
   const key = distroKey(info);
   const label = key === 'windows' ? 'Windows' : key === 'linux' ? 'Linux' : key;
-  return `<img src="${ASSET_ROOT}/linux-logo-icon/${escapeAttr(key)}.svg" alt="${escapeAttr(label)}" title="${escapeAttr(label)}" loading="lazy">`;
+  return `<span class="os-badge-text" title="${escapeAttr(label)}">${escapeHtml(distroAbbreviation(label))}</span>`;
 }
 
-export function nodegetStatusDotClass(statusClass = '') {
+export function cardThemeStatusDotClass(statusClass = '') {
   if (statusClass.includes('down')) return 'offline';
   if (statusClass.includes('degraded') || statusClass.includes('unknown')) return 'warning';
   return 'online';
 }
 
-export function nodegetCardMetaLine(parts = []) {
+export function cardThemeMetaLine(parts = []) {
   return parts.filter(Boolean).map(escapeHtml).join(' · ');
 }
 
@@ -62,4 +60,11 @@ function distroKey(info = {}) {
   if (text.includes('zorin')) return 'zorin';
   if (text.includes('gentoo')) return 'gentoo';
   return 'linux';
+}
+
+function distroAbbreviation(label) {
+  const normalized = String(label || '').trim();
+  if (!normalized) return 'OS';
+  if (normalized.toLowerCase() === 'windows') return 'WIN';
+  return normalized.slice(0, 3).toUpperCase();
 }

@@ -1,4 +1,4 @@
-export function nodegetDetailPageHtml(cardHtml, sideHtml = '') {
+export function cardThemeDetailPageHtml(cardHtml, sideHtml = '') {
   return `
     <section class="node-detail-page">
       <div class="node-detail-nav">
@@ -18,7 +18,7 @@ export function nodegetDetailPageHtml(cardHtml, sideHtml = '') {
   `;
 }
 
-export function mountNodegetDetailChecksPanel(panel, slot) {
+export function mountCardThemeDetailChecksPanel(panel, slot) {
   if (!panel || !slot) return;
 
   if (panel.parentNode !== slot) {

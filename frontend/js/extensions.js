@@ -14,7 +14,7 @@ export async function initializeFrontendExtensions() {
     await mountTheme(data.active_theme);
     mountPlugins(data.plugins || []);
   } catch (error) {
-    console.warn('NStatus extensions unavailable:', error);
+    console.warn('NIE-SLA extensions unavailable:', error);
   } finally {
     finishThemeBootstrap();
   }

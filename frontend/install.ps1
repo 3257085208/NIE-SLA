@@ -6,7 +6,7 @@
   [string]$PingTargets = $(if ($env:NSTATUS_PING_TARGETS) { $env:NSTATUS_PING_TARGETS } else { "*" }),
   [string]$PingSec = $(if ($env:NSTATUS_PING_SEC) { $env:NSTATUS_PING_SEC } else { "20" }),
   [string]$DownloadBase = $(if ($env:DOWNLOAD_BASE) { $env:DOWNLOAD_BASE } else { "https://status.example.com" }),
-  [string]$InstallDir = $(Join-Path $env:ProgramData "NStatus"),
+  [string]$InstallDir = $(Join-Path $env:ProgramData "NIE-SLA"),
   [switch]$Uninstall
 )
 

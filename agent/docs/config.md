@@ -4,7 +4,7 @@
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PUBLIC_SITE_NAME` | `NStatus` | Status page title |
+| `PUBLIC_SITE_NAME` | `NIE-SLA` | Status page title |
 | `PUBLIC_WORKER_URL` | — | Worker public URL (for snapshot self-fetch) |
 | `TIMEZONE_OFFSET_MINUTES` | `480` | UTC offset (480 = UTC+8) |
 | `ALLOWED_ORIGIN` | `(none)` | CORS origin for frontend (e.g. `https://your.pages.dev`) |

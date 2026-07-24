@@ -1,12 +1,12 @@
 # 13 Extensions and Developer API
 
-NStatus accepts validated ZIP packages from the separate Admin -> Themes and Admin -> Plugins pages. Version 1 supports CSS themes, sandboxed full-layout canvas themes, sandboxed read-only plugin panels, and a stable public API.
+NIE-SLA accepts validated ZIP packages from the separate Admin -> Themes and Admin -> Plugins pages. Version 1 supports CSS themes, sandboxed full-layout canvas themes, sandboxed read-only plugin panels, and a stable public API.
 
-Use an independent repository per theme or plugin. See [14 Theme Engineering Standard](14-theme-development-standard.md) and [15 Plugin Engineering Standard](15-plugin-development-standard.md) for required layout, commands, testing, SemVer, licensing, and release acceptance. The structure borrows useful independent-package ideas from NodeGet, but NStatus has an incompatible least-privilege runtime.
+Use an independent repository per theme or plugin. See [14 Theme Engineering Standard](14-theme-development-standard.md) and [15 Plugin Engineering Standard](15-plugin-development-standard.md) for required layout, commands, testing, SemVer, licensing, and release acceptance.
 
 ## Package Layout
 
-`manifest.json` must be at the ZIP root, must be strict UTF-8 JSON, and is limited to 64 KiB. Packages are limited to 8 MB compressed, 16 MB expanded, 300 files, and 4 MB per file. Absolute paths, `..`, backslash paths, duplicate names, control characters, non-NFC Unicode, trailing spaces or dots, paths deeper than eight components, and unsupported file extensions are rejected.
+`manifest.json` must be at the ZIP root, must be strict UTF-8 JSON, and is limited to 64 KiB. Packages are limited to 8 MB compressed, 16 MB expanded, 300 files, and 4 MB per file. Absolute paths, `..`, backslash paths, duplicate names, control characters, non-NFC Unicode, trailing spaces or dots, paths deeper than eight components, and unsupported file extensions are rejected. Extensionless files are limited to root-level `LICENSE` and `NOTICE` text files.
 
 ```text
 manifest.json
@@ -39,9 +39,7 @@ Direct Admin API clients must send the 64-character lowercase digest in `x-exten
 - Validation covers ZIP magic and Content-Type, the end-to-end digest, archive entries, the Manifest, and actual post-inflation byte counts instead of trusting only ZIP header sizes.
 - Every upload writes a new R2 revision. The registry switches only after all objects are stored; a storage or registry failure removes the staged revision and leaves the previous version usable. The old revision is removed only after the switch.
 - Packages install disabled. Administrators should verify source tags, author, license, version, explicit files, and the publisher's SHA-256 before enabling or upgrading.
-- NStatus intentionally has no server-side URL or marketplace import in v1, avoiding an incomplete SSRF and supply-chain entry point.
-
-This model draws on public implementations: Komari separately bounds archive, file, expanded, and Manifest sizes and binds marketplace downloads to SHA-256 while limiting bodies and validating redirects with fail-closed DNS checks; Nezha's restricted HTTP client blocks internal addresses, rejects redirects, pins connections to vetted IPs, and uses expected hashes for update operations; NodeGet treats themes as independent builds with explicit file lists and reproducible ZIP artifacts. NStatus adopts these limit, integrity, least-privilege, and packaging principles without copying their runtimes.
+- NIE-SLA intentionally has no server-side URL or marketplace import in v1, avoiding an incomplete SSRF and supply-chain entry point.
 
 Any future remote marketplace must, before release, enforce public HTTPS only, validate every resolved address and pin the connection, revalidate every redirect hop, cap redirects/time/body size, bind catalogs to package SHA-256, and still run every local ZIP check in this document. Every validation failure must fail closed.
 
@@ -69,10 +67,10 @@ Plugins may request a bounded resize with `{ type: "nstatus:resize", height: 480
 
 ## Versioned API
 
-`GET /api/v1` returns the capability manifest. Stable read-only aliases are `/api/v1/status`, `/api/v1/checks`, `/api/v1/metrics`, `/api/v1/pings`, and `/api/v1/latency`. Responses include `X-NStatus-API-Version: v1`.
+`GET /api/v1` returns the capability manifest. Stable read-only aliases are `/api/v1/status`, `/api/v1/checks`, `/api/v1/metrics`, `/api/v1/pings`, and `/api/v1/latency`. Responses include `X-NIE-SLA-API-Version: v1`.
 
 Browser-based alternate frontends need an exact HTTPS origin in `DEVELOPER_API_ORIGINS`; wildcard CORS is rejected and HTTP is accepted only for localhost. This setting never opens Admin or Agent writes.
 
 ## Security and Publishing
 
-New uploads are disabled by default. Administrators should review source, license, checksums, and changes before enabling a package. The package model borrows reproducible static builds, explicit file lists, generated settings metadata, and checksum-bound distribution ideas from Komari and NodeGet while retaining NStatus sandboxing. Packages must not contain credentials, private infrastructure, production data, or build caches.
+New uploads are disabled by default. Administrators should review source, license, checksums, and changes before enabling a package. Packages must not contain credentials, private infrastructure, production data, or build caches.

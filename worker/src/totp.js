@@ -131,6 +131,15 @@ export async function validateAdminSession(env, sessionId) {
   return { valid: false, expires_at: null };
 }
 
+export async function revokeAllAdminSessions(env) {
+  if (!env.DB) return;
+  await Promise.all([
+    deleteMeta(env, SESSIONS_KEY),
+    deleteMeta(env, SESSION_ID_KEY),
+    deleteMeta(env, SESSION_EXPIRES_KEY),
+  ]);
+}
+
 export async function verifyActiveTOTP(env, code) {
   const normalized = String(code || '').trim();
   if (!/^\d{6}$/.test(normalized) || !env.DB) return false;
@@ -149,7 +158,7 @@ async function readCode(request) {
 }
 
 function totpUri(secret, env) {
-  const issuer = encodeURIComponent(env.PUBLIC_SITE_NAME || 'NStatus');
+  const issuer = encodeURIComponent(env.PUBLIC_SITE_NAME || 'NIE-SLA');
   return `otpauth://totp/${issuer}:admin?secret=${secret}&issuer=${issuer}`;
 }
 
