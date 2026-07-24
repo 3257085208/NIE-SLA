@@ -5,7 +5,7 @@ import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAg
 import { rateLimitD1 } from '../src/ratelimit.js';
 import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
-import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeCurrency, updatePublicSettings } from '../src/admin/settings.js';
+import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
 import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates } from '../src/storage.js';
 import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
@@ -113,6 +113,7 @@ assert.equal(privateTarget.target_port, null);
 
 const compactStatus = compactStatusPayload({
   ok: true,
+  frontend: { theme: 'cards', appearance: { site_name: 'Demo' } },
   days: ['2026-07-19'],
   region_proxy_enabled: true,
   summaries: [{ target_id: 'vps-a', day: '2026-07-19', total: 1, ok_count: 1 }],
@@ -127,6 +128,7 @@ const compactStatus = compactStatusPayload({
 });
 assert.equal(compactStatus.lite, true);
 assert.equal(compactStatus.region_proxy_enabled, true);
+assert.equal(compactStatus.frontend.appearance.site_name, 'Demo');
 assert.deepEqual(compactStatus.summaries, [{ target_id: 'vps-a', day: '2026-07-19', total: 1, ok_count: 1 }]);
 assert.equal(compactStatus.targets[0].provider, 'Example');
 assert.equal(compactStatus.targets[0].agent_metrics.cpu_percent, 12);
@@ -140,6 +142,11 @@ assert.equal(liveLatency.latency_sources[0].latency_ms, 20);
 assert.deepEqual(refreshLatencySources({ id: 'private', type: 'tcp', no_public_ip: 1 }, liveLatency.latency_sources).latency_sources, []);
 assert.equal(isAgentApiPath('/api/agent/install-command'), false);
 
+globalThis.fetch = async (url) => String(url).endsWith('/bin/VERSION')
+  ? new Response('v9.8.7\n')
+  : String(url).endsWith('/bin/SHA256SUMS')
+    ? new Response('abc  nstatus-metrics-linux-amd64\n')
+    : new Response('', { status: 404 });
 const installCommand = await getAgentInstallCommand(
   {
     AGENT_TOKEN: 'global-agent-secret',
@@ -164,6 +171,7 @@ assert.equal(installCommand.install_base, 'https://status.example.test');
 assert.match(installCommand.linux_command, /NSTATUS_AGENT_TOKEN='nst_[a-f0-9]{48}'/);
 assert.match(installCommand.linux_command, /NSTATUS_AGENT_LABEL='VPS A'/);
 assert.match(installCommand.windows_command, /nstatus-install\.ps1/);
+assert.match(installCommand.linux_command, /NSTATUS_EXPECTED_VERSION='v9\.8\.7'/);
 
 const installCommandWithoutSourceHeaders = await getAgentInstallCommand(
   {
@@ -204,6 +212,7 @@ assert.equal(latencyInstallCommand.ok, true);
 assert.match(latencyInstallCommand.linux_command, /install-latency\.sh/);
 assert.match(latencyInstallCommand.linux_command, /install-latency\.sh\?v=4/);
 assert.doesNotMatch(latencyInstallCommand.linux_command, /NSTATUS_AGENT_ID=/);
+globalThis.fetch = originalFetch;
 assert.equal(isAgentApiPath('/api/login'), false);
 
 assert.deepEqual(await safeJson(new Request('https://example.com', { method: 'POST', body: '{"ok":true}' }), 64), { ok: true });
@@ -230,6 +239,27 @@ assert.deepEqual(await requireLatencyAgentForId(agentRequest(latencyToken), late
 
 const settingsEnv = fakeD1Env();
 assert.equal((await getPublicSettings(settingsEnv)).agent_auto_update, false);
+assert.equal(normalizeFrontendAppearance({ site_name: ' Demo ', brand_logo_url: 'javascript:bad', accent_color: 'red' }).site_name, 'Demo');
+assert.equal(normalizeFrontendAppearance({ site_name: ' Demo ', brand_logo_url: 'javascript:bad', accent_color: 'red' }).brand_logo_url, '');
+assert.equal(normalizeFrontendAppearance({ site_name: ' Demo ', brand_logo_url: 'javascript:bad', accent_color: 'red' }).accent_color, '#2ea36d');
+const appearance = normalizeFrontendAppearance({
+  brand_home_url: 'data:text/html,bad',
+  brand_logo_height: 500,
+  header_right_image_width: 20,
+  header_right_mode: 'invalid',
+  hero_subtitle: ' 自定义说明 ',
+  show_header: 'false',
+  show_chart: 0,
+  show_vps_details: '1',
+});
+assert.equal(appearance.brand_home_url, './');
+assert.equal(appearance.brand_logo_height, 64);
+assert.equal(appearance.header_right_image_width, 40);
+assert.equal(appearance.header_right_mode, 'image');
+assert.equal(appearance.hero_subtitle, '自定义说明');
+assert.equal(appearance.show_header, false);
+assert.equal(appearance.show_chart, false);
+assert.equal(appearance.show_vps_details, true);
 assert.equal(normalizeCurrency('rmb'), 'CNY');
 assert.equal(normalizeCurrency('not-a-currency'), 'USD');
 assert.equal(convertPriceToCny(10, 'USD', { CNY: 1, USD: 0.14 }), 71.43);
@@ -245,6 +275,9 @@ await updatePublicSettings(new Request('https://example.com', {
   body: JSON.stringify({ agent_auto_update: true }),
 }), settingsEnv);
 assert.equal((await getPublicSettings(settingsEnv)).agent_auto_update, true);
+await updatePublicSettings(new Request('https://example.com', { method: 'PATCH', body: JSON.stringify({ appearance: { site_name: 'Status Demo', banner_normal: '全部在线' } }) }), settingsEnv);
+assert.equal((await getPublicSettings(settingsEnv)).appearance.site_name, 'Status Demo');
+assert.equal((await getPublicSettings(settingsEnv)).appearance.banner_normal, '全部在线');
 globalThis.fetch = async (url) => String(url).endsWith('/bin/VERSION')
   ? new Response('v1.0.9\n')
   : new Response('abc  nstatus-metrics-linux-amd64\n');
@@ -252,6 +285,8 @@ const updatePolicy = await getAgentUpdatePolicy({ ...settingsEnv, AGENT_DOWNLOAD
 assert.equal(updatePolicy.auto_update, true);
 assert.equal(updatePolicy.latest_version, 'v1.0.9');
 assert.match(updatePolicy.manifest_sha256, /^[a-f0-9]{64}$/);
+const sameOriginPolicy = await getAgentUpdatePolicy(settingsEnv, new Request('https://one-click.example/api/agent/update-policy?agent_id=vps-a'));
+assert.equal(sameOriginPolicy.download_base, 'https://one-click.example');
 globalThis.fetch = originalFetch;
 
 const reordered = normalizeTargetOrder(['web-c', 'vps-a'], ['vps-a', 'vps-b', 'web-c']);

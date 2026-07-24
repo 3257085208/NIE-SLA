@@ -1630,6 +1630,83 @@ async function loadSettings() {
   loadAgentUpdate();
   loadTraffic();
   loadAlerts();
+  loadAppearance();
+}
+
+const appearanceSections = [
+  { title: '品牌与页头', fields: [
+    ['site_name', '站点名称'], ['site_subtitle', '页头副标题'], ['hero_subtitle', '状态横幅下方说明'], ['page_title', '浏览器页面标题'],
+    ['favicon_url', '浏览器图标 URL'], ['brand_home_url', '左上角品牌链接'], ['brand_logo_url', '左上角 Logo URL'],
+    ['brand_logo_alt', 'Logo 替代文字'], ['brand_logo_height', 'Logo 高度（20-64px）', 'number'],
+    ['brand_avatar_url', '卡片主题头像 URL'],
+    ['header_right_mode', '右上角显示方式', 'select', [['image', '显示图片'], ['text', '显示文字'], ['hidden', '隐藏']]],
+    ['header_right_text', '右上角文字'], ['header_right_image_url', '右上角图片 URL'],
+    ['header_right_image_alt', '右上角图片替代文字'], ['header_right_image_width', '右上角图片宽度（40-240px）', 'number'],
+    ['header_right_link', '右上角跳转链接'],
+  ] },
+  { title: '状态与导航文案', fields: [
+    ['search_placeholder', '列表主题搜索提示'], ['cards_search_placeholder', '卡片主题搜索提示'], ['group_by_title', '分组栏标题'],
+    ['banner_normal', '全部正常文案'], ['banner_down', '服务离线文案'], ['banner_degraded', '数据延迟文案'],
+    ['banner_unknown', '等待检查文案'], ['summary_total', '服务总数摘要'], ['summary_up', '正常服务摘要'],
+    ['summary_down', '离线服务摘要'], ['summary_degraded', '延迟服务摘要'], ['summary_unknown', '待检查服务摘要'],
+    ['summary_latency', '平均延迟摘要'], ['summary_updated', '更新时间摘要'],
+  ] },
+  { title: '内容区文案', fields: [
+    ['incident_title', '故障区标题'], ['incident_empty', '无故障摘要'], ['incident_empty_detail', '无故障详情'],
+    ['checks_title', '最近检查标题'], ['checks_hint', '最近检查提示'], ['checks_empty', '未选择服务提示'],
+    ['checks_unselected', '未选择服务标题'], ['checks_no_records', '无检查记录提示'], ['no_search_results', '无搜索结果提示'],
+    ['chart_title', '响应时间图表标题'], ['chart_unselected', '图表未选择提示'], ['latency_title', '卡片延迟区标题'],
+    ['latency_subtitle', '卡片延迟区副标题'], ['vps_details_label', 'VPS 详情折叠标题'],
+  ] },
+  { title: '页脚与颜色', fields: [
+    ['footer_text', '页脚文案'], ['footer_link_text', '页脚链接文字'], ['footer_link_url', '页脚链接 URL'],
+    ['accent_color', '强调色', 'color'], ['page_background', '页面背景色', 'color'], ['surface_color', '内容表面色', 'color'],
+  ] },
+  { title: '首页显示区域', fields: [
+    ['show_header', '显示页头', 'checkbox'], ['show_banner', '显示状态横幅', 'checkbox'], ['show_summary', '显示状态摘要', 'checkbox'],
+    ['show_search', '显示搜索框', 'checkbox'], ['show_group_by', '显示分组栏', 'checkbox'],
+    ['show_region_filter', '卡片主题显示地区筛选', 'checkbox'], ['show_card_sidebar', '卡片主题显示统计侧栏', 'checkbox'],
+    ['show_incidents', '显示故障记录', 'checkbox'], ['show_chart', '显示监控图表', 'checkbox'],
+    ['show_card_latency', '卡片显示 Latency 区', 'checkbox'], ['show_vps_details', '显示 VPS 详情', 'checkbox'],
+    ['show_checks', '显示最近检查', 'checkbox'],
+    ['show_footer', '显示页脚', 'checkbox'],
+  ] },
+];
+
+function appearanceFieldHtml(field, appearance) {
+  const [key, label, type = 'text', options = []] = field;
+  const value = appearance[key];
+  if (type === 'checkbox') {
+    return `<label class="appearance-switch"><span>${escapeHtml(label)}</span><input data-appearance-key="${escapeHtml(key)}" type="checkbox"${checkedAttr(value === true)}></label>`;
+  }
+  if (type === 'select') {
+    return `<label><span>${escapeHtml(label)}</span><select data-appearance-key="${escapeHtml(key)}">${options.map(([id, text]) => `<option value="${escapeHtml(id)}"${selectedAttr(value === id)}>${escapeHtml(text)}</option>`).join('')}</select></label>`;
+  }
+  return `<label><span>${escapeHtml(label)}</span><input data-appearance-key="${escapeHtml(key)}" value="${escapeHtml(value ?? '')}" type="${type}"></label>`;
+}
+
+async function loadAppearance() {
+  const box = byId('sAppearance');
+  if (!box) return;
+  try {
+    const d = await api('/api/settings');
+    const appearance = d.appearance || {};
+    box.innerHTML = `<div class="appearance-editor">${appearanceSections.map(section => `<fieldset><legend>${escapeHtml(section.title)}</legend><div class="appearance-form">${section.fields.map(field => appearanceFieldHtml(field, appearance)).join('')}</div></fieldset>`).join('')}</div><p class="hint">文案支持 <code>{count}</code>、<code>{value}</code> 和 <code>{site_name}</code> 占位符；图片与链接仅接受 HTTPS 或站内相对路径。</p><div class="appearance-actions"><button class="btn btn-primary" id="saveAppearance">保存外观</button><button class="btn" id="resetAppearance">恢复默认</button></div>`;
+    byId('saveAppearance').onclick = () => saveAppearance(false);
+    byId('resetAppearance').onclick = () => saveAppearance(true);
+  } catch (e) { errBox('sAppearance', e); }
+}
+
+async function saveAppearance(reset) {
+  const appearance = {};
+  if (!reset) document.querySelectorAll('[data-appearance-key]').forEach((input) => {
+    appearance[input.dataset.appearanceKey] = input.type === 'checkbox' ? input.checked : input.value;
+  });
+  try {
+    const d = await api('/api/settings', { method: 'PATCH', body: JSON.stringify({ appearance }) });
+    toast(reset ? '已恢复默认外观' : '外观设置已保存', 'ok');
+    loadAppearance();
+  } catch (e) { toast(e.message, 'err'); }
 }
 async function loadTheme() {
   try {

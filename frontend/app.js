@@ -56,6 +56,7 @@ import {
   nodegetTopbarToolsHtml,
 } from './js/themes/nodeget-cards.js?v=20260721-flag-harmony';
 import { buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 
 const $ = (sel) => document.querySelector(sel);
 const FRONTEND_THEME_KEY = 'nstatus.frontendTheme';
@@ -111,6 +112,7 @@ const state = {
   statusRequestSeq: 0,
   statusController: null,
   lastGroupsRenderKey: '',
+  appearance: normalizeAppearance(DEFAULT_APPEARANCE),
 };
 
 const els = {
@@ -320,9 +322,7 @@ async function loadStatus() {
 function render(data) {
   applyFrontendTheme(data);
 
-  if (els.brandName) {
-    els.brandName.textContent = data.name || '聶.NET';
-  }
+  applyAppearance(data?.frontend?.appearance || { site_name: data.name });
 
   const targets = data.targets || [];
   const checked = targets.filter(targetHasStatus);
@@ -334,17 +334,17 @@ function render(data) {
   const delayed = stale.filter(targetIsUp).length;
   const avg = avgLatency(fresh);
 
-  let bannerText = '所有系统运行正常';
+  let bannerText = appearanceText(state.appearance.banner_normal);
   let bannerClass = 'system-banner';
 
   if (down > 0) {
-    bannerText = `${down} 个服务离线`;
+    bannerText = appearanceText(state.appearance.banner_down, down);
     bannerClass += ' down';
   } else if (delayed > 0) {
-    bannerText = `${delayed} 个服务数据延迟`;
+    bannerText = appearanceText(state.appearance.banner_degraded, delayed);
     bannerClass += ' degraded';
   } else if (unknown > 0) {
-    bannerText = `${unknown} 个服务等待检查`;
+    bannerText = appearanceText(state.appearance.banner_unknown, unknown);
     bannerClass += ' degraded';
   }
 
@@ -354,18 +354,19 @@ function render(data) {
   }
 
   if (els.subline) {
-    els.subline.textContent = '';
+    els.subline.textContent = appearanceText(state.appearance.hero_subtitle);
+    els.subline.hidden = !state.appearance.hero_subtitle;
   }
 
   if (els.summaryLine) {
     els.summaryLine.innerHTML = [
-      `<span>${targets.length} 个服务</span>`,
-      `<span>${up} 个正常</span>`,
-      `<span>${down} 个离线</span>`,
-      `<span>${delayed} 个延迟</span>`,
-      `<span>${unknown} 个待检查</span>`,
-      `<span>平均延迟 ${avg == null ? '-' : avg + ' ms'}</span>`,
-      `<span>更新于 ${fmtTime(Date.now() / 1000, 'short')}</span>`,
+      `<span>${escapeHtml(appearanceText(state.appearance.summary_total, targets.length))}</span>`,
+      `<span>${escapeHtml(appearanceText(state.appearance.summary_up, up))}</span>`,
+      `<span>${escapeHtml(appearanceText(state.appearance.summary_down, down))}</span>`,
+      `<span>${escapeHtml(appearanceText(state.appearance.summary_degraded, delayed))}</span>`,
+      `<span>${escapeHtml(appearanceText(state.appearance.summary_unknown, unknown))}</span>`,
+      `<span>${escapeHtml(appearanceText(state.appearance.summary_latency, 0, avg == null ? '-' : `${avg} ms`))}</span>`,
+      `<span>${escapeHtml(appearanceText(state.appearance.summary_updated, 0, fmtTime(Date.now() / 1000, 'short')))}</span>`,
     ].join('');
   }
 
@@ -391,6 +392,7 @@ function statusGroupsRenderKey(data) {
     filter: state.filteredText,
     // Relative time labels only need periodic refresh when status data is unchanged.
     relativeBucket: Math.floor(Date.now() / 300000),
+    appearance: state.appearance,
     days: data?.days || [],
     targets: data?.targets || [],
     summaries: data?.summaries || [],
@@ -406,6 +408,92 @@ function applyFrontendTheme(data) {
     localStorage.setItem(FRONTEND_THEME_KEY, theme);
   } catch (_) {}
   syncCardTopbar(theme === 'cards');
+}
+
+function appearanceText(template, count = 0, value = '') {
+  return String(template || '')
+    .replaceAll('{count}', String(count))
+    .replaceAll('{value}', String(value))
+    .replaceAll('{site_name}', state.appearance.site_name);
+}
+
+function applyAppearance(raw) {
+  state.appearance = normalizeAppearance(raw || {});
+  document.title = state.appearance.page_title || state.appearance.site_name;
+  const rootStyle = document.documentElement?.style;
+  rootStyle?.setProperty('--appearance-accent', state.appearance.accent_color);
+  rootStyle?.setProperty('--appearance-bg', state.appearance.page_background);
+  rootStyle?.setProperty('--appearance-surface', state.appearance.surface_color);
+  rootStyle?.setProperty('--appearance-brand-logo-height', `${state.appearance.brand_logo_height}px`);
+  rootStyle?.setProperty('--appearance-header-image-width', `${state.appearance.header_right_image_width}px`);
+  let favicon = document.querySelector('link[rel~="icon"]');
+  if (state.appearance.favicon_url) {
+    if (!favicon) { favicon = document.createElement('link'); favicon.rel = 'icon'; document.head.appendChild(favicon); }
+    favicon.href = state.appearance.favicon_url;
+  } else if (favicon) favicon.remove();
+  if (els.brandName) els.brandName.textContent = state.appearance.site_name;
+  const brand = document.querySelector('.brand');
+  if (brand) {
+    brand.href = state.appearance.brand_home_url;
+    brand.setAttribute('aria-label', `${state.appearance.site_name} 首页`);
+    let logo = brand.querySelector('.brand-custom-logo');
+    if (state.appearance.brand_logo_url) {
+      if (!logo) { logo = document.createElement('img'); logo.className = 'brand-custom-logo'; brand.insertBefore(logo, brand.firstChild); }
+      logo.src = state.appearance.brand_logo_url;
+      logo.alt = state.appearance.brand_logo_alt;
+      logo.hidden = false;
+    } else if (logo) logo.hidden = true;
+    let subtitle = brand.querySelector('.brand-subtitle');
+    if (state.appearance.site_subtitle) {
+      if (!subtitle) { subtitle = document.createElement('small'); subtitle.className = 'brand-subtitle'; brand.appendChild(subtitle); }
+      subtitle.textContent = state.appearance.site_subtitle;
+      subtitle.hidden = false;
+    } else if (subtitle) subtitle.hidden = true;
+    const avatar = brand.querySelector('.brand-avatar');
+    if (avatar) {
+      avatar.innerHTML = state.appearance.brand_avatar_url
+        ? `<img src="${escapeAttr(state.appearance.brand_avatar_url)}" alt="">`
+        : nodegetAvatarHtml();
+    }
+  }
+  const right = document.querySelector('.topbar-cf');
+  if (right) {
+    right.hidden = state.appearance.header_right_mode === 'hidden';
+    if (state.appearance.header_right_mode === 'text') {
+      right.innerHTML = state.appearance.header_right_link
+        ? `<a class="appearance-header-text" href="${escapeAttr(state.appearance.header_right_link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(state.appearance.header_right_text)}</a>`
+        : `<span class="appearance-header-text">${escapeHtml(state.appearance.header_right_text)}</span>`;
+    } else if (state.appearance.header_right_mode === 'image') {
+      right.innerHTML = state.appearance.header_right_image_url
+        ? `<a class="cf-logo" href="${escapeAttr(state.appearance.header_right_link || '#')}" target="_blank" rel="noopener noreferrer"><img class="cf-logo-img" src="${escapeAttr(state.appearance.header_right_image_url)}" alt="${escapeAttr(state.appearance.header_right_image_alt)}"></a>`
+        : '';
+    }
+  }
+  const topbar = document.querySelector('.topbar');
+  if (topbar) topbar.hidden = !state.appearance.show_header;
+  const searchRow = document.querySelector('.search-row');
+  if (searchRow) searchRow.hidden = !state.appearance.show_search;
+  if (els.globalBanner) els.globalBanner.hidden = !state.appearance.show_banner;
+  if (els.summaryLine) els.summaryLine.hidden = !state.appearance.show_summary;
+  if (els.incidentLogPanel) els.incidentLogPanel.hidden = !state.appearance.show_incidents;
+  if (els.inlineChartPanel && !state.appearance.show_chart) els.inlineChartPanel.hidden = true;
+  if (els.checksPanel) els.checksPanel.hidden = !state.appearance.show_checks;
+  const footerRoot = document.querySelector('.footer');
+  if (footerRoot) footerRoot.hidden = !state.appearance.show_footer;
+  if (els.serviceSearch) els.serviceSearch.placeholder = state.frontendTheme === 'cards' ? state.appearance.cards_search_placeholder : state.appearance.search_placeholder;
+  const incidentTitle = document.querySelector('#incidentToggle > span');
+  if (incidentTitle) incidentTitle.textContent = state.appearance.incident_title;
+  const checksTitle = document.querySelector('.checks-head h2');
+  if (checksTitle) checksTitle.textContent = state.appearance.checks_title;
+  const checksHint = document.querySelector('#checksHint');
+  if (checksHint && !state.selectedId) checksHint.textContent = state.appearance.checks_hint;
+  if (els.chartTitle && !state.selectedId) els.chartTitle.textContent = state.appearance.chart_title;
+  if (els.chartServiceName && !state.selectedId) els.chartServiceName.textContent = state.appearance.chart_unselected;
+  const footer = document.querySelector('.footer-left');
+  if (footer) {
+    footer.textContent = appearanceText(state.appearance.footer_text);
+    if (state.appearance.footer_link_text && state.appearance.footer_link_url) footer.insertAdjacentHTML('beforeend', ` <a href="${escapeAttr(state.appearance.footer_link_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(state.appearance.footer_link_text)}</a>`);
+  }
 }
 
 function syncCardTopbar(enabled) {
@@ -427,7 +515,7 @@ function syncCardTopbar(enabled) {
     }
     avatar?.remove();
     tools?.remove();
-  if (els.serviceSearch) els.serviceSearch.placeholder = '搜索服务、IP、域名或分组...';
+    if (els.serviceSearch) els.serviceSearch.placeholder = state.appearance.search_placeholder;
     return;
   }
 
@@ -435,7 +523,9 @@ function syncCardTopbar(enabled) {
     avatar = document.createElement('span');
     avatar.className = 'brand-avatar';
     avatar.setAttribute('aria-hidden', 'true');
-    avatar.innerHTML = nodegetAvatarHtml();
+    avatar.innerHTML = state.appearance.brand_avatar_url
+      ? `<img src="${escapeAttr(state.appearance.brand_avatar_url)}" alt="">`
+      : nodegetAvatarHtml();
     brand.insertBefore(avatar, brand.firstChild);
   }
 
@@ -451,7 +541,7 @@ function syncCardTopbar(enabled) {
   }
   if (!tools.parentNode) topbarInner.appendChild(tools);
   if (cloudflare) topbarInner.appendChild(cloudflare);
-  if (els.serviceSearch) els.serviceSearch.placeholder = '搜索节点...';
+  if (els.serviceSearch) els.serviceSearch.placeholder = state.appearance.cards_search_placeholder;
 }
 
 function renderCardThemeExtras(data) {
@@ -476,8 +566,8 @@ function renderCardThemeExtras(data) {
   }
 
   const enabled = state.frontendTheme === 'cards';
-  filter.hidden = !enabled;
-  sidebar.hidden = !enabled;
+  filter.hidden = !enabled || !state.appearance.show_region_filter;
+  sidebar.hidden = !enabled || !state.appearance.show_card_sidebar;
   if (!enabled) return;
 
   const targets = data.targets || [];
@@ -631,10 +721,10 @@ function renderIncidentLog(data) {
 
   els.incidentSummary.textContent = rows.length
     ? `${rows.length} 条记录${currentDown ? ` · ${currentDown} 个进行中` : ''}`
-    : '暂无故障';
+    : state.appearance.incident_empty;
 
   if (!rows.length) {
-    els.incidentBody.innerHTML = '<div class="empty">暂无离线事件。</div>';
+    els.incidentBody.innerHTML = `<div class="empty">${escapeHtml(state.appearance.incident_empty_detail)}</div>`;
     updateIncidentToggle();
     return;
   }
@@ -756,9 +846,10 @@ function ensurePublicGroupByBar() {
   `).join('');
 
   bar.innerHTML = `
-    <span class="group-by-title">分组方式</span>
-    <div class="group-by-options" role="group" aria-label="分组方式">${options}</div>
+    <span class="group-by-title">${escapeHtml(state.appearance.group_by_title)}</span>
+    <div class="group-by-options" role="group" aria-label="${escapeAttr(state.appearance.group_by_title)}">${options}</div>
   `;
+  bar.hidden = !state.appearance.show_group_by;
 
   bar.querySelectorAll('[data-group-by]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -818,7 +909,7 @@ function renderGroups(data) {
   }
 
   if (!targets.length) {
-    els.groups.innerHTML = '<div class="empty">没有匹配的服务。</div>';
+    els.groups.innerHTML = `<div class="empty">${escapeHtml(state.appearance.no_search_results)}</div>`;
 
     if (els.inlineChartPanel) {
       els.inlineChartPanel.hidden = true;
@@ -1042,9 +1133,9 @@ function renderServiceCard(t, days, summaries) {
         ${cardResourceMetric('内存', Number(m.memory?.percent || 0), cardMemorySub(m.memory), 'mem')}
         ${cardResourceMetric('磁盘', Number(m.disk?.percent || 0), cardDiskSub(m.disk), 'disk')}
       </div>
-      ${hasLatency ? `<div class="node-latency-panel">
-        <strong>⌁ Latency</strong>
-        <small>多节点 TCP 建连延迟</small>
+      ${hasLatency && state.appearance.show_card_latency ? `<div class="node-latency-panel">
+        <strong>⌁ ${escapeHtml(state.appearance.latency_title)}</strong>
+        <small>${escapeHtml(state.appearance.latency_subtitle)}</small>
         ${latencyRows}
       </div>` : ''}
       <div class="node-sla-row${trafficProgress ? ' has-traffic' : ''}">
@@ -1468,6 +1559,11 @@ async function selectService(id, name, el, options = {}) {
 function attachInlineChart(serviceEl) {
   if (!els.inlineChartPanel) return;
 
+  if (!state.appearance.show_chart) {
+    els.inlineChartPanel.hidden = true;
+    return;
+  }
+
   els.inlineChartPanel.hidden = false;
   serviceEl.appendChild(els.inlineChartPanel);
 
@@ -1480,9 +1576,9 @@ async function loadChecks(id, name, target = null, options = {}) {
   const requestedHours = Math.max(rangeHours('day'), Number(options.hours || rangeHours('day')));
   const quiet = Boolean(options.quiet);
   if (!quiet) {
-    els.chartTitle.textContent = '响应时间';
+    els.chartTitle.textContent = state.appearance.chart_title;
     els.chartMeta.textContent = '正在加载检查记录...';
-    els.chartServiceName.textContent = `${name} 响应时间`;
+    els.chartServiceName.textContent = `${name} ${state.appearance.chart_title}`;
     els.chartAvg.textContent = '平均值：-';
     els.checksHint.textContent = name;
     els.checks.textContent = '正在加载...';
@@ -1611,6 +1707,11 @@ function normalizeAgentMetricsPayload(data) {
 function renderVPSInfo() {
   const bar = document.getElementById('vpsInfoBar');
   if (!bar) return;
+  if (!state.appearance.show_vps_details) {
+    bar.hidden = true;
+    bar.innerHTML = '';
+    return;
+  }
   const m = state.targetMetrics;
   const latest = m?.latest || {};
   const info = m?.latest?.vps_info || {};
@@ -1674,7 +1775,7 @@ function renderVPSInfo() {
   const summary = summaryBits.slice(0, 3).join(' · ') || '系统与网络信息';
   bar.innerHTML = `
     <button type="button" class="vps-info-toggle" id="vpsInfoToggle" aria-expanded="false">
-      <span class="vps-info-toggle-label">VPS 详情</span>
+      <span class="vps-info-toggle-label">${escapeHtml(state.appearance.vps_details_label)}</span>
       <span class="vps-info-toggle-summary">${escapeHtml(summary)}</span>
       <span class="vps-info-toggle-icon" aria-hidden="true"></span>
     </button>
@@ -1833,8 +1934,8 @@ function normalizePingPayload(data) {
 function renderChecksPage() {
   if (!state.selectedId) {
     els.checks.classList.add('muted');
-    els.checks.innerHTML = '<div class="empty">请选择服务以查看最近检查记录。</div>';
-    els.checksHint.textContent = '未选择服务';
+    els.checks.innerHTML = `<div class="empty">${escapeHtml(state.appearance.checks_empty)}</div>`;
+    els.checksHint.textContent = state.appearance.checks_unselected;
     updatePageInfo();
     return;
   }
@@ -1857,7 +1958,7 @@ function renderChecksPage() {
       <div>${c.status_code || '-'}</div>
       <div class="small check-extra">${formatCheckExtraHtml(c)}</div>
     </div>
-  `).join('') || '<div class="empty">暂无检查记录。</div>';
+  `).join('') || `<div class="empty">${escapeHtml(state.appearance.checks_no_records)}</div>`;
 
   els.checksHint.textContent = `${state.selectedName} · 最近 ${total} 条记录${state.checksSource ? ' · ' + state.checksSource : ''}`;
 
@@ -2058,7 +2159,7 @@ function updateChartForCurrentRange() {
     return;
   }
 
-  els.chartTitle.textContent = '响应时间';
+  els.chartTitle.textContent = state.appearance.chart_title;
   const rangeChecks = getChartPointsForRange();
 
   updateChart(rangeChecks, state.selectedName || '服务');
@@ -2331,7 +2432,7 @@ function updateChart(checks, name) {
   const nums = points.map(p => p.y).filter(Number.isFinite);
   const avg = nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
 
-  els.chartServiceName.textContent = `${name} 响应时间`;
+  els.chartServiceName.textContent = `${name} ${state.appearance.chart_title}`;
   els.chartAvg.textContent = `平均值：${avg == null ? '-' : avg.toFixed(2) + ' ms'}`;
 
   if (!state.chart) {

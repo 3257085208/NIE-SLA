@@ -1,4 +1,7 @@
 :root {
+  --appearance-accent: #2ea36d;
+  --appearance-bg: #f4f8fc;
+  --appearance-surface: #ffffff;
   --bg: #f4f5f7;
   --paper: #ffffff;
   --text: #0d1218;
@@ -22,11 +25,11 @@
 }
 
 * { box-sizing: border-box; }
-html { background: var(--bg); }
+html { background: var(--appearance-bg, var(--bg)); }
 body {
   margin: 0;
   color: var(--text);
-  background: var(--bg);
+  background: var(--appearance-bg, var(--bg));
   font-family: var(--font);
   font-size: 16px;
   line-height: 1.48;
@@ -3706,4 +3709,21 @@ tr.group-sep td{background:rgba(127,127,127,.12);font-size:13px;padding:8px 10px
   body[data-frontend-theme="cards"] .node-uptime-strip { gap: 3px; }
   body[data-frontend-theme="cards"] .node-uptime-strip .daybar { height: 14px; border-radius: 3px; }
   body[data-frontend-theme="cards"] .node-card-foot { font-size: 12px; }
+}
+
+/* Runtime appearance settings from the admin panel. */
+.brand-custom-logo { width: auto; max-width: 88px; height: var(--appearance-brand-logo-height, 36px); flex: 0 0 auto; object-fit: contain; }
+.brand-subtitle { max-width: 180px; margin-left: 9px; overflow: hidden; color: var(--muted); font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.appearance-header-text { color: var(--soft); font-size: 13px; font-weight: 800; text-decoration: none; white-space: nowrap; }
+.topbar-cf .cf-logo-img { width: var(--appearance-header-image-width, 109px); height: auto; max-height: 44px; object-fit: contain; }
+.brand-main { color: var(--appearance-accent, #4f9b58); }
+.system-banner:not(.down):not(.degraded) { background: var(--appearance-accent, var(--green)); }
+html, body, body[data-frontend-theme="cards"] { background-color: var(--appearance-bg, var(--bg)); }
+.topbar, body[data-frontend-theme="cards"] .topbar-inner, body[data-frontend-theme="cards"] .service.node-card { background: var(--appearance-surface, var(--paper)); }
+.nq-tab.active { border-bottom-color: var(--appearance-accent, #059669); }
+.group-by-option.active { color: var(--appearance-accent, var(--green-dark)); box-shadow: inset 0 -2px var(--appearance-accent, var(--green)); }
+
+@media (max-width: 560px) {
+  .brand-custom-logo { max-width: 64px; height: min(var(--appearance-brand-logo-height, 30px), 40px); }
+  .brand-subtitle { display: none; }
 }

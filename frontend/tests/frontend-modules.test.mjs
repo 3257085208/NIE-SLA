@@ -24,6 +24,7 @@ import {
 } from '../js/shared/target-catalogs.js';
 import { formatLocationLabel, normalizeCityName } from '../js/shared/format.js';
 import { buildNqModalHtml, renderNqAnsiHtml, renderNqReportHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from '../js/shared/appearance.js';
 
 const rows = normalizeChartRows([
   { checked_at: 30, ok: 1, latency_ms: 20 },
@@ -111,6 +112,29 @@ assert.equal(CURRENCIES.length >= 15, true);
 assert.equal(normalizeCountryCode('香港'), 'HK');
 assert.equal(filterCountries('新加坡')[0].code, 'SG');
 assert.equal(filterProviders('rack')[0], 'RackNerd');
+
+const customizedAppearance = normalizeAppearance({
+  site_name: ' Demo ',
+  brand_home_url: 'https://status.example/',
+  brand_logo_url: 'javascript:alert(1)',
+  brand_logo_height: 999,
+  header_right_image_width: 10,
+  header_right_mode: 'text',
+  show_chart: false,
+  show_vps_details: '0',
+  accent_color: '#123abc',
+});
+assert.equal(customizedAppearance.site_name, 'Demo');
+assert.equal(customizedAppearance.brand_home_url, 'https://status.example/');
+assert.equal(customizedAppearance.brand_logo_url, '');
+assert.equal(customizedAppearance.brand_logo_height, 64);
+assert.equal(customizedAppearance.header_right_image_width, 40);
+assert.equal(customizedAppearance.header_right_mode, 'text');
+assert.equal(customizedAppearance.show_chart, false);
+assert.equal(customizedAppearance.show_vps_details, false);
+assert.equal(customizedAppearance.accent_color, '#123abc');
+assert.equal(normalizeAppearance({ brand_home_url: 'data:text/html,bad', accent_color: 'red' }).brand_home_url, DEFAULT_APPEARANCE.brand_home_url);
+assert.equal(normalizeAppearance({ brand_home_url: 'data:text/html,bad', accent_color: 'red' }).accent_color, DEFAULT_APPEARANCE.accent_color);
 
 console.log('frontend module tests passed');
 

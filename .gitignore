@@ -8,6 +8,8 @@ agent/target/
 agent/bin/
 frontend/bin/
 dist/
+dist-one-click/
+.wrangler-dry-run/
 build/
 coverage/
 *.tsbuildinfo

@@ -1,5 +1,11 @@
 # 02 Deployment
 
+## Deploy to Cloudflare
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
+
+The official Deploy Button forks the repository, provisions D1 and R2, binds the Durable Object, configures the cron trigger, and serves the API plus frontend from one Worker. Set unique random values of at least 32 bytes for `ADMIN_TOKEN`, `AGENT_TOKEN`, and `TOTP_ENCRYPTION_KEY` in the deployment form. Cloudflare Deploy Buttons do not support Pages, so this path uses Worker Static Assets; the separate Worker + Pages process remains available below.
+
 ## Prerequisites
 
 - A Cloudflare account.

@@ -18,6 +18,8 @@ Worker + D1 + R2 + Pages + Durable Objects + Rust Agent + External Latency Agent
 
 [完整中文文档](#文档导航) · [English](README.en.md) · [Release](https://github.com/3257085208/NIE-SLA/releases) · [安全策略](SECURITY.md)
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
+
 </div>
 
 ## 项目定位
@@ -106,6 +108,14 @@ Cloudflare Scheduled Trigger 偶尔会延迟。Worker 每分钟只查询一次�
 旧 Agent 可能仍能上传基本字段，但缺少持久队列、scoped Token、自动更新或新 Ping 调度等能力，不作为公开版本的长期兼容承诺。
 
 ## 快速部署
+
+### 点一下部署到 Cloudflare
+
+点击上方 **Deploy to Cloudflare**，登录 Cloudflare 和 GitHub 后完成授权。部署向导会自动 Fork 本仓库，并创建 Worker、D1、R2、Durable Object、Cron 和静态前端；状态页、后台与 API 使用同一个 `workers.dev` 域名，不需要手工复制数据库 ID 或配置跨域。
+
+向导会要求设置三项 Secret：`ADMIN_TOKEN`、`AGENT_TOKEN`、`TOTP_ENCRYPTION_KEY`。三项都应使用密码管理器生成的不同随机值，至少 32 字节。Cloudflare 不允许模板作者替部署者预设安全口令，这也是一键流程中唯一必须填写的安全步骤。
+
+构建阶段会从本仓库最新公开 Release 下载 Agent，按 `SHA256SUMS` 校验后与前端一起发布。一键版适合首次体验和同源部署；需要独立 Pages 域名、Worker API 域名或已有生产资源时，继续使用下方脚本/手动流程。
 
 ### 前置条件
 

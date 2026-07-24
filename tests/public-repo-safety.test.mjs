@@ -29,8 +29,8 @@ for (const file of textFiles) {
   for (const [name, pattern] of checks) {
     if (pattern.test(source)) findings.push(`${name}: ${file}`);
   }
-  if (file.endsWith('wrangler.toml')) {
-    const ids = [...source.matchAll(/database_id\s*=\s*"([0-9a-f-]{36})"/gi)].map((match) => match[1]);
+  if (/wrangler\.(?:toml|jsonc?)$/i.test(file)) {
+    const ids = [...source.matchAll(/database_id\s*(?:=|:)\s*"([0-9a-f-]{36})"/gi)].map((match) => match[1]);
     if (ids.some((id) => id !== '00000000-0000-0000-0000-000000000000')) findings.push(`Cloudflare database ID: ${file}`);
   }
 }

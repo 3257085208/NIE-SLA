@@ -166,15 +166,15 @@ async function buildStatusPayload(env, url = null) {
     }
   }
   const frontend = await publicFrontend(env);
-  return { ok: true, name: env.PUBLIC_SITE_NAME || '聶.NET', now: new Date().toISOString(), days: dayList, regions: REGION_LABELS, region_proxy_enabled: Boolean(env.REGION_PROXY), frontend_theme: frontend.theme, frontend, traffic, ping_targets: pingTargetsResult.results || [], privacy: { mask_ips: maskIps, hide_ports: hidePorts, hide_colo: true }, storage: { mode: 'd1-check-buckets+r2-state', raw_checks_in_d1: false, raw_history_in_r2: Boolean(env.ARCHIVE), d1_regular_check_writes: true, status_cache_ttl: clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300) }, timezone: { offset_minutes: timezoneOffsetMin(env), label: timezoneLabel(env) }, targets: rows, summaries, incidents, warnings: sync_warning ? [sync_warning] : [] };
+  return { ok: true, name: frontend.appearance.site_name, now: new Date().toISOString(), days: dayList, regions: REGION_LABELS, region_proxy_enabled: Boolean(env.REGION_PROXY), frontend_theme: frontend.theme, frontend, traffic, ping_targets: pingTargetsResult.results || [], privacy: { mask_ips: maskIps, hide_ports: hidePorts, hide_colo: true }, storage: { mode: 'd1-check-buckets+r2-state', raw_checks_in_d1: false, raw_history_in_r2: Boolean(env.ARCHIVE), d1_regular_check_writes: true, status_cache_ttl: clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300) }, timezone: { offset_minutes: timezoneOffsetMin(env), label: timezoneLabel(env) }, targets: rows, summaries, incidents, warnings: sync_warning ? [sync_warning] : [] };
 }
 
 async function publicFrontend(env) {
   try {
     const settings = await getPublicSettings(env);
-    return { theme: settings.frontend_theme || 'classic' };
+    return { theme: settings.frontend_theme || 'classic', appearance: settings.appearance };
   } catch (_) {
-    return { theme: String(env.PUBLIC_FRONTEND_THEME || '').toLowerCase() === 'cards' ? 'cards' : 'classic' };
+    return { theme: String(env.PUBLIC_FRONTEND_THEME || '').toLowerCase() === 'cards' ? 'cards' : 'classic', appearance: { site_name: env.PUBLIC_SITE_NAME || '聶.NET' } };
   }
 }
 

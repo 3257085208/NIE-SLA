@@ -1,6 +1,7 @@
 // Admin sub-module: agent install command generation.
 import { clamp, sanitizeAgentId } from '../utils.js';
 import { agentScopedToken } from '../auth.js';
+import { loadAgentRelease } from './settings.js';
 
 export async function getAgentInstallCommand(env, url, request = null) {
   const globalAgentToken = String(env.AGENT_TOKEN || '').trim();
@@ -17,8 +18,9 @@ export async function getAgentInstallCommand(env, url, request = null) {
   if (!installBase) return { ok: false, error: 'Agent 安装地址不可用。请从公开前端域名打开管理后台，或配置 PUBLIC_AGENT_INSTALL_BASE。' };
   const apiBase = agentApiBase(env, request, url, installBase);
   const pingSec = String(clamp(Number(env.NSTATUS_PING_SEC || env.AGENT_PING_SEC || 20), 5, 600));
-  const sha256SumsSha256 = String(env.NSTATUS_SHA256SUMS_SHA256 || '').trim();
-  const expectedVersion = String(env.AGENT_LATEST_VERSION || 'v1.0.18').trim();
+  const release = await loadAgentRelease(env, request).catch(() => null);
+  const sha256SumsSha256 = String(env.NSTATUS_SHA256SUMS_SHA256 || release?.manifest_sha256 || 'f1a309909af9204d1ced30ebd59d8a1a303577d7d2794f896ac54e2bede2a3bc').trim();
+  const expectedVersion = String(env.AGENT_LATEST_VERSION || release?.latest_version || 'v1.0.18').trim();
 
   const linuxEnvNames = [
     'NSTATUS_AGENT_BASE_URL',

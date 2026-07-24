@@ -1,3 +1,48 @@
 {
-  "type": "module"
+  "name": "nie-sla-cloudflare",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "One-click Cloudflare deployment for NIE-SLA",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/prepare-one-click.mjs",
+    "test": "node tests/public-repo-safety.test.mjs && node tests/one-click-build.test.mjs",
+    "predeploy": "npm run build",
+    "deploy": "wrangler deploy",
+    "check:deploy": "npm run build && npm test && wrangler deploy --dry-run --outdir .wrangler-dry-run"
+  },
+  "dependencies": {
+    "fflate": "0.8.2"
+  },
+  "devDependencies": {
+    "wrangler": "4.88.0"
+  },
+  "cloudflare": {
+    "label": "NIE-SLA Status & VPS Monitor",
+    "products": [
+      "Workers",
+      "D1",
+      "R2",
+      "Durable Objects"
+    ],
+    "categories": [
+      "storage"
+    ],
+    "docs_url": "https://github.com/3257085208/NIE-SLA/blob/main/docs/zh-CN/02-deployment.md",
+    "publish": true,
+    "bindings": {
+      "ADMIN_TOKEN": {
+        "description": "后台最高权限口令。请使用密码管理器生成至少 32 字节随机值，不要与其他服务复用。"
+      },
+      "AGENT_TOKEN": {
+        "description": "Agent 主密钥，用于派生每台节点的独立 Token。请使用另一个至少 32 字节随机值。"
+      },
+      "TOTP_ENCRYPTION_KEY": {
+        "description": "TOTP 密钥加密主密钥。请使用第三个至少 32 字节随机值。"
+      }
+    }
+  }
 }

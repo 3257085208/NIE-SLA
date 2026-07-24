@@ -1,5 +1,7 @@
 # NIE-SLA
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
+
 NIE-SLA is an open-source, Cloudflare-native status page and VPS telemetry system built with Workers, D1, R2, Pages, Durable Objects, a Rust Agent, and optional external Latency Agents.
 
 The Chinese [README](README.md) and [documentation index](README.md#文档导航) are the primary, most detailed manuals. English component guides are available under [`docs/en`](docs/en/01-architecture.md).
@@ -17,6 +19,10 @@ The Chinese [README](README.md) and [documentation index](README.md#文档导航
 - Multi-architecture Linux and Windows releases from GitHub Actions.
 
 ## Quick Start
+
+The Deploy to Cloudflare button provisions the Worker, D1, R2, Durable Object, cron trigger, and same-origin static frontend. The setup form only requires three unique random secrets: `ADMIN_TOKEN`, `AGENT_TOKEN`, and `TOTP_ENCRYPTION_KEY`.
+
+For a separate Worker + Pages deployment:
 
 ```bash
 git clone https://github.com/3257085208/NIE-SLA.git

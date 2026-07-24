@@ -179,6 +179,18 @@ h3 {
 .col-wide {
   flex-basis: 100%;
 }
+.appearance-editor { display: grid; gap: 14px; }
+.appearance-editor fieldset { min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; }
+.appearance-editor legend { padding: 0 6px; color: var(--text); font-size: 13px; font-weight: 800; }
+.appearance-form { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px 14px; }
+.appearance-form label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.appearance-form input, .appearance-form select { width: 100%; min-height: 34px; padding: 6px 8px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; }
+.appearance-form input[type="color"] { padding: 3px; cursor: pointer; }
+.appearance-form .appearance-switch { min-height: 36px; grid-template-columns: 1fr auto; align-items: center; padding: 7px 9px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; }
+.appearance-form .appearance-switch input { width: 16px; min-height: 16px; margin: 0; }
+.appearance-actions { display: flex; gap: 8px; margin-top: 14px; }
+@media (max-width: 800px) { .appearance-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .appearance-form { grid-template-columns: 1fr; } }
 .stats {
   display: flex;
   gap: 12px;

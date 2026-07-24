@@ -98,7 +98,7 @@ curl -X POST https://YOUR-API/api/targets \
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET/PATCH | `/api/settings` | 公开主题、自动更新等 |
+| GET/PATCH | `/api/settings` | 公开主题、前端外观与文案、自动更新等 |
 | GET/PATCH | `/api/alerts/settings` | 报警设置 |
 | POST | `/api/alerts/test` | 测试 Telegram |
 | POST | `/api/alerts/check` | 立即计算报警 |
@@ -120,6 +120,8 @@ curl -X POST https://YOUR-API/api/targets \
 公开扩展注册表为 `GET /api/extensions`，启用后的包文件由 `GET /api/extensions/file/:id/:path` 提供。扩展文件接口不接受任意 R2 key，只能读取注册表中启用包的清单内文件。
 
 旧 `/api/extensions/manage`、`/api/extensions/upload` 和 `/api/extensions/:id` 暂时保留兼容，但新后台和第三方管理工具必须使用分类型接口。
+
+`GET /api/settings` 的 `appearance` 是经过服务端校验并补全默认值的公开对象。管理端可用 `PATCH /api/settings` 提交 `{ "appearance": { ... } }`；未知字段不会进入公开响应，URL、颜色、枚举、布尔值和图片尺寸会被标准化。公开首页从 `/api/status` 的 `frontend.appearance` 读取同一对象，`lite=1` 也不会删除它。
 
 ## 常见状态码
 

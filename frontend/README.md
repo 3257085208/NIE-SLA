@@ -70,6 +70,10 @@ https://YOUR-PAGES/bin/SHA256SUMS
 
 包格式与 `/api/v1` 见[扩展开发指南](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/14-extensions-developer-guide.md)，独立仓库、工程命令、测试、SemVer、许可证与发布标准见[主题规范](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/15-theme-development-standard.md)和[插件规范](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/16-plugin-development-standard.md)。
 
+## 后台外观配置
+
+后台“系统设置 → 前端外观与文案”可以直接调整内置主题的站点标题、Favicon、左侧 Logo/头像/副标题、品牌链接、右上角图片或文字、状态与内容区文案、页脚、三组基础颜色，以及页头、图表、Latency、VPS 详情等区域的显示开关。配置来自公开状态响应的 `frontend.appearance`，无需重新发布 Pages；URL、颜色、尺寸和枚举均由 Worker 校验并带安全默认值。
+
 ## IPv6-only TCP 目标
 
 推荐使用 DNS-only AAAA 域名：

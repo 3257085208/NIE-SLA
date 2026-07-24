@@ -142,11 +142,29 @@ Windows 若没有 `openssl`，可在 Git Bash 里执行，或用 PowerShell：
 
 ---
 
-## 2. 推荐部署路径：一键脚本
+## 2. 推荐部署路径
+
+### 2.1 点一下部署到 Cloudflare
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
+
+这个入口使用 Cloudflare 官方 Deploy Button。授权 GitHub 与 Cloudflare 后，平台会自动 Fork 仓库、创建 D1/R2、绑定 Durable Object、配置 Cron，并把 Worker API 与前端静态资源发布到同一个 `workers.dev` 域名。
+
+部署页只要求你设置三个不能由模板预置的安全值：
+
+- `ADMIN_TOKEN`：后台登录口令。
+- `AGENT_TOKEN`：派生节点专用 Token 的主密钥。
+- `TOTP_ENCRYPTION_KEY`：加密 TOTP Secret 的主密钥。
+
+三项必须不同，建议由密码管理器各生成至少 32 字节随机值。一键构建会下载本仓库最新公开 Release 的 Agent 文件，并用 `SHA256SUMS` 逐个校验。部署成功后直接打开 Cloudflare 给出的 Worker URL，后台地址为 `/admin.html`。
+
+Cloudflare Deploy Button 目前不支持 Pages，因此一键版使用 Worker Static Assets 提供前端。这与下文 Worker + Pages 分离部署的数据和 API 兼容；以后需要独立域名时可以再迁移到分离结构。
+
+### 2.2 本地一键脚本
 
 如果你是第一次部署，优先走这一节。手动部署只在脚本失败或你要精细控制时使用。
 
-### 2.1 克隆仓库
+### 2.3 克隆仓库
 
 公开示例仓库：
 
@@ -176,7 +194,7 @@ src/
 ../agent/
 ```
 
-### 2.2 登录 Cloudflare
+### 2.4 登录 Cloudflare
 
 ```bash
 npx wrangler login
@@ -192,7 +210,7 @@ npx wrangler whoami
 - 更推荐在自己电脑完成首次部署；
 - 或使用权限受限的 Cloudflare API Token，而不是 Global API Key。
 
-### 2.3 运行部署向导
+### 2.5 运行部署向导
 
 仍在 `worker/` 目录：
 
@@ -215,7 +233,7 @@ bash deploy.sh
 11. 部署 Pages
 12. 可选创建示例 HTTP 目标
 
-### 2.4 脚本会问你什么，怎么填
+### 2.6 脚本会问你什么，怎么填
 
 | 提示 | 示例 | 说明 |
 | --- | --- | --- |
@@ -237,7 +255,7 @@ bash deploy.sh
 | 日本 / 韩国（UTC+9） | `540` |
 | 美国东部冬令时（UTC-5） | `-300` |
 
-### 2.5 如何拿到 Worker URL
+### 2.7 如何拿到 Worker URL
 
 如果这是第一次部署：
 
@@ -257,7 +275,7 @@ API:         https://nstatus.xxxx.workers.dev
 
 把这两行保存好。
 
-### 2.6 脚本失败时怎么办
+### 2.8 脚本失败时怎么办
 
 不要连续狂按。先看**最后一条失败信息**。
 
