@@ -4,6 +4,7 @@ import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, get
 import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, convertPriceToCny, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
 import { summarizeTraffic, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 import { compactStatusPayload, refreshLatencySources } from './status-payload.js';
+import { mergeAgentAvailabilityRows } from './agent-availability.js';
 
 export async function getStatusCached(request, env, url, ctx = null) {
   const ttl = clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300);
@@ -72,9 +73,10 @@ async function buildStatusPayload(env, url = null) {
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.provider, t.line_type FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all())
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all());
   const metricsPromise = env.DB.prepare(`SELECT * FROM agent_metrics_state`).all().catch(() => ({ results: [] }));
+  const agentAvailabilityPromise = env.DB.prepare(`SELECT agent_id, day, total_sec, online_sec FROM agent_daily_availability WHERE day >= ?`).bind(startDay).all().catch(() => ({ results: [] }));
   const latestPromise = env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo, uptime_24h, uptime_7d, avg_latency_24h, last_fail_at, current_outage_started_at, last_recover_at, status_changed_at FROM latest_status`).all().catch(() => ({ results: [] }));
   const pingTargetsPromise = env.DB.prepare(`SELECT id, name FROM ping_targets WHERE enabled = 1 ORDER BY name`).all().catch(() => ({ results: [] }));
-  const [targets, metricsResult, latestResult, pingTargetsResult] = await Promise.all([targetsPromise, metricsPromise, latestPromise, pingTargetsPromise]);
+  const [targets, metricsResult, agentAvailabilityResult, latestResult, pingTargetsResult] = await Promise.all([targetsPromise, metricsPromise, agentAvailabilityPromise, latestPromise, pingTargetsPromise]);
   const r2State = await readR2State(env);
   const r2SummaryRows = getSummaryRowsFromState(r2State, startDay);
   const recentFromDay = dateAddLocal(env, -1);
@@ -101,30 +103,21 @@ async function buildStatusPayload(env, url = null) {
     for (const row of trafficRows.results || []) trafficMap[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
   } catch (_) {}
   const metricsMap = {};
-  // Agent heartbeat: fill uptime for NAT/agent-monitored targets
-  const agentActiveDays = new Set();
+  // Agent heartbeat summaries use elapsed seconds, so missing reports become explicit downtime.
   for (const r of metricsResult.results || []) {
     if (r.updated_at) {
       const key = sanitizeAgentId(r.agent_id);
       const settings = targetTrafficSettings[key] || { enabled: false, quota_gb: 0, quota_bytes: 0, ...traffic };
       if (key) metricsMap[key] = publicAgentSummary(r, summarizeTraffic(trafficMap[`${key}|${settings.month}`], settings));
-      const day = dayFromSec(Math.floor(new Date(r.updated_at).getTime() / 1000), env);
-      agentActiveDays.add(key + ':' + day);
     }
   }
-  if (agentActiveDays.size) {
-    const seen = new Set(summaries.map(s => s.target_id + '|' + s.day));
-    for (const t of targets.results || []) {
-      const aid = sanitizeAgentId(t.id);
-      if (!aid) continue;
-      for (let i = 0; i < dayList.length; i++) {
-        if (seen.has(t.id + '|' + dayList[i])) continue;
-        if (agentActiveDays.has(aid + ':' + dayList[i])) {
-          seen.add(t.id + '|' + dayList[i]);
-          summaries.push({ target_id: t.id, day: dayList[i], total: 1, ok_count: 1, sum_latency_ms: 0 });
-        }
-      }
-    }
+  const noPublicTargetByAgent = new Map((targets.results || [])
+    .filter(target => Number(target.no_public_ip || 0) === 1)
+    .map(target => [sanitizeAgentId(target.id), target.id]));
+  for (const availability of mergeAgentAvailabilityRows(agentAvailabilityResult.results, metricsResult.results, env, nowSec(), targets.results)) {
+    const targetId = noPublicTargetByAgent.get(availability.agent_id);
+    if (!targetId || availability.day < startDay) continue;
+    summaries.push({ target_id: targetId, day: availability.day, total: availability.total, ok_count: availability.ok_count, sum_latency_ms: 0, source: 'agent' });
   }
 
   const externalLatency = await getLatestExternalLatencyByTarget(env, (targets.results || [])

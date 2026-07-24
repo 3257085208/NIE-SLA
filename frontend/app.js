@@ -1466,8 +1466,10 @@ function renderBars(targetId, days, summaries, count = 30) {
 
     const pct = Number(s.ok_count || 0) / Number(s.total || 1) * 100;
     const cls = daybarClassFromPct(pct);
-  const todaySuffix = day === today ? ' · 今日截至目前' : '';
-    const title = `${day}: ${pct.toFixed(2)}% (${s.ok_count}/${s.total})${todaySuffix}`;
+    const todaySuffix = day === today ? ' · 今日截至目前' : '';
+    const title = s.source === 'agent'
+      ? `${day}：Agent 在线率 ${pct.toFixed(2)}% · 在线 ${formatDuration(Number(s.ok_count || 0))} / 已记录 ${formatDuration(Number(s.total || 0))}${todaySuffix}`
+      : `${day}: ${pct.toFixed(2)}% (${s.ok_count}/${s.total})${todaySuffix}`;
 
     return `<span class="daybar ${cls}" style="--i:${index}" title="${title}"></span>`;
   }).join('');

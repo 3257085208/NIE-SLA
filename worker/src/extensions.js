@@ -1,4 +1,4 @@
-import { strFromU8, unzipSync } from 'fflate';
+import { unzipSync } from 'fflate';
 import { ApiError, resolveCorsOrigin, safeJson } from './auth.js';
 import { getMeta, setMeta } from './admin/settings.js';
 import { nowSec, parseBoolean } from './utils.js';
@@ -8,6 +8,10 @@ const ZIP_MAX_BYTES = 8 * 1024 * 1024;
 const EXPANDED_MAX_BYTES = 16 * 1024 * 1024;
 const FILE_MAX_BYTES = 4 * 1024 * 1024;
 const FILE_MAX_COUNT = 300;
+const MANIFEST_MAX_BYTES = 64 * 1024;
+const PATH_MAX_DEPTH = 8;
+const ZIP_CONTENT_TYPES = new Set(['application/zip', 'application/x-zip-compressed', 'application/octet-stream']);
+const RESERVED_EXTENSION_IDS = new Set(['admin', 'api', 'cards', 'classic', 'extensions', 'plugins', 'themes']);
 const ALLOWED_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.woff', '.woff2']);
 
 export async function listPublicExtensions(env) {
@@ -38,23 +42,38 @@ export async function listManagedExtensionsByType(env, type) {
 
 export async function uploadExtension(request, env, expectedType = '') {
   requireExtensionStorage(env);
+  const contentTypeHeader = String(request.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
+  if (!ZIP_CONTENT_TYPES.has(contentTypeHeader)) throw new ApiError(415, '扩展上传必须使用 ZIP Content-Type');
   const contentLength = Number(request.headers.get('content-length') || 0);
   if (contentLength > ZIP_MAX_BYTES) throw new ApiError(413, `扩展 ZIP 不能超过 ${ZIP_MAX_BYTES / 1024 / 1024} MB`);
   const bytes = new Uint8Array(await request.arrayBuffer());
   if (!bytes.length || bytes.length > ZIP_MAX_BYTES) throw new ApiError(413, `扩展 ZIP 不能为空且不能超过 ${ZIP_MAX_BYTES / 1024 / 1024} MB`);
+  if (bytes.length < 4 || bytes[0] !== 0x50 || bytes[1] !== 0x4b || bytes[2] !== 0x03 || bytes[3] !== 0x04) {
+    throw new ApiError(400, '扩展文件不是有效的非空 ZIP 包');
+  }
+  const expectedSha256 = String(request.headers.get('x-extension-sha256') || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(expectedSha256)) throw new ApiError(400, '缺少有效的 x-extension-sha256');
+  const packageSha256 = await sha256Bytes(bytes);
+  if (packageSha256 !== expectedSha256) throw new ApiError(400, '扩展 ZIP SHA-256 校验失败');
 
   let expandedBytes = 0;
   let fileCount = 0;
+  const archiveNames = new Set();
   let files;
   try {
     files = unzipSync(bytes, {
       filter(file) {
+        const archivePath = String(file.name || '');
+        if (archiveNames.has(archivePath)) throw new Error(`ZIP 包含重复路径：${archivePath}`);
+        archiveNames.add(archivePath);
         fileCount += 1;
         expandedBytes += Number(file.originalSize || 0);
         if (fileCount > FILE_MAX_COUNT) throw new Error(`文件数不能超过 ${FILE_MAX_COUNT}`);
         if (file.originalSize > FILE_MAX_BYTES) throw new Error(`单个文件不能超过 ${FILE_MAX_BYTES / 1024 / 1024} MB`);
         if (expandedBytes > EXPANDED_MAX_BYTES) throw new Error(`解压后不能超过 ${EXPANDED_MAX_BYTES / 1024 / 1024} MB`);
-        return !file.name.endsWith('/');
+        if (archivePath.endsWith('/')) validatePackagePath(archivePath.slice(0, -1));
+        else validatePackagePath(archivePath);
+        return !archivePath.endsWith('/');
       },
     });
   } catch (error) {
@@ -63,13 +82,19 @@ export async function uploadExtension(request, env, expectedType = '') {
 
   const entries = Object.entries(files || {});
   if (!entries.length || !files['manifest.json']) throw new ApiError(400, 'ZIP 根目录必须包含 manifest.json');
-  for (const [path, data] of entries) validatePackageFile(path, data);
+  let actualExpandedBytes = 0;
+  for (const [path, data] of entries) {
+    validatePackageFile(path, data);
+    actualExpandedBytes += data.length;
+    if (actualExpandedBytes > EXPANDED_MAX_BYTES) throw new ApiError(400, `扩展解压后不能超过 ${EXPANDED_MAX_BYTES / 1024 / 1024} MB`);
+  }
+  if (files['manifest.json'].length > MANIFEST_MAX_BYTES) throw new ApiError(400, `manifest.json 不能超过 ${MANIFEST_MAX_BYTES / 1024} KiB`);
 
   let manifest;
-  try { manifest = JSON.parse(strFromU8(files['manifest.json'])); }
-  catch (_) { throw new ApiError(400, 'manifest.json 不是有效 JSON'); }
+  try { manifest = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(files['manifest.json'])); }
+  catch (_) { throw new ApiError(400, 'manifest.json 必须是有效 UTF-8 JSON'); }
   const extension = validateManifest(manifest, files);
-  extension.package_sha256 = await sha256Bytes(bytes);
+  extension.package_sha256 = packageSha256;
   const requiredType = expectedType ? cleanExtensionType(expectedType) : '';
   if (requiredType && extension.type !== requiredType) {
     throw new ApiError(400, requiredType === 'theme' ? '主题上传入口只接受 theme 包' : '插件上传入口只接受 plugin 包');
@@ -82,17 +107,29 @@ export async function uploadExtension(request, env, expectedType = '') {
   const revision = crypto.randomUUID().replaceAll('-', '');
   const storageRoot = extensionStorageRoot(extension.type);
   const prefix = `${storageRoot}/${extension.id}/${revision}/`;
-  for (let offset = 0; offset < entries.length; offset += 20) {
-    await Promise.all(entries.slice(offset, offset + 20).map(([path, data]) => env.ARCHIVE.put(prefix + path, data, {
-      httpMetadata: { contentType: contentType(path) },
-      customMetadata: { extension_id: extension.id, revision },
-    })));
-  }
-
   const record = { ...extension, revision, storage_root: storageRoot, enabled: previous?.enabled || false, uploaded_at: nowSec() };
   const next = [...registry.filter(item => item.id !== record.id), record].sort((a, b) => a.name.localeCompare(b.name));
-  await saveRegistry(env, next);
-  if (previous?.revision) await deletePrefix(env, extensionPrefix(previous));
+  try {
+    for (let offset = 0; offset < entries.length; offset += 20) {
+      const writes = await Promise.allSettled(entries.slice(offset, offset + 20).map(([path, data]) => env.ARCHIVE.put(prefix + path, data, {
+        httpMetadata: { contentType: contentType(path) },
+        customMetadata: { extension_id: extension.id, revision },
+      })));
+      const failure = writes.find(result => result.status === 'rejected');
+      if (failure) throw failure.reason;
+    }
+    await saveRegistry(env, next);
+  } catch (error) {
+    const registryState = await registryContainsRevision(env, record.id, revision).catch(() => null);
+    // D1 may commit even when its client observes a transport error, so verify before rollback.
+    if (registryState !== true) {
+      if (registryState === false) await deletePrefix(env, prefix).catch(() => {});
+      throw error;
+    }
+  }
+  if (previous?.revision) {
+    await deletePrefix(env, extensionPrefix(previous)).catch(error => console.warn('failed to remove old extension revision', error));
+  }
   return { ok: true, extension: record };
 }
 
@@ -140,10 +177,14 @@ export async function getExtensionFile(env, id, path) {
     'cache-control': 'public, max-age=300',
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
+    'cross-origin-resource-policy': 'cross-origin',
   });
   if (cleanPath.endsWith('.html')) {
     const frameOrigin = resolveCorsOrigin(env);
-    headers.set('content-security-policy', `default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'${frameOrigin ? ` ${frameOrigin}` : ''}`);
+    headers.set('content-security-policy', `sandbox allow-scripts; default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; child-src 'none'; worker-src 'none'; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'${frameOrigin ? ` ${frameOrigin}` : ''}`);
+    headers.set('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=()');
+  } else if (cleanPath.endsWith('.svg')) {
+    headers.set('content-security-policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
   }
   return new Response(object.body, { headers });
 }
@@ -219,6 +260,7 @@ function validatePackageFile(path, data) {
 function cleanExtensionId(value) {
   const id = String(value || '').trim().toLowerCase();
   if (!/^[a-z][a-z0-9-]{2,48}$/.test(id)) throw new ApiError(400, '扩展 ID 必须是 3-49 位小写字母、数字或连字符');
+  if (RESERVED_EXTENSION_IDS.has(id)) throw new ApiError(400, `扩展 ID ${id} 为系统保留名称`);
   return id;
 }
 
@@ -244,8 +286,17 @@ function assertExpectedType(extension, expectedType) {
 }
 
 function cleanPackagePath(value) {
-  const path = String(value || '').replaceAll('\\', '/');
-  if (!path || path.startsWith('/') || path.includes('\0') || path.split('/').some(part => !part || part === '.' || part === '..') || path.length > 180) throw new ApiError(400, `扩展路径无效：${path}`);
+  const path = validatePackagePath(value);
+  return path;
+}
+
+function validatePackagePath(value) {
+  const path = String(value || '');
+  const parts = path.split('/');
+  if (!path || path !== path.normalize('NFC') || path.startsWith('/') || path.includes('\\') || /[\u0000-\u001f\u007f-\u009f]/u.test(path)
+    || parts.length > PATH_MAX_DEPTH || parts.some(part => !part || part === '.' || part === '..' || /[ .]$/u.test(part)) || path.length > 180) {
+    throw new ApiError(400, `扩展路径无效：${path}`);
+  }
   return path;
 }
 
@@ -275,14 +326,24 @@ function publicExtension(item) {
 }
 
 async function loadRegistry(env) {
+  const raw = await getMeta(env, REGISTRY_KEY);
+  if (!raw) return [];
   try {
-    const value = JSON.parse(await getMeta(env, REGISTRY_KEY) || '[]');
-    return Array.isArray(value) ? value : [];
-  } catch (_) { return []; }
+    const value = JSON.parse(raw);
+    if (!Array.isArray(value)) throw new Error('registry root is not an array');
+    return value;
+  } catch (_) {
+    throw new ApiError(500, '扩展注册表损坏，已拒绝自动覆盖');
+  }
 }
 
 async function saveRegistry(env, registry) {
   await setMeta(env, REGISTRY_KEY, JSON.stringify(registry));
+}
+
+async function registryContainsRevision(env, id, revision) {
+  const value = JSON.parse(await getMeta(env, REGISTRY_KEY) || '[]');
+  return Array.isArray(value) && value.some(item => item?.id === id && item?.revision === revision);
 }
 
 async function deletePrefix(env, prefix) {

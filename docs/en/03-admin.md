@@ -14,13 +14,17 @@ When editing a TCP/VPS target, paste the original NodeQuality Markdown report in
 
 An enabled TCP/VPS target with a report gets an `NQ` button on the public VPS list. The modal loads the parsed report, shows the extracted report time, and links to the original report. HTTP targets never expose this button.
 
+### Agent-only availability
+
+Targets marked `No public IP` use Agent heartbeat availability instead of Cloudflare probe success for their daily blocks. Heartbeat gaps beyond `AGENT_OFFLINE_AFTER_SEC` are counted as downtime and split at local-day boundaries. On upgrade, the Worker conservatively bootstraps only the interval proven by the target creation time and the Agent's current system uptime; once the daily ledger starts, real heartbeat data is authoritative and unknown history remains gray.
+
 ## Ping Targets
 
 Ping targets are TCP endpoints tested by the Agent, such as `1.1.1.1:53` or `api.example.com:443`. The card theme displays all managed ping targets with colored latency bars.
 
 ## Themes
 
-Settings can switch between the classic list and the card layout without removing the original UI.
+The classic list is built in. Additional layouts, including the official card theme example, are installed as validated theme ZIPs from the dedicated Themes page.
 
 ## Install Commands
 

@@ -18,7 +18,7 @@ NStatus 扩展系统允许管理员在后台上传 ZIP 包，并在不替换生�
 
 1. 后台进入“主题”或“插件”页面；两种包使用独立入口和存储路径。
 2. 点击对应的“上传主题 ZIP”或“上传插件 ZIP”，选择不超过 8 MB 的包。
-3. Worker 校验清单、路径、文件类型、文件数和解压体积，然后将文件写入 R2。
+3. 后台先计算 ZIP SHA-256，Worker 对请求头和收到的完整包再次计算并比对，再校验清单、路径、文件类型、文件数和解压体积。
 4. 新上传的扩展默认停用，管理员确认名称、作者和版本后手动启用。
 5. 插件可以同时启用多个；第三方主题最多启用一个。
 6. 停用第三方主题后，前端立即回到内置 `classic` 主题。
@@ -43,14 +43,16 @@ assets/logo.webp
 
 - ZIP 最大 8 MB，解压后最大 16 MB。
 - 最多 300 个文件，单文件最大 4 MB。
-- 禁止绝对路径、空路径、`..`、反斜杠路径和目录穿越。
+- `manifest.json` 最大 64 KiB，必须是严格 UTF-8 JSON。
+- 禁止绝对路径、空路径、`..`、反斜杠路径、目录穿越、重复文件名、控制字符、非 NFC Unicode、尾部空格/点和超过 8 层的路径。
 - 允许扩展名：`.css`、`.html`、`.js`、`.json`、`.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.svg`、`.woff`、`.woff2`。
 - `id` 必须匹配 `[a-z][a-z0-9-]{2,48}`，发布后应保持不变。
+- `classic`、`cards`、`admin`、`api`、`themes`、`plugins`、`extensions` 是系统保留 ID。
 - `version` 必须使用 SemVer，例如 `1.2.0`。
 - `schema` 固定为 `nstatus-extension-v1`。
 - 推荐声明 HTTPS `repository`、`homepage`、SPDX 风格 `license` 和包内 `preview`。
 - 可声明精确的 `files` 数组；其中可包含或省略根 `manifest.json`，平台会自动归一化。其余条目必须与 ZIP 内文件完全一致，不能夹带未列出的文件。
-- Worker 会为每次上传计算并保存完整 ZIP 的 SHA-256，后台显示其前 16 位用于核对发布物。
+- 后台与 Worker 会分别计算完整 ZIP 的 SHA-256；不一致会拒绝上传。Worker 保存最终校验值，后台显示其前 16 位用于核对发布物。
 
 在示例目录内创建包：
 
@@ -60,6 +62,21 @@ zip -r ../minimal-green-theme.zip .
 ```
 
 不要压缩外层 `theme-minimal/` 目录本身，否则 `manifest.json` 不在 ZIP 根目录。
+
+使用后台上传时，浏览器会自动发送 `x-extension-sha256`。直接调用管理 API 的工具也必须发送 64 位小写十六进制 SHA-256，并使用 `application/zip`、`application/x-zip-compressed` 或 `application/octet-stream` Content-Type；Worker 不接受只靠文件名判断的上传。
+
+## 安全与供应链模型
+
+- CSS 主题只能提供样式；需要脚本的 canvas 主题和插件使用双层隔离：iframe `sandbox="allow-scripts"`，HTML 响应自身也带 CSP `sandbox allow-scripts`。即使直接打开扩展 HTML，也没有同源存储、联网、表单、对象、Worker 或子页面权限。
+- SVG 可包含主动内容，因此响应使用无脚本 CSP 与 `sandbox`；扩展资源同时带 `nosniff`、Referrer Policy 和受限 Permissions Policy。
+- ZIP 先校验 Magic、Content-Type、客户端 SHA、压缩目录、Manifest 和真实解压字节数。不能只相信 ZIP 头声明的大小。
+- 新版本写入独立 R2 revision。只有所有文件成功后才切换注册表；文件写入或注册表保存失败会删除新 revision，旧版本继续可用。注册表切换后才清理旧 revision。
+- 扩展默认停用。管理员应核对作者、源码 tag、许可证、版本和发布页 SHA-256 后再启用；同 ID 升级也应重新审查权限与文件清单。
+- 当前版本故意不提供“输入 URL/市场地址后由 Worker 下载并安装”。这避免把一个尚未充分约束的 SSRF 与供应链入口暴露给生产环境。
+
+这些边界对照了公开项目中的成熟做法：Komari 对主题包、单文件、总解压量和 Manifest 分别限额，并在市场安装中绑定 SHA-256、限制响应体、校验每次重定向并对 DNS 失败采用 fail-closed；哪吒的受限 HTTP 客户端拒绝重定向、过滤内网地址并把连接固定到已校验 IP，更新接口也使用期望 SHA；NodeGet 将主题维护为独立工程，生成显式文件清单和可复现 ZIP。NStatus 采用其中的限额、校验、最小权限和独立发布思想，但不复制它们的运行时。
+
+未来若增加远程市场，合并前必须同时实现：仅公网 HTTPS、DNS 全地址校验与连接固定、每一跳重定向重新校验、重定向次数/超时/响应体上限、目录清单与包 SHA 强绑定、下载后仍执行本章全部本地 ZIP 校验。任何一项失败都必须拒绝安装，不能回退到不安全下载。
 
 ## 主题开发规范
 

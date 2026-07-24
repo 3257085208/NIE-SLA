@@ -3,7 +3,7 @@ import { parseBoolean } from '../utils.js';
 
 let schemaEnsured = false;
 let schemaPromise = null;
-const SCHEMA_MARKER = 'schema:worker-v11-20260723-nq';
+const SCHEMA_MARKER = 'schema:worker-v12-20260724-agent-availability';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -93,6 +93,16 @@ export async function ensureV6Schema(env) {
   )`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_history_ts ON agent_metrics_history(agent_id, ts DESC)`).run();
 
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_daily_availability (
+    agent_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    total_sec INTEGER NOT NULL DEFAULT 0,
+    online_sec INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, day)
+  )`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_availability_day ON agent_daily_availability(day, agent_id)`).run();
+
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_traffic_monthly (
     agent_id TEXT NOT NULL,
     month TEXT NOT NULL,
@@ -170,4 +180,3 @@ export function shouldEnsureSchemaForRequest(path, method, env) {
   if (path === '/api/agent/metrics' && method === 'POST') return parseBoolean(env?.ENSURE_SCHEMA_ON_AGENT_WRITE, false);
   return parseBoolean(env?.ENSURE_SCHEMA_ON_REQUEST, false);
 }
-

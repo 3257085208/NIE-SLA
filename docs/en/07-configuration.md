@@ -13,6 +13,8 @@
 | `CONCURRENCY` | `8` | Probe concurrency |
 | `MAX_TARGETS_PER_RUN` | `60` | Cron probe cap |
 | `STATUS_CACHE_TTL` | `45` | Status cache seconds |
+| `AGENT_OFFLINE_AFTER_SEC` | `900` | Heartbeat gap before an Agent is considered offline |
+| `AGENT_AVAILABILITY_RETENTION_DAYS` | `90` | Daily Agent heartbeat availability retention, bounded to 30-180 days |
 | `AGENT_METRICS_TO_D1` | `false` | Store metric history in D1 |
 | `AGENT_PINGS_TO_D1` | `false` | Store ping history in D1 |
 | `AGENT_METRICS_R2_RETENTION_HOURS` | `72` | R2 telemetry retention |

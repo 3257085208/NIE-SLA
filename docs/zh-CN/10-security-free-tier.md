@@ -26,6 +26,9 @@
 - 公开状态脱敏 IP、端口、URL 凭据。
 - 安装器验证 manifest 和二进制 SHA-256，再验证版本。
 - Agent 默认要求 HTTPS。
+- 扩展上传使用浏览器与 Worker 双端 SHA-256、严格 ZIP/路径/体积校验和失败回滚。
+- 可执行扩展在无同源权限的 sandbox iframe 中运行，HTML/SVG 响应另有 CSP 隔离。
+- 生产环境不开放服务端远程主题市场，避免未经完整 SSRF 防护的下载入口。
 
 ## 部署者必须做的事
 
@@ -46,6 +49,8 @@ scoped Token 只能以对应 Agent ID 上报，不能直接获得 Admin 权限�
 ## TOTP 的边界
 
 TOTP 保护登录和管理 API，不防止同源 XSS、已控制浏览器、恶意扩展或设备本身失陷。前端仍必须坚持输出转义和依赖审计。
+
+第三方扩展虽然被隔离，仍属于供应链输入。只安装有可审计源码、许可证、版本 tag、显式文件清单和发布 SHA-256 的包；启用前核对后台记录的哈希，不要把 `ADMIN_TOKEN`、Agent Token 或生产数据写入主题配置。完整边界见 [主题、插件与开发者 API](14-extensions-developer-guide.md)。
 
 ## 免费额度思路
 

@@ -3684,6 +3684,76 @@ body[data-frontend-theme="cards"] .group-by-bar { display: none; }
 .group-by-label select{min-width:120px}
 tr.group-sep td{background:rgba(127,127,127,.12);font-size:13px;padding:8px 10px}
 
+.theme-boot {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  color: #263849;
+  background-color: #f4f8fc;
+  background-image:
+    linear-gradient(rgba(111, 133, 154, .055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(111, 133, 154, .055) 1px, transparent 1px);
+  background-size: 24px 24px;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity .18s ease, visibility .18s ease;
+}
+.theme-boot-inner {
+  width: min(280px, calc(100vw - 48px));
+  text-align: center;
+}
+.theme-boot strong {
+  display: block;
+  color: #228459;
+  font-family: "Varela Round", "Noto Sans SC", sans-serif;
+  font-size: 30px;
+  letter-spacing: 0;
+}
+.theme-boot span {
+  display: block;
+  margin-top: 8px;
+  color: #718195;
+  font-size: 13px;
+  font-weight: 700;
+}
+.theme-boot i {
+  position: relative;
+  display: block;
+  height: 3px;
+  margin-top: 18px;
+  overflow: hidden;
+  background: #dce6ee;
+  border-radius: 3px;
+}
+.theme-boot i::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42%;
+  background: #2ea36d;
+  animation: theme-boot-progress 1.05s ease-in-out infinite;
+}
+body.theme-pending { overflow: hidden; }
+body.theme-pending > .topbar,
+body.theme-pending > .main,
+body.theme-pending > .footer,
+body.theme-pending > .extension-theme-canvas { visibility: hidden; }
+body.theme-ready .theme-boot {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+@keyframes theme-boot-progress {
+  0% { transform: translateX(-110%); }
+  55% { transform: translateX(95%); }
+  100% { transform: translateX(245%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .theme-boot i::after { animation: none; width: 100%; }
+}
+
 .extension-theme-canvas {
   width: 100%;
   min-height: 100vh;

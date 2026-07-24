@@ -6,7 +6,7 @@ Use an independent repository per theme or plugin. See [14 Theme Engineering Sta
 
 ## Package Layout
 
-`manifest.json` must be at the ZIP root. Packages are limited to 8 MB compressed, 16 MB expanded, 300 files, and 4 MB per file. Absolute paths, `..`, backslash paths, and unsupported file extensions are rejected.
+`manifest.json` must be at the ZIP root, must be strict UTF-8 JSON, and is limited to 64 KiB. Packages are limited to 8 MB compressed, 16 MB expanded, 300 files, and 4 MB per file. Absolute paths, `..`, backslash paths, duplicate names, control characters, non-NFC Unicode, trailing spaces or dots, paths deeper than eight components, and unsupported file extensions are rejected.
 
 ```text
 manifest.json
@@ -28,7 +28,22 @@ The common manifest fields are:
 }
 ```
 
-IDs match `[a-z][a-z0-9-]{2,48}` and versions use SemVer. Optional normalized metadata includes HTTPS `repository`/`homepage`, SPDX-style `license`, packaged `preview`, and an exact `files` list. The list may include or omit the root `manifest.json`; all other entries must match the ZIP exactly. The Worker calculates and records the ZIP SHA-256. Uploading the same ID replaces its files and preserves its enabled state.
+IDs match `[a-z][a-z0-9-]{2,48}` and versions use SemVer. `classic`, `cards`, `admin`, `api`, `themes`, `plugins`, and `extensions` are reserved IDs. Optional normalized metadata includes HTTPS `repository`/`homepage`, SPDX-style `license`, packaged `preview`, and an exact `files` list. The list may include or omit the root `manifest.json`; all other entries must match the ZIP exactly. The Admin browser and Worker independently calculate the complete ZIP SHA-256 and reject a mismatch. Uploading the same ID replaces its files and preserves its enabled state.
+
+Direct Admin API clients must send the 64-character lowercase digest in `x-extension-sha256` and use `application/zip`, `application/x-zip-compressed`, or `application/octet-stream`. A filename alone is never treated as proof of a ZIP.
+
+## Security and supply chain model
+
+- CSS themes cannot execute scripts. Canvas themes and plugins are isolated by both iframe `sandbox="allow-scripts"` and an HTML response CSP containing `sandbox allow-scripts`. Directly opening an extension HTML file does not grant same-origin storage, networking, forms, objects, workers, or child pages.
+- SVG responses receive a script-free CSP and `sandbox`. Extension responses also use `nosniff`, a no-referrer policy, and a restrictive Permissions Policy where applicable.
+- Validation covers ZIP magic and Content-Type, the end-to-end digest, archive entries, the Manifest, and actual post-inflation byte counts instead of trusting only ZIP header sizes.
+- Every upload writes a new R2 revision. The registry switches only after all objects are stored; a storage or registry failure removes the staged revision and leaves the previous version usable. The old revision is removed only after the switch.
+- Packages install disabled. Administrators should verify source tags, author, license, version, explicit files, and the publisher's SHA-256 before enabling or upgrading.
+- NStatus intentionally has no server-side URL or marketplace import in v1, avoiding an incomplete SSRF and supply-chain entry point.
+
+This model draws on public implementations: Komari separately bounds archive, file, expanded, and Manifest sizes and binds marketplace downloads to SHA-256 while limiting bodies and validating redirects with fail-closed DNS checks; Nezha's restricted HTTP client blocks internal addresses, rejects redirects, pins connections to vetted IPs, and uses expected hashes for update operations; NodeGet treats themes as independent builds with explicit file lists and reproducible ZIP artifacts. NStatus adopts these limit, integrity, least-privilege, and packaging principles without copying their runtimes.
+
+Any future remote marketplace must, before release, enforce public HTTPS only, validate every resolved address and pin the connection, revalidate every redirect hop, cap redirects/time/body size, bind catalogs to package SHA-256, and still run every local ZIP check in this document. Every validation failure must fail closed.
 
 ## Themes
 

@@ -11,6 +11,7 @@ import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates }
 import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
 import { isAgentApiPath } from '../src/route-policy.js';
 import { compactStatusPayload, refreshLatencySources } from '../src/status-payload.js';
+import { agentAvailabilitySegments, mergeAgentAvailabilityRows, uptimeBaselineRows } from '../src/agent-availability.js';
 import { getAgentInstallCommand } from '../src/admin/install-command.js';
 import { getLatencyAgentInstallCommand } from '../src/admin/latency-agents.js';
 
@@ -303,6 +304,45 @@ const liveAgent = agentStatusFields({ updated_at: new Date().toISOString() }, {}
 assert.equal(liveAgent.status_source, 'agent');
 assert.equal(liveAgent.agent_online, true);
 assert.equal(agentStatusFields({ updated_at: '2020-01-01T00:00:00.000Z' }, {}).agent_online, false);
+
+const availabilityEnv = { TIMEZONE_OFFSET_MINUTES: '0', AGENT_OFFLINE_AFTER_SEC: '900' };
+assert.deepEqual(agentAvailabilitySegments('2026-07-20T23:50:00Z', '2026-07-22T00:10:00Z', availabilityEnv), [
+  { day: '2026-07-20', total: 600, ok_count: 600 },
+  { day: '2026-07-21', total: 86400, ok_count: 300 },
+  { day: '2026-07-22', total: 600, ok_count: 0 },
+]);
+assert.deepEqual(agentAvailabilitySegments('2026-07-24T10:00:00Z', '2026-07-24T10:05:00Z', availabilityEnv), [
+  { day: '2026-07-24', total: 300, ok_count: 300 },
+]);
+assert.deepEqual(mergeAgentAvailabilityRows(
+  [{ agent_id: 'private-vps', day: '2026-07-24', total_sec: 600, online_sec: 600 }],
+  [{ agent_id: 'private-vps', updated_at: '2026-07-24T00:10:00Z' }],
+  availabilityEnv,
+  Math.floor(new Date('2026-07-24T01:10:00Z').getTime() / 1000),
+), [{ agent_id: 'private-vps', day: '2026-07-24', total: 4200, ok_count: 1500 }]);
+const baselineMetrics = [{
+  agent_id: 'private-vps',
+  updated_at: '2026-07-24T12:00:00Z',
+  uptime_sec: 4 * 86400,
+}];
+const baselineTargets = [{
+  id: 'private-vps',
+  no_public_ip: 1,
+  created_at: Math.floor(new Date('2026-07-21T04:00:00Z').getTime() / 1000),
+}];
+assert.deepEqual(uptimeBaselineRows([], baselineMetrics, baselineTargets, availabilityEnv, Math.floor(new Date('2026-07-24T12:00:00Z').getTime() / 1000)), [
+  { agent_id: 'private-vps', day: '2026-07-21', total: 72000, ok_count: 72000 },
+  { agent_id: 'private-vps', day: '2026-07-22', total: 86400, ok_count: 86400 },
+  { agent_id: 'private-vps', day: '2026-07-23', total: 86400, ok_count: 86400 },
+  { agent_id: 'private-vps', day: '2026-07-24', total: 43200, ok_count: 43200 },
+]);
+assert.deepEqual(uptimeBaselineRows(
+  [{ agent_id: 'private-vps', day: '2026-07-24', total_sec: 60, online_sec: 60 }],
+  baselineMetrics,
+  baselineTargets,
+  availabilityEnv,
+  Math.floor(new Date('2026-07-24T12:00:00Z').getTime() / 1000),
+).map(row => row.day), ['2026-07-21', '2026-07-22', '2026-07-23']);
 
 const lockedR2Env = fakeLockedR2Env();
 const mergedStates = await Promise.all([

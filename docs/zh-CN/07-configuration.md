@@ -26,6 +26,7 @@
 | 名称 | 推荐/默认 | 说明 |
 | --- | --- | --- |
 | `AGENT_OFFLINE_AFTER_SEC` | `900` | Agent 离线阈值，代码限制 120–3600 |
+| `AGENT_AVAILABILITY_RETENTION_DAYS` | `90` | Agent 心跳日可用率保留天数，限制 30–180 |
 | `AGENT_METRICS_RETENTION_HOURS` | `6` | D1 临时指标保留 |
 | `AGENT_METRICS_R2_RETENTION_HOURS` | `72` | R2 高频历史保留 |
 | `AGENT_METRICS_POINTS_PER_REPORT` | `6` | 报告抽样点控制 |

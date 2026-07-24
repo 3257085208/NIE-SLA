@@ -15,13 +15,14 @@ for (const file of files) {
   assert.equal(result.status, 0, `${path.relative(root, file)} syntax failed:\n${result.stderr}`);
 }
 
-const [appSource, adminSource, adminCss, adminHtml, indexHtml, extensionsSource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
+const [appSource, adminSource, adminCss, adminHtml, indexHtml, extensionsSource, apiProxySource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
   readFile(path.join(root, 'app.js'), 'utf8'),
   readFile(path.join(root, 'js', 'admin.js'), 'utf8'),
   readFile(path.join(root, 'admin.css'), 'utf8'),
   readFile(path.join(root, 'admin.html'), 'utf8'),
   readFile(path.join(root, 'index.html'), 'utf8'),
   readFile(path.join(root, 'js', 'extensions.js'), 'utf8'),
+  readFile(path.join(root, 'functions', 'api', '[[path]].js'), 'utf8'),
   readFile(path.join(root, 'latency-agent.py'), 'utf8'),
   readFile(path.join(root, 'install-latency.sh'), 'utf8'),
 ]);
@@ -47,12 +48,16 @@ assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/,
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
 assert.match(adminHtml, /admin\.css\?v=20260724-theme-runtime1/, 'admin CSS cache key must publish theme runtime controls');
 assert.match(adminHtml, /js\/admin\.js\?v=20260724-theme-runtime1/, 'admin JS cache key must publish theme runtime controls');
-assert.match(indexHtml, /body data-frontend-theme="classic"/, 'classic must be the only built-in default theme');
+assert.match(indexHtml, /body class="theme-pending" data-frontend-theme="classic"/, 'theme resolution must hide the classic shell before startup');
 assert.match(indexHtml, /id="themeCanvas"/, 'frontend must provide a sandboxed full-layout theme mount');
+assert.match(indexHtml, /id="themeBoot"/, 'frontend must show a neutral loader while resolving the active theme');
 assert.doesNotMatch(adminSource, /data-theme="cards"/, 'cards must not remain a built-in settings choice');
 assert.match(extensionsSource, /THEME_API_RESOURCES = new Set\(\['status', 'checks', 'metrics', 'pings', 'latency'\]\)/, 'canvas themes must use the read-only resource allowlist');
 assert.match(extensionsSource, /frame\.sandbox = 'allow-scripts'/, 'canvas themes must run without same-origin access');
 assert.match(extensionsSource, /credentials: 'omit'/, 'canvas theme read-only requests must not carry browser credentials');
+assert.match(extensionsSource, /NSTATUS_EXTENSION_BOOTSTRAP/, 'extension runtime must reuse the pre-render registry request');
+assert.match(extensionsSource, /waitForElementLoad\(link, 2500\)/, 'CSS themes must load before the classic shell is revealed');
+assert.match(styleSource, /body\.theme-pending > \.topbar,[\s\S]*visibility:\s*hidden/, 'classic UI must stay hidden while the active theme resolves');
 assert.match(adminHtml, /id="sAppearance"/, 'admin must provide a centralized appearance editor');
 assert.match(adminHtml, /id="pg-themes"[\s\S]*id="themeZip"[\s\S]*id="themeTable"/, 'admin must provide an independent theme page and upload path');
 assert.match(adminHtml, /id="pg-plugins"[\s\S]*id="pluginZip"[\s\S]*id="pluginTable"/, 'admin must provide an independent plugin page and upload path');
@@ -66,6 +71,9 @@ assert.match(adminSource, /"\/api\/themes"/, 'admin must use the dedicated theme
 assert.match(adminSource, /"\/api\/plugins"/, 'admin must use the dedicated plugin API');
 assert.doesNotMatch(adminSource, /\/api\/extensions\/(?:manage|upload)/, 'admin must not use the legacy combined management API');
 assert.match(adminSource, /data-extension-action/, 'admin must manage installed extensions');
+assert.match(adminSource, /crypto\.subtle\.digest\("SHA-256"/, 'admin must hash extension ZIPs before upload');
+assert.match(adminSource, /"x-extension-sha256": sha256/, 'extension uploads must bind the browser digest to the request');
+assert.match(apiProxySource, /x-extension-filename,x-extension-sha256/, 'Pages proxy preflight must allow extension integrity headers');
 assert.match(appSource, /initializeFrontendExtensions\(\)/, 'frontend must initialize enabled extensions');
 assert.doesNotMatch(appSource, /meta-provider">🏪/, 'provider metadata must use typography instead of decorative emoji');
 assert.doesNotMatch(appSource, /meta-line">🔀/, 'line type metadata must use typography instead of decorative emoji');
@@ -75,6 +83,8 @@ assert.match(appSource, /wnam:\s*'北美西部'/, 'Western North America label m
 assert.doesNotMatch(appSource, /apac:\s*'APAC'/, 'probe region labels must not mix English abbreviations');
 assert.doesNotMatch(appSource, /wnam:\s*'美国西部'/, 'region labels must use the shared Chinese wording');
 assert.match(appSource, /function targetLocationLabel/, 'status page must format country + city labels');
+assert.match(appSource, /s\.source === 'agent'[\s\S]*Agent 在线率/, 'Agent availability bars must distinguish heartbeat uptime from probe counts');
+assert.doesNotMatch(appSource, /status_source === 'agent'[\s\S]{0,120}Cloudflare 探测记录/, 'Agent day bars must not be labelled as Cloudflare probe history');
 assert.match(appSource, /vps-info-toggle/, 'mobile VPS details must be collapsible');
 assert.match(appSource, /openNodeQualityReport/, 'frontend must open NodeQuality reports');
 assert.match(appSource, /targetHasNodeQuality/, 'frontend must expose NQ only for targets with reports');

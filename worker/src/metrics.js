@@ -3,6 +3,7 @@ import { summarizeTraffic, trafficSettingsFromTarget } from './traffic.js';
 import { requireAgentForId, safeJson, json } from './auth.js';
 import { readR2Json, writeR2Json } from './storage.js';
 import { rateLimitByIp } from './ratelimit.js';
+import { recordAgentAvailability } from './agent-availability.js';
 
 const MAX_AGENT_SAMPLES_PER_REPORT = 310;
 const MAX_AGENT_PINGS_PER_REPORT = 5_000;
@@ -840,6 +841,9 @@ async function persistAgentMetrics(env, data) {
   const { agentId, agentLabel, agentVersion, metrics, state, vpsInfo, rawSamples, pings, ts } = data;
   const rawPings = mapPings(pings, ts);
   const statePings = await mergeStatePings(env, agentId, rawPings);
+  const previousState = await env.DB.prepare('SELECT updated_at FROM agent_metrics_state WHERE agent_id = ?').bind(agentId).first().catch(() => null);
+  await recordAgentAvailability(env, agentId, previousState?.updated_at, ts)
+    .catch(err => console.error('recordAgentAvailability failed:', String(err?.message || err)));
   await env.DB.prepare(`
     INSERT INTO agent_metrics_state (agent_id, agent_label, agent_version, updated_at, hostname, cpu_percent, process_count, thread_count, memory, load, disk, net, diskio, stats, uptime_sec, vps_info, pings)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

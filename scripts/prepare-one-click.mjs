@@ -67,7 +67,7 @@ function requiredAsset(assets, name) {
 }
 
 async function fetchJson(url) {
-  const response = await fetch(url, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'NIE-SLA-One-Click/1.0' } });
+  const response = await fetchWithRetry(url, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'NIE-SLA-One-Click/1.0' } });
   if (!response.ok) throw new Error(`GitHub release lookup failed: HTTP ${response.status}`);
   return response.json();
 }
@@ -77,13 +77,33 @@ async function downloadText(url) {
 }
 
 async function downloadBytes(url, maxBytes = 32 * 1024 * 1024) {
-  const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'NIE-SLA-One-Click/1.0' } });
+  const response = await fetchWithRetry(url, { redirect: 'follow', headers: { 'user-agent': 'NIE-SLA-One-Click/1.0' } });
   if (!response.ok) throw new Error(`Release download failed: HTTP ${response.status}`);
   const declared = Number(response.headers.get('content-length') || 0);
   if (declared > maxBytes) throw new Error(`Release asset exceeds ${maxBytes} bytes`);
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (!bytes.length || bytes.length > maxBytes) throw new Error(`Release asset has invalid size: ${bytes.length}`);
   return bytes;
+}
+
+async function fetchWithRetry(url, options, maxAttempts = 5) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok || !isRetryableStatus(response.status) || attempt === maxAttempts) return response;
+      await response.body?.cancel().catch(() => {});
+    } catch (error) {
+      lastError = error;
+      if (attempt === maxAttempts) throw error;
+    }
+    await new Promise(resolve => setTimeout(resolve, 500 * (2 ** (attempt - 1))));
+  }
+  throw lastError || new Error('release request failed');
+}
+
+function isRetryableStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
 }
 
 async function assertDirectory(directory) {

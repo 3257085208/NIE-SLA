@@ -6,14 +6,17 @@ const THEME_API_RESOURCES = new Set(['status', 'checks', 'metrics', 'pings', 'la
 
 export async function initializeFrontendExtensions() {
   try {
-    const response = await fetch('/api/extensions', { cache: 'no-store' });
-    const data = await response.json();
-    if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    const data = window.NSTATUS_EXTENSION_BOOTSTRAP
+      ? await window.NSTATUS_EXTENSION_BOOTSTRAP
+      : await fetchExtensionRegistry();
+    if (!data?.ok) throw new Error(data?.error || '扩展注册表不可用');
     registry = data;
     await mountTheme(data.active_theme);
     mountPlugins(data.plugins || []);
   } catch (error) {
     console.warn('NStatus extensions unavailable:', error);
+  } finally {
+    finishThemeBootstrap();
   }
   return registry;
 }
@@ -46,21 +49,25 @@ async function mountTheme(theme) {
     frame.sandbox = 'allow-scripts';
     frame.referrerPolicy = 'no-referrer';
     frame.height = String(clampCanvasHeight(theme.height));
-    frame.src = extensionFileUrl(theme, theme.entry);
+    const loaded = waitForElementLoad(frame, 3500);
     frame.addEventListener('load', () => sendThemeStatus());
+    frame.src = extensionFileUrl(theme, theme.entry);
     canvas.appendChild(frame);
     canvas.hidden = false;
     document.body.dataset.extensionThemeMode = 'canvas';
     themeFrameRecord = { frame, theme, window: frame.contentWindow };
+    await loaded;
     return;
   }
-  for (const path of theme.styles || []) {
+  await Promise.all((theme.styles || []).map(path => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.dataset.nstatusExtensionTheme = theme.id;
     link.href = extensionFileUrl(theme, path);
+    const loaded = waitForElementLoad(link, 2500);
     document.head.appendChild(link);
-  }
+    return loaded;
+  }));
 }
 
 function mountPlugins(plugins) {
@@ -180,4 +187,34 @@ function clampHeight(value) {
 
 function clampCanvasHeight(value) {
   return Math.max(400, Math.min(12000, Number(value || 900)));
+}
+
+async function fetchExtensionRegistry() {
+  const response = await fetch('/api/extensions', { cache: 'no-store' });
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  return data;
+}
+
+function waitForElementLoad(element, timeoutMs) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve();
+    };
+    const timer = window.setTimeout(finish, timeoutMs);
+    element.addEventListener('load', finish, { once: true });
+    element.addEventListener('error', finish, { once: true });
+  });
+}
+
+function finishThemeBootstrap() {
+  window.clearTimeout(window.NSTATUS_THEME_BOOT_FALLBACK);
+  requestAnimationFrame(() => {
+    document.body.classList.remove('theme-pending');
+    document.body.classList.add('theme-ready');
+  });
 }

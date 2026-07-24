@@ -295,9 +295,15 @@ async function uploadExtensionPackage(resource, file) {
   button.disabled = true;
   button.textContent = "正在校验并上传...";
   try {
+    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    const sha256 = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
     const result = await api(`${apiBase}/upload`, {
       method: "POST",
-      headers: { "Content-Type": "application/zip", "x-extension-filename": file.name },
+      headers: {
+        "Content-Type": "application/zip",
+        "x-extension-filename": file.name,
+        "x-extension-sha256": sha256,
+      },
       body: file,
     });
     toast(`已安装 ${result.extension.name}，请确认后启用`, "ok");
