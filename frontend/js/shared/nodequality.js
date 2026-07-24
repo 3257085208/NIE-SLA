@@ -136,7 +136,7 @@ function renderNqMediaBlock(lines) {
   ].join('');
   return `<span class="nq-media-block">
     <span class="nq-media-title">五、流媒体及AI服务解锁检测</span>
-    <span class="nq-media-scroll"><span class="nq-media-grid" style="grid-template-columns:58px repeat(${columnCount}, minmax(68px, 1fr));">
+    <span class="nq-media-scroll"><span class="nq-media-grid" style="grid-template-columns:58px repeat(${columnCount}, 68px);">
       ${row('服务商', providers, 'nq-media-head')}
       ${statusCells}
       ${row('地区', regions)}
