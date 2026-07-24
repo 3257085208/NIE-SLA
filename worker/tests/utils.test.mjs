@@ -421,6 +421,7 @@ const alertResult = await runAlertChecks(fakeAlertEnv, { max_messages: 5 });
 assert.equal(alertResult.ok, true);
 assert.equal(alertResult.sent, 1);
 assert.equal(fakeAlertEnv._tables.alert_state.length, 1);
+assert.equal(fakeAlertEnv._alertStatePointReads, 0, 'alert checks should preload state instead of querying each rule');
 globalThis.fetch = originalFetch;
 
 console.log('worker utility tests passed');
@@ -495,6 +496,7 @@ function fakeLockedR2Env() {
 
 function fakeD1Env() {
   const nowIso = new Date().toISOString();
+  let alertStatePointReads = 0;
   const tables = {
     app_meta: [
       { key: 'alert_settings', value: JSON.stringify({ enabled: true, telegram_chat_id: '1', cpu_percent: 1, repeat_minutes: 0 }), updated_at: 1 },
@@ -520,10 +522,12 @@ function fakeD1Env() {
     TELEGRAM_BOT_TOKEN: '123:test',
     DB: {
       prepare(sql) {
+        if (sql.includes('FROM alert_state') && sql.includes('WHERE target_id')) alertStatePointReads++;
         return fakeStatement(sql, tables);
       },
     },
     _tables: tables,
+    get _alertStatePointReads() { return alertStatePointReads; },
   };
   return env;
 }

@@ -6,6 +6,7 @@ import { readR2State } from './storage.js';
 const SETTINGS_KEY = 'alert_settings';
 const TG_TOKEN_KEY = 'alert_telegram_bot_token';
 const RESEND_KEY = 'alert_resend_api_key';
+const ALERT_STATE_CACHE = Symbol('alert_state_cache');
 const SECRET_PREFIX = 'enc:v1:';
 const DEFAULT_SETTINGS = {
   enabled: false,
@@ -122,12 +123,18 @@ export async function runAlertChecks(env, options = {}) {
   if (!channels.length) return finishAlertRun(env, { ok: true, skipped: true, reason: 'channels_not_configured' });
   await ensureAlertStateTable(env);
 
-  const [targetRows, metricRows, trafficRows, latestRows] = await Promise.all([
+  const [targetRows, metricRows, trafficRows, latestRows, stateRows] = await Promise.all([
     env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 ORDER BY group_name, name`).all().catch(() => ({ results: [] })),
     env.DB.prepare(`SELECT * FROM agent_metrics_state`).all().catch(() => ({ results: [] })),
     env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all().catch(() => ({ results: [] })),
     env.DB.prepare(`SELECT * FROM latest_status`).all().catch(() => ({ results: [] })),
+    env.DB.prepare(`SELECT * FROM alert_state`).all().catch(() => ({ results: [] })),
   ]);
+
+  const alertEnv = Object.create(env);
+  alertEnv[ALERT_STATE_CACHE] = new Map(
+    (stateRows.results || []).map((row) => [alertStateKey(row.target_id, row.rule_key), row]),
+  );
 
   const metricsByAgent = new Map();
   for (const row of metricRows.results || []) {
@@ -160,17 +167,17 @@ export async function runAlertChecks(env, options = {}) {
     const agentId = sanitizeAgentId(target.id);
     const metric = metricsByAgent.get(agentId) || null;
     const latest = latestByTarget.get(String(target.id)) || null;
-    await collectProbeStaleAlert(env, targetSettings, target, latest, now, messages, maxMessages);
+    await collectProbeStaleAlert(alertEnv, targetSettings, target, latest, now, messages, maxMessages);
     if (messages.length >= maxMessages) break;
-    await collectProbeDownAlert(env, targetSettings, target, latest, now, messages, maxMessages);
+    await collectProbeDownAlert(alertEnv, targetSettings, target, latest, now, messages, maxMessages);
     if (messages.length >= maxMessages) break;
-    await collectOfflineAlert(env, targetSettings, target, metric, now, messages, maxMessages);
+    await collectOfflineAlert(alertEnv, targetSettings, target, metric, now, messages, maxMessages);
     if (messages.length >= maxMessages) break;
-    await collectMetricAlerts(env, targetSettings, target, metric, now, messages, maxMessages);
+    await collectMetricAlerts(alertEnv, targetSettings, target, metric, now, messages, maxMessages);
     if (messages.length >= maxMessages) break;
-    await collectExpiryAlert(env, targetSettings, target, now, messages, maxMessages);
+    await collectExpiryAlert(alertEnv, targetSettings, target, now, messages, maxMessages);
     if (messages.length >= maxMessages) break;
-    await collectTrafficAlert(env, targetSettings, target, trafficByKey, now, messages, maxMessages);
+    await collectTrafficAlert(alertEnv, targetSettings, target, trafficByKey, now, messages, maxMessages);
   }
 
   const sent = [];
@@ -455,6 +462,15 @@ async function clearIfActive(env, targetId, ruleKey, now) {
 }
 
 async function clearTrafficStates(env, targetId, now) {
+  const cache = env[ALERT_STATE_CACHE];
+  if (cache) {
+    for (const row of cache.values()) {
+      if (String(row.target_id) === String(targetId) && String(row.rule_key).startsWith('traffic:') && row.status === 'active') {
+        await markResolved(env, targetId, row.rule_key, now);
+      }
+    }
+    return;
+  }
   try {
     const rows = await env.DB.prepare(`SELECT rule_key FROM alert_state WHERE target_id = ? AND rule_key LIKE 'traffic:%' AND status = 'active'`).bind(targetId).all();
     for (const row of rows.results || []) await markResolved(env, targetId, row.rule_key, now);
@@ -462,6 +478,8 @@ async function clearTrafficStates(env, targetId, now) {
 }
 
 async function getAlertState(env, targetId, ruleKey) {
+  const cache = env[ALERT_STATE_CACHE];
+  if (cache) return cache.get(alertStateKey(targetId, ruleKey)) || null;
   try {
     return await env.DB.prepare(`SELECT * FROM alert_state WHERE target_id = ? AND rule_key = ?`).bind(targetId, ruleKey).first();
   } catch (_) {
@@ -481,6 +499,16 @@ async function markActive(env, targetId, ruleKey, now, value = null) {
       last_sent_at=excluded.last_sent_at,
       updated_at=excluded.updated_at
   `).bind(targetId, ruleKey, value == null ? null : Number(value), now, now, now).run();
+  env[ALERT_STATE_CACHE]?.set(alertStateKey(targetId, ruleKey), {
+    target_id: targetId,
+    rule_key: ruleKey,
+    status: 'active',
+    last_value: value == null ? null : Number(value),
+    opened_at: now,
+    resolved_at: null,
+    last_sent_at: now,
+    updated_at: now,
+  });
 }
 
 async function markResolved(env, targetId, ruleKey, now) {
@@ -492,6 +520,18 @@ async function markResolved(env, targetId, ruleKey, now) {
       resolved_at=excluded.resolved_at,
       updated_at=excluded.updated_at
   `).bind(targetId, ruleKey, now, now).run();
+  env[ALERT_STATE_CACHE]?.set(alertStateKey(targetId, ruleKey), {
+    ...(env[ALERT_STATE_CACHE]?.get(alertStateKey(targetId, ruleKey)) || {}),
+    target_id: targetId,
+    rule_key: ruleKey,
+    status: 'ok',
+    resolved_at: now,
+    updated_at: now,
+  });
+}
+
+function alertStateKey(targetId, ruleKey) {
+  return `${String(targetId || '')}\u0000${String(ruleKey || '')}`;
 }
 
 async function sendTelegram(env, settings, text) {
