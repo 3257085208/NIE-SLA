@@ -115,6 +115,10 @@ function nqMediaStatusClass(value) {
   return 'neutral';
 }
 
+function isNqMediaHeading(line) {
+  return /^五、流媒体.*服务解锁检测$/.test(stripNqAnsi(line).trim());
+}
+
 function renderNqMediaBlock(lines) {
   const { names: providers, starts } = nqMediaHeader(lines);
   const statuses = nqMediaRow(lines, '状态：', starts);
@@ -135,7 +139,7 @@ function renderNqMediaBlock(lines) {
     }),
   ].join('');
   return `<span class="nq-media-block">
-    <span class="nq-media-title">五、流媒体及AI服务解锁检测</span>
+    <span class="nq-media-title">五、流媒体解锁检测</span>
     <span class="nq-media-scroll"><span class="nq-media-grid" style="grid-template-columns:58px repeat(${columnCount}, 68px);">
       ${row('服务商', providers, 'nq-media-head')}
       ${statusCells}
@@ -147,11 +151,10 @@ function renderNqMediaBlock(lines) {
 
 export function renderNqReportHtml(content = '') {
   const lines = String(content || '').split('\n');
-  const heading = '五、流媒体及AI服务解锁检测';
   let cursor = 0;
   let html = '';
   while (cursor < lines.length) {
-    const start = lines.findIndex((line, index) => index >= cursor && stripNqAnsi(line).includes(heading));
+    const start = lines.findIndex((line, index) => index >= cursor && isNqMediaHeading(line));
     if (start < 0) break;
     const end = lines.findIndex((line, index) => index > start && stripNqAnsi(line).startsWith('六、邮局连通性及黑名单检测'));
     if (end < 0) break;

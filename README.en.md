@@ -1,67 +1,81 @@
 # NIE-SLA
 
+NIE-SLA is a Cloudflare-hosted status page and VPS monitor. The control plane uses Workers, D1, R2, Durable Objects, and static assets. Each VPS runs a native Rust Agent that reports over outbound HTTPS and does not open a management port.
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
 
-NIE-SLA is an open-source, Cloudflare-native status page and VPS telemetry system built with Workers, D1, R2, Pages, Durable Objects, a Rust Agent, and optional external Latency Agents.
+## One-Click Deployment
 
-The Chinese [README](README.md) and [documentation index](README.md#文档导航) are the primary, most detailed manuals. English component guides are available under [`docs/en`](docs/en/01-architecture.md).
+You do not need Node.js, Wrangler, a database, or a separate control server.
 
-## Highlights
+1. Click **Deploy to Cloudflare**.
+2. Sign in to GitHub and Cloudflare and follow the authorization screens.
+3. Enter three different random Secrets.
+4. Wait for the build, then open the provided `workers.dev` URL.
 
-- HTTP/TCP availability checks from Cloudflare.
-- A single-binary Rust VPS Agent with no Python, Node.js, Docker, or inbound management port requirement.
-- One-second local VPS metric sampling with durable batching and retry.
-- CPU, GPU, motherboard, disk, and chipset temperatures when the host exposes reliable sensors.
-- Agent-side TCP Ping history.
-- Multi-network TCP latency from lightweight external Linux nodes.
-- D1 for relational state and R2 for raw telemetry and snapshots.
-- Public status page plus Token/TOTP protected administration.
-- Telegram alerts, traffic quotas, billing metadata, NodeQuality reports, and custom ordering.
-- Uploadable theme and plugin ZIP packages, documented manifests, and a constrained public developer API.
-- Scoped per-node Agent tokens and SHA-256 verified updates.
-- A documented free-tier capacity model for 50, 100-class, and 200-node scenarios instead of an unexplained node-limit claim.
-- Multi-architecture Linux and Windows releases from GitHub Actions.
+| Secret | Purpose |
+| --- | --- |
+| `ADMIN_TOKEN` | Admin login |
+| `AGENT_TOKEN` | Derives a separate credential for each Agent |
+| `TOTP_ENCRYPTION_KEY` | Encrypts TOTP secrets |
 
-"Rust Agent" does not mean the entire stack is Rust: the Cloudflare Worker and frontend use JavaScript, while the production VPS telemetry Agent is the native Rust component.
+Use at least 32 random bytes for each value and store them in a password manager.
 
-## Where It Fits
+Open `/admin`, log in with `ADMIN_TOKEN`, add a VPS under **Agents**, and run the generated Linux or Windows command on that machine. The rest of the setup is available in the admin UI.
 
-This comparison describes product categories rather than claiming that every project has the same feature set. The Cloudflare-native category was checked against public project READMEs and deployment guides in July 2026; individual project names are intentionally omitted.
+See [Deploy to Cloudflare](docs/en/02-deployment.md) for the complete browser flow.
 
-| Area | NIE-SLA | Typical Cloudflare uptime/status tool | Traditional centralized VPS monitor |
-| --- | --- | --- | --- |
-| Control plane | Workers, D1, R2, Pages, and Durable Objects | Usually Workers plus D1/KV and Pages | A self-hosted server, database, and web port |
-| Availability | Cloudflare HTTP/TCP with optional regional execution | Usually strong HTTP/TCP status and alerting | Runs from the central server or agents |
-| Host telemetry | One-second Rust Agent sampling, batching, and durable retry | Usually URL/port focused without a full host Agent | A core strength, often with richer live management |
-| Hardware temperatures | CPU/GPU/board/disk/chipset when sensors are reliable | Usually unavailable | Depends on the Agent and platform |
-| Network viewpoints | Cloudflare checks, per-VPS TCP Ping, and external Latency Agents | Usually Cloudflare-region viewpoints | Usually Agent Ping without an inherent CF-edge viewpoint |
-| High-frequency history | D1 for state; R2 for raw metrics, Ping, and snapshots | Commonly D1/KV check history | Stored in the operator's database |
-| Extensibility | Uploaded theme/plugin ZIPs, manifests, sandboxing, and public APIs | Configuration, source customization, or built-in themes varies | Theme/plugin maturity varies by project |
-| Remote administration | Deliberately excludes web shells and arbitrary command execution | Usually uptime-focused | Often stronger terminals, jobs, and command execution |
-| Capacity model | Published request, D1, and R2 math with explicit assumptions | Commonly a monitor-count or free-tier estimate | Determined by server, database, and bandwidth sizing |
+## Features
 
-Choose NIE-SLA when you want a Cloudflare-hosted public status page and serious VPS telemetry without operating or exposing a central management server. A dedicated uptime tool can be simpler for website-only checks, certificate/domain expiry, or broad notification integrations. A traditional centralized monitor remains a better fit for web terminals, scheduled jobs, remote commands, or richer live operations. These categories can also coexist.
+- Cloudflare HTTP and TCP checks with optional regional execution.
+- Single-binary Rust Agent for Linux and Windows.
+- CPU, memory, disk, load, network, IO, connection, process, and thread metrics.
+- CPU, GPU, motherboard, disk, and chipset temperatures when sensors are available.
+- One-second local sampling with batched uploads and durable retry.
+- D1 for configuration and state; R2 for raw metrics, Ping, and snapshots.
+- Per-VPS TCP Ping and optional external Latency Agents.
+- Traffic quotas, billing metadata, expiry dates, tags, locations, and NodeQuality reports.
+- Telegram alerts for availability, resources, traffic, and expiry.
+- Uploadable theme and plugin ZIP packages.
+- Per-node scoped tokens, optional TOTP, and SHA-256 verified updates.
 
-## Quick Start
+## Monitoring Paths
 
-The Deploy to Cloudflare button provisions the Worker, D1, R2, Durable Object, cron trigger, and same-origin static frontend. The setup form only requires three unique random secrets: `ADMIN_TOKEN`, `AGENT_TOKEN`, and `TOTP_ENCRYPTION_KEY`.
+| Path | Purpose |
+| --- | --- |
+| Cloudflare HTTP/TCP | Public service reachability |
+| Agent heartbeat and metrics | VPS health and system data |
+| Agent TCP Ping | Latency from a VPS to managed targets |
+| External Latency Agent | Latency from additional networks |
 
-For a separate Worker + Pages deployment:
+These paths are independent. An online Agent does not guarantee that a public TCP port is reachable from Cloudflare.
 
-```bash
-git clone https://github.com/3257085208/NIE-SLA.git
-cd NIE-SLA/worker
-bash deploy.sh
-```
+## Scope
 
-The deployment script creates or reuses D1/R2, downloads and verifies Agent release assets, configures Worker secrets, deploys the Worker, and publishes the Pages frontend. Never commit the generated `worker/wrangler.local.toml`, `.dev.vars`, `.env`, tokens, production data, or private infrastructure identifiers.
+Dedicated uptime tools are simpler for website-only checks. Traditional centralized monitors are a better fit for web terminals and remote commands. NIE-SLA combines Cloudflare-side availability with VPS telemetry while deliberately excluding web shells and arbitrary command execution.
+
+## Free-Tier Planning
+
+The default five-minute upload mode is comfortable for small installations. Current estimates place the conservative free-tier boundary near 110 VPS nodes, with no more than 80 recommended for long-running deployments without paid capacity. Actual use depends on traffic, retries, Ping targets, and history retention.
+
+## Documentation
+
+- [Deployment](docs/en/02-deployment.md)
+- [Admin](docs/en/03-admin.md)
+- [Agent](docs/en/04-agent.md)
+- [Alerts](docs/en/06-alerts.md)
+- [API](docs/en/08-api.md)
+- [Operations](docs/en/09-operations.md)
+- [External Latency Agents](docs/en/12-external-latency-agents.md)
+- [Extensions](docs/en/13-extensions-developer-guide.md)
+- [Security](SECURITY.md)
 
 ## Validation
 
 ```bash
 bash test.sh
+npm install
+npm run check:deploy
 ```
-
-See [deployment](docs/en/02-deployment.md), [Agent](docs/en/04-agent.md), [external Latency Agents](docs/en/12-external-latency-agents.md), [operations](docs/en/09-operations.md), and [security](docs/en/10-security-free-tier.md) for English references.
 
 Licensed under the [MIT License](LICENSE).

@@ -1,61 +1,91 @@
-# 02 Deployment
+# Deploy to Cloudflare
 
-## Deploy to Cloudflare
+The recommended installation runs entirely in the browser. You do not need a VPS, Node.js, Wrangler, or a local terminal for the control plane.
+
+## Before You Start
+
+Prepare:
+
+- A Cloudflare account.
+- A GitHub account.
+- Three different random values, each at least 32 bytes long.
+
+| Secret | Purpose |
+| --- | --- |
+| `ADMIN_TOKEN` | Admin login |
+| `AGENT_TOKEN` | Derives a separate credential for each Agent |
+| `TOTP_ENCRYPTION_KEY` | Encrypts TOTP secrets |
+
+Store them in a password manager. Do not post them in issues, screenshots, forums, or public repositories.
+
+## 1. Open the Deploy Page
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
 
-The official Deploy Button forks the repository, provisions D1 and R2, binds the Durable Object, configures the cron trigger, and serves the API plus frontend from one Worker. Set unique random values of at least 32 bytes for `ADMIN_TOKEN`, `AGENT_TOKEN`, and `TOTP_ENCRYPTION_KEY` in the deployment form. Cloudflare Deploy Buttons do not support Pages, so this path uses Worker Static Assets; the separate Worker + Pages process remains available below.
+## 2. Authorize GitHub and Cloudflare
 
-## Prerequisites
+Follow the page prompts to sign in to GitHub, allow Cloudflare to fork the repository, sign in to Cloudflare, and select the target account.
 
-- A Cloudflare account.
-- Node.js 18 or newer.
-- Wrangler via `npx wrangler` or a global install.
-- A custom domain is optional.
+## 3. Enter the Secrets
 
-## Recommended Script
+Paste the three different values into:
 
-```bash
-cd worker
-bash deploy.sh
+```text
+ADMIN_TOKEN
+AGENT_TOKEN
+TOTP_ENCRYPTION_KEY
 ```
 
-The script creates or reuses D1/R2 resources, writes secrets, generates `wrangler.toml`, deploys the Worker, writes frontend config, and deploys Pages.
+Cloudflare stores them as Secrets. They are not committed to the repository.
 
-## Manual Worker Deployment
+## 4. Wait for Deployment
 
-```bash
-cd worker
-npx wrangler d1 create nstatus-db
-npx wrangler r2 bucket create nstatus-archive
-npx wrangler secret put ADMIN_TOKEN
-npx wrangler secret put AGENT_TOKEN
-npx wrangler secret put TOTP_ENCRYPTION_KEY
-npx wrangler deploy
+Cloudflare creates the Worker, D1 database, R2 bucket, Durable Object, cron trigger, Agent release assets, status page, and admin panel. When the build succeeds, open the provided `workers.dev` URL.
+
+## 5. Open the Admin Panel
+
+If the status page is:
+
+```text
+https://your-project.your-account.workers.dev
 ```
 
-Copy the D1 database id into `worker/wrangler.toml`.
+the admin panel is:
 
-## Manual Pages Deployment
-
-```bash
-cd frontend
-cat > config.js <<'EOF'
-window.NSTATUS_API_BASE = 'https://your-worker.example.workers.dev';
-EOF
-npx wrangler pages deploy ./ --project-name=nstatus
+```text
+https://your-project.your-account.workers.dev/admin
 ```
 
-## Custom Domains
+Log in with `ADMIN_TOKEN`. Enabling TOTP after the first login is recommended.
 
-Recommended layout: Worker API on `https://nstatus-api.example.com`, Pages frontend on `https://status.example.com`, and Agent download base on the Pages frontend domain.
+## 6. Add a VPS
 
-When frontend and Worker are cross-origin, set `ALLOWED_ORIGIN`, `PUBLIC_WORKER_URL`, and `PUBLIC_AGENT_INSTALL_BASE` in `wrangler.toml`.
+In Admin:
 
-## Verification
+1. Open **Agents**.
+2. Add a target with its name, host, and port.
+3. Save it and open its deployment action.
+4. Choose Linux or Windows.
+5. Run the generated command on that VPS.
 
-```bash
-curl https://your-worker.example.com/
-```
+Each command contains a node-specific credential. Do not reuse one node's command on another machine or publish the full command.
 
-Expected response includes `"ok":true`. Then open `https://your-frontend/admin.html` and log in with `ADMIN_TOKEN`.
+The public page will show metrics after the first successful report. Cloudflare availability checks and Agent reports are independent monitoring paths.
+
+## Optional Setup
+
+The admin UI includes site appearance, TOTP, Telegram alerts, traffic and billing data, Ping targets, external Latency Agents, NodeQuality reports, themes, and plugins. Configure them after the first node reports successfully.
+
+To use a custom domain, open the deployed Worker in Cloudflare Dashboard and add it under **Domains & Routes**. The status page and `/admin` continue to use the same origin.
+
+## Updates
+
+The deploy flow creates a GitHub fork. Sync its `main` branch with upstream, then redeploy the latest commit from Cloudflare. Agent automatic updates are controlled from Admin and should be tested on one VPS first.
+
+## Troubleshooting
+
+- Build failure: open the Cloudflare build log and fix the first error, then redeploy.
+- No Agent data: verify the command was run on the matching VPS, then use `sudo cftz status` and `sudo cftz log 100`.
+- External Latency Agent not reporting: run its generated deployment command and confirm that the response contains `accepted` greater than zero.
+
+See [Admin](03-admin.md), [Agent](04-agent.md), [Alerts](06-alerts.md), [External Latency Agents](12-external-latency-agents.md), and [Extensions](13-extensions-developer-guide.md) for feature-specific instructions.

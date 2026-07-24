@@ -7,7 +7,7 @@ import {
   publicNodeQualityReport,
 } from '../src/nodequality.js';
 
-const sample = await readFile('/Users/marknkx/.codex/attachments/7ce887bb-105a-4007-bad8-1f5bb41daa7e/pasted-text.txt', 'utf8');
+const sample = await readFile(new URL('./fixtures/nodequality-report.md', import.meta.url), 'utf8');
 const parsed = parseNodeQualityMarkdown(sample);
 assert.deepEqual(parsed.tabs.map((tab) => [tab.id, tab.kind]), [
   ['basic', 'ansi'],
@@ -17,10 +17,10 @@ assert.deepEqual(parsed.tabs.map((tab) => [tab.id, tab.kind]), [
 ]);
 assert.match(parsed.tabs[0].content, /硬件质量体检报告/);
 assert.match(parsed.tabs[1].content, /IP质量体检报告/);
-assert.equal(parsed.tabs[2].image, 'https://i.111666.best/image/cohH2O2u6Wo51sidbNj1U5.webp');
-assert.equal(parsed.tabs[3].image, 'https://i.111666.best/image/LcUXW9z5bLcpL26JsJwUpI.webp');
+assert.equal(parsed.tabs[2].image, 'https://example.com/network.webp');
+assert.equal(parsed.tabs[3].image, 'https://example.com/route.webp');
 assert.equal(extractReportTime(sample), '2026-07-23 22:37:36 CST');
-assert.equal(parsed.link, 'https://nodequality.com/r/VLDpQuy3AFgJ8e3f4QA8BerZwBEwEldB');
+assert.equal(parsed.link, 'https://nodequality.com/r/example-report');
 
 const normalized = normalizeNodeQualityReport(sample, { now: 123 });
 assert.equal(normalized.updatedAt, 123);
