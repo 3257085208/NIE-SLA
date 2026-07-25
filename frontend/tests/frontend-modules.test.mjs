@@ -155,7 +155,11 @@ globalThis.fetch = async (url) => {
 const pagesEnv = {
   NSTATUS_API_BASE: 'https://api.example',
   ASSETS: {
-    fetch: async request => new Response(new URL(request.url).pathname),
+    fetch: async request => {
+      const pathname = new URL(request.url).pathname;
+      if (pathname === '/admin.html') return new Response(null, { status: 307, headers: { location: '/admin' } });
+      return new Response(pathname);
+    },
   },
 };
 const routePage = pathname => routeAdminPage({
@@ -163,7 +167,10 @@ const routePage = pathname => routeAdminPage({
   env: pagesEnv,
   next: async request => new Response(request ? new URL(request.url).pathname : 'next'),
 });
-assert.equal(await (await routePage('/console-7f3a')).text(), '/admin.html');
+const customAdminPage = await routePage('/console-7f3a');
+assert.equal(customAdminPage.status, 200);
+assert.equal(await customAdminPage.text(), '/admin');
+assert.equal(customAdminPage.headers.get('location'), null);
 assert.equal((await routePage('/console-7f3a/')).status, 308);
 assert.equal((await routePage('/admin')).status, 404);
 assert.equal(await (await routePage('/unrelated')).text(), 'next');

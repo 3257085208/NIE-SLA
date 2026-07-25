@@ -37,7 +37,11 @@ const env = {
   ADMIN_PATH: '/from-env',
   ASSETS: {
     async fetch(request) {
-      return new Response(new URL(request.url).pathname, {
+      const pathname = new URL(request.url).pathname;
+      if (pathname === '/admin.html') {
+        return new Response(null, { status: 307, headers: { location: '/admin' } });
+      }
+      return new Response(pathname, {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
     },
@@ -50,7 +54,8 @@ assert.equal(await getAdminPath(env), '/console-7f3a');
 
 const custom = await routeStaticAssets(new Request('https://status.example/console-7f3a'), env);
 assert.equal(custom.status, 200);
-assert.equal(await custom.text(), '/admin.html');
+assert.equal(await custom.text(), '/admin');
+assert.equal(custom.headers.get('location'), null, 'admin routing must not return the Static Assets canonical redirect');
 assert.equal(custom.headers.get('cache-control'), 'no-store');
 assert.equal(custom.headers.get('x-frame-options'), 'DENY');
 

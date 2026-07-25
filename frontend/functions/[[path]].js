@@ -64,7 +64,9 @@ function isLegacyAdminPath(pathname) {
 
 async function adminAsset(context) {
   const assetUrl = new URL(context.request.url);
-  assetUrl.pathname = ADMIN_HTML_PATH;
+  // Pages canonicalizes /admin.html to /admin. Use that canonical URL for the
+  // internal asset lookup so a custom route never leaks a redirect loop.
+  assetUrl.pathname = DEFAULT_ADMIN_PATH;
   assetUrl.search = '';
   const assetRequest = new Request(assetUrl, context.request);
   const response = context.env?.ASSETS
