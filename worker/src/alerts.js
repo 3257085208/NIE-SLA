@@ -1043,17 +1043,38 @@ async function decryptSecret(payload, env) {
   if (combined.length <= 12) throw new Error('加密的告警密钥无效');
   const iv = combined.slice(0, 12);
   const encrypted = combined.slice(12);
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv },
-    await secretKey(env, ['decrypt']),
-    encrypted,
-  );
-  return new TextDecoder().decode(decrypted);
+  let lastError = null;
+  for (const material of secretKeyMaterials(env)) {
+    try {
+      const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        await importSecretKey(material, ['decrypt']),
+        encrypted,
+      );
+      return new TextDecoder().decode(decrypted);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('没有可用的告警密钥加密材料');
 }
 
 async function secretKey(env, usages) {
-  const material = String(env.ALERT_ENCRYPTION_KEY || env.TOTP_ENCRYPTION_KEY || '').trim();
-  if (!material) throw new Error('将告警密钥保存到 D1 需要配置 ALERT_ENCRYPTION_KEY 或 TOTP_ENCRYPTION_KEY');
+  const material = secretKeyMaterials(env)[0];
+  if (!material) throw new Error('将告警密钥保存到 D1 需要配置 ADMIN_PASSWORD、ALERT_ENCRYPTION_KEY 或 TOTP_ENCRYPTION_KEY');
+  return importSecretKey(material, usages);
+}
+
+function secretKeyMaterials(env) {
+  return [...new Set([
+    String(env.ALERT_ENCRYPTION_KEY || '').trim(),
+    String(env.TOTP_ENCRYPTION_KEY || '').trim(),
+    String(env.ADMIN_PASSWORD || '').trim(),
+    String(env.ADMIN_TOKEN || '').trim(),
+  ].filter(Boolean))];
+}
+
+async function importSecretKey(material, usages) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM', length: 256 }, false, usages);
 }

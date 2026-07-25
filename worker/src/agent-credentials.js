@@ -82,7 +82,7 @@ async function decryptCredential(row, env, subject) {
     if (!constantTimeEqual(hash, row.token_hash)) throw new Error('节点 Token 完整性校验失败');
     return token;
   } catch (err) {
-    throw new Error(`无法读取现有节点 Token，请检查 TOTP_ENCRYPTION_KEY；为避免在线节点失效，系统未自动轮换 Token。${err?.message ? ` ${err.message}` : ''}`);
+    throw new Error(`无法读取现有节点 Token，请检查节点凭据加密密钥或管理员密码；为避免在线节点失效，系统未自动轮换 Token。${err?.message ? ` ${err.message}` : ''}`);
   }
 }
 
@@ -104,18 +104,34 @@ async function decryptToken(value, env, subject) {
   if (!stored.startsWith(CIPHERTEXT_PREFIX)) throw new Error('节点 Token 密文格式无效');
   const combined = base64ToBytes(stored.slice(CIPHERTEXT_PREFIX.length));
   if (combined.length <= 12) throw new Error('节点 Token 密文无效');
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: combined.slice(0, 12), additionalData: subjectBytes(subject) },
-    await encryptionKey(encryptionMaterial(env), ['decrypt']),
-    combined.slice(12),
-  );
-  return new TextDecoder().decode(decrypted);
+  let lastError = null;
+  for (const material of encryptionMaterials(env)) {
+    try {
+      const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: combined.slice(0, 12), additionalData: subjectBytes(subject) },
+        await encryptionKey(material, ['decrypt']),
+        combined.slice(12),
+      );
+      return new TextDecoder().decode(decrypted);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('没有可用的节点凭据加密材料');
 }
 
 function encryptionMaterial(env) {
-  const material = String(env.TOTP_ENCRYPTION_KEY || '').trim();
-  if (!material) throw new Error('需要配置 TOTP_ENCRYPTION_KEY');
+  const material = encryptionMaterials(env)[0];
+  if (!material) throw new Error('需要配置 ADMIN_PASSWORD 或 TOTP_ENCRYPTION_KEY');
   return material;
+}
+
+function encryptionMaterials(env) {
+  return [...new Set([
+    String(env.TOTP_ENCRYPTION_KEY || '').trim(),
+    String(env.ADMIN_PASSWORD || '').trim(),
+    String(env.ADMIN_TOKEN || '').trim(),
+  ].filter(Boolean))];
 }
 
 async function encryptionKey(material, usages) {

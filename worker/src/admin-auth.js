@@ -11,8 +11,9 @@ const MAX_PENDING_OAUTH = 10;
 const ADMIN_CREDENTIALS_KEY = 'admin_credentials_v1';
 const PASSWORD_ALGORITHM = 'pbkdf2-sha256';
 const PASSWORD_ITERATIONS = 210_000;
-const MIN_PASSWORD_LENGTH = 12;
+const MIN_PASSWORD_LENGTH = 9;
 const MAX_PASSWORD_LENGTH = 256;
+const PASSWORD_POLICY_MESSAGE = '密码至少 9 位，且必须包含大写字母、小写字母、数字和特殊符号';
 
 export async function adminAuthConfig(env) {
   const credentials = await resolveAdminCredentials(env);
@@ -271,9 +272,12 @@ function validCredentialRecord(record) {
 
 function validateNewCredentials(username, password, confirmation) {
   if (!username) throw new ApiError(400, '账号需为 3-64 位字母、数字或 . _ @ -');
-  if (password.length < MIN_PASSWORD_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
-    throw new ApiError(400, `新密码长度需为 ${MIN_PASSWORD_LENGTH}-${MAX_PASSWORD_LENGTH} 位`);
-  }
+  if (password.length < MIN_PASSWORD_LENGTH
+    || password.length > MAX_PASSWORD_LENGTH
+    || !/[a-z]/.test(password)
+    || !/[A-Z]/.test(password)
+    || !/[0-9]/.test(password)
+    || !/[^A-Za-z0-9]/.test(password)) throw new ApiError(400, PASSWORD_POLICY_MESSAGE);
   if (password !== confirmation) throw new ApiError(400, '两次输入的新密码不一致');
   if (constantTimeEqual(username.toLowerCase(), password.toLowerCase())) throw new ApiError(400, '密码不能与账号相同');
 }

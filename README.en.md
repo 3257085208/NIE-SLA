@@ -2,6 +2,8 @@
 
 NIE-SLA is a Cloudflare-hosted status page and VPS monitor. The control plane uses Workers, D1, R2, Durable Objects, and static assets. Each VPS runs a native Rust Agent that reports over outbound HTTPS and does not open a management port.
 
+Canonical documentation: [nie-sla.pages.dev](https://nie-sla.pages.dev/)
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
 
 ## One-Click Deployment
@@ -12,20 +14,19 @@ NIE-SLA also supports a separate Pages frontend and Worker API. Because Cloudfla
 
 1. Click **Deploy to Cloudflare**.
 2. Sign in to GitHub and Cloudflare and follow the authorization screens.
-3. Enter an admin username, an admin password, and one independent encryption key.
+3. Enter an admin username and admin password.
 4. Wait for the build, then open the provided `workers.dev` URL.
 
 | Configuration | Purpose |
 | --- | --- |
 | `ADMIN_USERNAME` | Admin username, required during deployment |
-| `ADMIN_PASSWORD` | Unique admin password with at least 20 characters |
-| `TOTP_ENCRYPTION_KEY` | Encrypts TOTP secrets and recoverable per-node token copies; use at least 32 bytes |
+| `ADMIN_PASSWORD` | At least 9 characters with uppercase, lowercase, number, and special character |
 
-Keep the password and encryption key different and store both in a password manager. Per-node Agent tokens are generated automatically when an install command is first opened. Internal tuning defaults are fixed in code and do not appear in the deployment form.
+Do not reuse the password. Per-node Agent tokens are generated automatically when an install command is first opened. TOTP is disabled by default and can be enabled after login; a dedicated encryption key remains an advanced optional setting. Internal tuning defaults are fixed in code and do not appear in the deployment form.
 
 Open `/admin`, log in with the username and password, add a VPS under **Agents**, and run the generated Linux or Windows command on that machine. The rest of the setup is available in the admin UI.
 
-See [Deploy to Cloudflare](docs/en/02-deployment.md) for the complete browser flow.
+See the canonical [Cloudflare Quick Start](https://nie-sla.pages.dev/quickstart/) for the complete browser flow.
 
 ## Features
 
@@ -69,14 +70,10 @@ The default five-minute upload mode is comfortable for small installations. Curr
 
 ## Documentation
 
-- [Deployment](docs/en/02-deployment.md)
-- [Admin](docs/en/03-admin.md)
-- [Agent](docs/en/04-agent.md)
-- [Alerts](docs/en/06-alerts.md)
-- [API](docs/en/08-api.md)
-- [Operations](docs/en/09-operations.md)
-- [External Latency Agents](docs/en/12-external-latency-agents.md)
-- [Extensions](docs/en/13-extensions-developer-guide.md)
+- [Deployment](https://nie-sla.pages.dev/quickstart/)
+- [API](https://nie-sla.pages.dev/api/)
+- [Extensions](https://nie-sla.pages.dev/dev/)
+- [Developer Security](https://nie-sla.pages.dev/dev/security/)
 - [Security](SECURITY.md)
 
 ## Validation

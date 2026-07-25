@@ -31,7 +31,7 @@
     "categories": [
       "storage"
     ],
-    "docs_url": "https://github.com/3257085208/NIE-SLA/blob/main/docs/zh-CN/02-deployment.md",
+    "docs_url": "https://nie-sla.pages.dev/quickstart/",
     "publish": true,
     "bindings": {
       "ASSETS": {
@@ -50,10 +50,7 @@
         "description": "必填：后台管理员账号，使用 3-64 位字母、数字或 . _ @ -。"
       },
       "ADMIN_PASSWORD": {
-        "description": "必填：后台管理员密码，请使用至少 20 位且不与其他服务复用的随机密码。"
-      },
-      "TOTP_ENCRYPTION_KEY": {
-        "description": "必填：用于加密 TOTP 与节点 Token 明文副本，请使用至少 32 字节的独立随机值。"
+        "description": "必填：至少 9 位，并同时包含大写字母、小写字母、数字和特殊符号；请勿与其他服务复用。"
       }
     }
   }

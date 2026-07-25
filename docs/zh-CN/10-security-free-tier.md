@@ -35,7 +35,7 @@
 ## 部署者必须做的事
 
 1. 使用不同的随机 Secret。
-2. 启用 TOTP。
+2. 按风险需要启用 TOTP；新部署默认关闭。
 3. 不提交真实 `wrangler.toml` 数据库 ID/私有域名配置到公共模板。
 4. 不分享完整 Agent 安装命令。
 5. 最小化 GitHub Actions `permissions`。

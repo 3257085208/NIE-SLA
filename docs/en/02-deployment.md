@@ -1,18 +1,19 @@
 # Deploy to Cloudflare
 
+> This is an in-repository reference. The continuously maintained canonical guide is [NIE-SLA Quick Start](https://nie-sla.pages.dev/quickstart/).
+
 The recommended deployment runs in the browser. Prepare a GitHub account, a Cloudflare account, and these values:
 
 | Name | Value |
 | --- | --- |
 | `ADMIN_USERNAME` | Admin username, for example `admin` |
-| `ADMIN_PASSWORD` | Unique password with at least 20 characters |
-| `TOTP_ENCRYPTION_KEY` | An independent random value of at least 32 bytes |
+| `ADMIN_PASSWORD` | At least 9 characters with uppercase, lowercase, number, and special character |
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
 
-Authorize GitHub and Cloudflare, enter the three values, and start the deployment. Internal tuning settings use fixed safe defaults and are not shown in the form. Cloudflare builds the Worker and frontend and creates D1, R2, the Durable Object, and the one-minute cron trigger.
+Authorize GitHub and Cloudflare, enter the two values, and start the deployment. Internal tuning settings use fixed safe defaults and are not shown in the form. Cloudflare builds the Worker and frontend and creates D1, R2, the Durable Object, and the one-minute cron trigger.
 
-If the result is `https://project.account.workers.dev`, open `https://project.account.workers.dev/admin` and sign in with the configured username and password. Enable TOTP from Settings, add a VPS under Agents, and run the generated command on that VPS. The Worker creates a random credential for each Agent automatically; new deployments do not need a global `AGENT_TOKEN`.
+If the result is `https://project.account.workers.dev`, open `https://project.account.workers.dev/admin` and sign in with the configured username and password. TOTP is disabled by default and can be enabled from Settings. Add a VPS under Agents and run the generated command on that VPS. The Worker creates a random credential for each Agent automatically; new deployments do not need a global `AGENT_TOKEN`.
 
 Current status uses a lightweight one-minute R2 layer. SLA history remains in five-minute D1 buckets to protect free-tier write capacity.
 

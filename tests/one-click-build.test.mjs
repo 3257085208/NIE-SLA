@@ -53,7 +53,7 @@ assert.ok(wrangler.durable_objects?.bindings?.[0]?.class_name);
 assert.deepEqual(wrangler.triggers?.crons, ['* * * * *']);
 
 const describedBindings = packageJson.cloudflare?.bindings || {};
-const requiredInputs = ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'TOTP_ENCRYPTION_KEY'];
+const requiredInputs = ['ADMIN_USERNAME', 'ADMIN_PASSWORD'];
 const deployBindingNames = [
   ...Object.keys(wrangler.vars || {}),
   wrangler.assets?.binding,
@@ -67,10 +67,12 @@ assert.match(packageJson.cloudflare?.label || '', /\p{Script=Han}/u, 'deploy lab
 assert.deepEqual(wrangler.vars || {}, {}, 'one-click deploy must not expose internal tuning defaults');
 assert.deepEqual(
   Object.keys(describedBindings).sort(),
-  ['ADMIN_PASSWORD', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'REGION_PROXY', 'TOTP_ENCRYPTION_KEY'].sort(),
+  ['ADMIN_PASSWORD', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'REGION_PROXY'].sort(),
   'deploy form should only describe automatic resources and required inputs',
 );
 assert.equal('AGENT_TOKEN' in describedBindings, false, 'new deployments generate per-node Agent tokens');
+assert.equal('TOTP_ENCRYPTION_KEY' in describedBindings, false, 'TOTP is optional and disabled by default');
+assert.equal(packageJson.cloudflare?.docs_url, 'https://nie-sla.pages.dev/quickstart/');
 for (const name of new Set(deployBindingNames)) {
   assert.match(
     describedBindings[name]?.description || '',
@@ -87,6 +89,7 @@ for (const name of requiredInputs) {
   assert.match(secretExample, new RegExp(`^${name}=\\s*(?:#.*)?$`, 'm'), `${name} must require per-deployment input`);
 }
 assert.doesNotMatch(secretExample, /^AGENT_TOKEN=/m, 'new deployments must not ask for a global Agent token');
+assert.doesNotMatch(secretExample, /^TOTP_ENCRYPTION_KEY=/m, 'TOTP is configured only when the administrator enables it');
 assert.doesNotMatch(secretExample, /replace-with-|change-me|example-secret/i, 'deploy secrets must not have reusable defaults');
 
 console.log(`one-click build passed (${verified} Agent binaries, ${version})`);

@@ -2,7 +2,7 @@
 
 ## Login and TOTP
 
-The admin panel is usually available at `https://your-frontend/admin`. Log in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`, then enable TOTP from Settings. Passwords are only sent to the login endpoint; admin APIs use a short-lived session whose hash is stored in D1. Optional GitHub OAuth uses an explicit username allowlist and cannot bypass TOTP. TOTP secrets are encrypted with `TOTP_ENCRYPTION_KEY` before being stored in D1.
+The admin panel is usually available at `https://your-frontend/admin`. Log in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`. TOTP is disabled by default and can be enabled from Settings. Passwords are only sent to the login endpoint; admin APIs use a short-lived session whose hash is stored in D1. Optional GitHub OAuth uses an explicit username allowlist and cannot bypass TOTP. TOTP secrets use the optional `TOTP_ENCRYPTION_KEY`, falling back to the deployment `ADMIN_PASSWORD`, before storage in D1.
 
 ## Targets
 
@@ -31,7 +31,7 @@ The classic list is built in. Additional layouts, including the official card th
 The Deploy button generates a per-target install command containing API base, download base, Agent token, Agent ID, and label. Do not publish generated commands because they contain secrets.
 # Administrator credentials
 
-Use **Settings → Administrator account** to change the username and password. The current password is required, and an active TOTP code is also required when TOTP is enabled. The new password is stored as a randomly salted PBKDF2-SHA256 record in D1; plaintext credentials are never stored. Other admin sessions are revoked after a successful change.
+Use **Settings → Administrator account** to change the username and password. The current password is required, and an active TOTP code is also required when TOTP is enabled. New passwords must contain at least 9 characters, including uppercase, lowercase, a number, and a special character. The new password is stored as a randomly salted PBKDF2-SHA256 record in D1; plaintext credentials are never stored. Other admin sessions are revoked after a successful change.
 
 For lockout recovery, use the Cloudflare control plane from a trusted machine:
 

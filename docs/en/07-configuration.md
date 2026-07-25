@@ -35,12 +35,12 @@
 | Secret | Purpose |
 | --- | --- |
 | `ADMIN_PASSWORD` | Admin password; existing deployments temporarily fall back to `ADMIN_TOKEN` |
-| `TOTP_ENCRYPTION_KEY` | Encrypts TOTP secrets and recoverable per-node Agent token copies; required for new deployments |
+| `TOTP_ENCRYPTION_KEY` | Optional dedicated encryption key for TOTP and recoverable per-node Agent tokens; falls back to deployment `ADMIN_PASSWORD` |
 | `AGENT_TOKEN` | Legacy global/scoped Agent authentication compatibility; omit on new deployments |
 | `TELEGRAM_BOT_TOKEN` | Optional Telegram bot token |
 | `RESEND_API_KEY` | Optional Resend email API key |
 | `GITHUB_OAUTH_CLIENT_SECRET` | Optional GitHub OAuth secret |
-| `ALERT_ENCRYPTION_KEY` | Optional alert secret encryption key for D1 storage; falls back to `TOTP_ENCRYPTION_KEY` |
+| `ALERT_ENCRYPTION_KEY` | Optional alert secret encryption key for D1 storage; falls back to `TOTP_ENCRYPTION_KEY`, then deployment `ADMIN_PASSWORD` |
 
 ## Agent Environment
 

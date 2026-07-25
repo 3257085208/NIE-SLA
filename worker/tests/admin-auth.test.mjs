@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from '../src/admin-auth.js';
-import { disableTOTP, validateAdminSession } from '../src/totp.js';
+import { adminAuthConfig, completeGitHubOAuth, createAdminCredentialRecord, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from '../src/admin-auth.js';
+import { checkTOTP, disableTOTP, setupTOTP, validateAdminSession } from '../src/totp.js';
 
 function memoryDb() {
   const meta = new Map();
@@ -37,6 +37,7 @@ function jsonRequest(url, body) {
 
 {
   const env = { DB: memoryDb(), ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
+  assert.deepEqual(await checkTOTP(env), { ok: true, totp_enabled: false });
   assert.deepEqual(await adminAuthConfig(env), { ok: true, password_enabled: true, github_enabled: false });
   const login = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
     username: 'owner',
@@ -56,6 +57,14 @@ function jsonRequest(url, body) {
 }
 
 {
+  const env = { DB: memoryDb(), ADMIN_PASSWORD: 'Admin-fallback1!' };
+  const response = await setupTOTP(env);
+  assert.equal(response.status, 200);
+  assert.match(env.DB.meta.get('totp_pending_secret'), /^enc:v1:/);
+  assert.deepEqual(await checkTOTP(env), { ok: true, totp_enabled: false }, 'TOTP remains disabled until the first code is verified');
+}
+
+{
   const env = { DB: memoryDb(), ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
   const oldLogin = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
     username: 'owner',
@@ -64,8 +73,8 @@ function jsonRequest(url, body) {
   const changed = await updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {
     username: 'new.owner',
     current_password: 'correct horse battery staple',
-    new_password: 'a much stronger replacement password',
-    confirm_password: 'a much stronger replacement password',
+    new_password: 'A-much-stronger-replacement1',
+    confirm_password: 'A-much-stronger-replacement1',
   }), env);
   assert.equal(changed.credentials_source, 'db');
   assert.equal((await getAdminAccount(env)).username, 'new.owner');
@@ -80,7 +89,7 @@ function jsonRequest(url, body) {
   );
   const newLogin = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
     username: 'new.owner',
-    password: 'a much stronger replacement password',
+    password: 'A-much-stronger-replacement1',
   }), env);
   assert.equal(newLogin.session_valid, true);
   const stored = JSON.parse(env.DB.meta.get('admin_credentials_v1'));
@@ -90,8 +99,8 @@ function jsonRequest(url, body) {
     updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {
       username: 'new.owner',
       current_password: 'wrong password',
-      new_password: 'another sufficiently long password',
-      confirm_password: 'another sufficiently long password',
+      new_password: 'Another-sufficiently-long1!',
+      confirm_password: 'Another-sufficiently-long1!',
     }), env),
     /当前密码错误/,
   );
@@ -100,12 +109,23 @@ function jsonRequest(url, body) {
   await assert.rejects(
     updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {
       username: 'new.owner',
-      current_password: 'a much stronger replacement password',
-      new_password: 'another sufficiently long password',
-      confirm_password: 'another sufficiently long password',
+      current_password: 'A-much-stronger-replacement1',
+      new_password: 'Another-sufficiently-long1!',
+      confirm_password: 'Another-sufficiently-long1!',
     }), env),
     /需要有效的 TOTP 验证码/,
   );
+}
+
+{
+  const accepted = await createAdminCredentialRecord('owner', 'Abcdef1!x');
+  assert.equal(accepted.username, 'owner');
+  for (const password of ['Abcd1!xy', 'abcdef1!x', 'ABCDEF1!X', 'Abcdefg!x', 'Abcdef12x']) {
+    await assert.rejects(
+      createAdminCredentialRecord('owner', password),
+      /密码至少 9 位，且必须包含大写字母、小写字母、数字和特殊符号/,
+    );
+  }
 }
 
 {

@@ -12,7 +12,7 @@ Cloudflare Worker + D1 + R2 + Durable Objects + Rust Agent
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
 
-[部署教程](docs/zh-CN/02-deployment.md) · [English](README.en.md) · [安全说明](SECURITY.md)
+[权威文档](https://nie-sla.pages.dev/) · [部署教程](https://nie-sla.pages.dev/quickstart/) · [English](README.en.md) · [安全说明](SECURITY.md)
 
 </div>
 
@@ -30,7 +30,7 @@ NIE-SLA 支持“Pages 前端 + Worker API”分离部署。由于 Cloudflare �
 
 1. 点击上方 **Deploy to Cloudflare**。
 2. 按页面提示登录 GitHub 和 Cloudflare 并完成授权。
-3. 填写后台账号、后台密码和一段独立加密密钥。
+3. 填写后台账号和后台密码。
 4. 等待构建完成，打开 Cloudflare 给出的 `workers.dev` 地址。
 
 需要填写：
@@ -38,10 +38,9 @@ NIE-SLA 支持“Pages 前端 + Worker API”分离部署。由于 Cloudflare �
 | 配置 | 用途 |
 | --- | --- |
 | `ADMIN_USERNAME` | 后台管理员账号，创建时必填 |
-| `ADMIN_PASSWORD` | 后台管理员密码，建议至少 20 位 |
-| `TOTP_ENCRYPTION_KEY` | 加密 TOTP 和节点 Token 明文副本，至少 32 字节 |
+| `ADMIN_PASSWORD` | 至少 9 位，同时包含大写字母、小写字母、数字和特殊符号 |
 
-密码与加密密钥必须不同，也不要公开。Agent Token 会在后台首次生成部署命令时按节点自动创建，不需要填写全局 Token。探测并发、限流、历史保留等内部参数使用固定安全默认值，不会出现在部署表单中。
+密码不要与其他服务复用，也不要公开。Agent Token 会在后台首次生成部署命令时按节点自动创建，不需要填写全局 Token。TOTP 默认关闭，登录后台后可按需启用；专用加密密钥是高级可选配置，不再出现在一键部署表单中。探测并发、限流、历史保留等内部参数使用固定安全默认值。
 
 部署成功后，管理后台地址为：
 
@@ -58,7 +57,7 @@ https://你的项目.你的账号.workers.dev/admin
 
 首台 VPS 正常上报后，再按需配置 Ping、Latency Agent、GitHub 登录、Telegram/邮件告警、流量、主题和插件。
 
-完整步骤见 [Cloudflare 一键部署](docs/zh-CN/02-deployment.md)。
+完整步骤以 [NIE-SLA 快速上手](https://nie-sla.pages.dev/quickstart/) 为准。
 
 ## 主要功能
 
@@ -140,7 +139,7 @@ Rust Agent on VPS
 
 ## 安全要点
 
-- `ADMIN_PASSWORD` 和 `TOTP_ENCRYPTION_KEY` 必须不同；每个 Agent 使用后台自动生成的随机独立 Token。
+- 管理员密码必须符合复杂度要求且不与其他服务复用；每个 Agent 使用后台自动生成的随机独立 Token。
 - 密码只进入登录端点；后台 API 统一使用 24 小时 Session，D1 只保存 Session SHA-256 哈希。
 - GitHub OAuth 默认关闭；启用时必须同时配置 Client ID、Client Secret 和 GitHub 用户名白名单。
 - OAuth state 有时效并绑定 HttpOnly Cookie，登录票据短期、一次使用，TOTP 不能被 OAuth 绕过。
@@ -149,20 +148,16 @@ Rust Agent on VPS
 - 公共接口会裁剪敏感字段并可掩码 IP/端口。
 - 主题和插件包会检查 ZIP 路径、Manifest、内容类型、大小和哈希。
 
-详细边界见 [安全与免费额度](docs/zh-CN/10-security-free-tier.md) 和 [SECURITY.md](SECURITY.md)。
+详细边界见 [开发者安全规范](https://nie-sla.pages.dev/dev/security/) 和 [SECURITY.md](SECURITY.md)。
 
 ## 文档
 
 | 文档 | 内容 |
 | --- | --- |
-| [一键部署](docs/zh-CN/02-deployment.md) | Cloudflare 按钮部署与首次添加 VPS |
-| [后台使用](docs/zh-CN/03-admin.md) | 登录、GitHub OAuth、Target、TOTP、设置和更新 |
-| [Agent](docs/zh-CN/04-agent.md) | 安装、日志、升级和卸载 |
-| [告警](docs/zh-CN/06-alerts.md) | Telegram、Resend 邮件、阈值与冷却 |
-| [API](docs/zh-CN/08-api.md) | Public、Admin 与 Agent API |
-| [运维排障](docs/zh-CN/09-operations.md) | 离线、漏检、限流和历史 |
-| [External Latency Agent](docs/zh-CN/13-external-latency-agents.md) | 多网络测量节点 |
-| [主题与插件](docs/zh-CN/14-extensions-developer-guide.md) | 扩展格式、权限和上传 |
+| [一键部署](https://nie-sla.pages.dev/quickstart/) | Cloudflare 按钮部署与首次添加 VPS |
+| [API](https://nie-sla.pages.dev/api/) | 公开只读 API、参数与在线调试 |
+| [主题与插件](https://nie-sla.pages.dev/dev/) | 扩展格式、权限、消息协议和发布规范 |
+| [安全规范](https://nie-sla.pages.dev/dev/security/) | 沙箱、上传校验与开发者安全边界 |
 
 ## 本地验证
 

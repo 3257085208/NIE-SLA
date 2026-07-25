@@ -1989,11 +1989,11 @@ async function loadAccount() {
       <div class="account-form">
         ${formField("管理员账号", `<input id="accountUsername" autocomplete="username" value="${escapeHtml(account.username || "admin")}">`)}
         ${formField("当前密码", '<input id="accountCurrentPassword" type="password" autocomplete="current-password">')}
-        ${formField("新密码", `<input id="accountNewPassword" type="password" minlength="${escapeHtml(account.password_min_length || 12)}" maxlength="256" autocomplete="new-password">`)}
-        ${formField("确认新密码", `<input id="accountConfirmPassword" type="password" minlength="${escapeHtml(account.password_min_length || 12)}" maxlength="256" autocomplete="new-password">`)}
+        ${formField("新密码", `<input id="accountNewPassword" type="password" minlength="${escapeHtml(account.password_min_length || 9)}" maxlength="256" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{9,256}" autocomplete="new-password">`)}
+        ${formField("确认新密码", `<input id="accountConfirmPassword" type="password" minlength="${escapeHtml(account.password_min_length || 9)}" maxlength="256" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{9,256}" autocomplete="new-password">`)}
         ${loginState.totp_enabled ? formField("TOTP 验证码", '<input id="accountTotp" inputmode="numeric" maxlength="6" autocomplete="one-time-code">') : ""}
       </div>
-      <p class="hint">当前来源：${escapeHtml(source)}。保存后其他设备会退出登录。</p>
+      <p class="hint">密码至少 9 位，且必须包含大写字母、小写字母、数字和特殊符号。当前来源：${escapeHtml(source)}。保存后其他设备会退出登录。</p>
       <button class="btn btn-primary btn-sm" id="saveAccount">更新账号密码</button>`;
     byId("saveAccount").onclick = saveAccount;
   } catch (error) {
@@ -2009,6 +2009,9 @@ async function saveAccount() {
   const confirmPassword = byId("accountConfirmPassword")?.value || "";
   const totp = byId("accountTotp")?.value.trim() || "";
   if (!currentPassword || !newPassword || !confirmPassword) return toast("请完整填写当前密码和新密码", "err");
+  if (newPassword.length < 9 || newPassword.length > 256 || !/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^A-Za-z0-9]/.test(newPassword)) {
+    return toast("密码至少 9 位，且必须包含大写字母、小写字母、数字和特殊符号", "err");
+  }
   if (newPassword !== confirmPassword) return toast("两次输入的新密码不一致", "err");
   if (totp && !/^\d{6}$/.test(totp)) return toast("TOTP 验证码必须是 6 位数字", "err");
   button.disabled = true;

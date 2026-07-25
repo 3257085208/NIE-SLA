@@ -16,7 +16,7 @@
 
 ## 修改管理员账号密码
 
-打开“设置 → 管理员账号”，填写当前密码、新账号和新密码；启用 TOTP 时还要填写当前验证码。新密码至少 12 位，建议由密码管理器生成 20 位以上随机值。
+打开“设置 → 管理员账号”，填写当前密码、新账号和新密码；启用 TOTP 时还要填写当前验证码。新密码至少 9 位，并且必须同时包含大写字母、小写字母、数字和特殊符号。
 
 首次保存会把凭据从 Worker 环境变量迁移到 D1。D1 只保存随机盐和 PBKDF2-SHA256 派生结果，不保存明文密码。修改成功后会注销其他管理会话，当前页面会换发一枚新 Session。
 
@@ -53,7 +53,7 @@ npm run admin:reset -- --remote --disable-totp
 3. 输入当前 6 位验证码确认。
 4. 退出后重新登录验证完整流程。
 
-`TOTP_ENCRYPTION_KEY` 用于加密 D1 中的 TOTP secret。更换该密钥会导致旧 secret 无法解密，需要重新设置。
+TOTP 默认关闭，只有完成验证码确认后才会启用。D1 中的 TOTP secret 优先使用可选的 `TOTP_ENCRYPTION_KEY` 加密；未配置时使用部署时的 `ADMIN_PASSWORD`。更换实际使用的加密材料会导致旧 secret 无法解密，需要重新设置。
 
 ## 探针管理
 
@@ -129,7 +129,7 @@ TCP：
 对 TCP/VPS 目标点击“部署 Agent”：
 
 1. Worker 读取目标 ID。
-2. 首次生成命令时创建只属于该 ID 的随机 Token；D1 保存哈希，并保存由 `TOTP_ENCRYPTION_KEY` 加密的明文副本供以后再次查看命令。
+2. 首次生成命令时创建只属于该 ID 的随机 Token；D1 保存哈希，并保存加密后的明文副本供以后再次查看命令。加密优先使用可选的 `TOTP_ENCRYPTION_KEY`，否则使用部署时的 `ADMIN_PASSWORD`。
 3. 根据当前公开前端 Origin 生成安装下载地址。
 4. 固定期望版本和 manifest SHA-256。
 5. 返回 Linux/Windows 命令。

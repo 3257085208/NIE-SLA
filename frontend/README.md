@@ -2,7 +2,7 @@
 
 本目录是 NIE-SLA 的 Cloudflare Pages 前端，同时包含公开状态页、管理后台、Pages Functions API 代理、Agent 安装脚本和发布二进制。
 
-完整系统文档见 [NIE-SLA-Agent 中文主手册](https://github.com/3257085208/NIE-SLA-Agent/blob/main/README.zh-CN.md)。Worker/Agent 源码也位于该仓库。
+完整系统文档以 [NIE-SLA 文档站](https://nie-sla.pages.dev/) 为准。Worker/Agent 源码位于私有生产仓库。
 
 ## 目录
 
@@ -62,13 +62,13 @@ https://YOUR-PAGES/bin/SHA256SUMS
 
 重复执行当前部署命令会先停止旧服务和所有残留 Latency 进程，再启动唯一的新实例。后台“Agent 自动更新”开关也控制外部 Latency Agent；旧节点需要重新执行一次最新命令，之后才能按策略自动更新。
 
-完整教程见 [外部 Latency Agent 部署与排障](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/13-external-latency-agents.md)。
+完整教程见 [NIE-SLA 文档站](https://nie-sla.pages.dev/)。
 
 ## 主题与插件
 
 后台“主题”和“插件”是两个独立页面，分别使用 `/api/themes/*` 与 `/api/plugins/*` 上传和管理 `nstatus-extension-v1` ZIP。内置只保留 `classic`；官方卡片布局也通过主题 ZIP 启用。主题支持低风险 CSS 模式和隔离的全布局 canvas 模式，插件继续在 sandbox iframe 中通过只读消息 API 获取公开状态；停用主题会回退到 `classic`。
 
-包格式与 `/api/v1` 见[扩展开发指南](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/14-extensions-developer-guide.md)，独立仓库、工程命令、测试、SemVer、许可证与发布标准见[主题规范](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/15-theme-development-standard.md)和[插件规范](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/16-plugin-development-standard.md)。
+包格式与 `/api/v1` 见[扩展开发指南](https://nie-sla.pages.dev/dev/)，独立仓库、工程命令、测试、SemVer、许可证与发布标准分别见[主题规范](https://nie-sla.pages.dev/dev/theme/)和[插件规范](https://nie-sla.pages.dev/dev/plugin/)。
 
 ## 后台外观配置
 
@@ -85,7 +85,7 @@ Cloudflare Proxy: DNS only
 
 不要开启橙云。Cloudflare Workers TCP Sockets 可能拒绝直接 IPv6 字面地址；连接 Cloudflare 自己的代理 IP 也被禁止。
 
-完整教程见 [IPv6、AAAA 与 CF TCP 探测](https://github.com/3257085208/NIE-SLA-Agent/blob/main/docs/zh-CN/12-ipv6-cloudflare-probe.md)。
+相关部署与故障排查以 [NIE-SLA 文档站](https://nie-sla.pages.dev/) 为准。
 
 ## Agent 发布文件
 

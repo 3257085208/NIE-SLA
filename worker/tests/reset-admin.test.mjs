@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const directory = await mkdtemp(path.join(tmpdir(), 'nstatus-reset-test-'));
 const captureFile = path.join(directory, 'capture.json');
 const mockNpx = path.join(directory, process.platform === 'win32' ? 'npx.cmd' : 'npx');
-const password = 'test-only strong password';
+const password = 'Test-only-strong1!';
 
 try {
   if (process.platform === 'win32') {

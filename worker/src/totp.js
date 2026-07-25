@@ -226,21 +226,31 @@ async function encryptionKey(material, usages) {
 }
 
 function primaryEncryptionMaterial(env) {
-  const primary = String(env.TOTP_ENCRYPTION_KEY || '').trim();
-  if (primary) return { material: primary, source: 'primary' };
+  const dedicated = String(env.TOTP_ENCRYPTION_KEY || '').trim();
+  if (dedicated) return { material: dedicated, source: 'primary' };
+  const adminPassword = String(env.ADMIN_PASSWORD || '').trim();
+  if (adminPassword) return { material: adminPassword, source: 'primary' };
   if (allowAdminTokenTotpKey(env)) {
     const legacy = String(env.ADMIN_TOKEN || '').trim();
-    if (legacy) return { material: legacy, source: 'legacy-admin-token' };
+    if (legacy) return { material: legacy, source: 'primary' };
   }
-  throw new Error('加密 TOTP 密钥需要配置 TOTP_ENCRYPTION_KEY');
+  throw new Error('启用 TOTP 需要配置 ADMIN_PASSWORD 或 TOTP_ENCRYPTION_KEY');
 }
 
 function encryptionKeyMaterials(env) {
   const out = [];
-  const primary = String(env.TOTP_ENCRYPTION_KEY || '').trim();
-  if (primary) out.push({ material: primary, source: 'primary' });
-  const legacy = String(env.ADMIN_TOKEN || '').trim();
-  if (legacy && legacy !== primary) out.push({ material: legacy, source: 'legacy-admin-token' });
+  let primary = null;
+  try { primary = primaryEncryptionMaterial(env); } catch (_) {}
+  if (primary) out.push(primary);
+  for (const candidate of [
+    String(env.TOTP_ENCRYPTION_KEY || '').trim(),
+    String(env.ADMIN_PASSWORD || '').trim(),
+    String(env.ADMIN_TOKEN || '').trim(),
+  ]) {
+    if (candidate && !out.some((entry) => entry.material === candidate)) {
+      out.push({ material: candidate, source: 'legacy' });
+    }
+  }
   return out;
 }
 

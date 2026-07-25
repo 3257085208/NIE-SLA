@@ -56,9 +56,9 @@
 | 名称 | 必需 | 用途 |
 | --- | --- | --- |
 | `ADMIN_PASSWORD` | 新部署必需 | 后台密码；旧部署可暂时回退 `ADMIN_TOKEN` |
-| `TOTP_ENCRYPTION_KEY` | 新部署必需 | 加密 TOTP secret 与每节点 Token 明文副本 |
+| `TOTP_ENCRYPTION_KEY` | 可选 | TOTP 与每节点 Token 的专用加密密钥；未配置时使用部署时的 `ADMIN_PASSWORD` |
 | `AGENT_TOKEN` | 仅旧部署兼容 | 旧版全局及派生 scoped Token；新部署不要配置 |
-| `ALERT_ENCRYPTION_KEY` | 后台保存告警密钥时 | 加密报警 secret；默认回退 TOTP 密钥 |
+| `ALERT_ENCRYPTION_KEY` | 可选 | 告警 secret 的专用加密密钥；依次回退 TOTP 密钥和部署时的管理员密码 |
 | `TELEGRAM_BOT_TOKEN` | 可选 | 环境配置 TG Bot |
 | `RESEND_API_KEY` | 可选 | 环境配置 Resend 邮件 API |
 | `GITHUB_OAUTH_CLIENT_SECRET` | 可选 | GitHub OAuth App secret |

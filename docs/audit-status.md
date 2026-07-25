@@ -6,7 +6,7 @@ This file replaces the older generated bug/status reports that contradicted each
 
 - Agent runtime HTTP uses a native Rust HTTPS client (`ureq` + `rustls`) instead of spawning `curl` or `wget`.
 - Agent runtime requests do not expose the Agent token through process arguments.
-- TOTP secrets are encrypted with `TOTP_ENCRYPTION_KEY`; legacy plaintext or ADMIN_TOKEN-derived rows are migrated after successful verification.
+- TOTP secrets use AES-GCM with the optional dedicated key or deployment admin password; legacy plaintext or ADMIN_TOKEN-derived rows migrate after successful verification.
 - Security-sensitive rate limits use D1 by default.
 - D1 rate limit failures now fail closed for authenticated/write routes instead of silently allowing the request.
 - Windows install no longer defaults to SYSTEM or `ExecutionPolicy Bypass`.

@@ -82,6 +82,16 @@ await assert.rejects(() => getOrCreateAgentToken(wrongKeyEnv, 'agent', 'vps-a'),
 assert.deepEqual(await requireAgentForId(agentRequest(token), wrongKeyEnv, 'vps-a'), { type: 'scoped', agent_id: 'vps-a' }, 'authentication must only need the stored hash');
 assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM agent_credentials WHERE subject_type = 'agent' AND subject_id = 'vps-a'`).get().count, 1);
 
+const passwordFallbackEnv = { DB: env.DB, ADMIN_PASSWORD: 'Admin-fallback1!' };
+const passwordFallbackToken = await getOrCreateAgentToken(passwordFallbackEnv, 'agent', 'password-fallback');
+assert.match(passwordFallbackToken, /^nst_[a-f0-9]{64}$/);
+assert.equal(await getOrCreateAgentToken(passwordFallbackEnv, 'agent', 'password-fallback'), passwordFallbackToken);
+assert.equal(
+  await getOrCreateAgentToken({ ...passwordFallbackEnv, TOTP_ENCRYPTION_KEY: 'new-dedicated-key' }, 'agent', 'password-fallback'),
+  passwordFallbackToken,
+  'adding a dedicated key must not make ADMIN_PASSWORD-encrypted credentials unreadable',
+);
+
 const legacyEnv = { ...env, AGENT_TOKEN: 'legacy-global-secret' };
 const legacyToken = await legacyScopedToken(legacyEnv, 'agent', 'vps-a');
 assert.match(legacyToken, /^nst_[a-f0-9]{48}$/);
