@@ -128,6 +128,16 @@ cargo test
 cargo build --release
 ```
 
+## 本地构建完整 Release
+
+GitHub Actions 额度不足或需要在发布前本地复核时，在 macOS/Linux 安装 Rust、Zig 和 `cargo-zigbuild`，然后运行：
+
+```bash
+./build-release.sh
+```
+
+脚本会一次生成 Linux amd64、arm64、armv7、armv6、386 和 Windows amd64 六个二进制，并在 `bin/` 生成同一批次的 `VERSION` 与 `SHA256SUMS`。全部目标成功前不会覆盖现有发布目录。可通过第一个参数指定其他输出目录；通过 `RUST_TOOLCHAIN` 固定 Rust 工具链版本。
+
 ## License
 
 MIT

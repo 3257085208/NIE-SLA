@@ -69,14 +69,10 @@ cftz uninstall   # Complete removal
 cd agent
 cargo fmt -- --check
 cargo check
-make build-linux
+./build-release.sh
 ```
 
-For Windows release builds, use the GitHub Actions workflow or a local MSVC Rust toolchain:
-
-```powershell
-cargo build --release --target x86_64-pc-windows-msvc
-```
+`build-release.sh` uses Zig to build five statically linked Linux targets plus Windows amd64 locally, then writes a matching `VERSION` and `SHA256SUMS`. GitHub Actions is not required to produce release artifacts.
 
 ## External Probe Agent (Python)
 

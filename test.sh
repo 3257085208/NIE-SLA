@@ -109,7 +109,7 @@ fi
 
 echo ""
 echo "=== Shell Script Syntax ==="
-for f in "$ROOT/agent/install.sh" "$ROOT/agent/setup.sh" "$ROOT/agent/cftz" "$ROOT/agent/update.sh" "$ROOT/agent/quick-install.sh"; do
+for f in "$ROOT/agent/install.sh" "$ROOT/agent/setup.sh" "$ROOT/agent/cftz" "$ROOT/agent/update.sh" "$ROOT/agent/quick-install.sh" "$ROOT/agent/build-release.sh"; do
   run_check "agent/$(basename "$f")" bash -n "$f"
 done
 run_check "cftz" bash -n "$ROOT/cftz"

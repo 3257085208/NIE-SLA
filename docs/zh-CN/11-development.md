@@ -74,13 +74,22 @@ cargo build --release
 
 并发原则：采样不能被上传、Ping 或更新阻塞；队列必须有上限；退出和更新要避免留下重复进程。
 
+完整发布包必须在本机运行：
+
+```bash
+cd agent
+./build-release.sh
+```
+
+该脚本通过 Zig 交叉构建 Linux amd64、arm64、armv7、armv6、386 和 Windows amd64，并在所有目标成功后统一写入 `bin/VERSION` 与 `bin/SHA256SUMS`。GitHub Actions 额度不足期间只保留手动触发入口，不会在 push、PR 或 tag 时自动构建，也不作为发布产物来源。
+
 ## 版本发布
 
 建议顺序：
 
 1. 更新 Cargo 版本和 Agent 版本常量。
 2. 运行完整测试。
-3. 构建全部架构。
+3. 在可信本机运行 `agent/build-release.sh` 构建全部架构。
 4. 逐个执行 `--version`。
 5. 生成 `SHA256SUMS`。
 6. 计算 `SHA256SUMS` 文件自身 SHA-256。

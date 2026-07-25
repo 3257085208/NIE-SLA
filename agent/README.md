@@ -26,3 +26,13 @@ cargo fmt -- --check
 cargo check
 cargo build --release --target x86_64-unknown-linux-musl
 ```
+
+## Build a Complete Release Locally
+
+Install Rust, Zig, and `cargo-zigbuild`, then run:
+
+```bash
+./build-release.sh
+```
+
+The script builds Linux amd64, arm64, armv7, armv6, 386, and Windows amd64, then creates a matching `VERSION` and `SHA256SUMS` in `bin/`. Existing release artifacts are not replaced unless every target builds successfully. Pass an output directory as the first argument or set `RUST_TOOLCHAIN` to pin the Rust toolchain.
