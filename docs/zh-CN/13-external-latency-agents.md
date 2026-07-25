@@ -131,7 +131,7 @@ npx wrangler d1 execute nstatus-db --remote --command \
 
 - scoped Token 与节点 ID 不匹配。
 - 使用了另一节点的旧安装命令。
-- Worker 的 `AGENT_TOKEN` 在安装后被更换，派生 Token 随之变化。
+- Token 与节点 ID 不匹配，或误用了另一节点的部署命令。旧部署若仍使用全局 `AGENT_TOKEN`，修改它也会使旧派生 Token 失效。
 
 处理方式是从后台为当前节点重新生成命令并完整重装，不要手工拼接 Token。
 

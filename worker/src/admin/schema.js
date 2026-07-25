@@ -3,7 +3,7 @@ import { parseBoolean } from '../utils.js';
 
 let schemaEnsured = false;
 let schemaPromise = null;
-const SCHEMA_MARKER = 'schema:worker-v12-20260724-agent-availability';
+const SCHEMA_MARKER = 'schema:worker-v13-20260725-agent-credentials';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -142,6 +142,17 @@ export async function ensureV6Schema(env) {
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_credentials (
+    subject_type TEXT NOT NULL CHECK (subject_type IN ('agent', 'latency')),
+    subject_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL,
+    token_ciphertext TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    last_used_at INTEGER,
+    PRIMARY KEY (subject_type, subject_id)
+  )`).run();
+  await env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_credentials_hash ON agent_credentials(token_hash)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS latency_results (
     node_id TEXT NOT NULL,
     target_id TEXT NOT NULL,

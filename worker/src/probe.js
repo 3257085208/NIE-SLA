@@ -228,7 +228,7 @@ export async function runFastStatusTargets(env) {
   const lease = await acquireProbeRunLease(env, 120);
   if (!lease) return { ok: true, count: 0, results: [], skipped: true, reason: 'probe_run_in_progress' };
   try {
-    const concurrency = clamp(Number(env.CONCURRENCY || 20), 1, 40);
+    const concurrency = clamp(Number(env.CONCURRENCY || 40), 1, 40);
     const results = [];
     for (let i = 0; i < targets.length; i += concurrency) {
       const chunk = targets.slice(i, i + concurrency);
@@ -308,7 +308,7 @@ async function releaseProbeRunLease(env, lease) {
 }
 
 export async function runTargetBatch(env, targets, previousById = null) {
-  const concurrency = clamp(Number(env.CONCURRENCY || 20), 1, 40);
+  const concurrency = clamp(Number(env.CONCURRENCY || 40), 1, 40);
   if (!previousById) {
     const state = await readR2State(env);
     previousById = buildPreviousStateMap(targets, state, await readLatestStatusMap(env, targets.map(target => target.id)));

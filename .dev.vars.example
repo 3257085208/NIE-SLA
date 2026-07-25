@@ -1,3 +1,3 @@
+ADMIN_USERNAME= # 必填：3-64 位管理员账号
 ADMIN_PASSWORD= # 必填：至少 20 位的独立随机密码
-AGENT_TOKEN= # 必填：至少 32 字节的独立随机值
-TOTP_ENCRYPTION_KEY= # 必填：另一段至少 32 字节的独立随机值
+TOTP_ENCRYPTION_KEY= # 必填：至少 32 字节的独立随机值

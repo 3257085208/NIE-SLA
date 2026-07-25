@@ -79,7 +79,7 @@ export function convertPriceToCny(amount, currency, rates) {
 const FRONTEND_THEMES = new Set(['classic']);
 
 export const DEFAULT_FRONTEND_APPEARANCE = Object.freeze({
-  site_name: '聶.NET', site_subtitle: '', hero_subtitle: '', page_title: '', favicon_url: '', brand_home_url: './',
+  site_name: 'NIE-SLA', site_subtitle: '', hero_subtitle: '', page_title: '', favicon_url: '', brand_home_url: './',
   brand_logo_url: '', brand_logo_alt: '站点 Logo', brand_logo_height: 36,
   brand_avatar_url: '', header_right_text: '', header_right_image_url: './assets/cloudflare.svg?v=20260719-official',
   header_right_image_alt: 'Cloudflare', header_right_image_width: 109, header_right_link: 'https://www.cloudflare.com/', header_right_mode: 'image',

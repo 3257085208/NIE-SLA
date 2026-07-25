@@ -6,7 +6,7 @@
 
 | 名称 | 推荐/默认 | 说明 |
 | --- | --- | --- |
-| `PUBLIC_SITE_NAME` | `聶.NET` | 公开站点名称 |
+| `PUBLIC_SITE_NAME` | `NIE-SLA` | 公开站点名称 |
 | `PUBLIC_WORKER_URL` | Worker HTTPS URL | 区域/安装地址回退 |
 | `TIMEZONE_OFFSET_MINUTES` | `480` | UTC+8，影响每日桶和归档 |
 | `CONCURRENCY` | `40` | 单轮并发目标数 |
@@ -56,8 +56,8 @@
 | 名称 | 必需 | 用途 |
 | --- | --- | --- |
 | `ADMIN_PASSWORD` | 新部署必需 | 后台密码；旧部署可暂时回退 `ADMIN_TOKEN` |
-| `AGENT_TOKEN` | 是 | 派生 scoped Token |
-| `TOTP_ENCRYPTION_KEY` | 启用 TOTP 时 | 加密 TOTP secret |
+| `TOTP_ENCRYPTION_KEY` | 新部署必需 | 加密 TOTP secret 与每节点 Token 明文副本 |
+| `AGENT_TOKEN` | 仅旧部署兼容 | 旧版全局及派生 scoped Token；新部署不要配置 |
 | `ALERT_ENCRYPTION_KEY` | 后台保存告警密钥时 | 加密报警 secret；默认回退 TOTP 密钥 |
 | `TELEGRAM_BOT_TOKEN` | 可选 | 环境配置 TG Bot |
 | `RESEND_API_KEY` | 可选 | 环境配置 Resend 邮件 API |
@@ -79,7 +79,7 @@ npx wrangler secret list
 
 | 名称 | 默认 | 说明 |
 | --- | --- | --- |
-| `ADMIN_USERNAME` | `admin` | 后台账号 |
+| `ADMIN_USERNAME` | 新部署必填 | 后台账号；旧部署未配置时回退 `admin` |
 | `GITHUB_OAUTH_CLIENT_ID` | 空 | GitHub OAuth Client ID |
 | `GITHUB_OAUTH_ALLOWED_USERS` | 空 | GitHub 用户名白名单，英文逗号分隔 |
 | `GITHUB_OAUTH_CALLBACK_ORIGIN` | 当前 API Origin | 可选；固定 OAuth callback 的 HTTPS Origin |

@@ -179,7 +179,7 @@ export async function runAlertChecks(env, options = {}) {
 
   const now = nowSec();
   const messages = [];
-  const maxMessages = clamp(Number(options.max_messages || env.ALERT_MAX_MESSAGES_PER_RUN || 20), 1, 100);
+  const maxMessages = clamp(Number(options.max_messages || env.ALERT_MAX_MESSAGES_PER_RUN || 30), 1, 100);
   for (const target of targetRows.results || []) {
     if (messages.length >= maxMessages) break;
     const targetSettings = targetAlertSettings(target, settings);

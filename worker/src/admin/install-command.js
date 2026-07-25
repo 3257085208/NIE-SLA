@@ -1,18 +1,15 @@
 // Admin sub-module: agent install command generation.
 import { clamp, sanitizeAgentId } from '../utils.js';
-import { agentScopedToken } from '../auth.js';
+import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { loadAgentRelease } from './settings.js';
 
 export async function getAgentInstallCommand(env, url, request = null) {
-  const globalAgentToken = String(env.AGENT_TOKEN || '').trim();
-  if (!globalAgentToken) return { ok: false, error: 'Worker 尚未配置 AGENT_TOKEN' };
-
   const targetId = sanitizeAgentId(url.searchParams.get('target_id') || '');
   if (!targetId) return { ok: false, error: '必须提供 target_id' };
 
   const target = await env.DB.prepare(`SELECT id, name FROM targets WHERE id = ?`).bind(targetId).first().catch(() => null);
   const label = String(target?.name || targetId).trim() || targetId;
-  const agentToken = await agentScopedToken(env, targetId);
+  const agentToken = await getOrCreateAgentToken(env, 'agent', targetId);
   if (!agentToken) return { ok: false, error: '生成 Agent 专用 Token 失败' };
   const installBase = agentInstallBase(env, request);
   if (!installBase) return { ok: false, error: 'Agent 安装地址不可用。请从公开前端域名打开管理后台，或配置 PUBLIC_AGENT_INSTALL_BASE。' };

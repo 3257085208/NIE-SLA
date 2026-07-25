@@ -2,7 +2,7 @@
 
 ## 威胁模型
 
-需要保护：管理员密码和 Session、Agent 主 Token、节点 scoped Token、TOTP secret、Telegram Bot Token、Resend API Key、VPS 地址和历史指标。
+需要保护：管理员密码和 Session、节点独立 Token、TOTP secret、Telegram Bot Token、Resend API Key、VPS 地址和历史指标。
 
 主要风险：
 
@@ -17,7 +17,8 @@
 
 - 后台密码迁移后使用随机盐 PBKDF2-SHA256 派生，登录比较采用常量时间；管理 Session 在 D1 中只保存 SHA-256 哈希。
 - 修改管理员凭据会注销其他 Session；忘记密码只能通过已登录的 Cloudflare 控制面强制重置，不提供公网 Reset Token。
-- 每节点 scoped Token，绑定 Agent ID。
+- 每节点随机 Token，绑定 Agent ID；D1 仅以 SHA-256 哈希完成上报认证。
+- 为重复显示部署命令而保存的 Token 明文副本使用 AES-GCM 加密；加密密钥异常时不会自动轮换并中断在线节点。
 - Admin 可启用 TOTP。
 - TOTP secret 使用 AES-GCM 加密。
 - TOTP session 在 D1 中保存哈希。
@@ -45,7 +46,7 @@
 
 ## 节点失陷影响
 
-scoped Token 只能以对应 Agent ID 上报，不能直接获得 Admin 权限或其他节点 Token。仍应在节点失陷后重新生成/轮换主 Agent Token或提供节点撤销机制，并检查伪造历史。
+节点 Token 只能以对应 Agent ID 上报，不能直接获得 Admin 权限或其他节点 Token。节点失陷后应删除并重建该节点凭据，重新部署 Agent，并检查可能被伪造的历史。旧部署仍使用全局 `AGENT_TOKEN` 时，轮换它会影响所有旧派生 Token。
 
 ## TOTP 的边界
 

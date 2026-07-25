@@ -157,6 +157,7 @@ export async function deleteTarget(id, env) {
     env.DB.prepare(`DELETE FROM latest_status WHERE target_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM incident_events WHERE target_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM alert_state WHERE target_id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM agent_credentials WHERE subject_type = 'agent' AND subject_id = ?`).bind(sanitizeAgentId(id)),
     env.DB.prepare(`DELETE FROM targets WHERE id = ?`).bind(id),
   ]);
   await removeTargetFromR2State(env, id);
@@ -191,4 +192,3 @@ export async function getAgentTargets(env, url) {
   }));
   return { ok: true, agent_id: agentId, interval_sec: clamp(Number(env.AGENT_INTERVAL_SEC || DEFAULT_INTERVAL_SEC), MIN_INTERVAL_SEC, 86400), generated_at: new Date().toISOString(), targets };
 }
-

@@ -1,5 +1,5 @@
 import { ALLOWED_REGIONS, clamp, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
-import { requireAgent, requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
+import { requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
 import { listTargets, createTarget, updateTarget, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency } from './admin.js';
@@ -161,7 +161,7 @@ async function dispatchStatic(env, url, request, ctx) {
 
   // Health
   if (path === '/' || path === '/api/health') {
-    return json({ ok: true, name: env.PUBLIC_SITE_NAME || '聶.NET', version: VERSION, time: new Date().toISOString() }, 200, env);
+    return json({ ok: true, name: env.PUBLIC_SITE_NAME || 'NIE-SLA', version: VERSION, time: new Date().toISOString() }, 200, env);
   }
 
   // Public read
@@ -240,13 +240,13 @@ async function dispatchStatic(env, url, request, ctx) {
   // Agent
   if (path === '/api/agent/targets' && m === 'GET') {
     const agentId = url.searchParams.get('agent_id') || '';
-    if (agentId) await requireAgentIdentity(request, env, agentId); else requireAgent(request, env);
+    if (agentId) await requireAgentIdentity(request, env, agentId); else await requireAnyAgent(request, env);
     if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny();
     return json(await getAgentTargets(env, url), 200, env, { 'cache-control': 'no-store' });
   }
   if (path === '/api/agent/results' && m === 'POST') {
     const body = await safeJson(request);
-    if (body.agent_id) await requireAgentIdentity(request, env, body.agent_id); else requireAgent(request, env);
+    if (body.agent_id) await requireAgentIdentity(request, env, body.agent_id); else await requireAnyAgent(request, env);
     if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny();
     return json(await submitAgentResults(request, env, body), 200, env, { 'cache-control': 'no-store' });
   }
@@ -256,7 +256,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/agent/pings' && m === 'POST') return json(await submitAgentPings(request, env), 200, env, { 'cache-control': 'no-store' });
   if (path === '/api/latency-agent/targets' && m === 'GET') { await ensureV6Schema(env); const nodeId = url.searchParams.get('node_id') || ''; await requireLatencyAgentForId(request, env, nodeId); return json(await getLatencyAgentTargets(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agent/results' && m === 'POST') { await ensureV6Schema(env); const body = await safeJson(request); await requireLatencyAgentForId(request, env, body.node_id); return json(await submitLatencyAgentResults(request, env, body), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/latency-agent/update-policy' && m === 'GET') { const nodeId = url.searchParams.get('node_id') || ''; await requireLatencyAgentForId(request, env, nodeId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getLatencyAgentUpdatePolicy(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/latency-agent/update-policy' && m === 'GET') { await ensureV6Schema(env); const nodeId = url.searchParams.get('node_id') || ''; await requireLatencyAgentForId(request, env, nodeId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getLatencyAgentUpdatePolicy(env), 200, env, { 'cache-control': 'no-store' }); }
 
   // TOTP
   if (path === '/api/totp/setup' && m === 'POST') { await withAdmin(request, env); return setupTOTP(env); }
@@ -285,7 +285,7 @@ async function dispatchStatic(env, url, request, ctx) {
 
   // Stats & maintenance
   if (path === '/api/stats' && m === 'GET') { await withAdmin(request, env); return json(await getStats(env), 200, env); }
-  if (path === '/api/agent/install-command' && m === 'GET') { await withAdmin(request, env); return json(await getAgentInstallCommand(env, url, request), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/agent/install-command' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getAgentInstallCommand(env, url, request), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agent/install-command' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getLatencyAgentInstallCommand(env, url, request), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/maintenance/cleanup' && m === 'POST') { await withAdmin(request, env); const body = await safeJson(request).catch(() => ({})); return json({ ok: true, d1: await cleanupVolatileHistory(env, body), r2: await cleanupAgentMetricsR2(env, body) }, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/extensions/manage' && m === 'GET') { await withAdmin(request, env); return json(await listManagedExtensions(env), 200, env, { 'cache-control': 'no-store' }); }

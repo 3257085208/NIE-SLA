@@ -46,110 +46,14 @@
       "REGION_PROXY": {
         "description": "执行可选区域探测的 Durable Object；Cloudflare 会自动配置，无需填写。"
       },
-      "PUBLIC_SITE_NAME": {
-        "description": "状态页默认名称，部署后还可以在后台修改；通常保留 `NIE-SLA`。"
-      },
       "ADMIN_USERNAME": {
-        "description": "后台管理员账号，默认是 `admin`，可以在这里改成自己的账号名。"
+        "description": "必填：后台管理员账号，使用 3-64 位字母、数字或 . _ @ -。"
       },
       "ADMIN_PASSWORD": {
-        "description": "后台管理员密码。请使用密码管理器生成至少 20 位随机密码，不要与其他服务复用。"
-      },
-      "AGENT_TOKEN": {
-        "description": "Agent 主密钥，用于派生每台节点的独立 Token。请使用另一个至少 32 字节随机值。"
+        "description": "必填：后台管理员密码，请使用至少 20 位且不与其他服务复用的随机密码。"
       },
       "TOTP_ENCRYPTION_KEY": {
-        "description": "TOTP 密钥加密主密钥。请使用第三个至少 32 字节随机值。"
-      },
-      "TIMEZONE_OFFSET_MINUTES": {
-        "description": "本地时区相对 UTC 的分钟偏移；`480` 表示中国标准时间 UTC+8。"
-      },
-      "CONCURRENCY": {
-        "description": "单轮 Cloudflare 探测的最大并发数，默认 `40`；新手无需修改。"
-      },
-      "MAX_TARGETS_PER_RUN": {
-        "description": "每次定时任务最多处理的监控目标数，默认 `60`；新手无需修改。"
-      },
-      "CHECKS_DEFAULT_LIMIT": {
-        "description": "公开接口默认最多返回的 SLA 检查点数，默认 `864`；通常无需修改。"
-      },
-      "CHECKS_WINDOW_HOURS": {
-        "description": "默认 SLA 历史查询窗口，单位为小时；`72` 表示最近 3 天。"
-      },
-      "INCIDENTS_TO_D1": {
-        "description": "是否把故障和恢复事件写入 D1；建议保持 `true`。"
-      },
-      "PUBLIC_MASK_IPS": {
-        "description": "是否在公开页面隐藏节点 IP 和端口；为保护隐私，建议保持 `true`。"
-      },
-      "AGENT_METRICS_RETENTION_HOURS": {
-        "description": "D1 中 Agent 指标的保留时长，单位为小时；默认 `6`。"
-      },
-      "AGENT_METRICS_POINTS_PER_REPORT": {
-        "description": "每次 Agent 上报保留的采样点数量，默认 `6`；通常无需修改。"
-      },
-      "AGENT_METRICS_R2_RETENTION_HOURS": {
-        "description": "R2 中 Agent 高频指标的保留时长，单位为小时；默认 `72`。"
-      },
-      "AGENT_METRICS_PUBLIC_MAX_HOURS": {
-        "description": "公开页面最多允许查询多少小时的 Agent 指标；默认 `72`。"
-      },
-      "AGENT_METRICS_HARD_MAX_POINTS": {
-        "description": "单次 Agent 指标查询允许返回的绝对最大点数；默认 `4000`。"
-      },
-      "AGENT_METRICS_MAX_POINTS_1H": {
-        "description": "查询最近 1 小时时最多返回的 Agent 指标点数；默认 `3600`。"
-      },
-      "AGENT_METRICS_MAX_POINTS_6H": {
-        "description": "查询最近 6 小时时最多返回的 Agent 指标点数；默认 `1800`。"
-      },
-      "AGENT_METRICS_MAX_POINTS_24H": {
-        "description": "查询最近 24 小时时最多返回的 Agent 指标点数；默认 `1200`。"
-      },
-      "AGENT_PINGS_PUBLIC_MAX_HOURS": {
-        "description": "公开页面最多允许查询多少小时的 Agent Ping 历史；默认 `72`。"
-      },
-      "AGENT_PINGS_HARD_MAX_POINTS_PER_TARGET": {
-        "description": "单个 Ping 目标一次查询允许返回的最大点数；默认 `2000`。"
-      },
-      "MISSED_BACKFILL_GRACE_SEC": {
-        "description": "漏检回填的宽限时间，单位为秒；默认 `150`，通常无需修改。"
-      },
-      "STATUS_CACHE_TTL": {
-        "description": "公开状态缓存时间，单位为秒；默认 `20`。"
-      },
-      "STATUS_SNAPSHOT_EVERY_SEC": {
-        "description": "当前状态快照的写入间隔，单位为秒；默认 `60`。"
-      },
-      "STATUS_SNAPSHOT_MAX_AGE_SEC": {
-        "description": "状态快照允许使用的最大年龄，单位为秒；默认 `150`。"
-      },
-      "AGENT_METRICS_TO_D1": {
-        "description": "是否把高频 Agent 指标同时写入 D1；免费套餐建议保持 `false`。"
-      },
-      "AGENT_PINGS_TO_D1": {
-        "description": "是否把高频 Agent Ping 同时写入 D1；免费套餐建议保持 `false`。"
-      },
-      "PING_HISTORY_RETENTION_HOURS": {
-        "description": "D1 中 Ping 历史的保留时长，单位为小时；默认 `6`。"
-      },
-      "RATE_LIMIT_D1": {
-        "description": "是否使用 D1 提供跨 Worker 实例的持久限流；建议保持 `true`。"
-      },
-      "MISSED_WRITE_BACKFILL_MAX_BUCKETS": {
-        "description": "单次最多补写的遗漏 SLA 时间桶数量；默认 `6`。"
-      },
-      "ALERT_MAX_MESSAGES_PER_RUN": {
-        "description": "每轮定时任务最多发送的告警消息数；默认 `30`。"
-      },
-      "FAST_STATUS_ENABLED": {
-        "description": "是否启用分钟级当前状态探测；建议保持 `true`。"
-      },
-      "FAST_STATUS_INTERVAL_SEC": {
-        "description": "当前状态快速探测间隔，单位为秒；默认 `60`。"
-      },
-      "FAST_STATUS_MAX_TARGETS": {
-        "description": "每轮快速状态探测最多处理的目标数；默认 `50`。"
+        "description": "必填：用于加密 TOTP 与节点 Token 明文副本，请使用至少 32 字节的独立随机值。"
       }
     }
   }

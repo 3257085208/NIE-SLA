@@ -129,12 +129,14 @@ TCP：
 对 TCP/VPS 目标点击“部署 Agent”：
 
 1. Worker 读取目标 ID。
-2. 使用主 `AGENT_TOKEN` 派生只属于该 ID 的 scoped Token。
+2. 首次生成命令时创建只属于该 ID 的随机 Token；D1 保存哈希，并保存由 `TOTP_ENCRYPTION_KEY` 加密的明文副本供以后再次查看命令。
 3. 根据当前公开前端 Origin 生成安装下载地址。
 4. 固定期望版本和 manifest SHA-256。
 5. 返回 Linux/Windows 命令。
 
 完整命令含节点 Token，等同凭据。不要贴到公开聊天、Issue 或截图。
+
+旧部署如果仍配置 `AGENT_TOKEN`，会继续使用原来的派生 Token，升级后现有 Agent 不会因此掉线。新部署不需要配置全局 Agent Token。
 
 ## Latency 节点
 

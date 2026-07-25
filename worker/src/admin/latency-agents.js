@@ -1,4 +1,5 @@
-import { safeJson, latencyAgentScopedToken } from '../auth.js';
+import { safeJson } from '../auth.js';
+import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { clamp, nowSec, parseBoolean, sanitizeAgentId } from '../utils.js';
 import { agentApiBase, agentInstallBase, shellQuote } from './install-command.js';
 import { getPublicSettings } from './settings.js';
@@ -35,6 +36,7 @@ export async function deleteLatencyAgent(id, env) {
   const cleanId = sanitizeAgentId(id);
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM latency_results WHERE node_id = ?`).bind(cleanId),
+    env.DB.prepare(`DELETE FROM agent_credentials WHERE subject_type = 'latency' AND subject_id = ?`).bind(cleanId),
     env.DB.prepare(`DELETE FROM latency_agents WHERE id = ?`).bind(cleanId),
   ]);
   return { ok: true, id: cleanId };
@@ -45,7 +47,7 @@ export async function getLatencyAgentInstallCommand(env, url, request = null) {
   if (!nodeId) return { ok: false, error: '必须提供 node_id' };
   const node = await env.DB.prepare(`SELECT id, name FROM latency_agents WHERE id = ?`).bind(nodeId).first().catch(() => null);
   if (!node) return { ok: false, error: 'Latency 节点不存在' };
-  const token = await latencyAgentScopedToken(env, nodeId);
+  const token = await getOrCreateAgentToken(env, 'latency', nodeId);
   if (!token) return { ok: false, error: '生成 Latency 节点专用 Token 失败' };
   const installBase = agentInstallBase(env, request);
   if (!installBase) return { ok: false, error: 'Latency 安装地址不可用，请配置 PUBLIC_AGENT_INSTALL_BASE' };

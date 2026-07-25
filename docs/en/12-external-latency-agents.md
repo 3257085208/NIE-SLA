@@ -91,7 +91,7 @@ Older Python `urllib` defaults may be rejected by Cloudflare Browser Integrity C
 
 ### HTTP 401
 
-The token and node ID do not match, a command from another node was reused, or the Worker `AGENT_TOKEN` changed. Generate a new command for this node and reinstall it instead of assembling a token manually.
+The token and node ID do not match, or a command from another node was reused. Legacy deployments that still use a global `AGENT_TOKEN` will also invalidate old derived tokens if that secret changes. Generate a new command for this node and reinstall it instead of assembling a token manually.
 
 ### Cloudflare 1010 or 403
 

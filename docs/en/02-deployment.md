@@ -2,20 +2,17 @@
 
 The recommended deployment runs in the browser. Prepare a GitHub account, a Cloudflare account, and these values:
 
-The project supports a separate Pages frontend and Worker API, but Cloudflare's deploy button currently supports Workers applications only. This flow therefore serves the frontend through Workers Static Assets on the same Worker as the API. It produces one `workers.dev` entry point and does not require a separate Pages project.
-
 | Name | Value |
 | --- | --- |
 | `ADMIN_USERNAME` | Admin username, for example `admin` |
 | `ADMIN_PASSWORD` | Unique password with at least 20 characters |
-| `AGENT_TOKEN` | Independent random value of at least 32 bytes |
-| `TOTP_ENCRYPTION_KEY` | A different random value of at least 32 bytes |
+| `TOTP_ENCRYPTION_KEY` | An independent random value of at least 32 bytes |
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
 
-Authorize GitHub and Cloudflare, enter the four values, and start the deployment. Cloudflare builds the Worker and frontend and creates D1, R2, the Durable Object, and the one-minute cron trigger.
+Authorize GitHub and Cloudflare, enter the three values, and start the deployment. Internal tuning settings use fixed safe defaults and are not shown in the form. Cloudflare builds the Worker and frontend and creates D1, R2, the Durable Object, and the one-minute cron trigger.
 
-If the result is `https://project.account.workers.dev`, open `https://project.account.workers.dev/admin` and sign in with the configured username and password. Enable TOTP from Settings, add a VPS under Agents, and run the generated command on that VPS.
+If the result is `https://project.account.workers.dev`, open `https://project.account.workers.dev/admin` and sign in with the configured username and password. Enable TOTP from Settings, add a VPS under Agents, and run the generated command on that VPS. The Worker creates a random credential for each Agent automatically; new deployments do not need a global `AGENT_TOKEN`.
 
 Current status uses a lightweight one-minute R2 layer. SLA history remains in five-minute D1 buckets to protect free-tier write capacity.
 

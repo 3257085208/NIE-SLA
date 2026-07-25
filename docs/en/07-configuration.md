@@ -5,18 +5,18 @@
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PUBLIC_SITE_NAME` | `NIE-SLA` | Public site name |
-| `ADMIN_USERNAME` | `admin` | Admin username |
+| `ADMIN_USERNAME` | required for new deployments | Admin username; legacy deployments fall back to `admin` |
 | `PUBLIC_WORKER_URL` | empty | Public Worker URL |
 | `PUBLIC_AGENT_INSTALL_BASE` | auto | Installer/download base |
 | `ALLOWED_ORIGIN` | empty | CORS origin |
 | `DEVELOPER_API_ORIGINS` | empty | Exact comma-separated browser origins for read-only `/api/v1`; no wildcard |
 | `TIMEZONE_OFFSET_MINUTES` | `480` | Timezone offset |
-| `CONCURRENCY` | `8` | Probe concurrency |
+| `CONCURRENCY` | `40` | Probe concurrency |
 | `MAX_TARGETS_PER_RUN` | `60` | Cron probe cap |
 | `FAST_STATUS_ENABLED` | `true` | Enable lightweight R2 current-status probes |
 | `FAST_STATUS_INTERVAL_SEC` | `60` | Current-status interval, bounded to 60-300 seconds |
 | `FAST_STATUS_MAX_TARGETS` | `50` | Maximum fast targets per cron invocation |
-| `STATUS_CACHE_TTL` | `45` | Status cache seconds |
+| `STATUS_CACHE_TTL` | `20` | Status cache seconds |
 | `AGENT_OFFLINE_AFTER_SEC` | `900` | Heartbeat gap before an Agent is considered offline |
 | `AGENT_AVAILABILITY_RETENTION_DAYS` | `90` | Daily Agent heartbeat availability retention, bounded to 30-180 days |
 | `AGENT_METRICS_TO_D1` | `false` | Store metric history in D1 |
@@ -35,8 +35,8 @@
 | Secret | Purpose |
 | --- | --- |
 | `ADMIN_PASSWORD` | Admin password; existing deployments temporarily fall back to `ADMIN_TOKEN` |
-| `AGENT_TOKEN` | Agent authentication |
-| `TOTP_ENCRYPTION_KEY` | TOTP secret encryption |
+| `TOTP_ENCRYPTION_KEY` | Encrypts TOTP secrets and recoverable per-node Agent token copies; required for new deployments |
+| `AGENT_TOKEN` | Legacy global/scoped Agent authentication compatibility; omit on new deployments |
 | `TELEGRAM_BOT_TOKEN` | Optional Telegram bot token |
 | `RESEND_API_KEY` | Optional Resend email API key |
 | `GITHUB_OAUTH_CLIENT_SECRET` | Optional GitHub OAuth secret |

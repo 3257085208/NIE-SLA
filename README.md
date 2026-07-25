@@ -30,19 +30,18 @@ NIE-SLA 支持“Pages 前端 + Worker API”分离部署。由于 Cloudflare �
 
 1. 点击上方 **Deploy to Cloudflare**。
 2. 按页面提示登录 GitHub 和 Cloudflare 并完成授权。
-3. 填写后台账号、后台密码和两段独立密钥。
+3. 填写后台账号、后台密码和一段独立加密密钥。
 4. 等待构建完成，打开 Cloudflare 给出的 `workers.dev` 地址。
 
 需要填写：
 
 | 配置 | 用途 |
 | --- | --- |
-| `ADMIN_USERNAME` | 后台管理员账号，默认可用 `admin` |
+| `ADMIN_USERNAME` | 后台管理员账号，创建时必填 |
 | `ADMIN_PASSWORD` | 后台管理员密码，建议至少 20 位 |
-| `AGENT_TOKEN` | 生成每台 Agent 的独立凭据 |
-| `TOTP_ENCRYPTION_KEY` | 加密 TOTP 密钥 |
+| `TOTP_ENCRYPTION_KEY` | 加密 TOTP 和节点 Token 明文副本，至少 32 字节 |
 
-密码与两段密钥必须不同，也不要公开。
+密码与加密密钥必须不同，也不要公开。Agent Token 会在后台首次生成部署命令时按节点自动创建，不需要填写全局 Token。探测并发、限流、历史保留等内部参数使用固定安全默认值，不会出现在部署表单中。
 
 部署成功后，管理后台地址为：
 
@@ -141,7 +140,7 @@ Rust Agent on VPS
 
 ## 安全要点
 
-- `ADMIN_PASSWORD`、`AGENT_TOKEN` 和 `TOTP_ENCRYPTION_KEY` 必须不同。
+- `ADMIN_PASSWORD` 和 `TOTP_ENCRYPTION_KEY` 必须不同；每个 Agent 使用后台自动生成的随机独立 Token。
 - 密码只进入登录端点；后台 API 统一使用 24 小时 Session，D1 只保存 Session SHA-256 哈希。
 - GitHub OAuth 默认关闭；启用时必须同时配置 Client ID、Client Secret 和 GitHub 用户名白名单。
 - OAuth state 有时效并绑定 HttpOnly Cookie，登录票据短期、一次使用，TOTP 不能被 OAuth 绕过。

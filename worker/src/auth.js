@@ -1,15 +1,14 @@
-import { sanitizeAgentId, sha256Hex } from './utils.js';
+import { sanitizeAgentId } from './utils.js';
+import { findAgentCredential, legacyScopedToken, verifyAgentCredential } from './agent-credentials.js';
 
 export function requireAgent(request, env) {
   const configured = env.AGENT_TOKEN;
-  if (!configured) throw new ApiError(500, '未配置身份验证');
   const token = bearerToken(request);
-  if (!token || !constantTimeEqual(token, configured)) throw new ApiError(401, '未授权');
+  if (!configured || !token || !constantTimeEqual(token, configured)) throw new ApiError(401, '未授权');
 }
 
 export async function requireAgentForId(request, env, agentId) {
   const configured = String(env.AGENT_TOKEN || '').trim();
-  if (!configured) throw new ApiError(500, '未配置身份验证');
   const id = String(agentId || '').trim();
   if (!id || !env.DB) throw new ApiError(401, '未授权');
   let target = await env.DB.prepare(`SELECT id FROM targets WHERE id = ? AND enabled = 1`).bind(id).first().catch(() => null);
@@ -20,7 +19,8 @@ export async function requireAgentForId(request, env, agentId) {
   if (!target) throw new ApiError(401, 'Agent 目标不存在或已禁用');
   const token = bearerToken(request);
   if (!token) throw new ApiError(401, '未授权');
-  if (constantTimeEqual(token, configured)) return { type: 'global' };
+  if (configured && constantTimeEqual(token, configured)) return { type: 'global' };
+  if (await verifyAgentCredential(env, 'agent', id, token)) return { type: 'scoped', agent_id: id };
   const scoped = await agentScopedToken(env, id);
   if (scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', agent_id: id };
   throw new ApiError(401, '未授权');
@@ -28,11 +28,15 @@ export async function requireAgentForId(request, env, agentId) {
 
 export async function requireAnyAgent(request, env) {
   const configured = String(env.AGENT_TOKEN || '').trim();
-  if (!configured) throw new ApiError(500, '未配置身份验证');
   const token = bearerToken(request);
   if (!token) throw new ApiError(401, '未授权');
-  if (constantTimeEqual(token, configured)) return { type: 'global' };
+  if (configured && constantTimeEqual(token, configured)) return { type: 'global' };
   if (!env.DB) throw new ApiError(401, '未授权');
+  const credential = await findAgentCredential(env, token);
+  if (credential) {
+    const target = await env.DB.prepare(`SELECT id FROM targets WHERE id = ? AND enabled = 1`).bind(credential.agent_id).first().catch(() => null);
+    if (target) return { type: 'scoped', agent_id: credential.agent_id };
+  }
   const rows = await env.DB.prepare(`SELECT id FROM targets WHERE enabled = 1`).all().catch(() => ({ results: [] }));
   for (const row of rows.results || []) {
     const scoped = await agentScopedToken(env, row.id);
@@ -43,22 +47,21 @@ export async function requireAnyAgent(request, env) {
 
 export async function requireAgentIdentity(request, env, agentId) {
   const configured = String(env.AGENT_TOKEN || '').trim();
-  if (!configured) throw new ApiError(500, '未配置身份验证');
   const id = sanitizeAgentId(String(agentId || '').trim());
   if (!String(agentId || '').trim() || !id) throw new ApiError(401, '缺少有效的 Agent ID');
   const token = bearerToken(request);
   if (!token) throw new ApiError(401, '未授权');
-  if (constantTimeEqual(token, configured)) return { type: 'global', agent_id: id };
+  if (configured && constantTimeEqual(token, configured)) return { type: 'global', agent_id: id };
+  if (await verifyAgentCredential(env, 'agent', id, token)) return { type: 'scoped', agent_id: id };
   const scoped = await agentScopedToken(env, id);
   if (scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', agent_id: id };
   throw new ApiError(401, '未授权');
 }
 
 export async function agentScopedToken(env, agentId) {
-  const configured = String(env.AGENT_TOKEN || '').trim();
   const id = String(agentId || '').trim();
-  if (!configured || !id) return '';
-  return `nst_${(await sha256Hex(`${configured}:${id}`)).slice(0, 48)}`;
+  if (!id) return '';
+  return legacyScopedToken(env, 'agent', id);
 }
 
 export async function requireLatencyAgentForId(request, env, nodeId) {
@@ -68,15 +71,15 @@ export async function requireLatencyAgentForId(request, env, nodeId) {
   if (!node) throw new ApiError(401, 'Latency 节点不存在或已禁用');
   const token = bearerToken(request);
   const globalToken = String(env.AGENT_TOKEN || '').trim();
-  if (!globalToken) throw new ApiError(500, '未配置身份验证');
-  if (token && constantTimeEqual(token, globalToken)) return { type: 'global', node_id: id };
+  if (token && globalToken && constantTimeEqual(token, globalToken)) return { type: 'global', node_id: id };
+  if (token && await verifyAgentCredential(env, 'latency', id, token)) return { type: 'scoped', node_id: id };
   const scoped = await latencyAgentScopedToken(env, id);
   if (token && scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', node_id: id };
   throw new ApiError(401, '未授权');
 }
 
 export async function latencyAgentScopedToken(env, nodeId) {
-  return agentScopedToken(env, `latency:${sanitizeAgentId(nodeId)}`);
+  return legacyScopedToken(env, 'latency', sanitizeAgentId(nodeId));
 }
 
 export function bearerToken(request) {

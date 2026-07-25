@@ -53,18 +53,24 @@ assert.ok(wrangler.durable_objects?.bindings?.[0]?.class_name);
 assert.deepEqual(wrangler.triggers?.crons, ['* * * * *']);
 
 const describedBindings = packageJson.cloudflare?.bindings || {};
+const requiredInputs = ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'TOTP_ENCRYPTION_KEY'];
 const deployBindingNames = [
   ...Object.keys(wrangler.vars || {}),
   wrangler.assets?.binding,
   ...wrangler.d1_databases.map(item => item.binding),
   ...wrangler.r2_buckets.map(item => item.binding),
   ...wrangler.durable_objects.bindings.map(item => item.name),
-  'ADMIN_PASSWORD',
-  'AGENT_TOKEN',
-  'TOTP_ENCRYPTION_KEY',
+  ...requiredInputs,
 ].filter(Boolean);
 
 assert.match(packageJson.cloudflare?.label || '', /\p{Script=Han}/u, 'deploy label should include Chinese');
+assert.deepEqual(wrangler.vars || {}, {}, 'one-click deploy must not expose internal tuning defaults');
+assert.deepEqual(
+  Object.keys(describedBindings).sort(),
+  ['ADMIN_PASSWORD', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'REGION_PROXY', 'TOTP_ENCRYPTION_KEY'].sort(),
+  'deploy form should only describe automatic resources and required inputs',
+);
+assert.equal('AGENT_TOKEN' in describedBindings, false, 'new deployments generate per-node Agent tokens');
 for (const name of new Set(deployBindingNames)) {
   assert.match(
     describedBindings[name]?.description || '',
@@ -77,9 +83,10 @@ const pnpmWorkspace = await readFile(path.join(root, 'pnpm-workspace.yaml'), 'ut
 assert.match(pnpmWorkspace, /^packages:\s*\n\s+-\s+["']?\.["']?\s*$/m, 'pnpm workspace must include the root package');
 
 const secretExample = await readFile(path.join(root, '.dev.vars.example'), 'utf8');
-for (const name of ['ADMIN_PASSWORD', 'AGENT_TOKEN', 'TOTP_ENCRYPTION_KEY']) {
+for (const name of requiredInputs) {
   assert.match(secretExample, new RegExp(`^${name}=\\s*(?:#.*)?$`, 'm'), `${name} must require per-deployment input`);
 }
+assert.doesNotMatch(secretExample, /^AGENT_TOKEN=/m, 'new deployments must not ask for a global Agent token');
 assert.doesNotMatch(secretExample, /replace-with-|change-me|example-secret/i, 'deploy secrets must not have reusable defaults');
 
 console.log(`one-click build passed (${verified} Agent binaries, ${version})`);
