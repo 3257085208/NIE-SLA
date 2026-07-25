@@ -12,11 +12,11 @@ For split Pages deployments, keep the root Pages Function and configure `NSTATUS
 
 ## Application updates
 
-**Settings → System update** displays the current application version, latest stable version, publication time, and changelog. Application releases use `app-v*` tags and are separate from the Agent binary `v*` releases.
+**Settings → System update** displays the current application version, latest stable version, and publication time. The changelog and update instructions open in admin dialogs. Application releases use `app-v*` tags and remain separate from Agent binary `v*` releases.
 
-A Worker cannot rewrite its own deployment without control-plane authorization. The online update button therefore dispatches the `NIE-SLA Online Update` workflow in the user's deployment repository. The workflow merges the official stable application tag while retaining the repository's `wrangler.jsonc` resource bindings, then runs the build, tests, security checks, and Wrangler dry-run before pushing. Cloudflare deploys that tested commit and keeps the previous successful deployment until the new build succeeds.
+The deployment repository runs `NIE-SLA Online Update` every six hours. It preserves `wrangler.jsonc`, applies only a verified official stable tag, and runs security checks, application tests, and a Wrangler dry run before pushing. Cloudflare deploys the tested commit while retaining the previous successful deployment until the new build succeeds. No GitHub or Cloudflare token is entered in the admin UI.
 
-Enable Actions and grant workflow read/write permission under **Settings → Actions → General**. At update time, enter the deployment repository as `owner/repo` and a fine-grained GitHub token limited to that repository with Actions write access. The token is used for that dispatch request only and is never stored in D1, Worker variables, logs, or browser storage. Deployments older than `1.0.21` need one manual synchronization before this workflow becomes available.
+For an immediate check, open **Actions → NIE-SLA Online Update** in the deployment repository and click **Run workflow** without parameters. If GitHub reports a push permission error, enable read/write workflow permission under **Settings → Actions → General**. Deployments older than `1.0.22` need one manual synchronization to receive this workflow.
 
 ## Targets
 

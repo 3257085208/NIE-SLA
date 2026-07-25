@@ -116,6 +116,7 @@ curl -X POST https://YOUR-API/api/targets \
 | GET/PATCH | `/api/alerts/settings` | 报警设置 |
 | POST | `/api/alerts/test` | 测试 Telegram 或邮件；body 使用 `channel` |
 | POST | `/api/alerts/check` | 立即计算报警 |
+| GET | `/api/system/update` | 读取当前版本、官方稳定版本与站内更新日志 |
 | GET/PATCH | `/api/auth/account` | 读取或修改管理员账号；PATCH 需要当前密码，启用 TOTP 时还需验证码 |
 | GET | `/api/stats` | 存储统计 |
 | POST | `/api/maintenance/cleanup` | 手动清理 |

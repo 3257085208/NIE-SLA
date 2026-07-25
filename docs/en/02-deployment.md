@@ -48,13 +48,8 @@ After login, **Settings → Administrator account** can migrate the initial envi
 
 On an existing deployment, the default username is `admin`. If `ADMIN_PASSWORD` is not set yet, the existing `ADMIN_TOKEN` is accepted as the temporary password. Set a dedicated `ADMIN_PASSWORD` after the upgrade.
 
-Starting with `1.0.21`, one-click installations expose **Settings → System update**. It shows the installed and latest application versions, publication time, and changelog. Before the first online update:
+Starting with `1.0.22`, each one-click deployment repository checks the official stable version every six hours. When an update is available, the workflow preserves the existing `wrangler.jsonc`, runs security checks, application tests, and a Wrangler dry run, then commits the verified update for Cloudflare to redeploy. No repository name, GitHub token, or Cloudflare token is requested.
 
-1. In the deployment repository, allow read and write workflow permissions under **Settings → Actions → General**.
-2. Create a fine-grained GitHub personal access token scoped only to that repository with `Actions: Read and write`.
-3. Enter the deployment repository as `owner/repo`, paste the one-time token, and start the update.
-4. Follow the provided GitHub Actions link. The workflow builds, tests, and performs a Wrangler dry run before it pushes anything; Cloudflare then redeploys the new commit automatically.
-
-The token is sent to GitHub for that request only and is never stored in D1, Worker variables, or the browser. The workflow always restores the deployment repository's existing `wrangler.jsonc`, preserving its D1, R2, and Durable Object bindings. Installations older than `1.0.21` need one manual upstream sync before the update center can be used.
+To check immediately, open the generated repository, select **Actions → NIE-SLA Online Update**, and click **Run workflow** without entering any parameters. **Settings → System update** shows version information and opens the changelog and instructions in local dialogs. If GitHub reports a push permission error, enable read/write workflow permission under **Settings → Actions → General**. Installations older than `1.0.22` need one manual upstream sync to receive the no-input workflow.
 
 See [Admin](03-admin.md), [Agent](04-agent.md), [Alerts](06-alerts.md), [External Latency Agents](12-external-latency-agents.md), and [Extensions](13-extensions-developer-guide.md).

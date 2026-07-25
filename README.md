@@ -64,9 +64,9 @@ https://你的项目.你的账号.workers.dev/你填写的后台路径
 
 ## 在线更新
 
-`1.0.21` 及以上版本会在后台“设置 → 系统更新”显示当前版本、最新版本、发布时间和更新日志。更新由部署仓库中的 GitHub Actions 完成：它只接受官方 `app-vX.Y.Z` 稳定标签，保留当前 `wrangler.jsonc` 中的 Cloudflare 绑定，并在提交前完成构建、完整测试与 Wrangler dry-run。通过后推送的新提交会由 Cloudflare 自动重新部署。
+`1.0.22` 及以上版本的部署仓库默认每 6 小时检查官方稳定版本。发现更新后，GitHub Actions 会保留现有 `wrangler.jsonc` 中的 Cloudflare 绑定，执行安全扫描、应用测试和 Wrangler dry-run，通过后提交更新并由 Cloudflare 自动重新部署。后台“设置 → 系统更新”可检查版本，并通过站内弹窗查看更新日志和操作指引。
 
-首次使用时，需要允许部署仓库的工作流写入内容，并提供一个只授权给该仓库、具有 `Actions: Read and write` 权限的 GitHub fine-grained token。Token 只用于当次调度，不会保存到 D1、Worker 环境变量或浏览器。低于 `1.0.21` 的旧实例先手动同步一次官方仓库，之后即可在后台完成更新。具体步骤见[快速上手](https://nie-sla.pages.dev/quickstart/#后续在线更新)。
+整个过程不要求填写部署仓库、GitHub Token 或 Cloudflare Token。需要立即检查时，只需在部署仓库的 **Actions → NIE-SLA Online Update** 点击 **Run workflow**，无需填写参数。低于 `1.0.22` 的旧实例需先手动同步一次官方仓库。具体步骤见[快速上手](https://nie-sla.pages.dev/quickstart/#后续在线更新)。
 
 ## 主要功能
 
@@ -82,7 +82,7 @@ https://你的项目.你的账号.workers.dev/你填写的后台路径
 | 告警 | Telegram 与邮件发送离线、恢复、资源、流量和到期提醒 |
 | 扩展 | 后台分别上传主题 ZIP 和插件 ZIP |
 | 安全 | 账号密码 Session、GitHub OAuth 白名单、TOTP、每节点 scoped Token、SHA-256 更新校验 |
-| 应用更新 | 后台版本检查、更新日志、受控在线更新与部署前完整验证 |
+| 应用更新 | 每 6 小时自动检查、站内更新日志、无参数手动运行与部署前验证 |
 
 ## 监控链路
 

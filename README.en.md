@@ -31,9 +31,9 @@ See the canonical [Cloudflare Quick Start](https://nie-sla.pages.dev/quickstart/
 
 ## Online Updates
 
-Version `1.0.21` and newer expose **Settings → System update**, including the installed version, latest stable version, publication time, and changelog. Updates run in the deployment repository's GitHub Actions workflow. It accepts only official `app-vX.Y.Z` tags, preserves the existing Cloudflare bindings in `wrangler.jsonc`, and runs the build, full test suite, and Wrangler dry run before pushing. Cloudflare automatically redeploys the verified commit.
+Version `1.0.22` and newer check the official stable application version every six hours from the deployment repository. The workflow preserves the existing Cloudflare bindings in `wrangler.jsonc`, runs security checks, application tests, and a Wrangler dry run, then lets Cloudflare redeploy the verified commit. **Settings → System update** checks versions and opens the changelog and instructions in local dialogs.
 
-The first update requires read/write workflow permissions and a fine-grained GitHub token scoped only to the deployment repository with `Actions: Read and write`. The token is used for that dispatch only and is not stored in D1, Worker variables, or browser storage. Deployments older than `1.0.21` need one manual upstream sync before they can use the update center.
+No deployment repository, GitHub token, or Cloudflare token is entered in the admin UI. For an immediate check, open **Actions → NIE-SLA Online Update** in the generated repository and click **Run workflow** without parameters. Deployments older than `1.0.22` need one manual upstream sync first.
 
 ## Features
 

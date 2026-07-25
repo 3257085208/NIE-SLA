@@ -2,15 +2,8 @@ name: NIE-SLA Online Update
 
 on:
   workflow_dispatch:
-    inputs:
-      source_ref:
-        description: Official stable application tag
-        required: true
-        type: string
-      expected_version:
-        description: Expected application version
-        required: true
-        type: string
+  schedule:
+    - cron: "17 */6 * * *"
 
 permissions:
   contents: write
@@ -21,61 +14,70 @@ concurrency:
 
 jobs:
   update:
-    name: Verify and apply official update
+    name: Check and apply official update
     if: github.repository != '3257085208/NIE-SLA'
     runs-on: ubuntu-latest
     env:
       OFFICIAL_REPOSITORY: https://github.com/3257085208/NIE-SLA.git
-      SOURCE_REF: ${{ inputs.source_ref }}
-      EXPECTED_VERSION: ${{ inputs.expected_version }}
+      OFFICIAL_MANIFEST: https://raw.githubusercontent.com/3257085208/NIE-SLA/main/update-manifest.json
     steps:
       - name: Check out deployment repository
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - name: Validate requested stable version
+      - name: Resolve latest stable version
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$SOURCE_REF" =~ ^app-v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid source_ref" >&2; exit 1; }
-          [[ "$EXPECTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid expected_version" >&2; exit 1; }
-          [[ "$SOURCE_REF" == "app-v$EXPECTED_VERSION" ]] || { echo "Version and tag do not match" >&2; exit 1; }
-          test -f wrangler.jsonc || { echo "Deployment wrangler.jsonc is missing" >&2; exit 1; }
-
-      - name: Fetch and verify official target
-        shell: bash
-        run: |
-          set -euo pipefail
-          git remote remove nie-sla-upstream 2>/dev/null || true
-          git remote add nie-sla-upstream "$OFFICIAL_REPOSITORY"
-          git fetch --force --no-tags nie-sla-upstream "+refs/tags/$SOURCE_REF:refs/tags/$SOURCE_REF"
-          git cat-file -e "refs/tags/$SOURCE_REF^{commit}"
-          git show "refs/tags/$SOURCE_REF:update-manifest.json" > "$RUNNER_TEMP/update-manifest.json"
+          curl --fail --silent --show-error --location --retry 3 \
+            --proto '=https' --tlsv1.2 \
+            "$OFFICIAL_MANIFEST" -o "$RUNNER_TEMP/update-manifest.json"
           node --input-type=module <<'NODE'
           import { appendFileSync } from 'node:fs';
           import { readFile } from 'node:fs/promises';
+
           const manifest = JSON.parse(await readFile(process.env.RUNNER_TEMP + '/update-manifest.json', 'utf8'));
           if (manifest.schema !== 'nie-sla-app-update-v1') throw new Error('Unsupported update manifest');
-          if (manifest.version !== process.env.EXPECTED_VERSION) throw new Error('Manifest version mismatch');
-          if (manifest.source_ref !== process.env.SOURCE_REF) throw new Error('Manifest tag mismatch');
+          if (!/^\d+\.\d+\.\d+$/.test(manifest.version || '')) throw new Error('Invalid update version');
+          if (manifest.source_ref !== `app-v${manifest.version}`) throw new Error('Manifest tag mismatch');
+
           const source = await readFile('worker/src/version.js', 'utf8');
-          const current = source.match(/VERSION\s*=\s*['\"]([^'\"]+)['\"]/u)?.[1];
+          const current = source.match(/VERSION\s*=\s*['"]([^'"]+)['"]/u)?.[1];
           if (!/^\d+\.\d+\.\d+$/.test(current || '')) throw new Error('Current Worker version is invalid');
-          const parts = (value) => value.split('.').map(Number);
           const compare = (left, right) => {
-            const a = parts(left);
-            const b = parts(right);
+            const a = left.split('.').map(Number);
+            const b = right.split('.').map(Number);
             for (let index = 0; index < 3; index += 1) {
               if (a[index] !== b[index]) return a[index] - b[index];
             }
             return 0;
           };
-          if (compare(manifest.version, current) <= 0) throw new Error(`Target ${manifest.version} is not newer than ${current}`);
-          appendFileSync(process.env.GITHUB_ENV, `CURRENT_VERSION=${current}\nCURRENT_REF=app-v${current}\n`);
+          appendFileSync(process.env.GITHUB_ENV, [
+            `CURRENT_VERSION=${current}`,
+            `CURRENT_REF=app-v${current}`,
+            `EXPECTED_VERSION=${manifest.version}`,
+            `SOURCE_REF=${manifest.source_ref}`,
+            `UPDATE_AVAILABLE=${compare(manifest.version, current) > 0 ? 'true' : 'false'}`,
+            '',
+          ].join('\n'));
           NODE
 
+      - name: Fetch and verify official target
+        if: env.UPDATE_AVAILABLE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f wrangler.jsonc || { echo "Deployment wrangler.jsonc is missing" >&2; exit 1; }
+          git remote remove nie-sla-upstream 2>/dev/null || true
+          git remote add nie-sla-upstream "$OFFICIAL_REPOSITORY"
+          git fetch --force --no-tags nie-sla-upstream "+refs/tags/$SOURCE_REF:refs/tags/$SOURCE_REF"
+          git cat-file -e "refs/tags/$SOURCE_REF^{commit}"
+          git show "refs/tags/$SOURCE_REF:update-manifest.json" > "$RUNNER_TEMP/tag-update-manifest.json"
+          cmp "$RUNNER_TEMP/update-manifest.json" "$RUNNER_TEMP/tag-update-manifest.json"
+
       - name: Verify local files and apply official snapshot
+        if: env.UPDATE_AVAILABLE == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -109,46 +111,49 @@ jobs:
           node --input-type=module <<'NODE'
           import { readFile } from 'node:fs/promises';
           const source = await readFile('worker/src/version.js', 'utf8');
-          const version = source.match(/VERSION\s*=\s*['\"]([^'\"]+)['\"]/u)?.[1];
+          const version = source.match(/VERSION\s*=\s*['"]([^'"]+)['"]/u)?.[1];
           if (version !== process.env.EXPECTED_VERSION) throw new Error(`Worker version mismatch: ${version || 'missing'}`);
           NODE
 
       - name: Set up pnpm
+        if: env.UPDATE_AVAILABLE == 'true'
         uses: pnpm/action-setup@v4
         with:
           version: 10.13.1
           run_install: false
+
       - name: Set up Node
+        if: env.UPDATE_AVAILABLE == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
 
-      - name: Set up full validation toolchain
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup toolchain install 1.86.0 --profile minimal
-          rustup default 1.86.0
-          rustup component add rustfmt --toolchain 1.86.0
-          rustup target add --toolchain 1.86.0 x86_64-unknown-linux-musl
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
-
       - name: Build, test, and validate deployment
+        if: env.UPDATE_AVAILABLE == 'true'
         shell: bash
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
           pnpm run build
           NIE_SLA_DEPLOYMENT_VALIDATION=1 pnpm test
-          bash test.sh
+          pnpm run test:update
           pnpm exec wrangler deploy --dry-run --outdir "$RUNNER_TEMP/wrangler-dry-run"
 
       - name: Commit verified update
+        if: env.UPDATE_AVAILABLE == 'true'
         shell: bash
         run: |
           set -euo pipefail
           git add -A
           git commit --allow-empty -m "chore: update NIE-SLA to $EXPECTED_VERSION"
           git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      - name: Report result
+        shell: bash
+        run: |
+          if [[ "$UPDATE_AVAILABLE" == "true" ]]; then
+            echo "Updated NIE-SLA from $CURRENT_VERSION to $EXPECTED_VERSION" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "NIE-SLA $CURRENT_VERSION is already up to date" >> "$GITHUB_STEP_SUMMARY"
+          fi

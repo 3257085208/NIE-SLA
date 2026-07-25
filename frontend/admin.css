@@ -229,7 +229,18 @@ h3 {
 .app-update-status .hint { margin: 0; }
 .app-update-log { margin: 8px 0 12px; padding-left: 18px; color: var(--ink-soft); font-size: 12px; }
 .app-update-log li + li { margin-top: 5px; }
+.app-update-note { line-height: 1.6; }
 .app-update-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.app-update-log-modal,
+.app-update-guide {
+  margin: 18px 0;
+  padding-left: 22px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.65;
+}
+.app-update-log-modal li + li,
+.app-update-guide li + li { margin-top: 8px; }
 .loading.compact { padding: 4px 0; }
 @media (max-width: 800px) { .appearance-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .appearance-form { grid-template-columns: 1fr; } }
@@ -636,6 +647,16 @@ th {
 }
 .modal::-webkit-scrollbar {
   display: none;
+}
+@media (max-width: 520px) {
+  .modal {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    padding: 18px;
+  }
+  .app-update-actions .btn { flex: 1 1 120px; }
+  .app-update-guide { padding-left: 20px; }
+  .app-update-guide b { overflow-wrap: anywhere; }
 }
 .ma {
   display: flex;

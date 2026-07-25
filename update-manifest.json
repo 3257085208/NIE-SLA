@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.21",
-  "source_ref": "app-v1.0.21",
-  "published_at": "2026-07-25T12:00:00Z",
-  "title": "NIE-SLA 1.0.21",
+  "version": "1.0.22",
+  "source_ref": "app-v1.0.22",
+  "published_at": "2026-07-25T13:43:44Z",
+  "title": "NIE-SLA 1.0.22",
   "changelog": [
-    "在线更新兼容 Cloudflare 创建的独立源码导入仓库",
-    "更新前校验当前官方基准，发现自定义代码时安全停止",
-    "更新前自动执行构建、测试和 Wrangler 部署预检",
-    "更新时保留用户现有的 Cloudflare D1、R2 与 Durable Object 绑定",
-    "后台可查看当前版本、最新版本、发布时间和完整更新日志"
+    "移除后台部署仓库与 GitHub Token 输入，更新过程不再收集敏感凭据",
+    "一键部署仓库默认每 6 小时自动检查并应用官方稳定更新",
+    "GitHub Actions 支持无参数手动运行，可随时立即检查更新",
+    "更新日志改为后台站内弹窗展示，不再跳转 GitHub",
+    "用户更新流程改用轻量应用验证，并继续保留现有 Cloudflare 资源绑定"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

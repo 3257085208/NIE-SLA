@@ -12,16 +12,11 @@
 
 ## 系统更新
 
-“设置 → 系统更新”显示当前 Worker/前端应用版本、官方最新稳定版本、发布时间和更新日志。点击“检查更新”会读取公开仓库中的 HTTPS 版本清单；Agent 二进制继续使用独立的 `v*` Release，不会因为应用版本变化而下载错误文件。
+“设置 → 系统更新”显示当前 Worker/前端应用版本、官方最新稳定版本和发布时间。“更新日志”通过后台站内弹窗展示；点击“检查更新”会重新读取公开的 HTTPS 版本清单。Agent 二进制继续使用独立的 `v*` Release，不会因应用版本变化而选错文件。
 
-一键部署的 Worker 不能绕过 Cloudflare 或 GitHub 权限改写自身。“在线更新”通过部署仓库自带的 `NIE-SLA Online Update` GitHub Actions 工作流完成：工作流合并官方 `app-v*` 稳定标签，保留用户仓库中的 `wrangler.jsonc` 资源绑定，运行安全扫描、构建、测试和 Wrangler dry-run，通过后提交到用户仓库，由 Cloudflare 自动重新部署。
+一键部署仓库中的 `NIE-SLA Online Update` 工作流每 6 小时自动检查官方 `app-v*` 稳定标签。发现新版本时，它会保留用户的 `wrangler.jsonc` 资源绑定，运行安全扫描、应用测试和 Wrangler dry-run，通过后提交到部署仓库，由 Cloudflare 自动重新部署。更新过程不收集 GitHub Token、Cloudflare Token 或部署仓库名。
 
-首次使用前，在部署仓库中启用 Actions，并在 `Settings → Actions → General → Workflow permissions` 允许工作流读写仓库内容。后台触发时填写：
-
-- 一键部署生成的 GitHub 仓库，格式为 `owner/repo`。
-- 只授权该仓库且只包含 Actions 写权限的 GitHub 细粒度 Token。
-
-Token 只存在于这次 HTTPS 管理请求和发往 GitHub 的请求内，不写入 D1、Worker 变量、日志或浏览器存储。触发成功后到工作流页面查看进度；Cloudflare 会继续提供上一个成功部署，直到新构建完成。旧于 `1.0.21` 的部署需要先按教程手动同步一次，获得稳定的源码导入更新工作流后才能从后台触发后续版本。
+需要立即更新时，在部署仓库的 `Actions` 页面选择 `NIE-SLA Online Update`，点击 `Run workflow` 即可，无需填写参数。后台“更新指引”弹窗也会显示这几步。若 GitHub 报告工作流没有推送权限，再到 `Settings → Actions → General → Workflow permissions` 启用读写权限。旧于 `1.0.22` 的部署需先手动同步一次官方仓库，获得新版无参数工作流。
 
 ## 登录流程
 

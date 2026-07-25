@@ -35,6 +35,7 @@ Password and GitHub OAuth login endpoints issue a short-lived admin session. Adm
 | GET/PATCH | `/api/alerts/settings` | Alert settings |
 | POST | `/api/alerts/test` | Send a Telegram or email test |
 | POST | `/api/alerts/check` | Evaluate alerts now |
+| GET | `/api/system/update` | Read installed/latest versions and the in-app changelog |
 | GET/POST | `/api/ping-targets` | Ping target management |
 | POST | `/api/totp/setup` | Setup TOTP |
 | POST | `/api/totp/verify` | Verify TOTP |

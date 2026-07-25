@@ -165,16 +165,15 @@ https://status.example.com/api/auth/github/callback
 
 ## 更新
 
-从 `1.0.21` 开始，一键部署实例可在后台“设置 → 系统更新”中查看当前版本、最新版本和更新日志。首次使用在线更新时：
+从 `1.0.22` 开始，一键部署仓库默认每 6 小时检查一次官方稳定版本。发现更新后，工作流会保留现有 `wrangler.jsonc`，完成安全扫描、应用测试和 Wrangler dry-run，再提交更新；Cloudflare 随后自动重新部署。整个过程不要求填写仓库名、GitHub Token 或 Cloudflare Token。
 
-1. 在部署仓库的 `Settings → Actions → General → Workflow permissions` 中允许工作流读写仓库内容。
-2. 创建只授权给该部署仓库的 GitHub fine-grained personal access token，并授予 `Actions: Read and write`。
-3. 在系统更新卡片填写部署仓库的 `owner/repo` 和该 Token，点击“在线更新”。
-4. 打开卡片给出的 GitHub Actions 链接查看进度。工作流通过构建、测试和 Wrangler dry-run 后才会推送更新，Cloudflare 随后自动重新部署。
+需要立即检查时：
 
-Token 只随本次请求发送给 GitHub，不会保存到 D1、Worker 环境变量或浏览器。部署仓库名会保存，方便下次使用。更新工作流始终保留部署仓库现有的 `wrangler.jsonc`，不会用官方模板覆盖用户的 D1、R2 或 Durable Object 绑定。
+1. 打开一键部署生成的 GitHub 仓库。
+2. 进入 `Actions`，选择 `NIE-SLA Online Update`。
+3. 点击 `Run workflow`，无需填写参数。
 
-低于 `1.0.21` 的实例尚未包含稳定的源码导入更新工作流，需要先在 GitHub 手动同步一次官方仓库并让 Cloudflare 完成重新部署。此后可直接使用后台更新中心。
+后台“设置 → 系统更新”显示当前版本、最新版本和发布时间；“更新日志”在站内弹窗中展示，“更新指引”会重复上面的操作。若工作流推送时提示权限不足，再到 `Settings → Actions → General → Workflow permissions` 选择读写权限。低于 `1.0.22` 的实例需先手动同步一次官方仓库，获得新版无参数工作流。
 
 Agent 自动更新由后台开关控制，建议先用一台 VPS 验证新版本。
 
