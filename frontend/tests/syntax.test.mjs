@@ -51,7 +51,7 @@ assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector
 assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260725-settings-layout1/, 'admin CSS cache key must publish the settings layout');
+assert.match(adminHtml, /admin\.css\?v=20260725-app-update1/, 'admin CSS cache key must publish the update center');
 assert.match(adminHtml, /js\/admin\.js\?v=20260725-app-update1/, 'admin JS cache key must publish the update center');
 assert.match(adminHtml, /settings-primary[\s\S]*settings-columns[\s\S]*settings-column/, 'settings must separate wide forms from independent card columns');
 assert.match(adminCss, /\.settings-columns\s*\{[\s\S]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/, 'desktop settings cards must use three independent columns');
