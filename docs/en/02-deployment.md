@@ -2,6 +2,8 @@
 
 The recommended deployment runs in the browser. Prepare a GitHub account, a Cloudflare account, and these values:
 
+The project supports a separate Pages frontend and Worker API, but Cloudflare's deploy button currently supports Workers applications only. This flow therefore serves the frontend through Workers Static Assets on the same Worker as the API. It produces one `workers.dev` entry point and does not require a separate Pages project.
+
 | Name | Value |
 | --- | --- |
 | `ADMIN_USERNAME` | Admin username, for example `admin` |

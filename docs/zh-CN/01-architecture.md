@@ -1,6 +1,6 @@
 # 01 架构与数据流
 
-本文解释系统为什么拆成 Worker、Pages、D1、R2、Durable Objects 和 Agent，以及一条数据从采集到前端展示经历了什么。
+本文解释系统为什么使用 Worker、前端静态托管、D1、R2、Durable Objects 和 Agent，以及一条数据从采集到前端展示经历了什么。
 
 ## 设计目标
 
@@ -15,11 +15,13 @@ NIE-SLA 同时解决四类问题：
 
 ## 组件职责
 
-### Cloudflare Pages
+### Cloudflare 前端
 
-Pages 托管公开首页、图表、后台和 Agent 下载文件。浏览器通过 Pages Functions 或配置的 API Base 请求 Worker。
+分离部署时，Cloudflare Pages 托管公开首页、图表、后台和 Agent 下载文件，浏览器通过 Pages Functions 或配置的 API Base 请求 Worker。
 
-Pages 不保存业务状态。刷新页面后，目标、状态和图表数据都重新从 Worker 获取。
+一键部署时，Cloudflare 官方按钮把同一套前端作为 Workers Static Assets 交给 Worker 托管。浏览器、静态文件和 API 使用同一个 `workers.dev` 或自定义域名，不需要单独的 Pages 项目。
+
+两种模式都不在前端保存业务状态。刷新页面后，目标、状态和图表数据都重新从 Worker 获取。
 
 ### Cloudflare Worker
 

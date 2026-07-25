@@ -8,6 +8,8 @@ NIE-SLA is a Cloudflare-hosted status page and VPS monitor. The control plane us
 
 You do not need Node.js, Wrangler, a database, or a separate control server.
 
+NIE-SLA also supports a separate Pages frontend and Worker API. Because Cloudflare's deploy button only supports Workers applications, the one-click path serves the frontend through Workers Static Assets on the same Worker as the API. No separate Pages project is required; D1, R2, the Durable Object, and the one-minute cron are provisioned with it.
+
 1. Click **Deploy to Cloudflare**.
 2. Sign in to GitHub and Cloudflare and follow the authorization screens.
 3. Enter an admin username, an admin password, and two independent secrets.

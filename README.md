@@ -7,7 +7,7 @@
 Cloudflare Worker + D1 + R2 + Durable Objects + Rust Agent
 
 [![Agent Version](docs/badges/agent-version.svg)](https://github.com/3257085208/NIE-SLA/releases)
-[![Agent CI](https://github.com/3257085208/NIE-SLA/actions/workflows/agent-ci.yml/badge.svg)](https://github.com/3257085208/NIE-SLA/actions/workflows/agent-ci.yml)
+[![Public CI](https://github.com/3257085208/NIE-SLA/actions/workflows/public-ci.yml/badge.svg?branch=main)](https://github.com/3257085208/NIE-SLA/actions/workflows/public-ci.yml)
 [![License](docs/badges/license.svg)](LICENSE)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
@@ -25,6 +25,8 @@ NIE-SLA 把公开状态页、Cloudflare HTTP/TCP 检查和 VPS 系统数据放�
 ## 一键部署
 
 不需要先安装 Node.js、Wrangler 或数据库。
+
+NIE-SLA 支持“Pages 前端 + Worker API”分离部署。由于 Cloudflare 官方一键部署按钮只支持 Workers 应用，按钮模式会把前端作为 Workers Static Assets 与 API 部署到同一个 Worker；不需要再单独创建 Pages 项目，D1、R2、Durable Object 和每分钟 Cron 也会同时配置。
 
 1. 点击上方 **Deploy to Cloudflare**。
 2. 按页面提示登录 GitHub 和 Cloudflare 并完成授权。

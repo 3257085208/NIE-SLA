@@ -2,6 +2,8 @@
 
 这是推荐部署方式。第一次部署不需要命令行，也不需要先购买服务器作为控制端。
 
+项目支持 Pages 前端与 Worker API 分离部署，但 Cloudflare 官方一键部署按钮目前只支持 Workers 应用。因此本教程会把网页作为 Workers Static Assets 与 API 一起部署到同一个 Worker。部署完成后只有一个 `workers.dev` 入口，不需要再创建 Pages 项目。
+
 ## 先准备四项内容
 
 1. 一个 GitHub 账号。
