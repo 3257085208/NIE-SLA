@@ -10,7 +10,7 @@ import {
   trimEmptyPointEdges,
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
-import { groupByDimension, groupByMenuHtml, groupKeyFor, priceBandKey } from '../js/shared/grouping.js';
+import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, priceBandKey } from '../js/shared/grouping.js';
 import { cardThemeFlagHtml } from '../js/themes/card-theme.js';
 import { canShowTemperature, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
 import {
@@ -88,6 +88,12 @@ assert.equal(Object.keys(groupByDimension(targets, 'line_type')).length, 2);
 assert.equal(priceBandKey({ price: 8 }), '5 – 10');
 assert.match(groupByMenuHtml('location'), /role="listbox"/);
 assert.match(groupByMenuHtml('location'), /data-group-value="location"[^>]*>国家\/地区<\/button>/);
+assert.match(groupByMenuHtml('line_type'), /data-group-value="line_type"[^>]*>机器类型<\/button>/);
+for (const type of ['建站机', '线路机', '落地机', '中转机', '家宽机', '解锁机', '存储机', '备份机', '算力机', '游戏机', '邮件机', '综合用途']) {
+  assert.equal(LINE_TYPE_OPTIONS.some((option) => option.id === type), true, `${type} must be available as a machine type`);
+}
+assert.match(lineTypeOptionsHtml('落地鸡'), /value="落地鸡" selected>落地鸡（旧数据）<\/option>/);
+assert.equal(groupKeyFor({}, 'line_type'), '未设置机器类型');
 assert.match(cardThemeFlagHtml('HK'), /assets\/flags\/4x3\/hk\.svg/);
 assert.match(cardThemeFlagHtml('HK'), /width="18" height="13"/);
 assert.equal(countryFlagAsset('HK'), './assets/flags/4x3/hk.svg');

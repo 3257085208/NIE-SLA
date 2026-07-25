@@ -30,7 +30,7 @@ NIE-SLA 支持“Pages 前端 + Worker API”分离部署。由于 Cloudflare �
 
 1. 点击上方 **Deploy to Cloudflare**。
 2. 按页面提示登录 GitHub 和 Cloudflare 并完成授权。
-3. 填写后台账号和后台密码。
+3. 填写后台账号、后台密码和后台路径。
 4. 等待构建完成，打开 Cloudflare 给出的 `workers.dev` 地址。
 
 需要填写：
@@ -39,16 +39,17 @@ NIE-SLA 支持“Pages 前端 + Worker API”分离部署。由于 Cloudflare �
 | --- | --- |
 | `ADMIN_USERNAME` | 后台管理员账号，创建时必填 |
 | `ADMIN_PASSWORD` | 至少 9 位，同时包含大写字母、小写字母、数字和特殊符号 |
+| `ADMIN_PATH` | 后台入口，3-64 位字母、数字、连字符或下划线，例如 `/console-7f3a` |
 
 密码不要与其他服务复用，也不要公开。Agent Token 会在后台首次生成部署命令时按节点自动创建，不需要填写全局 Token。TOTP 默认关闭，登录后台后可按需启用；专用加密密钥是高级可选配置，不再出现在一键部署表单中。探测并发、限流、历史保留等内部参数使用固定安全默认值。
 
 部署成功后，管理后台地址为：
 
 ```text
-https://你的项目.你的账号.workers.dev/admin
+https://你的项目.你的账号.workers.dev/你填写的后台路径
 ```
 
-登录后可在“设置 → 后台入口”改成自己的路径。保存后旧 `/admin` 与 `/admin.html` 会返回 404，GitHub OAuth 也会使用新入口；新地址应立即保存到密码管理器或书签。自定义路径只减少通用扫描噪声，不能替代账号密码、Session 和可选 TOTP。
+登录后仍可在“设置 → 后台入口”修改路径。保存后旧入口会返回 404，GitHub OAuth 也会使用新入口；当前地址应立即保存到密码管理器或书签。自定义路径只减少通用扫描噪声，不能替代账号密码、Session 和可选 TOTP。
 
 使用账号密码登录，然后按后台 UI 操作：
 

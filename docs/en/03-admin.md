@@ -14,6 +14,10 @@ For split Pages deployments, keep the root Pages Function and configure `NSTATUS
 
 A target represents a monitored service or VPS. Important fields include ID, name, group, type, host/port or URL/status codes, tags, location, expiry date, price, currency, billing cycle, per-VPS traffic settings, and per-VPS alert settings.
 
+### Machine type
+
+Machine type is a display and grouping label; it does not alter the probe protocol or Agent behavior. Built-in choices cover web hosting, optimized-route, egress, relay, residential, unblocking, storage, backup, compute, game, mail, general-purpose, and other machines. The field may remain empty. Legacy Chinese values remain visible and selectable when existing targets are edited.
+
 ### NodeQuality reports
 
 When editing a TCP/VPS target, paste the original NodeQuality Markdown report into the `NodeQuality report` field and save it. The Worker parses `:::: tabs` reports into hardware/basic information, IP quality, network quality, and return-route tabs. ANSI text keeps terminal colors, while network and route tabs keep their report images. Submit the field empty to remove the report.

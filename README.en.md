@@ -14,17 +14,18 @@ NIE-SLA also supports a separate Pages frontend and Worker API. Because Cloudfla
 
 1. Click **Deploy to Cloudflare**.
 2. Sign in to GitHub and Cloudflare and follow the authorization screens.
-3. Enter an admin username and admin password.
+3. Enter an admin username, admin password, and admin route.
 4. Wait for the build, then open the provided `workers.dev` URL.
 
 | Configuration | Purpose |
 | --- | --- |
 | `ADMIN_USERNAME` | Admin username, required during deployment |
 | `ADMIN_PASSWORD` | At least 9 characters with uppercase, lowercase, number, and special character |
+| `ADMIN_PATH` | A 3-64 character admin route such as `/console-7f3a` |
 
 Do not reuse the password. Per-node Agent tokens are generated automatically when an install command is first opened. TOTP is disabled by default and can be enabled after login; a dedicated encryption key remains an advanced optional setting. Internal tuning defaults are fixed in code and do not appear in the deployment form.
 
-Open `/admin`, log in with the username and password, add a VPS under **Agents**, and run the generated Linux or Windows command on that machine. The rest of the setup is available in the admin UI.
+Open the configured `ADMIN_PATH`, log in with the username and password, add a VPS under **Agents**, and run the generated Linux or Windows command on that machine. The rest of the setup is available in the admin UI.
 
 See the canonical [Cloudflare Quick Start](https://nie-sla.pages.dev/quickstart/) for the complete browser flow.
 

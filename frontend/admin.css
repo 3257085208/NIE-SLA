@@ -190,6 +190,26 @@ h3 {
 .appearance-form .appearance-switch input { width: 16px; min-height: 16px; margin: 0; }
 .appearance-actions { display: flex; gap: 8px; margin-top: 14px; }
 .admin-path-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.settings-layout,
+.settings-primary,
+.settings-column {
+  display: grid;
+  gap: 16px;
+}
+.settings-primary {
+  margin-bottom: 16px;
+}
+.settings-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+.settings-layout .card {
+  min-width: 0;
+  min-height: 0;
+  margin-bottom: 0;
+}
 @media (max-width: 800px) { .appearance-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .appearance-form { grid-template-columns: 1fr; } }
 .stats {
@@ -1070,9 +1090,7 @@ th {
   color: var(--signal);
   font: 700 11px/1 var(--mono);
 }
-#pg-settings .card {
-  min-height: 145px;
-}
+#pg-settings .card { min-height: 0; }
 code,
 .code,
 .targets-table .sort-index {
@@ -1093,6 +1111,7 @@ code,
   .nav a { padding: 10px 11px 12px; }
   .nav a.on::after { right: 10px; left: 10px; }
   .page { padding-top: 22px; }
+  .settings-columns { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {

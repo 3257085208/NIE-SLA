@@ -8,14 +8,15 @@ The recommended deployment runs in the browser. Prepare a GitHub account, a Clou
 | --- | --- |
 | `ADMIN_USERNAME` | Admin username, for example `admin` |
 | `ADMIN_PASSWORD` | At least 9 characters with uppercase, lowercase, number, and special character |
+| `ADMIN_PATH` | A 3-64 character route such as `/console-7f3a`, using letters, numbers, hyphens, or underscores |
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
 
-Authorize GitHub and Cloudflare, enter the two values, and start the deployment. Internal tuning settings use fixed safe defaults and are not shown in the form. Cloudflare builds the Worker and frontend and creates D1, R2, the Durable Object, and the one-minute cron trigger.
+Authorize GitHub and Cloudflare, enter the three values, and start the deployment. Internal tuning settings use fixed safe defaults and are not shown in the form. Cloudflare builds the Worker and frontend and creates D1, R2, the Durable Object, and the one-minute cron trigger.
 
-If the result is `https://project.account.workers.dev`, open `https://project.account.workers.dev/admin` and sign in with the configured username and password. TOTP is disabled by default and can be enabled from Settings. Add a VPS under Agents and run the generated command on that VPS. The Worker creates a random credential for each Agent automatically; new deployments do not need a global `AGENT_TOKEN`.
+If the result is `https://project.account.workers.dev`, append the configured `ADMIN_PATH` and sign in with the configured username and password. TOTP is disabled by default and can be enabled from Settings. Add a VPS under Agents and run the generated command on that VPS. The Worker creates a random credential for each Agent automatically; new deployments do not need a global `AGENT_TOKEN`.
 
-The default admin route is `/admin`. You can change it under **Settings → Admin entry** to a path such as `/console-7f3a`. The old `/admin` and `/admin.html` routes return 404 after the change, and GitHub OAuth follows the new route. Save the new URL immediately. A custom route reduces generic scan noise but does not replace password, session, or TOTP protection.
+One-click deployment uses the supplied `ADMIN_PATH` as the initial route. You can change it later under **Settings → Admin entry**. The old route returns 404 after the change, and GitHub OAuth follows the new route. Save the current URL immediately. A custom route reduces generic scan noise but does not replace password, session, or TOTP protection.
 
 Current status uses a lightweight one-minute R2 layer. SLA history remains in five-minute D1 buckets to protect free-tier write capacity.
 

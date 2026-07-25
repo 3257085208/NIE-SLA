@@ -14,7 +14,7 @@ import {
   groupByMenuHtml,
   lineTypeOptionsHtml,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260721-control-harmony";
+} from "./shared/grouping.js?v=20260725-machine-types1";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -783,7 +783,7 @@ function targetGroupCell(target) {
     sharedDisplayGroupName(target.group_name),
     target.provider ? `商家:${target.provider}` : "",
     target.location || target.city ? `地区:${[target.location, target.city].filter(Boolean).join(" · ")}` : "",
-    target.line_type ? `线路:${target.line_type}` : "",
+    target.line_type ? `机器:${target.line_type}` : "",
   ].filter(Boolean);
   return parts.join(" · ");
 }
@@ -992,12 +992,12 @@ function searchableCatalogField({ label, searchId, selectId, searchPlaceholder, 
 function countryCatalogField(current = "") {
   const code = normalizeCountryCode(current);
   const asset = countryFlagAsset(code);
-  return formField("位置", `
+  return formField("国家或地区（可选）", `
     <div class="catalog-select">
       <input type="search" id="mLocationSearch" placeholder="搜索中文名、英文名或代码" autocomplete="off">
       <div class="country-select-row">
         <img id="mLocationFlag" class="country-flag-preview" src="${escapeHtml(asset)}" alt=""${asset ? "" : " hidden"}>
-        <select id="mLocation" required>${countryOptionsHtml(current)}</select>
+        <select id="mLocation">${countryOptionsHtml(current)}</select>
       </div>
     </div>`);
 }
@@ -1076,7 +1076,7 @@ function targetModalHtml(target, isEdit) {
     <div class="form-grid">
       ${inputField("标签", "mTags", target.tags || "", 'placeholder="逗号分隔"')}
       ${countryCatalogField(target.location || "")}
-      ${formField("城市", `<input id="mCity" value="${escapeHtml(target.city || "")}" placeholder="例如 Los Angeles / 东京" maxlength="64"><p class="hint">可选。前台显示为「国家 · 城市」。</p>`)}
+      ${formField("城市（可选）", `<input id="mCity" value="${escapeHtml(target.city || "")}" placeholder="例如 Los Angeles / 东京" maxlength="64"><p class="hint">前台有国家时显示为「国家 · 城市」。</p>`)}
       ${searchableCatalogField({
         label: "商家",
         searchId: "mProviderSearch",
@@ -1084,12 +1084,12 @@ function targetModalHtml(target, isEdit) {
         searchPlaceholder: "搜索商家名称",
         options: providerOptionsHtml(target.provider || ""),
       })}
-      ${formField("线路类型", `<select id="mLineType">${lineTypeOptionsHtml(target.line_type || "")}</select>`)}
+      ${formField("机器类型", `<select id="mLineType">${lineTypeOptionsHtml(target.line_type || "")}</select>`)}
     </div>
     ${formField("NodeQuality 报告", `<textarea id="mNqReport" rows="8" placeholder="粘贴 NodeQuality 原始报告（包含 ::: tab-item、ANSI 文本和图片链接）">${escapeHtml(nodeQualityEditorValue(target))}</textarea><p class="hint">保存后前台 VPS 卡片会显示 NQ 按钮。再次保存空白内容会清除报告。</p>`)}
 
     <div class="form-grid">
-      ${formField("到期时间", `<input id="mExpires" type="date" value="${dateInput(target.expires_at)}">`)}
+      ${formField("到期时间（可选）", `<input id="mExpires" type="date" value="${dateInput(target.expires_at)}">`)}
       ${formField("费用", `<input id="mPrice" type="number" min="0" step="0.01" value="${escapeHtml(target.price ?? "")}">`)}
     </div>
 
@@ -1212,7 +1212,6 @@ async function saveTarget(edit) {
   const id = byId("mId").value.trim();
   if (id && !edit) b.id = id;
   if (!b.name) return toast("名称不能为空", "err");
-  if (!b.location) return toast("请选择国家或地区", "err");
   if (b.type === "tcp") {
     b.target_host = byId("mHost").value.trim();
     b.target_port = Number(byId("mPort").value) || 0;

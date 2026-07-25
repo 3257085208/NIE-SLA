@@ -28,7 +28,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js';
+import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260725-machine-types1';
 import { canShowTemperature, hasTemperatureData } from './js/shared/hardware.js';
 import { extensionBaseTheme, initializeFrontendExtensions, publishExtensionStatus } from './js/extensions.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';

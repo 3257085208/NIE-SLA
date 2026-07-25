@@ -53,7 +53,7 @@ assert.ok(wrangler.durable_objects?.bindings?.[0]?.class_name);
 assert.deepEqual(wrangler.triggers?.crons, ['* * * * *']);
 
 const describedBindings = packageJson.cloudflare?.bindings || {};
-const requiredInputs = ['ADMIN_USERNAME', 'ADMIN_PASSWORD'];
+const requiredInputs = ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'ADMIN_PATH'];
 const deployBindingNames = [
   ...Object.keys(wrangler.vars || {}),
   wrangler.assets?.binding,
@@ -67,7 +67,7 @@ assert.match(packageJson.cloudflare?.label || '', /\p{Script=Han}/u, 'deploy lab
 assert.deepEqual(wrangler.vars || {}, {}, 'one-click deploy must not expose internal tuning defaults');
 assert.deepEqual(
   Object.keys(describedBindings).sort(),
-  ['ADMIN_PASSWORD', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'REGION_PROXY'].sort(),
+  ['ADMIN_PASSWORD', 'ADMIN_PATH', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'REGION_PROXY'].sort(),
   'deploy form should only describe automatic resources and required inputs',
 );
 assert.equal('AGENT_TOKEN' in describedBindings, false, 'new deployments generate per-node Agent tokens');

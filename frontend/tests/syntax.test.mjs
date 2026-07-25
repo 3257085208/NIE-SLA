@@ -33,6 +33,11 @@ assert.match(adminSource, /data-target-id=/, 'deploy buttons must carry a stable
 assert.match(adminSource, /button\?\.dataset\.targetId \|\| button\?\.closest\("tr"\)\?\.dataset\.id/, 'deploy actions must resolve the stable button target id first');
 assert.match(adminSource, /targetGroupOptions\(type, target\.group_name\)/, 'target grouping must be a VPS/Web selector');
 assert.match(adminSource, /bindCatalogSearch\("mLocationSearch", "mLocation"/, 'location must provide catalog search');
+assert.doesNotMatch(adminSource, /<select id="mLocation" required>/, 'country must remain optional when saving a target');
+assert.doesNotMatch(adminSource, /if \(!b\.location\) return toast/, 'target saves must not require a country');
+assert.match(adminSource, /到期时间（可选）/, 'target expiry must be clearly optional');
+assert.match(adminSource, /formField\("机器类型"/, 'target editor must label line_type as machine type');
+assert.doesNotMatch(adminSource, /formField\("线路类型"/, 'target editor must not expose the old line type label');
 assert.match(adminSource, /currencyOptionsHtml\(target\.currency \|\| "USD"\)/, 'currency must use the supported selector');
 assert.match(adminSource, /id="mNoPublicIp"/, 'VPS editor must expose the no-public-IP option');
 assert.match(adminSource, /const cfDetails = noPublicIp[\s\S]*\? ""/, 'no-public-IP targets must hide Cloudflare status in admin');
@@ -46,8 +51,11 @@ assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector
 assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260725-admin-path1/, 'admin CSS cache key must publish admin path controls');
-assert.match(adminHtml, /js\/admin\.js\?v=20260725-admin-path1/, 'admin JS cache key must publish admin path controls');
+assert.match(adminHtml, /admin\.css\?v=20260725-settings-layout1/, 'admin CSS cache key must publish the settings layout');
+assert.match(adminHtml, /js\/admin\.js\?v=20260725-settings-layout1/, 'admin JS cache key must publish target and settings changes');
+assert.match(adminHtml, /settings-primary[\s\S]*settings-columns[\s\S]*settings-column/, 'settings must separate wide forms from independent card columns');
+assert.match(adminCss, /\.settings-columns\s*\{[\s\S]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/, 'desktop settings cards must use three independent columns');
+assert.match(adminCss, /@media \(max-width: 820px\) \{[\s\S]*\.settings-columns\s*\{\s*grid-template-columns:\s*1fr/, 'mobile settings cards must collapse to one column');
 assert.match(adminHtml, /id="sAdminPath"/, 'admin settings must expose the custom entry path');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /body class="theme-pending" data-frontend-theme="classic"/, 'theme resolution must hide the classic shell before startup');
