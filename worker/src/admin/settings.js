@@ -1,6 +1,7 @@
 // Admin sub-module: settings, meta, and exchange rates.
 import { nowSec, clamp, parseBoolean, sha256Hex } from '../utils.js';
 import { safeJson } from '../auth.js';
+import { getAdminPath, setAdminPath } from '../admin-path.js';
 
 const EXCHANGE_RATE_TTL_SEC = 86400;
 const EXCHANGE_RATE_RETRY_SEC = 3600;
@@ -219,7 +220,7 @@ export function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj || {}, key);
 }
 
-export async function getPublicSettings(env) {
+export async function getPublicSettings(env, { includeAdmin = false } = {}) {
   let saved = null;
   let autoUpdate = null;
   let appearanceSaved = null;
@@ -230,7 +231,7 @@ export async function getPublicSettings(env) {
   let parsedAppearance = {};
   try { parsedAppearance = appearanceSaved ? JSON.parse(appearanceSaved) : {}; } catch (_) {}
   const { trafficPeriod } = await import('../traffic.js');
-  return {
+  const settings = {
     ok: true,
     frontend_theme: frontendTheme,
     agent_auto_update: parseBoolean(autoUpdate ?? env.AGENT_AUTO_UPDATE_DEFAULT, false),
@@ -240,6 +241,8 @@ export async function getPublicSettings(env) {
       { id: 'classic', name: '原版列表' },
     ],
   };
+  if (includeAdmin) settings.admin_path = await getAdminPath(env);
+  return settings;
 }
 
 export async function updatePublicSettings(request, env) {
@@ -254,7 +257,8 @@ export async function updatePublicSettings(request, env) {
     const appearance = normalizeFrontendAppearance(body.appearance ?? body.frontend_appearance, env);
     await setMeta(env, 'frontend_appearance', JSON.stringify(appearance));
   }
-  return getPublicSettings(env);
+  if (hasOwn(body, 'admin_path')) await setAdminPath(env, body.admin_path);
+  return getPublicSettings(env, { includeAdmin: true });
 }
 
 export async function getAgentUpdatePolicy(env, request = null) {

@@ -43,10 +43,12 @@ npx wrangler pages deploy . --project-name nstatus
 
 ```text
 https://YOUR-PAGES/
-https://YOUR-PAGES/admin.html
+https://YOUR-PAGES/admin
 https://YOUR-PAGES/bin/VERSION
 https://YOUR-PAGES/bin/SHA256SUMS
 ```
+
+登录后可在“设置 → 后台入口”修改路径。Pages 部署需要保留 `functions/[[path]].js`，并为 Functions 配置与 API 代理相同的 `NSTATUS_API_BASE`；修改后旧 `/admin` 与 `/admin.html` 会返回 404。
 
 ## 四种数据不要混淆
 

@@ -4,6 +4,12 @@
 
 The admin panel is usually available at `https://your-frontend/admin`. Log in with `ADMIN_USERNAME` and `ADMIN_PASSWORD`. TOTP is disabled by default and can be enabled from Settings. Passwords are only sent to the login endpoint; admin APIs use a short-lived session whose hash is stored in D1. Optional GitHub OAuth uses an explicit username allowlist and cannot bypass TOTP. TOTP secrets use the optional `TOTP_ENCRYPTION_KEY`, falling back to the deployment `ADMIN_PASSWORD`, before storage in D1.
 
+## Custom admin route
+
+Use **Settings → Admin entry** to replace `/admin` with a single path such as `/console-7f3a`. The value must contain 3-64 letters, digits, hyphens, or underscores and cannot use reserved API or asset paths. After saving, `/admin`, `/admin/`, and `/admin.html` return 404, while GitHub OAuth returns to the new route.
+
+For split Pages deployments, keep the root Pages Function and configure `NSTATUS_API_BASE` so Pages can resolve the current route. The route is discoverable by the client routing layer and is not an authentication secret; passwords, short-lived sessions, rate limits, and optional TOTP remain the security boundary.
+
 ## Targets
 
 A target represents a monitored service or VPS. Important fields include ID, name, group, type, host/port or URL/status codes, tags, location, expiry date, price, currency, billing cycle, per-VPS traffic settings, and per-VPS alert settings.

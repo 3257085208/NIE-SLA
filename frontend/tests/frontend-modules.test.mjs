@@ -25,6 +25,7 @@ import {
 import { formatLocationLabel, normalizeCityName } from '../js/shared/format.js';
 import { buildNqModalHtml, renderNqAnsiHtml, renderNqReportHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from '../js/shared/appearance.js';
+import { onRequest as routeAdminPage } from '../functions/[[path]].js';
 
 const rows = normalizeChartRows([
   { checked_at: 30, ok: 1, latency_ms: 20 },
@@ -145,6 +146,30 @@ assert.equal(formatLocationLabel('香港', '香港'), '香港');
 assert.equal(formatLocationLabel('', 'Singapore'), 'Singapore');
 assert.equal(formatLocationLabel('德国', ''), '德国');
 console.log('location label helpers ok');
+
+const previousFetch = globalThis.fetch;
+globalThis.fetch = async (url) => {
+  assert.match(String(url), /\/api\/auth\/config$/);
+  return Response.json({ ok: true, admin_path: '/console-7f3a' });
+};
+const pagesEnv = {
+  NSTATUS_API_BASE: 'https://api.example',
+  ASSETS: {
+    fetch: async request => new Response(new URL(request.url).pathname),
+  },
+};
+const routePage = pathname => routeAdminPage({
+  request: new Request(`https://status.example${pathname}`),
+  env: pagesEnv,
+  next: async request => new Response(request ? new URL(request.url).pathname : 'next'),
+});
+assert.equal(await (await routePage('/console-7f3a')).text(), '/admin.html');
+assert.equal((await routePage('/console-7f3a/')).status, 308);
+assert.equal((await routePage('/admin')).status, 404);
+assert.equal(await (await routePage('/unrelated')).text(), 'next');
+globalThis.fetch = previousFetch;
+console.log('Pages admin path routing ok');
+
 assert.equal(targetHasNodeQuality({ type: 'tcp', has_nq: 1 }), true);
 assert.equal(targetHasNodeQuality({ type: 'tcp', nq: { has_report: true } }), true);
 assert.equal(targetHasNodeQuality({ type: 'http', has_nq: 1 }), false);

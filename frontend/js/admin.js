@@ -1627,11 +1627,47 @@ async function loadSettings() {
   loadSysInfo();
   loadTotp();
   loadAccount();
+  loadAdminPath();
   loadTheme();
   loadAgentUpdate();
   loadTraffic();
   loadAlerts();
   loadAppearance();
+}
+
+async function loadAdminPath() {
+  const box = byId("sAdminPath");
+  if (!box) return;
+  try {
+    const data = await api("/api/settings");
+    const path = data.admin_path || "/admin";
+    box.innerHTML = `
+      <div class="f"><label>入口路径</label><input id="adminPath" value="${escapeHtml(path)}" maxlength="65" autocomplete="off" spellcheck="false"></div>
+      <p class="hint">使用 3-64 位字母、数字、连字符或下划线。修改后旧入口会返回 404；它只能减少扫描噪声，不能代替账号密码与 TOTP。</p>
+      <div class="admin-path-actions"><button class="btn btn-primary btn-sm" id="saveAdminPath">保存路径</button><a class="btn btn-sm" id="openAdminPath" href="${escapeHtml(path)}">打开当前入口</a></div>`;
+    byId("saveAdminPath").onclick = saveAdminPath;
+  } catch (error) {
+    errBox("sAdminPath", error);
+  }
+}
+
+async function saveAdminPath() {
+  const button = byId("saveAdminPath");
+  const value = byId("adminPath")?.value.trim() || "";
+  if (button) button.disabled = true;
+  try {
+    const data = await api("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ admin_path: value }),
+    });
+    const path = data.admin_path || "/admin";
+    toast(`后台入口已改为 ${path}`, "ok");
+    loadAdminPath();
+  } catch (error) {
+    toast(error.message, "err");
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 const appearanceSections = [

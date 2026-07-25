@@ -1,6 +1,7 @@
 import { ApiError, constantTimeEqual, json, safeJson } from './auth.js';
 import { sha256Hex } from './utils.js';
 import { checkTOTP, createAdminSession, revokeAllAdminSessions, verifyActiveTOTP } from './totp.js';
+import { getAdminPath } from './admin-path.js';
 
 const OAUTH_STATES_KEY = 'github_oauth_states';
 const OAUTH_TICKETS_KEY = 'github_oauth_tickets';
@@ -21,6 +22,7 @@ export async function adminAuthConfig(env) {
     ok: true,
     password_enabled: Boolean(credentials),
     github_enabled: githubEnabled(env),
+    admin_path: await getAdminPath(env),
   };
 }
 
@@ -163,10 +165,12 @@ export async function finishGitHubOAuth(request, env) {
       subject: login,
     });
     await writePending(env, OAUTH_TICKETS_KEY, tickets);
-    return redirect(`${site}/admin#github_ticket=${encodeURIComponent(ticket)}`, { 'set-cookie': clearOAuthCookie() });
+    const adminPath = await getAdminPath(env);
+    return redirect(`${site}${adminPath}#github_ticket=${encodeURIComponent(ticket)}`, { 'set-cookie': clearOAuthCookie() });
   } catch (error) {
     const message = error instanceof ApiError ? error.message : 'GitHub 登录暂时不可用';
-    return redirect(`${site}/admin#github_error=${encodeURIComponent(message)}`, { 'set-cookie': clearOAuthCookie() });
+    const adminPath = await getAdminPath(env);
+    return redirect(`${site}${adminPath}#github_error=${encodeURIComponent(message)}`, { 'set-cookie': clearOAuthCookie() });
   }
 }
 

@@ -1,6 +1,14 @@
 # 03 后台管理完整说明
 
-后台入口通常是 `https://YOUR-PAGES/admin.html`。它是静态前端，所有修改最终通过 Worker Admin API 写入 D1。
+后台入口默认是 `https://YOUR-SITE/admin`。它是静态前端，所有修改最终通过 Worker Admin API 写入 D1。
+
+## 自定义后台入口
+
+进入“设置 → 后台入口”，可以把默认 `/admin` 改成 `/console-7f3a` 一类单段路径。路径长度为 3-64 位，只允许字母、数字、连字符和下划线，不能使用 API、静态资源等系统保留路径。
+
+保存后请立即打开并收藏界面显示的新地址。旧 `/admin`、`/admin/` 和 `/admin.html` 会返回 404，GitHub OAuth 成功或失败也会回到新入口。分离式 Pages 部署必须保留根级 Pages Function，并正确配置 `NSTATUS_API_BASE`，才能从 Worker 读取当前路径并完成静态文件重写。
+
+入口路径会通过登录配置接口提供给 Pages 路由，因此它不是秘密，也不是认证机制。它只用于减少通用扫描和区分部署；真正的安全边界仍是账号密码、短期 Session、限流与可选 TOTP。
 
 ## 登录流程
 

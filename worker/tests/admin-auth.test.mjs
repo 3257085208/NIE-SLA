@@ -38,7 +38,7 @@ function jsonRequest(url, body) {
 {
   const env = { DB: memoryDb(), ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
   assert.deepEqual(await checkTOTP(env), { ok: true, totp_enabled: false });
-  assert.deepEqual(await adminAuthConfig(env), { ok: true, password_enabled: true, github_enabled: false });
+  assert.deepEqual(await adminAuthConfig(env), { ok: true, password_enabled: true, github_enabled: false, admin_path: '/admin' });
   const login = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
     username: 'owner',
     password: 'correct horse battery staple',
@@ -146,6 +146,7 @@ function jsonRequest(url, body) {
     GITHUB_OAUTH_ALLOWED_USERS: 'AllowedUser, second-user',
     PUBLIC_SITE_ORIGIN: 'https://status.example',
   };
+  env.DB.meta.set('admin_path', '/console-7f3a');
   assert.equal((await adminAuthConfig(env)).github_enabled, true);
   const start = await startGitHubOAuth(new Request('https://status.example/api/auth/github/start'), env);
   assert.equal(start.status, 302);
@@ -168,7 +169,7 @@ function jsonRequest(url, body) {
     ), env);
     assert.equal(callback.status, 302);
     const redirectUrl = callback.headers.get('location');
-    assert.match(redirectUrl, /^https:\/\/status\.example\/admin#github_ticket=/);
+    assert.match(redirectUrl, /^https:\/\/status\.example\/console-7f3a#github_ticket=/);
     const ticket = new URLSearchParams(redirectUrl.split('#')[1]).get('github_ticket');
     const completed = await completeGitHubOAuth(jsonRequest('https://status.example/api/auth/github/complete', { ticket }), env);
     assert.equal(completed.provider, 'github');

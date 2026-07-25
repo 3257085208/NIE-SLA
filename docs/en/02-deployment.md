@@ -15,6 +15,8 @@ Authorize GitHub and Cloudflare, enter the two values, and start the deployment.
 
 If the result is `https://project.account.workers.dev`, open `https://project.account.workers.dev/admin` and sign in with the configured username and password. TOTP is disabled by default and can be enabled from Settings. Add a VPS under Agents and run the generated command on that VPS. The Worker creates a random credential for each Agent automatically; new deployments do not need a global `AGENT_TOKEN`.
 
+The default admin route is `/admin`. You can change it under **Settings → Admin entry** to a path such as `/console-7f3a`. The old `/admin` and `/admin.html` routes return 404 after the change, and GitHub OAuth follows the new route. Save the new URL immediately. A custom route reduces generic scan noise but does not replace password, session, or TOTP protection.
+
 Current status uses a lightweight one-minute R2 layer. SLA history remains in five-minute D1 buckets to protect free-tier write capacity.
 
 ## Optional GitHub Login

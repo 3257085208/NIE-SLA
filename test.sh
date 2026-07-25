@@ -55,6 +55,7 @@ done
 run_check "worker utility tests" node "$ROOT/worker/tests/utils.test.mjs"
 run_check "worker hardening tests" node "$ROOT/worker/tests/hardening.test.mjs"
 run_check "admin authentication tests" node "$ROOT/worker/tests/admin-auth.test.mjs"
+run_check "custom admin path tests" node "$ROOT/worker/tests/admin-path.test.mjs"
 run_check "admin reset tests" node "$ROOT/worker/tests/reset-admin.test.mjs"
 run_check "per-node Agent credential tests" node "$ROOT/worker/tests/agent-credentials.test.mjs"
 run_check "email alert tests" node "$ROOT/worker/tests/alerts.test.mjs"

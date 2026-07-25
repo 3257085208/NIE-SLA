@@ -46,8 +46,10 @@ assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector
 assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260724-theme-runtime1/, 'admin CSS cache key must publish theme runtime controls');
-assert.match(adminHtml, /js\/admin\.js\?v=20260724-theme-runtime1/, 'admin JS cache key must publish theme runtime controls');
+assert.match(adminHtml, /admin\.css\?v=20260725-admin-path1/, 'admin CSS cache key must publish admin path controls');
+assert.match(adminHtml, /js\/admin\.js\?v=20260725-admin-path1/, 'admin JS cache key must publish admin path controls');
+assert.match(adminHtml, /id="sAdminPath"/, 'admin settings must expose the custom entry path');
+assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /body class="theme-pending" data-frontend-theme="classic"/, 'theme resolution must hide the classic shell before startup');
 assert.match(indexHtml, /id="themeCanvas"/, 'frontend must provide a sandboxed full-layout theme mount');
 assert.match(indexHtml, /id="themeBoot"/, 'frontend must show a neutral loader while resolving the active theme');

@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `PUBLIC_SITE_NAME` | `NIE-SLA` | Public site name |
 | `ADMIN_USERNAME` | required for new deployments | Admin username; legacy deployments fall back to `admin` |
+| `ADMIN_PATH` | `/admin` | Optional initial admin route; the D1 setting in Admin can override it |
 | `PUBLIC_WORKER_URL` | empty | Public Worker URL |
 | `PUBLIC_AGENT_INSTALL_BASE` | auto | Installer/download base |
 | `ALLOWED_ORIGIN` | empty | CORS origin |

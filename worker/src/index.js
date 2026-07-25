@@ -8,6 +8,7 @@ import { VERSION } from './version.js';
 import { handleRequest } from './routes.js';
 import { json } from './auth.js';
 import { parseBoolean, shouldRunScheduledFollowups } from './utils.js';
+import { routeStaticAssets } from './static-assets.js';
 
 // Durable Object for region probing.
 
@@ -38,7 +39,14 @@ export class ProbeRegion {
 
 export default {
   async fetch(request, env, ctx) {
-    try { return await handleRequest(request, env, ctx); }
+    try {
+      const url = new URL(request.url);
+      if (!url.pathname.startsWith('/api/') && url.pathname !== '/api') {
+        const assetResponse = await routeStaticAssets(request, env);
+        if (assetResponse) return assetResponse;
+      }
+      return await handleRequest(request, env, ctx);
+    }
     catch (err) {
       const status = err?.status || 500;
       const message = status === 500 ? '服务器内部错误' : String(err?.message || '请求失败');

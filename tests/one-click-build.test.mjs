@@ -20,7 +20,7 @@ for (const relative of [
   assert.ok(info.isFile() && info.size > 0, `missing one-click asset: ${relative}`);
 }
 
-for (const relative of ['AGENTS.md', 'README.md', 'package.json', 'functions', 'tests']) {
+for (const relative of ['AGENTS.md', 'README.md', '_redirects', 'package.json', 'functions', 'tests']) {
   await assert.rejects(access(path.join(output, relative)), undefined, `private build input leaked into assets: ${relative}`);
 }
 
@@ -46,7 +46,7 @@ assert.ok(verified >= 3, 'expected Agent binaries for multiple platforms');
 const wrangler = JSON.parse(await readFile(path.join(root, 'wrangler.jsonc'), 'utf8'));
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 assert.equal(wrangler.assets?.directory, './dist-one-click');
-assert.deepEqual(wrangler.assets?.run_worker_first, ['/api/*']);
+assert.equal(wrangler.assets?.run_worker_first, true, 'custom admin routes must reach the Worker before static assets');
 assert.equal(wrangler.d1_databases?.[0]?.database_id, '00000000-0000-0000-0000-000000000000');
 assert.ok(wrangler.r2_buckets?.[0]?.binding);
 assert.ok(wrangler.durable_objects?.bindings?.[0]?.class_name);

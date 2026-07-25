@@ -189,6 +189,7 @@ h3 {
 .appearance-form .appearance-switch { min-height: 36px; grid-template-columns: 1fr auto; align-items: center; padding: 7px 9px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; }
 .appearance-form .appearance-switch input { width: 16px; min-height: 16px; margin: 0; }
 .appearance-actions { display: flex; gap: 8px; margin-top: 14px; }
+.admin-path-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 @media (max-width: 800px) { .appearance-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 520px) { .appearance-form { grid-template-columns: 1fr; } }
 .stats {

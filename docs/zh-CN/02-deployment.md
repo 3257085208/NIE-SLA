@@ -70,6 +70,8 @@ https://你的项目.你的账号.workers.dev/admin
 
 TOTP 默认关闭。登录后可按需打开“设置 → TOTP”，用验证器应用开启二次验证。
 
+默认后台入口是 `/admin`。需要更换时，在“设置 → 后台入口”填写例如 `/console-7f3a`；保存后旧 `/admin` 与 `/admin.html` 会返回 404，GitHub 登录也会自动回到新地址。请立即保存新地址。自定义路径只能减少自动扫描噪声，不能代替账号密码、Session 和 TOTP。
+
 ## 第五步：添加第一台 VPS
 
 进入后台后：
@@ -91,7 +93,7 @@ Agent 上报成功后，前台会出现 CPU、内存、磁盘、网络和可用�
 确认：
 
 - 首页可以打开。
-- `/admin` 可以用账号密码登录。
+- 当前后台入口可以用账号密码登录。
 - 新增的 VPS 出现在首页。
 - 后台“最近上报”持续更新。
 - CPU、内存和磁盘不再是空值。
@@ -137,7 +139,7 @@ https://status.example.com/api/auth/github/callback
 | `GITHUB_OAUTH_CLIENT_SECRET` | GitHub Client Secret，类型选 Secret |
 | `GITHUB_OAUTH_ALLOWED_USERS` | 允许登录的 GitHub 用户名；多个用英文逗号分隔 |
 
-保存并重新打开 `/admin`，登录框会出现“使用 GitHub 登录”。没有出现在白名单中的 GitHub 账号无法进入后台。已启用 TOTP 时，GitHub 登录也需要验证码。
+保存并重新打开当前后台入口，登录框会出现“使用 GitHub 登录”。没有出现在白名单中的 GitHub 账号无法进入后台。已启用 TOTP 时，GitHub 登录也需要验证码。
 
 ## 可选：启用邮件报警
 
@@ -155,7 +157,7 @@ https://status.example.com/api/auth/github/callback
 
 ## 绑定自己的域名
 
-在 Cloudflare Dashboard 中打开 Worker 的“域和路由”，添加自己的域名。绑定后首页和 `/admin` 继续使用同一个域名。
+在 Cloudflare Dashboard 中打开 Worker 的“域和路由”，添加自己的域名。绑定后首页和当前后台入口继续使用同一个域名。
 
 如果启用了 GitHub 登录，域名改变后还要同步修改 GitHub OAuth App 的 Homepage URL 和 callback URL。
 

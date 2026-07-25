@@ -80,6 +80,7 @@ npx wrangler secret list
 | 名称 | 默认 | 说明 |
 | --- | --- | --- |
 | `ADMIN_USERNAME` | 新部署必填 | 后台账号；旧部署未配置时回退 `admin` |
+| `ADMIN_PATH` | `/admin` | 可选初始后台入口；登录后可在“设置 → 后台入口”写入 D1 覆盖 |
 | `GITHUB_OAUTH_CLIENT_ID` | 空 | GitHub OAuth Client ID |
 | `GITHUB_OAUTH_ALLOWED_USERS` | 空 | GitHub 用户名白名单，英文逗号分隔 |
 | `GITHUB_OAUTH_CALLBACK_ORIGIN` | 当前 API Origin | 可选；固定 OAuth callback 的 HTTPS Origin |
@@ -111,7 +112,7 @@ GitHub 登录必须同时配置 Client ID、Client Secret 和非空白名单，�
 
 - vars 修改后必须重新部署 Worker。
 - secrets 修改通常产生新 Worker 版本或更新 secret binding。
-- 后台设置写 D1，不需要重新部署。
+- 后台设置（包括后台入口路径）写 D1，不需要重新部署。
 - Agent env 修改后需要重启服务。
 - 缩短采样/上传间隔会增加 CPU、网络和存储压力。
 - 修改时区会改变每日桶边界，不建议上线后频繁修改。

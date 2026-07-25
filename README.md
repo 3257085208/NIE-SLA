@@ -48,6 +48,8 @@ NIE-SLA 支持“Pages 前端 + Worker API”分离部署。由于 Cloudflare �
 https://你的项目.你的账号.workers.dev/admin
 ```
 
+登录后可在“设置 → 后台入口”改成自己的路径。保存后旧 `/admin` 与 `/admin.html` 会返回 404，GitHub OAuth 也会使用新入口；新地址应立即保存到密码管理器或书签。自定义路径只减少通用扫描噪声，不能替代账号密码、Session 和可选 TOTP。
+
 使用账号密码登录，然后按后台 UI 操作：
 
 1. 打开“探针”。
