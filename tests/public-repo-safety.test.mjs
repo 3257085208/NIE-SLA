@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
+const deploymentValidation = process.env.NIE_SLA_DEPLOYMENT_VALIDATION === '1';
 const tracked = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], { cwd: root })
   .toString('utf8').split('\0').filter(Boolean);
 const textFiles = tracked.filter((file) =>
@@ -30,8 +31,8 @@ for (const file of textFiles) {
     if (pattern.test(source)) findings.push(`${name}: ${file}`);
   }
   if (/wrangler\.(?:toml|jsonc?)$/i.test(file)) {
-    const ids = [...source.matchAll(/database_id\s*(?:=|:)\s*"([0-9a-f-]{36})"/gi)].map((match) => match[1]);
-    if (ids.some((id) => id !== '00000000-0000-0000-0000-000000000000')) findings.push(`Cloudflare database ID: ${file}`);
+    const ids = [...source.matchAll(/database_id["']?\s*(?:=|:)\s*"([0-9a-f-]{36})"/gi)].map((match) => match[1]);
+    if (!deploymentValidation && ids.some((id) => id !== '00000000-0000-0000-0000-000000000000')) findings.push(`Cloudflare database ID: ${file}`);
   }
 }
 

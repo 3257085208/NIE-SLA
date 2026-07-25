@@ -26,7 +26,7 @@ assert.match(workflow, /git archive "refs\/tags\/\$CURRENT_REF"/);
 assert.match(workflow, /rsync -rlpcni --delete/);
 assert.match(workflow, /Only wrangler\.jsonc may differ/);
 assert.match(workflow, /pnpm run build/);
-assert.match(workflow, /pnpm test/);
+assert.match(workflow, /NIE_SLA_DEPLOYMENT_VALIDATION=1 pnpm test/);
 assert.match(workflow, /bash test\.sh/);
 assert.match(workflow, /wrangler deploy --dry-run/);
 assert.doesNotMatch(workflow, /CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID/);

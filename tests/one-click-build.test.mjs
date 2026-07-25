@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
 const output = path.join(root, 'dist-one-click');
+const deploymentValidation = process.env.NIE_SLA_DEPLOYMENT_VALIDATION === '1';
 
 for (const relative of [
   'index.html',
@@ -47,7 +48,9 @@ const wrangler = JSON.parse(await readFile(path.join(root, 'wrangler.jsonc'), 'u
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 assert.equal(wrangler.assets?.directory, './dist-one-click');
 assert.equal(wrangler.assets?.run_worker_first, true, 'custom admin routes must reach the Worker before static assets');
-assert.equal(wrangler.d1_databases?.[0]?.database_id, '00000000-0000-0000-0000-000000000000');
+const databaseId = wrangler.d1_databases?.[0]?.database_id || '';
+assert.match(databaseId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+if (!deploymentValidation) assert.equal(databaseId, '00000000-0000-0000-0000-000000000000');
 assert.ok(wrangler.r2_buckets?.[0]?.binding);
 assert.ok(wrangler.durable_objects?.bindings?.[0]?.class_name);
 assert.deepEqual(wrangler.triggers?.crons, ['* * * * *']);
