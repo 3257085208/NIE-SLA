@@ -37,7 +37,7 @@ const manifestResponse = () => new Response(JSON.stringify(manifest), {
 });
 
 const info = await getAppUpdateInfo(env, { force: true, fetchImpl: async () => manifestResponse() });
-assert.equal(info.current_version, '1.0.20');
+assert.equal(info.current_version, '1.0.21');
 assert.equal(info.latest_version, '1.1.0');
 assert.equal(info.update_available, true);
 assert.equal(info.repository, 'demo/status');

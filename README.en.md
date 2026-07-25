@@ -31,9 +31,9 @@ See the canonical [Cloudflare Quick Start](https://nie-sla.pages.dev/quickstart/
 
 ## Online Updates
 
-Version `1.0.20` and newer expose **Settings → System update**, including the installed version, latest stable version, publication time, and changelog. Updates run in the deployment repository's GitHub Actions workflow. It accepts only official `app-vX.Y.Z` tags, preserves the existing Cloudflare bindings in `wrangler.jsonc`, and runs the build, full test suite, and Wrangler dry run before pushing. Cloudflare automatically redeploys the verified commit.
+Version `1.0.21` and newer expose **Settings → System update**, including the installed version, latest stable version, publication time, and changelog. Updates run in the deployment repository's GitHub Actions workflow. It accepts only official `app-vX.Y.Z` tags, preserves the existing Cloudflare bindings in `wrangler.jsonc`, and runs the build, full test suite, and Wrangler dry run before pushing. Cloudflare automatically redeploys the verified commit.
 
-The first update requires read/write workflow permissions and a fine-grained GitHub token scoped only to the deployment repository with `Actions: Read and write`. The token is used for that dispatch only and is not stored in D1, Worker variables, or browser storage. Deployments older than `1.0.20` need one manual upstream sync before they can use the update center.
+The first update requires read/write workflow permissions and a fine-grained GitHub token scoped only to the deployment repository with `Actions: Read and write`. The token is used for that dispatch only and is not stored in D1, Worker variables, or browser storage. Deployments older than `1.0.21` need one manual upstream sync before they can use the update center.
 
 ## Features
 

@@ -165,7 +165,7 @@ https://status.example.com/api/auth/github/callback
 
 ## 更新
 
-从 `1.0.20` 开始，一键部署实例可在后台“设置 → 系统更新”中查看当前版本、最新版本和更新日志。首次使用在线更新时：
+从 `1.0.21` 开始，一键部署实例可在后台“设置 → 系统更新”中查看当前版本、最新版本和更新日志。首次使用在线更新时：
 
 1. 在部署仓库的 `Settings → Actions → General → Workflow permissions` 中允许工作流读写仓库内容。
 2. 创建只授权给该部署仓库的 GitHub fine-grained personal access token，并授予 `Actions: Read and write`。
@@ -174,7 +174,7 @@ https://status.example.com/api/auth/github/callback
 
 Token 只随本次请求发送给 GitHub，不会保存到 D1、Worker 环境变量或浏览器。部署仓库名会保存，方便下次使用。更新工作流始终保留部署仓库现有的 `wrangler.jsonc`，不会用官方模板覆盖用户的 D1、R2 或 Durable Object 绑定。
 
-低于 `1.0.20` 的实例尚未包含更新工作流，需要先在 GitHub 手动同步一次官方仓库并让 Cloudflare 完成重新部署。此后可直接使用后台更新中心。
+低于 `1.0.21` 的实例尚未包含稳定的源码导入更新工作流，需要先在 GitHub 手动同步一次官方仓库并让 Cloudflare 完成重新部署。此后可直接使用后台更新中心。
 
 Agent 自动更新由后台开关控制，建议先用一台 VPS 验证新版本。
 

@@ -16,7 +16,7 @@ For split Pages deployments, keep the root Pages Function and configure `NSTATUS
 
 A Worker cannot rewrite its own deployment without control-plane authorization. The online update button therefore dispatches the `NIE-SLA Online Update` workflow in the user's deployment repository. The workflow merges the official stable application tag while retaining the repository's `wrangler.jsonc` resource bindings, then runs the build, tests, security checks, and Wrangler dry-run before pushing. Cloudflare deploys that tested commit and keeps the previous successful deployment until the new build succeeds.
 
-Enable Actions and grant workflow read/write permission under **Settings → Actions → General**. At update time, enter the deployment repository as `owner/repo` and a fine-grained GitHub token limited to that repository with Actions write access. The token is used for that dispatch request only and is never stored in D1, Worker variables, logs, or browser storage. Deployments older than `1.0.20` need one manual synchronization before this workflow becomes available.
+Enable Actions and grant workflow read/write permission under **Settings → Actions → General**. At update time, enter the deployment repository as `owner/repo` and a fine-grained GitHub token limited to that repository with Actions write access. The token is used for that dispatch request only and is never stored in D1, Worker variables, logs, or browser storage. Deployments older than `1.0.21` need one manual synchronization before this workflow becomes available.
 
 ## Targets
 
