@@ -90,7 +90,7 @@ jobs:
           git archive "refs/tags/$CURRENT_REF" | tar -x -C "$RUNNER_TEMP/current-source"
           git archive "refs/tags/$SOURCE_REF" | tar -x -C "$RUNNER_TEMP/target-source"
 
-          local_changes="$(rsync -acni --delete \
+          local_changes="$(rsync -rlpcni --delete \
             --exclude='.git/' \
             --exclude='wrangler.jsonc' \
             "$RUNNER_TEMP/current-source/" ./)"
@@ -101,7 +101,7 @@ jobs:
             exit 1
           fi
 
-          rsync -ac --delete \
+          rsync -rlpc --delete \
             --exclude='.git/' \
             --exclude='wrangler.jsonc' \
             "$RUNNER_TEMP/target-source/" ./
