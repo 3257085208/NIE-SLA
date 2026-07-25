@@ -43,7 +43,7 @@ jobs:
           [[ "$SOURCE_REF" == "app-v$EXPECTED_VERSION" ]] || { echo "Version and tag do not match" >&2; exit 1; }
           test -f wrangler.jsonc || { echo "Deployment wrangler.jsonc is missing" >&2; exit 1; }
 
-      - name: Fetch and verify official tag
+      - name: Fetch and verify official target
         shell: bash
         run: |
           set -euo pipefail
@@ -53,41 +53,59 @@ jobs:
           git cat-file -e "refs/tags/$SOURCE_REF^{commit}"
           git show "refs/tags/$SOURCE_REF:update-manifest.json" > "$RUNNER_TEMP/update-manifest.json"
           node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
           import { readFile } from 'node:fs/promises';
           const manifest = JSON.parse(await readFile(process.env.RUNNER_TEMP + '/update-manifest.json', 'utf8'));
           if (manifest.schema !== 'nie-sla-app-update-v1') throw new Error('Unsupported update manifest');
           if (manifest.version !== process.env.EXPECTED_VERSION) throw new Error('Manifest version mismatch');
           if (manifest.source_ref !== process.env.SOURCE_REF) throw new Error('Manifest tag mismatch');
+          const source = await readFile('worker/src/version.js', 'utf8');
+          const current = source.match(/VERSION\s*=\s*['\"]([^'\"]+)['\"]/u)?.[1];
+          if (!/^\d+\.\d+\.\d+$/.test(current || '')) throw new Error('Current Worker version is invalid');
+          const parts = (value) => value.split('.').map(Number);
+          const compare = (left, right) => {
+            const a = parts(left);
+            const b = parts(right);
+            for (let index = 0; index < 3; index += 1) {
+              if (a[index] !== b[index]) return a[index] - b[index];
+            }
+            return 0;
+          };
+          if (compare(manifest.version, current) <= 0) throw new Error(`Target ${manifest.version} is not newer than ${current}`);
+          appendFileSync(process.env.GITHUB_ENV, `CURRENT_VERSION=${current}\nCURRENT_REF=app-v${current}\n`);
           NODE
 
-      - name: Merge update and preserve Cloudflare bindings
+      - name: Verify local files and apply official snapshot
         shell: bash
         run: |
           set -euo pipefail
+          git fetch --force --no-tags nie-sla-upstream "+refs/tags/$CURRENT_REF:refs/tags/$CURRENT_REF" || {
+            echo "The installed version has no online-update baseline. Perform one manual upstream sync first." >&2
+            exit 1
+          }
           cp wrangler.jsonc "$RUNNER_TEMP/wrangler.deployment.jsonc"
           git config user.name "nie-sla-update[bot]"
           git config user.email "nie-sla-update[bot]@users.noreply.github.com"
+          mkdir -p "$RUNNER_TEMP/current-source" "$RUNNER_TEMP/target-source"
+          git archive "refs/tags/$CURRENT_REF" | tar -x -C "$RUNNER_TEMP/current-source"
+          git archive "refs/tags/$SOURCE_REF" | tar -x -C "$RUNNER_TEMP/target-source"
 
-          set +e
-          git merge --no-commit --no-ff "refs/tags/$SOURCE_REF"
-          merge_status=$?
-          set -e
-
-          conflicts="$(git diff --name-only --diff-filter=U)"
-          unexpected="$(printf '%s\n' "$conflicts" | sed '/^$/d;/^wrangler\.jsonc$/d')"
-          if [[ -n "$unexpected" ]]; then
-            printf 'Update has conflicts outside wrangler.jsonc:\n%s\n' "$unexpected" >&2
-            git merge --abort || true
-            exit 1
-          fi
-          if [[ $merge_status -ne 0 && -z "$conflicts" ]]; then
-            git merge --abort || true
-            echo "Official update could not be merged" >&2
+          local_changes="$(rsync -acni --delete \
+            --exclude='.git/' \
+            --exclude='wrangler.jsonc' \
+            "$RUNNER_TEMP/current-source/" ./)"
+          if [[ -n "$local_changes" ]]; then
+            echo "Deployment files differ from the official $CURRENT_REF baseline:" >&2
+            printf '%s\n' "$local_changes" | head -80 >&2
+            echo "Only wrangler.jsonc may differ during an online update. Reconcile custom code manually." >&2
             exit 1
           fi
 
+          rsync -ac --delete \
+            --exclude='.git/' \
+            --exclude='wrangler.jsonc' \
+            "$RUNNER_TEMP/target-source/" ./
           cp "$RUNNER_TEMP/wrangler.deployment.jsonc" wrangler.jsonc
-          git add wrangler.jsonc
           node --input-type=module <<'NODE'
           import { readFile } from 'node:fs/promises';
           const source = await readFile('worker/src/version.js', 'utf8');
