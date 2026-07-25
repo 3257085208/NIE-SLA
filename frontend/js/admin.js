@@ -981,6 +981,8 @@ function cityOptionsHtml(current = "", cities = [], state = "ready") {
       ? "城市目录暂时不可用"
       : state === "country-required"
         ? "请先选择国家或地区"
+        : state === "no-results"
+          ? "没有匹配的中文城市"
         : "请选择城市";
   return [
     `<option value="">${placeholder}</option>`,
@@ -1011,7 +1013,10 @@ function countryCatalogField(current = "") {
 function cityCatalogField(current = "", country = "") {
   const hasCountry = Boolean(normalizeCountryCode(country));
   return formField("城市（可选）", `
-    <select id="mCity"${hasCountry ? "" : " disabled"}>${cityOptionsHtml(current, [], hasCountry ? "loading" : "country-required")}</select>
+    <div class="city-select-stack">
+      <input id="mCitySearch" type="search" placeholder="搜索中文城市" autocomplete="off" disabled>
+      <select id="mCity"${hasCountry ? "" : " disabled"}>${cityOptionsHtml(current, [], hasCountry ? "loading" : "country-required")}</select>
+    </div>
     <p class="hint" id="mCityHint">${hasCountry ? "正在加载城市目录..." : "选择国家或地区后加载城市。"}</p>`);
 }
 
@@ -1026,15 +1031,38 @@ function updateCountryPreview(code) {
 }
 
 let cityCatalogRequest = 0;
+let cityCatalogCountry = "";
+let cityCatalogCities = [];
+
+function filterLoadedCities() {
+  const citySelect = byId("mCity");
+  const search = byId("mCitySearch");
+  const hint = byId("mCityHint");
+  if (!citySelect || !search) return;
+  const query = search.value.trim().toLocaleLowerCase("zh-CN");
+  const selected = citySelect.value;
+  const matches = query
+    ? cityCatalogCities.filter((city) => city.toLocaleLowerCase("zh-CN").includes(query))
+    : cityCatalogCities;
+  citySelect.innerHTML = cityOptionsHtml(selected, matches, matches.length ? "ready" : "no-results");
+  if (hint) hint.textContent = query
+    ? `找到 ${matches.length} / ${cityCatalogCities.length} 个中文城市。`
+    : `已加载 ${cityCatalogCities.length} 个中文城市。`;
+}
 
 async function loadCitiesForCountry({ preserveCity = false } = {}) {
   const countrySelect = byId("mLocation");
   const citySelect = byId("mCity");
+  const search = byId("mCitySearch");
   const hint = byId("mCityHint");
-  if (!countrySelect || !citySelect) return;
+  if (!countrySelect || !citySelect || !search) return;
   const requestId = ++cityCatalogRequest;
   const countryCode = normalizeCountryCode(countrySelect.value);
   const currentCity = preserveCity ? citySelect.value : "";
+  cityCatalogCountry = countryCode;
+  cityCatalogCities = [];
+  search.value = "";
+  search.disabled = true;
   updateCountryPreview(countryCode);
   if (!countryCode) {
     citySelect.innerHTML = cityOptionsHtml(currentCity, [], "country-required");
@@ -1050,9 +1078,12 @@ async function loadCitiesForCountry({ preserveCity = false } = {}) {
     const result = await apiAdmin(`/api/catalog/cities?country=${encodeURIComponent(countryCode)}`, {}, 15_000);
     if (requestId !== cityCatalogRequest) return;
     const cities = Array.isArray(result.cities) ? result.cities : [];
+    if (normalizeCountryCode(result.country_code) !== cityCatalogCountry) return;
+    cityCatalogCities = cities;
     citySelect.innerHTML = cityOptionsHtml(currentCity, cities);
     citySelect.disabled = false;
-    if (hint) hint.textContent = `已加载 ${cities.length} 个城市。`;
+    search.disabled = false;
+    if (hint) hint.textContent = `已加载 ${cities.length} 个中文城市。`;
   } catch (error) {
     if (requestId !== cityCatalogRequest) return;
     citySelect.innerHTML = cityOptionsHtml(currentCity, [], "error");
@@ -1199,6 +1230,7 @@ function targetModal(target = null) {
   byId("mType").onchange = toggleTargetTypeFields;
   byId("mNoPublicIp").onchange = toggleNoPublicIpFields;
   byId("mLocation").onchange = () => loadCitiesForCountry({ preserveCity: false });
+  byId("mCitySearch").oninput = filterLoadedCities;
   loadCitiesForCountry({ preserveCity: true });
   toggleTargetTypeFields();
   byId("saveTarget").onclick = () => saveTarget(isEdit);

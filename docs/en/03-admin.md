@@ -22,6 +22,10 @@ For an immediate check, open **Actions → NIE-SLA Online Update** in the deploy
 
 A target represents a monitored service or VPS. Important fields include ID, name, group, type, host/port or URL/status codes, tags, location, expiry date, price, currency, billing cycle, an independent traffic reset day, per-VPS traffic settings, and per-VPS alert settings. Changing the reset day rebuilds the current period from the daily traffic ledger; changing expiry never changes the traffic boundary.
 
+### Country and city
+
+Country/region, city, and provider use selectors. After a country or region is selected, the Worker loads its Chinese-localized city catalog. Use the search field above the city selector to filter long lists with Chinese keywords. Changing the country clears the current city; when an existing saved city is absent from the refreshed catalog, the editor preserves it instead of silently overwriting it.
+
 ### Machine type
 
 Machine type is a display and grouping label; it does not alter the probe protocol or Agent behavior. Built-in choices cover web hosting, optimized-route, egress, relay, residential, unblocking, storage, backup, compute, game, mail, general-purpose, and other machines. The field may remain empty. Legacy Chinese values remain visible and selectable when existing targets are edited.

@@ -23,6 +23,7 @@ export default [
         FormData: 'readonly',
         Headers: 'readonly',
         HTMLCanvasElement: 'readonly',
+        Intl: 'readonly',
         MutationObserver: 'readonly',
         Request: 'readonly',
         ResizeObserver: 'readonly',

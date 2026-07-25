@@ -607,6 +607,13 @@ th {
   pointer-events: none;
   transform: translateY(-50%);
 }
+.city-select-stack {
+  display: grid;
+  gap: 8px;
+}
+.city-select-stack input[type="search"] {
+  min-width: 0;
+}
 .currency-note {
   margin: 5px 0 0;
 }
