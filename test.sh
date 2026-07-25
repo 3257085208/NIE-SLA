@@ -58,6 +58,7 @@ run_check "admin authentication tests" node "$ROOT/worker/tests/admin-auth.test.
 run_check "custom admin path tests" node "$ROOT/worker/tests/admin-path.test.mjs"
 run_check "admin reset tests" node "$ROOT/worker/tests/reset-admin.test.mjs"
 run_check "application update tests" node "$ROOT/worker/tests/app-update.test.mjs"
+run_check "independent traffic reset day tests" node "$ROOT/worker/tests/traffic-reset.test.mjs"
 run_check "per-node Agent credential tests" node "$ROOT/worker/tests/agent-credentials.test.mjs"
 run_check "email alert tests" node "$ROOT/worker/tests/alerts.test.mjs"
 run_check "admin reset tool" node --check "$ROOT/worker/scripts/reset-admin.mjs"

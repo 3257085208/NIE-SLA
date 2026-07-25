@@ -4,6 +4,8 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
+**当前阶段：Beta**
+
 Cloudflare Worker + D1 + R2 + Durable Objects + Rust Agent
 
 [![Agent Version](docs/badges/agent-version.svg)](https://github.com/3257085208/NIE-SLA/releases)
@@ -64,9 +66,9 @@ https://你的项目.你的账号.workers.dev/你填写的后台路径
 
 ## 在线更新
 
-`1.0.22` 及以上版本的部署仓库默认每 6 小时检查官方稳定版本。发现更新后，GitHub Actions 会保留现有 `wrangler.jsonc` 中的 Cloudflare 绑定，执行安全扫描、应用测试和 Wrangler dry-run，通过后提交更新并由 Cloudflare 自动重新部署。后台“设置 → 系统更新”可检查版本，并通过站内弹窗查看更新日志和操作指引。
+一键部署生成的仓库默认每 6 小时检查官方最新发布版本，包括当前 Beta 版本。发现更新后，GitHub Actions 会保留现有 `wrangler.jsonc` 中的 Cloudflare 绑定，执行安全扫描、应用测试和 Wrangler dry-run，通过后提交更新并由 Cloudflare 自动重新部署。后台“设置 → 系统更新”可检查版本，并通过站内弹窗查看更新日志和操作指引。
 
-整个过程不要求填写部署仓库、GitHub Token 或 Cloudflare Token。需要立即检查时，只需在部署仓库的 **Actions → NIE-SLA Online Update** 点击 **Run workflow**，无需填写参数。低于 `1.0.22` 的旧实例需先手动同步一次官方仓库。具体步骤见[快速上手](https://nie-sla.pages.dev/quickstart/#后续在线更新)。
+整个过程不要求填写部署仓库、GitHub Token 或 Cloudflare Token。需要立即检查时，只需在部署仓库的 **Actions → NIE-SLA Online Update** 点击 **Run workflow**，无需填写参数。具体步骤见[快速上手](https://nie-sla.pages.dev/quickstart/#后续在线更新)。
 
 ## 主要功能
 
@@ -78,7 +80,7 @@ https://你的项目.你的账号.workers.dev/你填写的后台路径
 | 温度 | 支持 CPU、GPU、主板、硬盘和芯片组传感器 |
 | 高频历史 | 本地 1 秒采样，默认 5 分钟批量上传到 R2 |
 | 网络测量 | VPS TCP Ping、Cloudflare Latency、外部 Latency Agent |
-| 节点管理 | 流量、价格、到期日、币种、标签、位置和 NodeQuality 报告 |
+| 节点管理 | 按日流量账本、独立重置日、价格、到期日、币种、标签、位置和 NodeQuality 报告 |
 | 告警 | Telegram 与邮件发送离线、恢复、资源、流量和到期提醒 |
 | 扩展 | 后台分别上传主题 ZIP 和插件 ZIP |
 | 安全 | 账号密码 Session、GitHub OAuth 白名单、TOTP、每节点 scoped Token、SHA-256 更新校验 |
@@ -116,6 +118,8 @@ NIE-SLA 不用增加 5 倍 D1 写入来换取更快的状态：
 - **Agent 指标层**：VPS 本地 1 秒采样，默认 5 分钟批量上传 R2，失败批次进入有界队列。
 
 因此，离线状态和报警通常可在约 1 分钟粒度变化，历史写入仍维持原有免费额度模型。
+
+流量上报在当天只更新当前周期行，跨天后每台 Agent 才封存一条每日记录。修改流量重置日时会按已有日记录重新汇总，因此不会把每次 5 分钟上报都变成额外的日账本写入。
 
 ## 数据存储
 

@@ -62,7 +62,7 @@ export async function getStats(env) {
   if (!env.DB) return { ok: true, note: '未绑定 D1' };
   const results = {};
   try {
-    const tables = ['targets', 'check_buckets', 'latest_status', 'incident_events', 'agent_metrics_state', 'agent_metrics_history', 'agent_traffic_monthly', 'ping_targets', 'ping_history', 'rate_limits', 'app_meta'];
+    const tables = ['targets', 'check_buckets', 'latest_status', 'incident_events', 'agent_metrics_state', 'agent_metrics_history', 'agent_traffic_monthly', 'agent_traffic_daily', 'ping_targets', 'ping_history', 'rate_limits', 'app_meta'];
     for (const table of tables) {
       try {
         const row = await env.DB.prepare(`SELECT COUNT(*) as cnt FROM ${table}`).first();
@@ -84,11 +84,14 @@ export async function getStats(env) {
     const metricsToD1 = parseBoolean(env.AGENT_METRICS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE);
     const pingsToD1 = parseBoolean(env.AGENT_PINGS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE);
     const pingTargetsCount = (await env.DB.prepare(`SELECT COUNT(*) as cnt FROM ping_targets WHERE enabled = 1`).first())?.cnt || 0;
+    const trafficAgentCount = (await env.DB.prepare(`SELECT COUNT(*) as cnt FROM targets WHERE enabled = 1 AND traffic_enabled = 1`).first())?.cnt || 0;
     const agentReportsPerDay = agentCount * 288;
     const pingIntervalSec = clamp(Number(env.NSTATUS_PING_SEC || env.AGENT_PING_SEC || 20), 5, 600);
     results.estimated_daily = {
       check_bucket_writes: targetsCount * 288,
       agent_state_writes: agentReportsPerDay,
+      agent_traffic_period_writes: trafficAgentCount * 288,
+      agent_traffic_daily_writes: trafficAgentCount,
       agent_history_d1_writes: metricsToD1 ? agentReportsPerDay : 0,
       ping_history_d1_writes: pingsToD1 ? Math.ceil(agentCount * pingTargetsCount * 86400 / pingIntervalSec) : 0,
       agent_history_points_in_d1: metricsToD1 ? agentCount * metricsPointsPerReport * 288 : 0,
@@ -97,7 +100,7 @@ export async function getStats(env) {
       r2_class_a_writes_month: agentReportsPerDay * 30,
       d1_rows_written_limit_per_day: 100000,
       storage_mode: env.ARCHIVE ? 'r2-primary' : 'd1-fallback',
-      notes: 'R2-primary keeps high-frequency metric and ping history out of D1 unless AGENT_METRICS_TO_D1/AGENT_PINGS_TO_D1 are enabled.'
+      notes: 'R2-primary keeps high-frequency metric and ping history out of D1 unless AGENT_METRICS_TO_D1/AGENT_PINGS_TO_D1 are enabled. Traffic daily rows are finalized once per agent per day.'
     };
   } catch (e) { results.error = String(e?.message || e); }
   return { ok: true, stats: results };

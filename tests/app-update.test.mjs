@@ -12,7 +12,8 @@ const routesSource = await readFile(path.join(root, 'worker/src/routes.js'), 'ut
 const version = versionSource.match(/VERSION\s*=\s*['"]([^'"]+)['"]/u)?.[1];
 
 assert.equal(manifest.schema, 'nie-sla-app-update-v1');
-assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
+assert.match(manifest.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/);
+assert.match(manifest.version, /-beta\.\d+$/, 'current application release must carry a Beta prerelease identifier');
 assert.equal(manifest.source_ref, `app-v${manifest.version}`);
 assert.equal(version, manifest.version, 'public Worker version must match the update manifest');
 assert.ok(Array.isArray(manifest.changelog) && manifest.changelog.length > 0);
@@ -24,6 +25,7 @@ assert.doesNotMatch(workflow, /inputs:[\s\S]*(?:source_ref|expected_version)/);
 assert.match(workflow, /contents: write/);
 assert.match(workflow, /raw\.githubusercontent\.com\/3257085208\/NIE-SLA\/main\/update-manifest\.json/);
 assert.match(workflow, /UPDATE_AVAILABLE=/);
+assert.match(workflow, /prerelease/, 'online updates must compare prerelease versions');
 assert.match(workflow, /if: env\.UPDATE_AVAILABLE == 'true'/);
 assert.match(workflow, /refs\/tags\/\$SOURCE_REF/);
 assert.match(workflow, /wrangler\.deployment\.jsonc/);

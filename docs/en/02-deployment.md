@@ -48,8 +48,8 @@ After login, **Settings → Administrator account** can migrate the initial envi
 
 On an existing deployment, the default username is `admin`. If `ADMIN_PASSWORD` is not set yet, the existing `ADMIN_TOKEN` is accepted as the temporary password. Set a dedicated `ADMIN_PASSWORD` after the upgrade.
 
-Starting with `1.0.22`, each one-click deployment repository checks the official stable version every six hours. When an update is available, the workflow preserves the existing `wrangler.jsonc`, runs security checks, application tests, and a Wrangler dry run, then commits the verified update for Cloudflare to redeploy. No repository name, GitHub token, or Cloudflare token is requested.
+Each one-click deployment repository checks the latest official published version, including the current Beta channel, every six hours. When an update is available, the workflow preserves the existing `wrangler.jsonc`, runs security checks, application tests, and a Wrangler dry run, then commits the verified update for Cloudflare to redeploy. No repository name, GitHub token, or Cloudflare token is requested.
 
-To check immediately, open the generated repository, select **Actions → NIE-SLA Online Update**, and click **Run workflow** without entering any parameters. **Settings → System update** shows version information and opens the changelog and instructions in local dialogs. If GitHub reports a push permission error, enable read/write workflow permission under **Settings → Actions → General**. Installations older than `1.0.22` need one manual upstream sync to receive the no-input workflow.
+To check immediately, open the generated repository, select **Actions → NIE-SLA Online Update**, and click **Run workflow** without entering any parameters. **Settings → System update** shows version information and opens the changelog and instructions in local dialogs. If GitHub reports a push permission error, enable read/write workflow permission under **Settings → Actions → General**.
 
 See [Admin](03-admin.md), [Agent](04-agent.md), [Alerts](06-alerts.md), [External Latency Agents](12-external-latency-agents.md), and [Extensions](13-extensions-developer-guide.md).

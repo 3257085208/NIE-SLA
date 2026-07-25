@@ -52,7 +52,7 @@ assert.match(adminSource, /data-group-value/, 'group selector must use structure
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
 assert.match(adminHtml, /admin\.css\?v=20260725-app-update2/, 'admin CSS cache key must publish the update center');
-assert.match(adminHtml, /js\/admin\.js\?v=20260725-app-update2/, 'admin JS cache key must publish the update center');
+assert.match(adminHtml, /js\/admin\.js\?v=20260725-daily-traffic1/, 'admin JS cache key must publish daily traffic settings');
 assert.match(adminHtml, /settings-primary[\s\S]*settings-columns[\s\S]*settings-column/, 'settings must separate wide forms from independent card columns');
 assert.match(adminCss, /\.settings-columns\s*\{[\s\S]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/, 'desktop settings cards must use three independent columns');
 assert.match(adminCss, /@media \(max-width: 820px\) \{[\s\S]*\.settings-columns\s*\{\s*grid-template-columns:\s*1fr/, 'mobile settings cards must collapse to one column');
@@ -65,6 +65,15 @@ assert.match(adminSource, /function showAppUpdateGuide\(\)[\s\S]*NIE-SLA Online 
 assert.doesNotMatch(adminSource, /data\.release_url[\s\S]*href=/, 'changelog must not link away to GitHub');
 assert.match(adminSource, /每 \$\{escapeHtml\(data\.automatic_check_hours \|\| 6\)\} 小时自动检查/, 'update center must explain scheduled checks');
 assert.match(adminSource, /infoRow\("版本", health\.version/, 'system information must display the Worker version');
+assert.match(adminSource, /id="mTrafficResetDay"[\s\S]*min="1" max="31"/, 'target editor must expose an independent monthly traffic reset day');
+assert.match(adminSource, /traffic_reset_day:\s*byId\("mType"\)/, 'target saves must persist the independent traffic reset day');
+assert.match(adminSource, /流量重置日与 VPS 到期时间完全独立/, 'traffic settings must explain expiry/reset separation');
+assert.match(adminSource, /修改流量重置日会立即切换当前统计周期/, 'changing the reset day must require an explicit warning');
+assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
+assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
+assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
+assert.match(indexHtml, /app\.js\?v=20260725-daily-traffic1/, 'frontend cache key must publish daily traffic changes');
+assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /body class="theme-pending" data-frontend-theme="classic"/, 'theme resolution must hide the classic shell before startup');
 assert.match(indexHtml, /id="themeCanvas"/, 'frontend must provide a sandboxed full-layout theme mount');

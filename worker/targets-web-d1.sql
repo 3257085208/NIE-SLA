@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS targets (
   traffic_enabled INTEGER NOT NULL DEFAULT 0,
   traffic_quota_gb REAL NOT NULL DEFAULT 0,
   traffic_mode TEXT DEFAULT 'total',
+  traffic_reset_day INTEGER NOT NULL DEFAULT 1,
   alert_enabled INTEGER NOT NULL DEFAULT 1,
   alert_expiry_days INTEGER,
   alert_traffic_remaining_percent REAL,
@@ -62,11 +63,36 @@ CREATE TABLE IF NOT EXISTS alert_state (
   PRIMARY KEY (target_id, rule_key)
 );
 
+CREATE TABLE IF NOT EXISTS agent_traffic_monthly (
+  agent_id TEXT NOT NULL,
+  month TEXT NOT NULL,
+  rx_bytes INTEGER NOT NULL DEFAULT 0,
+  tx_bytes INTEGER NOT NULL DEFAULT 0,
+  last_rx_bytes INTEGER,
+  last_tx_bytes INTEGER,
+  active_day TEXT,
+  day_rx_bytes INTEGER NOT NULL DEFAULT 0,
+  day_tx_bytes INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (agent_id, month)
+);
+
+CREATE TABLE IF NOT EXISTS agent_traffic_daily (
+  agent_id TEXT NOT NULL,
+  day TEXT NOT NULL,
+  rx_bytes INTEGER NOT NULL DEFAULT 0,
+  tx_bytes INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (agent_id, day)
+);
+
 CREATE INDEX IF NOT EXISTS idx_targets_group ON targets(group_name, name);
 CREATE INDEX IF NOT EXISTS idx_incident_target_active ON incident_events(target_id, recovered_at);
 CREATE INDEX IF NOT EXISTS idx_incident_started ON incident_events(started_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_incident_one_active ON incident_events(target_id) WHERE recovered_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_alert_state_updated ON alert_state(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_traffic_month ON agent_traffic_monthly(month);
+CREATE INDEX IF NOT EXISTS idx_agent_traffic_daily_day ON agent_traffic_daily(day, agent_id);
 
 -- This file intentionally contains schema only.
 -- Do not commit real VPS IP addresses, private hostnames, or personal domains here.

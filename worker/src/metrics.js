@@ -1,4 +1,4 @@
-﻿import { sanitizeAgentId, clamp, nowSec, retentionSeconds, parseBoolean } from './utils.js';
+﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean } from './utils.js';
 import { summarizeTraffic, trafficSettingsFromTarget } from './traffic.js';
 import { requireAgentForId, safeJson, json } from './auth.js';
 import { readR2Json, writeR2Json } from './storage.js';
@@ -207,7 +207,7 @@ function validateTelemetryBatch(samples, pings, now) {
 async function agentTrafficSettings(env, agentId, ts = nowSec()) {
   let row = null;
   try {
-    row = await env.DB.prepare(`SELECT traffic_enabled, traffic_quota_gb, traffic_mode, expires_at FROM targets WHERE id = ?`).bind(agentId).first();
+    row = await env.DB.prepare(`SELECT traffic_enabled, traffic_quota_gb, traffic_mode, traffic_reset_day, expires_at FROM targets WHERE id = ?`).bind(agentId).first();
   } catch (_) {
     try {
       row = await env.DB.prepare(`SELECT traffic_enabled, traffic_quota_gb, expires_at FROM targets WHERE id = ?`).bind(agentId).first();
@@ -215,7 +215,7 @@ async function agentTrafficSettings(env, agentId, ts = nowSec()) {
   }
   if (!row) {
     try {
-      const rows = await env.DB.prepare(`SELECT id, traffic_enabled, traffic_quota_gb, traffic_mode, expires_at FROM targets`).all();
+      const rows = await env.DB.prepare(`SELECT id, traffic_enabled, traffic_quota_gb, traffic_mode, traffic_reset_day, expires_at FROM targets`).all();
       row = (rows.results || []).find((item) => sanitizeAgentId(item.id) === agentId) || null;
     } catch (_) {
       try {
@@ -239,7 +239,81 @@ async function readAgentTraffic(env, agentId) {
   }
 }
 
-async function persistAgentTraffic(env, agentId, metrics, ts) {
+async function dailyTrafficSum(env, agentId, periodStart, periodEnd) {
+  const row = await env.DB.prepare(`SELECT COALESCE(SUM(rx_bytes), 0) AS rx_bytes, COALESCE(SUM(tx_bytes), 0) AS tx_bytes
+    FROM agent_traffic_daily WHERE agent_id = ? AND day >= ? AND day < ?`)
+    .bind(agentId, periodStart, periodEnd).first();
+  return {
+    rx: Math.max(0, Number(row?.rx_bytes || 0) || 0),
+    tx: Math.max(0, Number(row?.tx_bytes || 0) || 0),
+  };
+}
+
+function rawTrafficDelta(raw, previous) {
+  const last = Number(previous);
+  return Number.isFinite(last) && raw >= last ? Math.floor(raw - last) : 0;
+}
+
+function dayInTrafficPeriod(day, settings) {
+  return Boolean(day && day >= settings.period_start && day < settings.period_end);
+}
+
+function finalizeTrafficDayStatement(env, agentId, row, ts) {
+  if (!row?.active_day) return null;
+  const rx = Math.max(0, Number(row.day_rx_bytes || 0) || 0);
+  const tx = Math.max(0, Number(row.day_tx_bytes || 0) || 0);
+  if (rx === 0 && tx === 0) return null;
+  return env.DB.prepare(`INSERT INTO agent_traffic_daily (agent_id, day, rx_bytes, tx_bytes, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(agent_id, day) DO UPDATE SET
+      rx_bytes = agent_traffic_daily.rx_bytes + excluded.rx_bytes,
+      tx_bytes = agent_traffic_daily.tx_bytes + excluded.tx_bytes,
+      updated_at = excluded.updated_at`)
+    .bind(agentId, row.active_day, rx, tx, ts);
+}
+
+export async function rebuildAgentTrafficPeriod(env, agentId, target = null, ts = nowSec()) {
+  const id = sanitizeAgentId(agentId);
+  if (!env.DB || !id) return null;
+  let source = target;
+  if (!source) {
+    source = await env.DB.prepare(`SELECT traffic_enabled, traffic_quota_gb, traffic_mode, traffic_reset_day, expires_at FROM targets WHERE id = ?`)
+      .bind(agentId).first();
+  }
+  const settings = trafficSettingsFromTarget(source, env, ts);
+  const latest = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? ORDER BY updated_at DESC, month DESC LIMIT 1`)
+    .bind(id).first();
+  const daily = await dailyTrafficSum(env, id, settings.period_start, settings.period_end);
+  const includeActive = dayInTrafficPeriod(latest?.active_day, settings);
+  const activeRx = includeActive ? Math.max(0, Number(latest?.day_rx_bytes || 0) || 0) : 0;
+  const activeTx = includeActive ? Math.max(0, Number(latest?.day_tx_bytes || 0) || 0) : 0;
+  const latestUpdatedAt = Number(latest?.updated_at || 0) || 0;
+  const updatedAt = Math.max(ts, latestUpdatedAt + (latest && latest.month !== settings.month ? 1 : 0));
+  await env.DB.prepare(`INSERT INTO agent_traffic_monthly
+    (agent_id, month, rx_bytes, tx_bytes, last_rx_bytes, last_tx_bytes, active_day, day_rx_bytes, day_tx_bytes, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(agent_id, month) DO UPDATE SET
+      rx_bytes = excluded.rx_bytes,
+      tx_bytes = excluded.tx_bytes,
+      last_rx_bytes = excluded.last_rx_bytes,
+      last_tx_bytes = excluded.last_tx_bytes,
+      active_day = excluded.active_day,
+      day_rx_bytes = excluded.day_rx_bytes,
+      day_tx_bytes = excluded.day_tx_bytes,
+      updated_at = excluded.updated_at`)
+    .bind(
+      id, settings.month, Math.floor(daily.rx + activeRx), Math.floor(daily.tx + activeTx),
+      latest?.last_rx_bytes ?? null, latest?.last_tx_bytes ?? null,
+      latest?.active_day || dayFromSec(ts, env), activeRx, activeTx, updatedAt,
+    ).run();
+  return summarizeTraffic({
+    rx_bytes: daily.rx + activeRx,
+    tx_bytes: daily.tx + activeTx,
+    updated_at: updatedAt,
+  }, settings);
+}
+
+export async function persistAgentTraffic(env, agentId, metrics, ts) {
   const settings = await agentTrafficSettings(env, agentId, ts);
   if (!settings.enabled || !env.DB || !agentId) return;
   const rxRaw = Number(metrics?.net?.rx_bytes);
@@ -253,25 +327,76 @@ async function persistAgentTraffic(env, agentId, metrics, ts) {
     tx_bytes INTEGER NOT NULL DEFAULT 0,
     last_rx_bytes INTEGER,
     last_tx_bytes INTEGER,
+    active_day TEXT,
+    day_rx_bytes INTEGER NOT NULL DEFAULT 0,
+    day_tx_bytes INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (agent_id, month)
   )`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_traffic_daily (
+    agent_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    rx_bytes INTEGER NOT NULL DEFAULT 0,
+    tx_bytes INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, day)
+  )`).run();
   const row = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? AND month = ?`)
     .bind(agentId, month).first();
-  if (!row) {
-    await env.DB.prepare(`INSERT INTO agent_traffic_monthly (agent_id, month, rx_bytes, tx_bytes, last_rx_bytes, last_tx_bytes, updated_at) VALUES (?, ?, 0, 0, ?, ?, ?)`)
-      .bind(agentId, month, Math.floor(rxRaw), Math.floor(txRaw), ts).run();
-    return;
+  const latest = row || await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? ORDER BY updated_at DESC, month DESC LIMIT 1`)
+    .bind(agentId).first();
+  const deltaRx = rawTrafficDelta(rxRaw, latest?.last_rx_bytes);
+  const deltaTx = rawTrafficDelta(txRaw, latest?.last_tx_bytes);
+  const today = dayFromSec(ts, env);
+
+  if (row) {
+    const crossedDay = Boolean(row.active_day && row.active_day !== today);
+    const statements = [];
+    if (crossedDay) {
+      const finalize = finalizeTrafficDayStatement(env, agentId, row, ts);
+      if (finalize) statements.push(finalize);
+    }
+    statements.push(env.DB.prepare(`UPDATE agent_traffic_monthly SET
+      rx_bytes = rx_bytes + ?, tx_bytes = tx_bytes + ?, last_rx_bytes = ?, last_tx_bytes = ?,
+      active_day = ?, day_rx_bytes = ?, day_tx_bytes = ?, updated_at = ?
+      WHERE agent_id = ? AND month = ?`)
+      .bind(
+        deltaRx, deltaTx, Math.floor(rxRaw), Math.floor(txRaw), today,
+        crossedDay || !row.active_day ? deltaRx : Math.max(0, Number(row.day_rx_bytes || 0) || 0) + deltaRx,
+        crossedDay || !row.active_day ? deltaTx : Math.max(0, Number(row.day_tx_bytes || 0) || 0) + deltaTx,
+        ts, agentId, month,
+      ));
+    await env.DB.batch(statements);
+  } else {
+    const daily = await dailyTrafficSum(env, agentId, settings.period_start, settings.period_end);
+    const carryActive = dayInTrafficPeriod(latest?.active_day, settings);
+    const carriedRx = carryActive ? Math.max(0, Number(latest?.day_rx_bytes || 0) || 0) : 0;
+    const carriedTx = carryActive ? Math.max(0, Number(latest?.day_tx_bytes || 0) || 0) : 0;
+    const activeRx = latest?.active_day === today ? carriedRx + deltaRx : deltaRx;
+    const activeTx = latest?.active_day === today ? carriedTx + deltaTx : deltaTx;
+    const statements = [];
+    if (latest?.active_day && latest.active_day !== today) {
+      const finalize = finalizeTrafficDayStatement(env, agentId, latest, ts);
+      if (finalize) statements.push(finalize);
+    }
+    const updatedAt = Math.max(ts, (Number(latest?.updated_at || 0) || 0) + (latest ? 1 : 0));
+    statements.push(env.DB.prepare(`INSERT INTO agent_traffic_monthly
+      (agent_id, month, rx_bytes, tx_bytes, last_rx_bytes, last_tx_bytes, active_day, day_rx_bytes, day_tx_bytes, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(
+        agentId, month, Math.floor(daily.rx + carriedRx + deltaRx), Math.floor(daily.tx + carriedTx + deltaTx),
+        Math.floor(rxRaw), Math.floor(txRaw), today, activeRx, activeTx, updatedAt,
+      ));
+    await env.DB.batch(statements);
   }
-  const lastRx = Number(row.last_rx_bytes);
-  const lastTx = Number(row.last_tx_bytes);
-  const deltaRx = Number.isFinite(lastRx) && rxRaw >= lastRx ? Math.floor(rxRaw - lastRx) : 0;
-  const deltaTx = Number.isFinite(lastTx) && txRaw >= lastTx ? Math.floor(txRaw - lastTx) : 0;
-  await env.DB.prepare(`UPDATE agent_traffic_monthly SET rx_bytes = rx_bytes + ?, tx_bytes = tx_bytes + ?, last_rx_bytes = ?, last_tx_bytes = ?, updated_at = ? WHERE agent_id = ? AND month = ?`)
-    .bind(deltaRx, deltaTx, Math.floor(rxRaw), Math.floor(txRaw), ts, agentId, month).run();
-  try {
-    await env.DB.prepare(`DELETE FROM agent_traffic_monthly WHERE agent_id = ? AND month <> ?`).bind(agentId, month).run();
-  } catch (_) {}
+  if (latest?.active_day !== today) {
+    try {
+      await env.DB.batch([
+        env.DB.prepare(`DELETE FROM agent_traffic_monthly WHERE agent_id = ? AND updated_at < ?`).bind(agentId, ts - 400 * 86400),
+        env.DB.prepare(`DELETE FROM agent_traffic_daily WHERE agent_id = ? AND day < ?`).bind(agentId, dayFromSec(ts - 400 * 86400, env)),
+      ]);
+    } catch (_) {}
+  }
 }
 
 async function loadAgentMetricsD1History(env, agentId, since, historyByTs) {
@@ -408,7 +533,7 @@ export async function deleteAgentTelemetry(env, agentId) {
   const id = sanitizeAgentId(agentId);
   if (!id) return { d1: 0, r2: 0 };
   let d1 = 0;
-  for (const table of ['agent_metrics_state', 'agent_metrics_history', 'agent_traffic_monthly', 'ping_history']) {
+  for (const table of ['agent_metrics_state', 'agent_metrics_history', 'agent_traffic_monthly', 'agent_traffic_daily', 'ping_history']) {
     const result = await env.DB.prepare(`DELETE FROM ${table} WHERE agent_id = ?`).bind(id).run().catch(() => null);
     d1 += Number(result?.meta?.changes || 0);
   }

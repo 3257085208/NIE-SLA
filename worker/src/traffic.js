@@ -1,4 +1,4 @@
-import { nowSec, parseBoolean, trafficPeriodFromExpiry } from './utils.js';
+import { dayFromSec, nowSec, parseBoolean, trafficPeriodFromResetDay } from './utils.js';
 
 const TRAFFIC_MODES = new Set(['total', 'tx', 'rx', 'max']);
 
@@ -11,6 +11,12 @@ export function normalizeTrafficQuotaGb(value) {
 export function normalizeTrafficMode(value) {
   const mode = String(value || 'total').trim().toLowerCase();
   return TRAFFIC_MODES.has(mode) ? mode : 'total';
+}
+
+export function normalizeTrafficResetDay(value, fallback = 1) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return Math.max(1, Math.min(31, Math.floor(Number(fallback) || 1)));
+  return Math.max(1, Math.min(31, Math.floor(parsed)));
 }
 
 export function trafficModeLabel(mode) {
@@ -34,24 +40,35 @@ export function trafficBillableBytes(mode, rx, tx) {
 }
 
 export function currentTrafficMonth(env, ts = nowSec()) {
-  return trafficPeriodFromExpiry(env, null, ts).month;
+  return trafficPeriodFromResetDay(env, 1, ts).month;
 }
 
 export function trafficPeriod(env, ts = nowSec()) {
-  return trafficPeriodFromExpiry(env, null, ts);
+  return trafficPeriodFromResetDay(env, 1, ts);
 }
 
 export function trafficSettingsFromTarget(target, env, ts = nowSec()) {
   const quotaGb = normalizeTrafficQuotaGb(target?.traffic_quota_gb ?? 0);
   const mode = normalizeTrafficMode(target?.traffic_mode);
+  const resetDay = trafficResetDayFromTarget(target, env);
   return {
     enabled: parseBoolean(target?.traffic_enabled, false),
     mode,
     mode_label: trafficModeLabel(mode),
     quota_gb: quotaGb,
     quota_bytes: Math.round(quotaGb * 1024 * 1024 * 1024),
-    ...trafficPeriodFromExpiry(env, target?.expires_at, ts),
+    ...trafficPeriodFromResetDay(env, resetDay, ts),
   };
+}
+
+function trafficResetDayFromTarget(target, env) {
+  if (target?.traffic_reset_day !== undefined && target?.traffic_reset_day !== null && target?.traffic_reset_day !== '') {
+    return normalizeTrafficResetDay(target.traffic_reset_day);
+  }
+  const legacyExpiry = Number(target?.expires_at || 0);
+  return Number.isFinite(legacyExpiry) && legacyExpiry > 0
+    ? normalizeTrafficResetDay(Number(dayFromSec(legacyExpiry, env).slice(-2)))
+    : 1;
 }
 
 export function summarizeTraffic(row, settings) {

@@ -1754,7 +1754,7 @@ function renderVPSInfo() {
     if (traffic.mode_label) networkItems.push(vpsItem('流量计费', traffic.mode_label));
     networkItems.push(vpsItem('累计接收', fmtBytes(traffic.rx_bytes || 0)));
     networkItems.push(vpsItem('累计发送', fmtBytes(traffic.tx_bytes || 0)));
-    networkItems.push(vpsItem(traffic.reset === 'expiry-day' ? '计费周期流量' : '本月计费流量', `${fmtBytes(traffic.total_bytes || 0)}${traffic.quota_bytes ? ' / ' + fmtBytes(traffic.quota_bytes) : ''}${traffic.percent != null ? ' · ' + traffic.percent + '%' : ''}${traffic.reset === 'expiry-day' && traffic.reset_day ? ' · ' + traffic.reset_day + '日重置' : ''}`));
+    networkItems.push(vpsItem('计费周期流量', `${fmtBytes(traffic.total_bytes || 0)}${traffic.quota_bytes ? ' / ' + fmtBytes(traffic.quota_bytes) : ''}${traffic.percent != null ? ' · ' + traffic.percent + '%' : ''}${traffic.reset_day ? ' · ' + traffic.reset_day + '日重置' : ''}`));
   }
   networkItems.push(vpsItem('当前接收', fmtBytesPerSec(net.rx_bytes_sec || 0)));
   networkItems.push(vpsItem('当前发送', fmtBytesPerSec(net.tx_bytes_sec || 0)));

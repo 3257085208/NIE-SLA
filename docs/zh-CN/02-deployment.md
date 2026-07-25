@@ -165,7 +165,7 @@ https://status.example.com/api/auth/github/callback
 
 ## 更新
 
-从 `1.0.22` 开始，一键部署仓库默认每 6 小时检查一次官方稳定版本。发现更新后，工作流会保留现有 `wrangler.jsonc`，完成安全扫描、应用测试和 Wrangler dry-run，再提交更新；Cloudflare 随后自动重新部署。整个过程不要求填写仓库名、GitHub Token 或 Cloudflare Token。
+一键部署仓库默认每 6 小时检查一次官方最新发布版本，包括当前 Beta 版本。发现更新后，工作流会保留现有 `wrangler.jsonc`，完成安全扫描、应用测试和 Wrangler dry-run，再提交更新；Cloudflare 随后自动重新部署。整个过程不要求填写仓库名、GitHub Token 或 Cloudflare Token。
 
 需要立即检查时：
 
@@ -173,7 +173,7 @@ https://status.example.com/api/auth/github/callback
 2. 进入 `Actions`，选择 `NIE-SLA Online Update`。
 3. 点击 `Run workflow`，无需填写参数。
 
-后台“设置 → 系统更新”显示当前版本、最新版本和发布时间；“更新日志”在站内弹窗中展示，“更新指引”会重复上面的操作。若工作流推送时提示权限不足，再到 `Settings → Actions → General → Workflow permissions` 选择读写权限。低于 `1.0.22` 的实例需先手动同步一次官方仓库，获得新版无参数工作流。
+后台“设置 → 系统更新”显示当前版本、最新版本和发布时间；“更新日志”在站内弹窗中展示，“更新指引”会重复上面的操作。若工作流推送时提示权限不足，再到 `Settings → Actions → General → Workflow permissions` 选择读写权限。
 
 Agent 自动更新由后台开关控制，建议先用一台 VPS 验证新版本。
 

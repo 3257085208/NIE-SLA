@@ -12,15 +12,15 @@ For split Pages deployments, keep the root Pages Function and configure `NSTATUS
 
 ## Application updates
 
-**Settings → System update** displays the current application version, latest stable version, and publication time. The changelog and update instructions open in admin dialogs. Application releases use `app-v*` tags and remain separate from Agent binary `v*` releases.
+**Settings → System update** displays the current application version, latest published version, and publication time. Beta builds use the `-beta.N` suffix. The changelog and update instructions open in admin dialogs. Application releases use `app-v*` tags and remain separate from Agent binary `v*` releases.
 
 The deployment repository runs `NIE-SLA Online Update` every six hours. It preserves `wrangler.jsonc`, applies only a verified official stable tag, and runs security checks, application tests, and a Wrangler dry run before pushing. Cloudflare deploys the tested commit while retaining the previous successful deployment until the new build succeeds. No GitHub or Cloudflare token is entered in the admin UI.
 
-For an immediate check, open **Actions → NIE-SLA Online Update** in the deployment repository and click **Run workflow** without parameters. If GitHub reports a push permission error, enable read/write workflow permission under **Settings → Actions → General**. Deployments older than `1.0.22` need one manual synchronization to receive this workflow.
+For an immediate check, open **Actions → NIE-SLA Online Update** in the deployment repository and click **Run workflow** without parameters. If GitHub reports a push permission error, enable read/write workflow permission under **Settings → Actions → General**.
 
 ## Targets
 
-A target represents a monitored service or VPS. Important fields include ID, name, group, type, host/port or URL/status codes, tags, location, expiry date, price, currency, billing cycle, per-VPS traffic settings, and per-VPS alert settings.
+A target represents a monitored service or VPS. Important fields include ID, name, group, type, host/port or URL/status codes, tags, location, expiry date, price, currency, billing cycle, an independent traffic reset day, per-VPS traffic settings, and per-VPS alert settings. Changing the reset day rebuilds the current period from the daily traffic ledger; changing expiry never changes the traffic boundary.
 
 ### Machine type
 

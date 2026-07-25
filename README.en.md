@@ -2,6 +2,8 @@
 
 NIE-SLA is a Cloudflare-hosted status page and VPS monitor. The control plane uses Workers, D1, R2, Durable Objects, and static assets. Each VPS runs a native Rust Agent that reports over outbound HTTPS and does not open a management port.
 
+Current release stage: **Beta**.
+
 Canonical documentation: [nie-sla.pages.dev](https://nie-sla.pages.dev/)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
@@ -31,9 +33,9 @@ See the canonical [Cloudflare Quick Start](https://nie-sla.pages.dev/quickstart/
 
 ## Online Updates
 
-Version `1.0.22` and newer check the official stable application version every six hours from the deployment repository. The workflow preserves the existing Cloudflare bindings in `wrangler.jsonc`, runs security checks, application tests, and a Wrangler dry run, then lets Cloudflare redeploy the verified commit. **Settings → System update** checks versions and opens the changelog and instructions in local dialogs.
+The generated deployment repository checks the latest official published application version, including the current Beta channel, every six hours. The workflow preserves the existing Cloudflare bindings in `wrangler.jsonc`, runs security checks, application tests, and a Wrangler dry run, then lets Cloudflare redeploy the verified commit. **Settings → System update** checks versions and opens the changelog and instructions in local dialogs.
 
-No deployment repository, GitHub token, or Cloudflare token is entered in the admin UI. For an immediate check, open **Actions → NIE-SLA Online Update** in the generated repository and click **Run workflow** without parameters. Deployments older than `1.0.22` need one manual upstream sync first.
+No deployment repository, GitHub token, or Cloudflare token is entered in the admin UI. For an immediate check, open **Actions → NIE-SLA Online Update** in the generated repository and click **Run workflow** without parameters.
 
 ## Features
 
@@ -45,7 +47,7 @@ No deployment repository, GitHub token, or Cloudflare token is entered in the ad
 - One-second local sampling with batched uploads and durable retry.
 - D1 for configuration and state; R2 for raw metrics, Ping, and snapshots.
 - Per-VPS TCP Ping and optional external Latency Agents.
-- Traffic quotas, billing metadata, expiry dates, tags, locations, and NodeQuality reports.
+- Low-write daily traffic accounting, independent reset days, quotas, billing metadata, expiry dates, tags, locations, and NodeQuality reports.
 - Telegram and Resend email alerts for availability, resources, traffic, and expiry.
 - Uploadable theme and plugin ZIP packages.
 - Admin version checks, changelogs, and verified online application updates.
@@ -74,7 +76,7 @@ Admin passwords are accepted only by the login endpoint. Admin APIs use a 24-hou
 
 ## Free-Tier Planning
 
-The default five-minute upload mode is comfortable for small installations. Current estimates place the conservative free-tier boundary near 110 VPS nodes, with no more than 80 recommended for long-running deployments without paid capacity. Actual use depends on traffic, retries, Ping targets, and history retention.
+The default five-minute upload mode is comfortable for small installations. Current estimates place the conservative free-tier boundary near 110 VPS nodes, with no more than 80 recommended for long-running deployments without paid capacity. Daily traffic accounting normally adds only one finalized row per Agent per day; actual use still depends on traffic, retries, Ping targets, and history retention.
 
 ## Documentation
 

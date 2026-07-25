@@ -96,34 +96,22 @@ function dateKey(year, month, day) {
   return `${year}-${pad2(month)}-${pad2(day)}`;
 }
 
-export function trafficPeriodFromExpiry(env, expiresAt = null, ts = nowSec()) {
+export function trafficPeriodFromResetDay(env, resetDay = 1, ts = nowSec()) {
   const current = localDateParts(ts, env);
-  const currentMonth = `${current.year}-${pad2(current.month)}`;
-  const expiryTs = Number(expiresAt || 0);
-  if (!Number.isFinite(expiryTs) || expiryTs <= 0) {
-    const next = monthShift(current.year, current.month, 1);
-    return {
-      month: currentMonth,
-      reset: 'calendar-month',
-      reset_day: 1,
-      period_start: `${currentMonth}-01`,
-      period_end: dateKey(next.year, next.month, 1),
-    };
-  }
-  const resetDay = clamp(localDateParts(expiryTs, env).day, 1, 31);
+  const normalizedResetDay = clamp(Number(resetDay || 1), 1, 31);
   let start = { year: current.year, month: current.month };
-  let startDay = Math.min(resetDay, daysInMonth(start.year, start.month));
+  let startDay = Math.min(normalizedResetDay, daysInMonth(start.year, start.month));
   if (current.day < startDay) {
     start = monthShift(current.year, current.month, -1);
-    startDay = Math.min(resetDay, daysInMonth(start.year, start.month));
+    startDay = Math.min(normalizedResetDay, daysInMonth(start.year, start.month));
   }
   const end = monthShift(start.year, start.month, 1);
-  const endDay = Math.min(resetDay, daysInMonth(end.year, end.month));
+  const endDay = Math.min(normalizedResetDay, daysInMonth(end.year, end.month));
   const startKey = dateKey(start.year, start.month, startDay);
   return {
     month: startKey,
-    reset: 'expiry-day',
-    reset_day: resetDay,
+    reset: normalizedResetDay === 1 ? 'calendar-month' : 'reset-day',
+    reset_day: normalizedResetDay,
     period_start: startKey,
     period_end: dateKey(end.year, end.month, endDay),
   };

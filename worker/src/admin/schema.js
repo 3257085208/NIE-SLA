@@ -1,9 +1,9 @@
 ﻿// Admin sub-module: D1 schema migrations.
-import { parseBoolean } from '../utils.js';
+import { dayFromSec, nowSec, parseBoolean, timezoneOffsetMin } from '../utils.js';
 
 let schemaEnsured = false;
 let schemaPromise = null;
-const SCHEMA_MARKER = 'schema:worker-v13-20260725-agent-credentials';
+const SCHEMA_MARKER = 'schema:worker-v15-20260725-daily-traffic';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -29,10 +29,12 @@ export async function ensureV6Schema(env) {
   // statements on every cron invocation once this schema revision is installed.
   const installed = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(SCHEMA_MARKER).first().catch(() => null);
   if (installed?.value === '1') { schemaEnsured = true; return; }
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, no_public_ip INTEGER NOT NULL DEFAULT 0, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', city TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '', nq_report TEXT DEFAULT '', nq_updated_at INTEGER)`).run();
-  for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN no_public_ip INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN city TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_report TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_updated_at INTEGER']) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, no_public_ip INTEGER NOT NULL DEFAULT 0, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', city TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', traffic_reset_day INTEGER NOT NULL DEFAULT 1, alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '', nq_report TEXT DEFAULT '', nq_updated_at INTEGER)`).run();
+  for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN traffic_reset_day INTEGER', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN no_public_ip INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN city TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_report TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_updated_at INTEGER']) {
     await runOptionalSchemaChange(env, stmt);
   }
+  await env.DB.prepare(`UPDATE targets SET traffic_reset_day = CASE WHEN expires_at IS NOT NULL AND expires_at > 0 THEN CAST(strftime('%d', expires_at + ?, 'unixepoch') AS INTEGER) ELSE 1 END WHERE traffic_reset_day IS NULL`)
+    .bind(timezoneOffsetMin(env) * 60).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_due ON targets(enabled, last_checked_at, interval_sec)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_group ON targets(group_name, name)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_sort_order ON targets(sort_order)`).run();
@@ -110,10 +112,44 @@ export async function ensureV6Schema(env) {
     tx_bytes INTEGER NOT NULL DEFAULT 0,
     last_rx_bytes INTEGER,
     last_tx_bytes INTEGER,
+    active_day TEXT,
+    day_rx_bytes INTEGER NOT NULL DEFAULT 0,
+    day_tx_bytes INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (agent_id, month)
   )`).run();
+  for (const stmt of [
+    'ALTER TABLE agent_traffic_monthly ADD COLUMN active_day TEXT',
+    'ALTER TABLE agent_traffic_monthly ADD COLUMN day_rx_bytes INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE agent_traffic_monthly ADD COLUMN day_tx_bytes INTEGER NOT NULL DEFAULT 0',
+  ]) {
+    await runOptionalSchemaChange(env, stmt);
+  }
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_traffic_month ON agent_traffic_monthly(month)`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_traffic_daily (
+    agent_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    rx_bytes INTEGER NOT NULL DEFAULT 0,
+    tx_bytes INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (agent_id, day)
+  )`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_traffic_daily_day ON agent_traffic_daily(day, agent_id)`).run();
+
+  // Legacy totals cannot be split retroactively. Preserve the newest total as
+  // an upgrade-day entry; subsequent days are recorded precisely.
+  const migrationNow = nowSec();
+  const migrationDay = dayFromSec(migrationNow, env);
+  await env.DB.prepare(`INSERT OR IGNORE INTO agent_traffic_daily (agent_id, day, rx_bytes, tx_bytes, updated_at)
+    SELECT m.agent_id, ?, m.rx_bytes, m.tx_bytes, ?
+    FROM agent_traffic_monthly m
+    WHERE m.updated_at = (SELECT MAX(latest.updated_at) FROM agent_traffic_monthly latest WHERE latest.agent_id = m.agent_id)
+      AND (m.rx_bytes > 0 OR m.tx_bytes > 0)`)
+    .bind(migrationDay, migrationNow).run();
+  await env.DB.prepare(`UPDATE agent_traffic_monthly SET active_day = ?, day_rx_bytes = 0, day_tx_bytes = 0
+    WHERE active_day IS NULL
+      AND updated_at = (SELECT MAX(latest.updated_at) FROM agent_traffic_monthly latest WHERE latest.agent_id = agent_traffic_monthly.agent_id)`)
+    .bind(migrationDay).run();
 
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ping_targets (
     id TEXT PRIMARY KEY,

@@ -26,7 +26,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve latest stable version
+      - name: Resolve latest published version
         shell: bash
         run: |
           set -euo pipefail
@@ -39,17 +39,38 @@ jobs:
 
           const manifest = JSON.parse(await readFile(process.env.RUNNER_TEMP + '/update-manifest.json', 'utf8'));
           if (manifest.schema !== 'nie-sla-app-update-v1') throw new Error('Unsupported update manifest');
-          if (!/^\d+\.\d+\.\d+$/.test(manifest.version || '')) throw new Error('Invalid update version');
+          const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+          if (!versionPattern.test(manifest.version || '')) throw new Error('Invalid update version');
           if (manifest.source_ref !== `app-v${manifest.version}`) throw new Error('Manifest tag mismatch');
 
           const source = await readFile('worker/src/version.js', 'utf8');
           const current = source.match(/VERSION\s*=\s*['"]([^'"]+)['"]/u)?.[1];
-          if (!/^\d+\.\d+\.\d+$/.test(current || '')) throw new Error('Current Worker version is invalid');
+          if (!versionPattern.test(current || '')) throw new Error('Current Worker version is invalid');
+          const parse = (value) => {
+            const separator = value.indexOf('-');
+            const core = separator < 0 ? value : value.slice(0, separator);
+            const prerelease = separator < 0 ? '' : value.slice(separator + 1);
+            return { core: core.split('.').map(Number), prerelease: prerelease ? prerelease.split('.') : [] };
+          };
           const compare = (left, right) => {
-            const a = left.split('.').map(Number);
-            const b = right.split('.').map(Number);
+            const a = parse(left);
+            const b = parse(right);
             for (let index = 0; index < 3; index += 1) {
-              if (a[index] !== b[index]) return a[index] - b[index];
+              if (a.core[index] !== b.core[index]) return a.core[index] - b.core[index];
+            }
+            if (!a.prerelease.length || !b.prerelease.length) {
+              return a.prerelease.length === b.prerelease.length ? 0 : (a.prerelease.length ? -1 : 1);
+            }
+            for (let index = 0; index < Math.max(a.prerelease.length, b.prerelease.length); index += 1) {
+              const x = a.prerelease[index];
+              const y = b.prerelease[index];
+              if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+              if (x === y) continue;
+              const xn = /^\d+$/.test(x);
+              const yn = /^\d+$/.test(y);
+              if (xn && yn) return Number(x) - Number(y);
+              if (xn !== yn) return xn ? -1 : 1;
+              return x > y ? 1 : -1;
             }
             return 0;
           };

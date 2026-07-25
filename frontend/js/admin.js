@@ -1047,6 +1047,7 @@ function targetModalHtml(target, isEdit) {
   const alertEnabled = target.alert_enabled === undefined ? true : Number(target.alert_enabled) !== 0;
   return `
     <h3>${isEdit ? "编辑" : "新增"}探针</h3>
+    <input id="mOriginalTrafficResetDay" type="hidden" value="${escapeHtml(target.traffic_reset_day ?? 1)}">
     ${inputField("ID", "mId", target.id || "", isEdit ? "readonly" : "")}
     ${inputField("名称", "mName", target.name || "")}
 
@@ -1111,14 +1112,15 @@ function targetModalHtml(target, isEdit) {
         <input type="checkbox" id="mTrafficEnabled"${checkedAttr(Number(target.traffic_enabled || 0))}>
         <span>启用流量累计</span>
       </label>
-      <p class="hint">设置到期时间后，流量会按到期日号每月重置。</p>`,
+      <p class="hint">流量周期只按独立的重置日计算，与 VPS 到期时间互不影响。</p>`,
       "fvps",
     )}
 
     <div class="form-grid fvps">
       ${formField("本 VPS 每月流量上限 GB", `<input id="mTrafficQuota" type="number" min="0" step="0.1" value="${escapeHtml(target.traffic_quota_gb || 0)}">`)}
-      ${formField("流量计费方式", `<select id="mTrafficMode">${trafficModeOptions(target.traffic_mode)}</select>`)}
+      ${formField("流量重置日（每月）", `<input id="mTrafficResetDay" type="number" min="1" max="31" step="1" value="${escapeHtml(target.traffic_reset_day ?? 1)}"><p class="hint">填写 1–31；短月份自动使用当月最后一天。</p>`)}
     </div>
+    ${formField("流量计费方式", `<select id="mTrafficMode">${trafficModeOptions(target.traffic_mode)}</select>`, "fvps")}
 
     ${formField(
       "此探针报警",
@@ -1185,6 +1187,11 @@ async function saveTarget(edit) {
   const price = priceRaw === "" ? null : Number(priceRaw);
   if (priceRaw !== "" && !Number.isFinite(price))
     return toast("费用需要是数字", "err");
+  const trafficResetDay = Number(byId("mTrafficResetDay")?.value || 1);
+  if (!Number.isInteger(trafficResetDay) || trafficResetDay < 1 || trafficResetDay > 31)
+    return toast("流量重置日需要是 1–31 的整数", "err");
+  const originalTrafficResetDay = Number(byId("mOriginalTrafficResetDay")?.value || 1);
+  if (edit && trafficResetDay !== originalTrafficResetDay && !confirm("修改流量重置日会立即切换当前统计周期，并按已有的每日记录重新汇总。统计结果可能随周期范围变化，是否继续？")) return;
   const b = {
     name: byId("mName").value.trim(),
     type: byId("mType").value,
@@ -1205,6 +1212,7 @@ async function saveTarget(edit) {
     traffic_enabled: byId("mType").value === "tcp" && !!byId("mTrafficEnabled")?.checked,
     traffic_quota_gb: byId("mType").value === "tcp" ? Number(byId("mTrafficQuota")?.value) || 0 : 0,
     traffic_mode: byId("mTrafficMode")?.value || "total",
+    traffic_reset_day: byId("mType").value === "tcp" ? trafficResetDay : 1,
     alert_enabled: !!byId("mAlertEnabled")?.checked,
     alert_expiry_days: nullableNumber("mAlertExpiryDays"),
     alert_traffic_remaining_percent: byId("mType").value === "tcp" ? nullableNumber("mAlertTrafficPercent") : null,
@@ -1861,7 +1869,7 @@ async function loadTraffic() {
   try {
     await api("/api/settings");
     byId("sTraffic").innerHTML =
-      `<p class="hint">流量统计按 VPS 单独设置。到“探针管理”里编辑某台 VPS，可单独开启流量累计并设置该 VPS 的每月上限。</p><div class="traffic-settings"><p class="hint">如果设置了到期时间，流量会按照到期时间的日号每月重置；未设置到期时间时按自然月重置。数据保存在 CF/D1。</p></div>`;
+      `<p class="hint">流量统计按 VPS 单独设置。到“探针管理”里编辑某台 VPS，可分别设置每月上限、计费方式和流量重置日。</p><div class="traffic-settings"><p class="hint">流量重置日与 VPS 到期时间完全独立；续期或修改到期时间不会改变流量周期。数据保存在 CF/D1。</p></div>`;
   } catch (e) {
     errBox("sTraffic", e);
   }

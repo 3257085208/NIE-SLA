@@ -1,10 +1,10 @@
 ﻿// Admin sub-module: target CRUD, probes, and agent target listing.
 import { clamp, nowSec, sanitizeId, sanitizeAgentId, parseBoolean, normalizeTarget, parseExpectedStatus, REGION_LABELS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC } from '../utils.js';
-import { normalizeTrafficMode, normalizeTrafficQuotaGb, summarizeTraffic, trafficSettingsFromTarget } from '../traffic.js';
+import { normalizeTrafficMode, normalizeTrafficQuotaGb, normalizeTrafficResetDay, summarizeTraffic, trafficSettingsFromTarget } from '../traffic.js';
 import { safeJson } from '../auth.js';
 import { removeTargetFromR2State } from '../storage.js';
 import { runTargetBatch } from '../probe.js';
-import { deleteAgentTelemetry } from '../metrics.js';
+import { deleteAgentTelemetry, rebuildAgentTrafficPeriod } from '../metrics.js';
 import { ensureV6Schema } from './schema.js';
 import { setMeta } from './settings.js';
 import { syncEnvTargetsMaybe, syncEnvTargets } from './sync.js';
@@ -90,13 +90,14 @@ export async function createTarget(request, env) {
   const trafficEnabled = parseBoolean(body?.traffic_enabled, false) ? 1 : 0;
   const trafficQuotaGb = normalizeTrafficQuotaGb(body?.traffic_quota_gb ?? 0);
   const trafficMode = normalizeTrafficMode(body?.traffic_mode);
+  const trafficResetDay = normalizeTrafficResetDay(body?.traffic_reset_day ?? 1);
   const alertEnabled = body?.alert_enabled === undefined ? 1 : (parseBoolean(body.alert_enabled, true) ? 1 : 0);
   const alertExpiryDays = normalizeNullableNumber(body?.alert_expiry_days, 3650);
   const alertTrafficPercent = normalizeNullableNumber(body?.alert_traffic_remaining_percent, 100);
   const alertTrafficGb = normalizeNullableNumber(body?.alert_traffic_remaining_gb, 1048576);
   const maxSort = await env.DB.prepare(`SELECT MAX(sort_order) AS value FROM targets`).first().catch(() => null);
   const sortOrder = maxSort?.value == null ? null : Number(maxSort.value) + 1;
-  await env.DB.prepare(`INSERT INTO targets (id, name, group_name, type, target_host, target_port, url, method, expected_status, timeout_ms, interval_sec, probe_region, enabled, no_public_ip, sort_order, created_at, updated_at, expires_at, price, billing_cycle, tags, location, city, currency, traffic_enabled, traffic_quota_gb, traffic_mode, alert_enabled, alert_expiry_days, alert_traffic_remaining_percent, alert_traffic_remaining_gb, provider, line_type, nq_report, nq_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, normalized.name, normalized.group_name, normalized.type, normalized.target_host, normalized.target_port, normalized.url, normalized.method, normalized.expected_status, normalized.timeout_ms, normalized.interval_sec, normalized.probe_region, normalized.enabled ? 1 : 0, normalized.no_public_ip ? 1 : 0, sortOrder, now, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nq.report, nq.updatedAt).run();
+  await env.DB.prepare(`INSERT INTO targets (id, name, group_name, type, target_host, target_port, url, method, expected_status, timeout_ms, interval_sec, probe_region, enabled, no_public_ip, sort_order, created_at, updated_at, expires_at, price, billing_cycle, tags, location, city, currency, traffic_enabled, traffic_quota_gb, traffic_mode, traffic_reset_day, alert_enabled, alert_expiry_days, alert_traffic_remaining_percent, alert_traffic_remaining_gb, provider, line_type, nq_report, nq_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, normalized.name, normalized.group_name, normalized.type, normalized.target_host, normalized.target_port, normalized.url, normalized.method, normalized.expected_status, normalized.timeout_ms, normalized.interval_sec, normalized.probe_region, normalized.enabled ? 1 : 0, normalized.no_public_ip ? 1 : 0, sortOrder, now, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, trafficResetDay, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nq.report, nq.updatedAt).run();
   await setMeta(env, 'targets_last_sync_at', String(now));
   return { ok: true, id };
 }
@@ -126,11 +127,22 @@ export async function updateTarget(id, request, env) {
   const trafficEnabled = body?.traffic_enabled !== undefined ? (parseBoolean(body.traffic_enabled, false) ? 1 : 0) : (parseBoolean(existing.traffic_enabled, false) ? 1 : 0);
   const trafficQuotaGb = body?.traffic_quota_gb !== undefined ? normalizeTrafficQuotaGb(body.traffic_quota_gb) : normalizeTrafficQuotaGb(existing.traffic_quota_gb ?? 0);
   const trafficMode = body?.traffic_mode !== undefined ? normalizeTrafficMode(body.traffic_mode) : normalizeTrafficMode(existing.traffic_mode);
+  const trafficResetDay = body?.traffic_reset_day !== undefined ? normalizeTrafficResetDay(body.traffic_reset_day) : normalizeTrafficResetDay(existing.traffic_reset_day ?? 1);
+  const trafficResetDayChanged = trafficResetDay !== normalizeTrafficResetDay(existing.traffic_reset_day ?? 1);
   const alertEnabled = body?.alert_enabled !== undefined ? (parseBoolean(body.alert_enabled, true) ? 1 : 0) : (existing.alert_enabled == null ? 1 : (parseBoolean(existing.alert_enabled, true) ? 1 : 0));
   const alertExpiryDays = body?.alert_expiry_days !== undefined ? normalizeNullableNumber(body.alert_expiry_days, 3650) : (existing.alert_expiry_days ?? null);
   const alertTrafficPercent = body?.alert_traffic_remaining_percent !== undefined ? normalizeNullableNumber(body.alert_traffic_remaining_percent, 100) : (existing.alert_traffic_remaining_percent ?? null);
   const alertTrafficGb = body?.alert_traffic_remaining_gb !== undefined ? normalizeNullableNumber(body.alert_traffic_remaining_gb, 1048576) : (existing.alert_traffic_remaining_gb ?? null);
-  await env.DB.prepare(`UPDATE targets SET name = ?, group_name = ?, type = ?, target_host = ?, target_port = ?, url = ?, method = ?, expected_status = ?, timeout_ms = ?, interval_sec = ?, probe_region = ?, enabled = ?, no_public_ip = ?, updated_at = ?, expires_at = ?, price = ?, billing_cycle = ?, tags = ?, location = ?, city = ?, currency = ?, traffic_enabled = ?, traffic_quota_gb = ?, traffic_mode = ?, alert_enabled = ?, alert_expiry_days = ?, alert_traffic_remaining_percent = ?, alert_traffic_remaining_gb = ?, provider = ?, line_type = ?, nq_report = ?, nq_updated_at = ? WHERE id = ?`).bind(merged.name, merged.group_name, merged.type, merged.target_host, merged.target_port, merged.url, merged.method, merged.expected_status, merged.timeout_ms, merged.interval_sec, merged.probe_region, merged.enabled ? 1 : 0, merged.no_public_ip ? 1 : 0, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nqReport, nqUpdatedAt, id).run();
+  await env.DB.prepare(`UPDATE targets SET name = ?, group_name = ?, type = ?, target_host = ?, target_port = ?, url = ?, method = ?, expected_status = ?, timeout_ms = ?, interval_sec = ?, probe_region = ?, enabled = ?, no_public_ip = ?, updated_at = ?, expires_at = ?, price = ?, billing_cycle = ?, tags = ?, location = ?, city = ?, currency = ?, traffic_enabled = ?, traffic_quota_gb = ?, traffic_mode = ?, traffic_reset_day = ?, alert_enabled = ?, alert_expiry_days = ?, alert_traffic_remaining_percent = ?, alert_traffic_remaining_gb = ?, provider = ?, line_type = ?, nq_report = ?, nq_updated_at = ? WHERE id = ?`).bind(merged.name, merged.group_name, merged.type, merged.target_host, merged.target_port, merged.url, merged.method, merged.expected_status, merged.timeout_ms, merged.interval_sec, merged.probe_region, merged.enabled ? 1 : 0, merged.no_public_ip ? 1 : 0, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, trafficResetDay, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nqReport, nqUpdatedAt, id).run();
+  if (trafficResetDayChanged) {
+    await rebuildAgentTrafficPeriod(env, sanitizeAgentId(id), {
+      ...existing,
+      traffic_enabled: trafficEnabled,
+      traffic_quota_gb: trafficQuotaGb,
+      traffic_mode: trafficMode,
+      traffic_reset_day: trafficResetDay,
+    }, now);
+  }
   await setMeta(env, 'targets_last_sync_at', String(now));
   return { ok: true, id };
 }

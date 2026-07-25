@@ -12,11 +12,11 @@
 
 ## 系统更新
 
-“设置 → 系统更新”显示当前 Worker/前端应用版本、官方最新稳定版本和发布时间。“更新日志”通过后台站内弹窗展示；点击“检查更新”会重新读取公开的 HTTPS 版本清单。Agent 二进制继续使用独立的 `v*` Release，不会因应用版本变化而选错文件。
+“设置 → 系统更新”显示当前 Worker/前端应用版本、官方最新发布版本和发布时间。“更新日志”通过后台站内弹窗展示；点击“检查更新”会重新读取公开的 HTTPS 版本清单。Beta 版本使用 `-beta.N` 标识；Agent 二进制继续使用独立的 `v*` Release，不会因应用版本变化而选错文件。
 
-一键部署仓库中的 `NIE-SLA Online Update` 工作流每 6 小时自动检查官方 `app-v*` 稳定标签。发现新版本时，它会保留用户的 `wrangler.jsonc` 资源绑定，运行安全扫描、应用测试和 Wrangler dry-run，通过后提交到部署仓库，由 Cloudflare 自动重新部署。更新过程不收集 GitHub Token、Cloudflare Token 或部署仓库名。
+一键部署仓库中的 `NIE-SLA Online Update` 工作流每 6 小时自动检查官方 `app-v*` 发布标签。发现新版本时，它会保留用户的 `wrangler.jsonc` 资源绑定，运行安全扫描、应用测试和 Wrangler dry-run，通过后提交到部署仓库，由 Cloudflare 自动重新部署。更新过程不收集 GitHub Token、Cloudflare Token 或部署仓库名。
 
-需要立即更新时，在部署仓库的 `Actions` 页面选择 `NIE-SLA Online Update`，点击 `Run workflow` 即可，无需填写参数。后台“更新指引”弹窗也会显示这几步。若 GitHub 报告工作流没有推送权限，再到 `Settings → Actions → General → Workflow permissions` 启用读写权限。旧于 `1.0.22` 的部署需先手动同步一次官方仓库，获得新版无参数工作流。
+需要立即更新时，在部署仓库的 `Actions` 页面选择 `NIE-SLA Online Update`，点击 `Run workflow` 即可，无需填写参数。后台“更新指引”弹窗也会显示这几步。若 GitHub 报告工作流没有推送权限，再到 `Settings → Actions → General → Workflow permissions` 启用读写权限。
 
 ## 登录流程
 
@@ -212,7 +212,8 @@ Ping 目标由 Agent 定期拉取。格式通常为域名/IP与端口。Agent �
 编辑单台 VPS 可以设置：
 
 - 流量累计开关和额度。
-- 统计模式。
+- 独立的每月流量重置日和统计模式。
+- 修改重置日后按每日账本重新汇总当前周期；到期时间不会参与计算。
 - 到期时间、价格、币种和周期。
 - 是否参与报警。
 - 单机报警阈值覆盖。

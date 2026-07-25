@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, normalizeTarget, parseBoolean, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromExpiry } from '../src/utils.js';
+import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, normalizeTarget, parseBoolean, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
 import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, requireLatencyAgentForId, safeJson } from '../src/auth.js';
 import { rateLimitD1 } from '../src/ratelimit.js';
 import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries, writeAgentTelemetryR2History } from '../src/metrics.js';
@@ -36,23 +36,36 @@ assert.equal(sanitizeId('%%%'), sanitizeId('%%%'));
 assert.equal(sanitizeId('HTTP://Example.COM/a b'), 'example.com-a-b');
 
 const env = { TIMEZONE_OFFSET_MINUTES: '480' };
-const expiryAt = Date.parse('2027-01-11T16:00:00.000Z') / 1000; // 2027-01-12 in UTC+8.
 const beforeReset = Date.parse('2026-07-05T12:00:00.000Z') / 1000;
 const afterReset = Date.parse('2026-07-15T12:00:00.000Z') / 1000;
 
-assert.deepEqual(trafficPeriodFromExpiry(env, expiryAt, beforeReset), {
+assert.deepEqual(trafficPeriodFromResetDay(env, 12, beforeReset), {
   month: '2026-06-12',
-  reset: 'expiry-day',
+  reset: 'reset-day',
   reset_day: 12,
   period_start: '2026-06-12',
   period_end: '2026-07-12',
 });
-assert.deepEqual(trafficPeriodFromExpiry(env, expiryAt, afterReset), {
+assert.deepEqual(trafficPeriodFromResetDay(env, 12, afterReset), {
   month: '2026-07-12',
-  reset: 'expiry-day',
+  reset: 'reset-day',
   reset_day: 12,
   period_start: '2026-07-12',
   period_end: '2026-08-12',
+});
+assert.deepEqual(trafficPeriodFromResetDay(env, 1, beforeReset), {
+  month: '2026-07-01',
+  reset: 'calendar-month',
+  reset_day: 1,
+  period_start: '2026-07-01',
+  period_end: '2026-08-01',
+});
+assert.deepEqual(trafficPeriodFromResetDay(env, 31, Date.parse('2026-03-15T12:00:00.000Z') / 1000), {
+  month: '2026-02-28',
+  reset: 'reset-day',
+  reset_day: 31,
+  period_start: '2026-02-28',
+  period_end: '2026-03-31',
 });
 
 assert.equal(
