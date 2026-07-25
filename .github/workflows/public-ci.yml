@@ -13,6 +13,7 @@ permissions:
 jobs:
   verify:
     name: Desensitized snapshot verification
+    if: github.repository == '3257085208/NIE-SLA'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

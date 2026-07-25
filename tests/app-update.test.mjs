@@ -5,6 +5,7 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const manifest = JSON.parse(await readFile(path.join(root, 'update-manifest.json'), 'utf8'));
 const workflow = await readFile(path.join(root, '.github/workflows/nie-sla-update.yml'), 'utf8');
+const publicCi = await readFile(path.join(root, '.github/workflows/public-ci.yml'), 'utf8');
 const versionSource = await readFile(path.join(root, 'worker/src/version.js'), 'utf8');
 const updateSource = await readFile(path.join(root, 'worker/src/app-update.js'), 'utf8');
 const version = versionSource.match(/VERSION\s*=\s*['"]([^'"]+)['"]/u)?.[1];
@@ -30,6 +31,7 @@ assert.match(workflow, /NIE_SLA_DEPLOYMENT_VALIDATION=1 pnpm test/);
 assert.match(workflow, /bash test\.sh/);
 assert.match(workflow, /wrangler deploy --dry-run/);
 assert.doesNotMatch(workflow, /CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID/);
+assert.match(publicCi, /if: github\.repository == '3257085208\/NIE-SLA'/, 'deployment repositories must not run the official snapshot CI');
 
 assert.match(updateSource, /token_stored:\s*false/);
 assert.doesNotMatch(updateSource, /setMeta\([^\n]*github_token/);
