@@ -10,6 +10,19 @@
 
 入口路径会通过登录配置接口提供给 Pages 路由，因此它不是秘密，也不是认证机制。它只用于减少通用扫描和区分部署；真正的安全边界仍是账号密码、短期 Session、限流与可选 TOTP。
 
+## 系统更新
+
+“设置 → 系统更新”显示当前 Worker/前端应用版本、官方最新稳定版本、发布时间和更新日志。点击“检查更新”会读取公开仓库中的 HTTPS 版本清单；Agent 二进制继续使用独立的 `v*` Release，不会因为应用版本变化而下载错误文件。
+
+一键部署的 Worker 不能绕过 Cloudflare 或 GitHub 权限改写自身。“在线更新”通过部署仓库自带的 `NIE-SLA Online Update` GitHub Actions 工作流完成：工作流合并官方 `app-v*` 稳定标签，保留用户仓库中的 `wrangler.jsonc` 资源绑定，运行安全扫描、构建、测试和 Wrangler dry-run，通过后提交到用户仓库，由 Cloudflare 自动重新部署。
+
+首次使用前，在部署仓库中启用 Actions，并在 `Settings → Actions → General → Workflow permissions` 允许工作流读写仓库内容。后台触发时填写：
+
+- 一键部署生成的 GitHub 仓库，格式为 `owner/repo`。
+- 只授权该仓库且只包含 Actions 写权限的 GitHub 细粒度 Token。
+
+Token 只存在于这次 HTTPS 管理请求和发往 GitHub 的请求内，不写入 D1、Worker 变量、日志或浏览器存储。触发成功后到工作流页面查看进度；Cloudflare 会继续提供上一个成功部署，直到新构建完成。旧于 `1.0.20` 的部署需要先按教程手动同步一次，获得更新工作流后才能从后台触发后续版本。
+
 ## 登录流程
 
 1. 输入 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD`。

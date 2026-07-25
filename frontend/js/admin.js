@@ -1624,6 +1624,7 @@ async function deletePing(p) {
 }
 async function loadSettings() {
   loadSysInfo();
+  loadAppUpdate();
   loadTotp();
   loadAccount();
   loadAdminPath();
@@ -1632,6 +1633,78 @@ async function loadSettings() {
   loadTraffic();
   loadAlerts();
   loadAppearance();
+}
+
+async function loadAppUpdate(refresh = false) {
+  const box = byId("sAppUpdate");
+  if (!box) return;
+  box.innerHTML = '<div class="loading compact">正在检查版本...</div>';
+  try {
+    const data = await api(`/api/system/update${refresh ? "?refresh=1" : ""}`);
+    const changelog = Array.isArray(data.changelog) && data.changelog.length
+      ? `<ul class="app-update-log">${data.changelog.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+      : '<p class="hint">该版本没有单独的更新说明。</p>';
+    const status = data.update_available
+      ? '<span class="tag tag-warn">发现新版本</span>'
+      : '<span class="tag tag-on">已是最新版</span>';
+    box.innerHTML = `
+      <div class="app-update-versions">
+        <div><span>当前版本</span><b>v${escapeHtml(data.current_version || "-")}</b></div>
+        <div><span>最新版本</span><b>v${escapeHtml(data.latest_version || "-")}</b></div>
+      </div>
+      <div class="app-update-status">${status}${data.stale ? '<span class="hint">使用缓存结果</span>' : ""}</div>
+      <h4>${escapeHtml(data.title || "更新日志")}</h4>
+      ${changelog}
+      <p class="hint">发布时间：${escapeHtml(formatUpdateTime(data.published_at))}</p>
+      <div class="f"><label>部署仓库</label><input id="appUpdateRepository" value="${escapeHtml(data.repository || "")}" placeholder="owner/repo" autocomplete="off" spellcheck="false"></div>
+      <div class="f"><label>GitHub 细粒度 Token（仅本次使用）</label><input id="appUpdateToken" type="password" placeholder="需要该仓库的 Actions 写权限" autocomplete="new-password"></div>
+      <p class="hint">Token 只用于触发本次更新，不会保存到 D1、环境变量或浏览器。仓库需启用 Actions，并允许工作流写入内容。</p>
+      <div class="app-update-actions">
+        <button class="btn btn-sm" id="checkAppUpdate">检查更新</button>
+        <button class="btn btn-primary btn-sm" id="runAppUpdate"${data.update_available ? "" : " disabled"}>在线更新</button>
+        ${data.release_url ? `<a class="btn btn-sm" href="${escapeHtml(data.release_url)}" target="_blank" rel="noopener noreferrer">完整日志</a>` : ""}
+      </div>`;
+    byId("checkAppUpdate").onclick = () => loadAppUpdate(true);
+    if (data.update_available) byId("runAppUpdate").onclick = runAppUpdate;
+  } catch (error) {
+    errBox("sAppUpdate", error);
+  }
+}
+
+async function runAppUpdate() {
+  const button = byId("runAppUpdate");
+  const repository = byId("appUpdateRepository")?.value.trim() || "";
+  const githubToken = byId("appUpdateToken")?.value.trim() || "";
+  if (!repository) return toast("请填写一键部署所使用的 GitHub 仓库", "err");
+  if (!githubToken) return toast("请输入仅用于本次更新的 GitHub Token", "err");
+  if (!confirm(`将通过 ${repository} 的 GitHub Actions 更新并重新部署，是否继续？`)) return;
+  const oldText = button.textContent;
+  button.disabled = true;
+  button.textContent = "正在触发...";
+  try {
+    const result = await api("/api/system/update", {
+      method: "POST",
+      body: JSON.stringify({ repository, github_token: githubToken }),
+    });
+    byId("appUpdateToken").value = "";
+    toast(`已触发 v${result.target_version} 更新`, "ok");
+    const actions = document.createElement("a");
+    actions.className = "btn btn-sm update-run-link";
+    actions.href = result.actions_url;
+    actions.target = "_blank";
+    actions.rel = "noopener noreferrer";
+    actions.textContent = "查看更新进度";
+    button.parentElement.appendChild(actions);
+  } catch (error) {
+    toast(error.message, "err");
+    button.disabled = false;
+    button.textContent = oldText;
+  }
+}
+
+function formatUpdateTime(value) {
+  const time = Date.parse(value || "");
+  return Number.isFinite(time) ? new Date(time).toLocaleString("zh-CN", { hour12: false }) : "未知";
 }
 
 async function loadAdminPath() {
@@ -1986,9 +2059,10 @@ async function runAlertCheck() {
 }
 async function loadSysInfo() {
   try {
-    const d = await api("/api/status?days=1");
+    const [d, health] = await Promise.all([api("/api/status?days=1"), api("/api/health")]);
     byId("sInfo").innerHTML =
       infoRow("名称", d.name || "聶.NET") +
+      infoRow("版本", health.version ? `v${health.version}` : "-") +
       infoRow("时区", d.timezone?.label || "UTC+8") +
       infoRow("目标数", d.targets?.length || 0) +
       infoRow("存储", d.storage?.mode || "D1");

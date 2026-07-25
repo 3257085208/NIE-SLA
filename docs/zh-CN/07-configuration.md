@@ -81,6 +81,7 @@ npx wrangler secret list
 | --- | --- | --- |
 | `ADMIN_USERNAME` | 新部署必填 | 后台账号；旧部署未配置时回退 `admin` |
 | `ADMIN_PATH` | `/admin` | 一键部署必填；手动部署留空时回退 `/admin`，登录后可在“设置 → 后台入口”写入 D1 覆盖 |
+| `APP_UPDATE_MANIFEST_URL` | 官方公开清单 | 高级选项；覆盖后台检查应用更新时读取的 HTTPS 版本清单 |
 | `GITHUB_OAUTH_CLIENT_ID` | 空 | GitHub OAuth Client ID |
 | `GITHUB_OAUTH_ALLOWED_USERS` | 空 | GitHub 用户名白名单，英文逗号分隔 |
 | `GITHUB_OAUTH_CALLBACK_ORIGIN` | 当前 API Origin | 可选；固定 OAuth callback 的 HTTPS Origin |

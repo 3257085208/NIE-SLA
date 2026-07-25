@@ -48,4 +48,13 @@ After login, **Settings → Administrator account** can migrate the initial envi
 
 On an existing deployment, the default username is `admin`. If `ADMIN_PASSWORD` is not set yet, the existing `ADMIN_TOKEN` is accepted as the temporary password. Set a dedicated `ADMIN_PASSWORD` after the upgrade.
 
+Starting with `1.0.20`, one-click installations expose **Settings → System update**. It shows the installed and latest application versions, publication time, and changelog. Before the first online update:
+
+1. In the deployment repository, allow read and write workflow permissions under **Settings → Actions → General**.
+2. Create a fine-grained GitHub personal access token scoped only to that repository with `Actions: Read and write`.
+3. Enter the deployment repository as `owner/repo`, paste the one-time token, and start the update.
+4. Follow the provided GitHub Actions link. The workflow builds, tests, and performs a Wrangler dry run before it pushes anything; Cloudflare then redeploys the new commit automatically.
+
+The token is sent to GitHub for that request only and is never stored in D1, Worker variables, or the browser. The workflow always restores the deployment repository's existing `wrangler.jsonc`, preserving its D1, R2, and Durable Object bindings. Installations older than `1.0.20` need one manual upstream sync before the update center can be used.
+
 See [Admin](03-admin.md), [Agent](04-agent.md), [Alerts](06-alerts.md), [External Latency Agents](12-external-latency-agents.md), and [Extensions](13-extensions-developer-guide.md).

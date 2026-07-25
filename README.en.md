@@ -29,6 +29,12 @@ Open the configured `ADMIN_PATH`, log in with the username and password, add a V
 
 See the canonical [Cloudflare Quick Start](https://nie-sla.pages.dev/quickstart/) for the complete browser flow.
 
+## Online Updates
+
+Version `1.0.20` and newer expose **Settings → System update**, including the installed version, latest stable version, publication time, and changelog. Updates run in the deployment repository's GitHub Actions workflow. It accepts only official `app-vX.Y.Z` tags, preserves the existing Cloudflare bindings in `wrangler.jsonc`, and runs the build, full test suite, and Wrangler dry run before pushing. Cloudflare automatically redeploys the verified commit.
+
+The first update requires read/write workflow permissions and a fine-grained GitHub token scoped only to the deployment repository with `Actions: Read and write`. The token is used for that dispatch only and is not stored in D1, Worker variables, or browser storage. Deployments older than `1.0.20` need one manual upstream sync before they can use the update center.
+
 ## Features
 
 - One-minute current status with five-minute persistent SLA buckets.
@@ -42,6 +48,7 @@ See the canonical [Cloudflare Quick Start](https://nie-sla.pages.dev/quickstart/
 - Traffic quotas, billing metadata, expiry dates, tags, locations, and NodeQuality reports.
 - Telegram and Resend email alerts for availability, resources, traffic, and expiry.
 - Uploadable theme and plugin ZIP packages.
+- Admin version checks, changelogs, and verified online application updates.
 - Username/password sessions, optional allowlisted GitHub OAuth and TOTP, per-node scoped tokens, and SHA-256 verified updates.
 
 ## Monitoring Paths

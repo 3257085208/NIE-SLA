@@ -1,0 +1,16 @@
+{
+  "schema": "nie-sla-app-update-v1",
+  "version": "1.0.20",
+  "source_ref": "app-v1.0.20",
+  "published_at": "2026-07-25T12:00:00Z",
+  "title": "NIE-SLA 1.0.20",
+  "changelog": [
+    "新增后台应用更新中心，可查看版本、发布时间和更新日志",
+    "支持从后台安全触发部署仓库的在线更新工作流",
+    "更新前自动执行构建、测试和 Wrangler 部署预检",
+    "更新时保留用户现有的 Cloudflare D1、R2 与 Durable Object 绑定",
+    "线路类型更名为机器类型，并扩充常用机器用途",
+    "优化后台设置页在桌面端与移动端的响应式排版"
+  ],
+  "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
+}

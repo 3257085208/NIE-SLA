@@ -13,6 +13,7 @@ import { developerApiPreflight, developerApiUrl, getDeveloperApiManifest, withDe
 import { deleteExtension, getExtensionFile, listManagedExtensions, listManagedExtensionsByType, listPublicExtensions, updateExtension, uploadExtension } from './extensions.js';
 import { publicNodeQualityReport } from './nodequality.js';
 import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from './admin-auth.js';
+import { dispatchAppUpdate, getAppUpdateInfo } from './app-update.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
@@ -125,6 +126,8 @@ const ROUTES = [
   { method: 'PATCH', path: '/api/alerts/settings', rl: 'write' },
   { method: 'POST', path: '/api/alerts/test', rl: 'write' },
   { method: 'POST', path: '/api/alerts/check', rl: 'write' },
+  { method: 'GET', path: '/api/system/update', rl: 'write' },
+  { method: 'POST', path: '/api/system/update', rl: 'write' },
 
   // Stats & maintenance
   { method: 'GET', path: '/api/stats', rl: 'write' },
@@ -276,6 +279,8 @@ async function dispatchStatic(env, url, request, ctx) {
   // Settings
   if (path === '/api/settings' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getPublicSettings(env, { includeAdmin: true }), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/settings' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updatePublicSettings(request, env); clearStatusCaches(url, env).catch(() => {}); return json(result, 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/system/update' && m === 'GET') { await withAdmin(request, env); return json(await getAppUpdateInfo(env, { force: url.searchParams.get('refresh') === '1' }), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/system/update' && m === 'POST') { await withAdmin(request, env); if (!await rateLimitD1(env, 'app-update-dispatch', 3, 600)) return deny(); return json(await dispatchAppUpdate(request, env), 202, env, { 'cache-control': 'no-store' }); }
 
   // Alerts
   if (path === '/api/alerts/settings' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json({ ok: true, ...(await getAlertSettings(env)) }, 200, env, { 'cache-control': 'no-store' }); }

@@ -7,6 +7,7 @@
 | `PUBLIC_SITE_NAME` | `NIE-SLA` | Public site name |
 | `ADMIN_USERNAME` | required for new deployments | Admin username; legacy deployments fall back to `admin` |
 | `ADMIN_PATH` | `/admin` | Required by one-click deployment; manual deployments fall back to `/admin`, and the D1 Admin setting can override it |
+| `APP_UPDATE_MANIFEST_URL` | official public manifest | Advanced override for the HTTPS application update manifest used by Admin |
 | `PUBLIC_WORKER_URL` | empty | Public Worker URL |
 | `PUBLIC_AGENT_INSTALL_BASE` | auto | Installer/download base |
 | `ALLOWED_ORIGIN` | empty | CORS origin |

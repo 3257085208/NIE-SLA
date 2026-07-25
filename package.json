@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "node scripts/prepare-one-click.mjs",
-    "test": "node tests/public-repo-safety.test.mjs && node tests/one-click-build.test.mjs",
+    "test": "node tests/public-repo-safety.test.mjs && node tests/one-click-build.test.mjs && node tests/app-update.test.mjs",
     "predeploy": "npm run build",
     "deploy": "wrangler deploy",
     "check:deploy": "npm run build && npm test && wrangler deploy --dry-run --outdir .wrangler-dry-run"
