@@ -44,11 +44,42 @@ for (const line of manifest.split(/\r?\n/)) {
 assert.ok(verified >= 3, 'expected Agent binaries for multiple platforms');
 
 const wrangler = JSON.parse(await readFile(path.join(root, 'wrangler.jsonc'), 'utf8'));
+const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 assert.equal(wrangler.assets?.directory, './dist-one-click');
 assert.deepEqual(wrangler.assets?.run_worker_first, ['/api/*']);
 assert.equal(wrangler.d1_databases?.[0]?.database_id, '00000000-0000-0000-0000-000000000000');
 assert.ok(wrangler.r2_buckets?.[0]?.binding);
 assert.ok(wrangler.durable_objects?.bindings?.[0]?.class_name);
 assert.deepEqual(wrangler.triggers?.crons, ['* * * * *']);
+
+const describedBindings = packageJson.cloudflare?.bindings || {};
+const deployBindingNames = [
+  ...Object.keys(wrangler.vars || {}),
+  wrangler.assets?.binding,
+  ...wrangler.d1_databases.map(item => item.binding),
+  ...wrangler.r2_buckets.map(item => item.binding),
+  ...wrangler.durable_objects.bindings.map(item => item.name),
+  'ADMIN_PASSWORD',
+  'AGENT_TOKEN',
+  'TOTP_ENCRYPTION_KEY',
+].filter(Boolean);
+
+assert.match(packageJson.cloudflare?.label || '', /\p{Script=Han}/u, 'deploy label should include Chinese');
+for (const name of new Set(deployBindingNames)) {
+  assert.match(
+    describedBindings[name]?.description || '',
+    /\p{Script=Han}/u,
+    `missing Chinese deploy description: ${name}`,
+  );
+}
+
+const pnpmWorkspace = await readFile(path.join(root, 'pnpm-workspace.yaml'), 'utf8');
+assert.match(pnpmWorkspace, /^packages:\s*\n\s+-\s+["']?\.["']?\s*$/m, 'pnpm workspace must include the root package');
+
+const secretExample = await readFile(path.join(root, '.dev.vars.example'), 'utf8');
+for (const name of ['ADMIN_PASSWORD', 'AGENT_TOKEN', 'TOTP_ENCRYPTION_KEY']) {
+  assert.match(secretExample, new RegExp(`^${name}=\\s*(?:#.*)?$`, 'm'), `${name} must require per-deployment input`);
+}
+assert.doesNotMatch(secretExample, /replace-with-|change-me|example-secret/i, 'deploy secrets must not have reusable defaults');
 
 console.log(`one-click build passed (${verified} Agent binaries, ${version})`);
