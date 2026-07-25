@@ -588,13 +588,6 @@ th {
   background: #111827;
   border-color: #111827;
 }
-.catalog-select {
-  display: grid;
-  gap: 6px;
-}
-.catalog-select input[type="search"] {
-  background: #f8fafc;
-}
 .country-select-row {
   position: relative;
 }

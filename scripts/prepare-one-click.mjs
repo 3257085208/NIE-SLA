@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = path.join(root, 'frontend');
 const outputRoot = path.join(root, 'dist-one-click');
 const repository = '3257085208/NIE-SLA';
-const excluded = new Set(['.git', '.wrangler', 'AGENTS.md', 'README.md', '_redirects', 'functions', 'node_modules', 'package.json', 'tests', 'bin']);
+const excluded = new Set(['.git', '.wrangler', 'README.md', '_redirects', 'functions', 'node_modules', 'package.json', 'tests', 'bin']);
 
 await assertDirectory(frontendRoot);
 await rm(outputRoot, { recursive: true, force: true });

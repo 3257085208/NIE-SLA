@@ -130,7 +130,7 @@ cargo build --release
 
 ## 本地构建完整 Release
 
-GitHub Actions 额度不足或需要在发布前本地复核时，在 macOS/Linux 安装 Rust、Zig 和 `cargo-zigbuild`，然后运行：
+发布完整 Agent 产物时，在 macOS/Linux 安装 Rust、Zig 和 `cargo-zigbuild`，然后运行：
 
 ```bash
 ./build-release.sh

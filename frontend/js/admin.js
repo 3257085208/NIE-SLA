@@ -4,9 +4,8 @@ import { canShowTemperature } from "./shared/hardware.js";
 import {
   CURRENCIES,
   COUNTRIES,
+  PROVIDERS,
   countryFlagAsset,
-  filterCountries,
-  filterProviders,
   normalizeCountryCode,
 } from "./shared/target-catalogs.js";
 import {
@@ -949,30 +948,47 @@ function targetGroupOptions(type = "tcp", current = "") {
     .join("");
 }
 
-function countryOptionsHtml(current = "", query = "") {
+function countryOptionsHtml(current = "") {
   const selected = normalizeCountryCode(current);
-  const countries = filterCountries(query);
-  const selectedCountry = COUNTRIES.find((country) => country.code === selected);
-  const options = selectedCountry && !countries.includes(selectedCountry)
-    ? [selectedCountry, ...countries]
-    : countries;
   return [
     '<option value="">请选择国家或地区</option>',
-    ...options.map((country) =>
+    ...COUNTRIES.map((country) =>
       `<option value="${country.code}"${selectedAttr(country.code === selected)}>${escapeHtml(country.name)} (${country.code})</option>`),
   ].join("");
 }
 
-function providerOptionsHtml(current = "", query = "") {
+function providerOptionsHtml(current = "") {
   const selected = String(current || "").trim();
-  const providers = filterProviders(query);
-  const options = selected && !providers.includes(selected)
-    ? [selected, ...providers]
-    : providers;
+  const options = selected && !PROVIDERS.includes(selected)
+    ? [selected, ...PROVIDERS]
+    : PROVIDERS;
   return [
     '<option value="">请选择商家</option>',
     ...options.map((provider) =>
       `<option value="${escapeHtml(provider)}"${selectedAttr(provider === selected)}>${escapeHtml(provider)}</option>`),
+  ].join("");
+}
+
+function cityOptionsHtml(current = "", cities = [], state = "ready") {
+  const selected = String(current || "").trim().slice(0, 64);
+  const normalizedCities = Array.isArray(cities)
+    ? cities.map((city) => String(city || "").trim().slice(0, 64)).filter(Boolean)
+    : [];
+  const hasSelected = normalizedCities.some((city) => city === selected);
+  const placeholder = state === "loading"
+    ? "正在加载城市..."
+    : state === "error"
+      ? "城市目录暂时不可用"
+      : state === "country-required"
+        ? "请先选择国家或地区"
+        : "请选择城市";
+  return [
+    `<option value="">${placeholder}</option>`,
+    ...(selected && !hasSelected
+      ? [`<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}（已保存）</option>`]
+      : []),
+    ...normalizedCities.map((city) =>
+      `<option value="${escapeHtml(city)}"${selectedAttr(city === selected)}>${escapeHtml(city)}</option>`),
   ].join("");
 }
 
@@ -982,25 +998,21 @@ function currencyOptionsHtml(current = "USD") {
     `<option value="${currency.code}"${selectedAttr(currency.code === selected)}>${escapeHtml(currency.name)} (${currency.code})</option>`).join("");
 }
 
-function searchableCatalogField({ label, searchId, selectId, searchPlaceholder, options }) {
-  return formField(label, `
-    <div class="catalog-select">
-      <input type="search" id="${searchId}" placeholder="${escapeHtml(searchPlaceholder)}" autocomplete="off">
-      <select id="${selectId}">${options}</select>
-    </div>`);
-}
-
 function countryCatalogField(current = "") {
   const code = normalizeCountryCode(current);
   const asset = countryFlagAsset(code);
   return formField("国家或地区（可选）", `
-    <div class="catalog-select">
-      <input type="search" id="mLocationSearch" placeholder="搜索中文名、英文名或代码" autocomplete="off">
-      <div class="country-select-row">
-        <img id="mLocationFlag" class="country-flag-preview" src="${escapeHtml(asset)}" alt=""${asset ? "" : " hidden"}>
-        <select id="mLocation">${countryOptionsHtml(current)}</select>
-      </div>
+    <div class="country-select-row">
+      <img id="mLocationFlag" class="country-flag-preview" src="${escapeHtml(asset)}" alt=""${asset ? "" : " hidden"}>
+      <select id="mLocation">${countryOptionsHtml(current)}</select>
     </div>`);
+}
+
+function cityCatalogField(current = "", country = "") {
+  const hasCountry = Boolean(normalizeCountryCode(country));
+  return formField("城市（可选）", `
+    <select id="mCity"${hasCountry ? "" : " disabled"}>${cityOptionsHtml(current, [], hasCountry ? "loading" : "country-required")}</select>
+    <p class="hint" id="mCityHint">${hasCountry ? "正在加载城市目录..." : "选择国家或地区后加载城市。"}</p>`);
 }
 
 function updateCountryPreview(code) {
@@ -1013,21 +1025,40 @@ function updateCountryPreview(code) {
   preview.alt = country ? `${country.name}国旗` : "";
 }
 
-function bindCatalogSearch(searchId, selectId, renderOptions, onChange = () => {}) {
-  const search = byId(searchId);
-  const select = byId(selectId);
-  if (!search || !select) return;
-  search.oninput = () => {
-    select.innerHTML = renderOptions(select.value, search.value);
-    onChange(select.value);
-  };
-  search.onkeydown = (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    select.focus();
-  };
-  select.onchange = () => onChange(select.value);
-  onChange(select.value);
+let cityCatalogRequest = 0;
+
+async function loadCitiesForCountry({ preserveCity = false } = {}) {
+  const countrySelect = byId("mLocation");
+  const citySelect = byId("mCity");
+  const hint = byId("mCityHint");
+  if (!countrySelect || !citySelect) return;
+  const requestId = ++cityCatalogRequest;
+  const countryCode = normalizeCountryCode(countrySelect.value);
+  const currentCity = preserveCity ? citySelect.value : "";
+  updateCountryPreview(countryCode);
+  if (!countryCode) {
+    citySelect.innerHTML = cityOptionsHtml(currentCity, [], "country-required");
+    citySelect.disabled = true;
+    if (hint) hint.textContent = "选择国家或地区后加载城市。";
+    return;
+  }
+
+  citySelect.innerHTML = cityOptionsHtml(currentCity, [], "loading");
+  citySelect.disabled = true;
+  if (hint) hint.textContent = "正在加载城市目录...";
+  try {
+    const result = await apiAdmin(`/api/catalog/cities?country=${encodeURIComponent(countryCode)}`, {}, 15_000);
+    if (requestId !== cityCatalogRequest) return;
+    const cities = Array.isArray(result.cities) ? result.cities : [];
+    citySelect.innerHTML = cityOptionsHtml(currentCity, cities);
+    citySelect.disabled = false;
+    if (hint) hint.textContent = `已加载 ${cities.length} 个城市。`;
+  } catch (error) {
+    if (requestId !== cityCatalogRequest) return;
+    citySelect.innerHTML = cityOptionsHtml(currentCity, [], "error");
+    citySelect.disabled = true;
+    if (hint) hint.textContent = error.message || "城市目录暂时不可用，请重新选择国家后重试。";
+  }
 }
 
 function displayGroupName(value) {
@@ -1078,14 +1109,8 @@ function targetModalHtml(target, isEdit) {
     <div class="form-grid">
       ${inputField("标签", "mTags", target.tags || "", 'placeholder="逗号分隔"')}
       ${countryCatalogField(target.location || "")}
-      ${formField("城市（可选）", `<input id="mCity" value="${escapeHtml(target.city || "")}" placeholder="例如 Los Angeles / 东京" maxlength="64"><p class="hint">前台有国家时显示为「国家 · 城市」。</p>`)}
-      ${searchableCatalogField({
-        label: "商家",
-        searchId: "mProviderSearch",
-        selectId: "mProvider",
-        searchPlaceholder: "搜索商家名称",
-        options: providerOptionsHtml(target.provider || ""),
-      })}
+      ${cityCatalogField(target.city || "", target.location || "")}
+      ${formField("商家", `<select id="mProvider">${providerOptionsHtml(target.provider || "")}</select>`)}
       ${formField("机器类型", `<select id="mLineType">${lineTypeOptionsHtml(target.line_type || "")}</select>`)}
     </div>
     ${formField("NodeQuality 报告", `<textarea id="mNqReport" rows="8" placeholder="粘贴 NodeQuality 原始报告（包含 ::: tab-item、ANSI 文本和图片链接）">${escapeHtml(nodeQualityEditorValue(target))}</textarea><p class="hint">保存后前台 VPS 卡片会显示 NQ 按钮。再次保存空白内容会清除报告。</p>`)}
@@ -1173,8 +1198,8 @@ function targetModal(target = null) {
   byId("modal").innerHTML = targetModalHtml(target || {}, isEdit);
   byId("mType").onchange = toggleTargetTypeFields;
   byId("mNoPublicIp").onchange = toggleNoPublicIpFields;
-  bindCatalogSearch("mLocationSearch", "mLocation", countryOptionsHtml, updateCountryPreview);
-  bindCatalogSearch("mProviderSearch", "mProvider", providerOptionsHtml);
+  byId("mLocation").onchange = () => loadCitiesForCountry({ preserveCity: false });
+  loadCitiesForCountry({ preserveCity: true });
   toggleTargetTypeFields();
   byId("saveTarget").onclick = () => saveTarget(isEdit);
   openModal();

@@ -32,7 +32,12 @@ assert.match(adminSource, /data-retry-install/, 'deploy failures must offer a re
 assert.match(adminSource, /data-target-id=/, 'deploy buttons must carry a stable target id');
 assert.match(adminSource, /button\?\.dataset\.targetId \|\| button\?\.closest\("tr"\)\?\.dataset\.id/, 'deploy actions must resolve the stable button target id first');
 assert.match(adminSource, /targetGroupOptions\(type, target\.group_name\)/, 'target grouping must be a VPS/Web selector');
-assert.match(adminSource, /bindCatalogSearch\("mLocationSearch", "mLocation"/, 'location must provide catalog search');
+assert.match(adminSource, /<select id="mLocation">/, 'country must use a single selector');
+assert.match(adminSource, /<select id="mCity"/, 'city must use a selector');
+assert.match(adminSource, /<select id="mProvider">/, 'provider must use a single selector');
+assert.doesNotMatch(adminSource, /mLocationSearch|mProviderSearch/, 'country and provider must not render duplicate search inputs');
+assert.match(adminSource, /\/api\/catalog\/cities\?country=/, 'country changes must load the city catalog API');
+assert.match(adminSource, /mLocation"\)\.onchange[\s\S]*loadCitiesForCountry/, 'country selector must drive the city selector');
 assert.doesNotMatch(adminSource, /<select id="mLocation" required>/, 'country must remain optional when saving a target');
 assert.doesNotMatch(adminSource, /if \(!b\.location\) return toast/, 'target saves must not require a country');
 assert.match(adminSource, /到期时间（可选）/, 'target expiry must be clearly optional');
@@ -51,8 +56,8 @@ assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector
 assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260725-app-update2/, 'admin CSS cache key must publish the update center');
-assert.match(adminHtml, /js\/admin\.js\?v=20260725-daily-traffic1/, 'admin JS cache key must publish daily traffic settings');
+assert.match(adminHtml, /admin\.css\?v=20260726-location-catalog1/, 'admin CSS cache key must publish location selectors');
+assert.match(adminHtml, /js\/admin\.js\?v=20260726-location-catalog1/, 'admin JS cache key must publish location selectors');
 assert.match(adminHtml, /settings-primary[\s\S]*settings-columns[\s\S]*settings-column/, 'settings must separate wide forms from independent card columns');
 assert.match(adminCss, /\.settings-columns\s*\{[\s\S]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/, 'desktop settings cards must use three independent columns');
 assert.match(adminCss, /@media \(max-width: 820px\) \{[\s\S]*\.settings-columns\s*\{\s*grid-template-columns:\s*1fr/, 'mobile settings cards must collapse to one column');

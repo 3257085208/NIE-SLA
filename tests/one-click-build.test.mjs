@@ -21,7 +21,7 @@ for (const relative of [
   assert.ok(info.isFile() && info.size > 0, `missing one-click asset: ${relative}`);
 }
 
-for (const relative of ['AGENTS.md', 'README.md', '_redirects', 'package.json', 'functions', 'tests']) {
+for (const relative of ['README.md', '_redirects', 'package.json', 'functions', 'tests']) {
   await assert.rejects(access(path.join(output, relative)), undefined, `private build input leaked into assets: ${relative}`);
 }
 

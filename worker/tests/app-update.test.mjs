@@ -18,10 +18,10 @@ const manifest = {
 assert.equal(compareAppVersions('1.10.0', '1.9.9'), 1);
 assert.equal(compareAppVersions('v1.0.20', '1.0.20'), 0);
 assert.equal(compareAppVersions('1.0.19', '1.0.20'), -1);
-assert.equal(compareAppVersions('1.0.23-beta.2', '1.0.23-beta.1'), 1);
-assert.equal(compareAppVersions('1.0.23', '1.0.23-beta.1'), 1);
-assert.equal(compareAppVersions('1.0.23-beta.1', '1.0.23'), -1);
-assert.equal(parseAppUpdateManifest({ ...manifest, version: '1.0.23-beta.1', source_ref: 'app-v1.0.23-beta.1' }).version, '1.0.23-beta.1');
+assert.equal(compareAppVersions('0.23.0-beta.2', '0.23.0-beta.1'), 1);
+assert.equal(compareAppVersions('0.23.0', '0.23.0-beta.1'), 1);
+assert.equal(compareAppVersions('0.23.0-beta.1', '0.23.0'), -1);
+assert.equal(parseAppUpdateManifest({ ...manifest, version: '0.23.0-beta.1', source_ref: 'app-v0.23.0-beta.1' }).version, '0.23.0-beta.1');
 assert.equal(parseAppUpdateManifest(manifest).source_ref, 'app-v1.1.0');
 assert.equal(parseAppUpdateManifest({ ...manifest, release_url: 'not a URL' }).release_url, '');
 assert.throws(() => parseAppUpdateManifest({ ...manifest, source_ref: 'main' }), /source ref/);
@@ -35,7 +35,7 @@ const info = await getAppUpdateInfo(env, {
   }),
 });
 
-assert.equal(info.current_version, '1.0.23-beta.1');
+assert.equal(info.current_version, '0.23.0-beta.1');
 assert.equal(info.latest_version, '1.1.0');
 assert.equal(info.update_available, true);
 assert.equal(info.update_mode, 'github-actions');
