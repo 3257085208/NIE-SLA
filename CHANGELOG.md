@@ -2,6 +2,14 @@
 
 NIE-SLA 当前处于 Beta。应用使用 `0.x.y-beta.N`，Rust Agent 使用独立 `vX.Y.Z` 版本。
 
+## 0.24.0-beta.11 - 2026-07-26
+
+- 真实中国大陆 VPS 回归发现节点无法访问 GitHub Release，导致 `v1.0.27` 的临时 jq 下载失败；现将五架构 jq 官方固定产物随 Worker 静态资源和 Agent Release 一起发布。
+- Agent 优先从自身已经连通的 NIE-SLA Worker `/bin/` 下载对应 jq，GitHub 官方 Release 仅作备用源；两条路径都必须通过代码内固定 SHA-256 才会执行。
+- 一键部署构建会验证并打包 amd64、arm64、i386、armhf 与 armel 五个 jq 产物，确保新部署和自建域名同样具备兼容资源。
+- 后台操作列继续采用 Beta 10 的常规管理/Beta 任务分组、对齐和窄屏换行布局。
+- Rust Agent 更新至 `v1.0.28`；现有 Agent 可自动升级，无需重新安装。
+
 ## 0.24.0-beta.10 - 2026-07-26
 
 - 真实低权限 VPS 回归发现 IP.Check.Place 即使跳过依赖安装，仍会因系统缺少 `jq` 在检测初期退出；Agent 现仅在缺失时下载 jq 官方固定版本。

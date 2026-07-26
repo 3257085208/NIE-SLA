@@ -9,6 +9,7 @@ TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target/local-release}"
 command -v cargo >/dev/null 2>&1 || { echo "cargo is required" >&2; exit 1; }
 command -v rustup >/dev/null 2>&1 || { echo "rustup is required" >&2; exit 1; }
 command -v zig >/dev/null 2>&1 || { echo "zig is required" >&2; exit 1; }
+command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
 cargo zigbuild --help >/dev/null 2>&1 || { echo "cargo-zigbuild is required" >&2; exit 1; }
 
 targets=(
@@ -26,6 +27,20 @@ outputs=(
   nstatus-metrics-linux-armv6
   nstatus-metrics-linux-386
   nstatus-metrics-windows-amd64.exe
+)
+jq_assets=(
+  jq-linux-amd64
+  jq-linux-arm64
+  jq-linux-i386
+  jq-linux-armhf
+  jq-linux-armel
+)
+jq_hashes=(
+  020468de7539ce70ef1bceaf7cde2e8c4f2ca6c3afb84642aabc5c97d9fc2a0d
+  6bc62f25981328edd3cfcfe6fe51b073f2d7e7710d7ef7fcdac28d4e384fc3d4
+  ee8489cb8acfddf2e6d2ab4308877b5cbb6ec6b55beedb7c6d5a4fafb2879c86
+  ac304e50cf7cd24933d83dc7d0e4f79892a71a92fb02336d4ecaffa8933760bd
+  b98e283ff26cd7478f6fb18cc081ca0e0cb2e9980300f0bfc8bb26854d347eb2
 )
 
 rustup toolchain install "$TOOLCHAIN" --profile minimal >/dev/null
@@ -52,6 +67,24 @@ for index in "${!targets[@]}"; do
   cp "$source" "$staging/$output"
 done
 
+for index in "${!jq_assets[@]}"; do
+  asset="${jq_assets[$index]}"
+  expected="${jq_hashes[$index]}"
+  echo "==> Fetching pinned $asset"
+  curl -fsSL --retry 3 --retry-all-errors \
+    "https://github.com/jqlang/jq/releases/download/jq-1.8.1/$asset" \
+    -o "$staging/$asset"
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$staging/$asset" | awk '{print $1}')"
+  else
+    actual="$(shasum -a 256 "$staging/$asset" | awk '{print $1}')"
+  fi
+  [[ "$actual" == "$expected" ]] || { echo "jq checksum mismatch: $asset" >&2; exit 1; }
+  chmod 755 "$staging/$asset"
+done
+
+release_files=("${outputs[@]}" "${jq_assets[@]}")
+
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT/Cargo.toml" | head -n 1)"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid Cargo package version: $version" >&2; exit 1; }
 printf 'v%s\n' "$version" > "$staging/VERSION"
@@ -59,7 +92,7 @@ printf 'v%s\n' "$version" > "$staging/VERSION"
 (
   cd "$staging"
   : > SHA256SUMS
-  for file in "${outputs[@]}"; do
+  for file in "${release_files[@]}"; do
     if command -v sha256sum >/dev/null 2>&1; then
       sha256sum "$file" >> SHA256SUMS
     else
@@ -69,7 +102,7 @@ printf 'v%s\n' "$version" > "$staging/VERSION"
 )
 
 mkdir -p "$OUT_DIR"
-for file in "${outputs[@]}" VERSION SHA256SUMS; do
+for file in "${release_files[@]}" VERSION SHA256SUMS; do
   cp "$staging/$file" "$OUT_DIR/$file"
 done
 

@@ -10,6 +10,7 @@ const deploymentValidation = process.env.NIE_SLA_DEPLOYMENT_VALIDATION === '1';
 for (const relative of [
   'index.html', 'admin.html', 'config.js', 'bin/VERSION', 'bin/SHA256SUMS',
   'bin/nstatus-metrics-linux-amd64', 'bin/nstatus-metrics-linux-arm64', 'bin/nstatus-metrics-windows-amd64.exe',
+  'bin/jq-linux-amd64', 'bin/jq-linux-arm64', 'bin/jq-linux-i386', 'bin/jq-linux-armhf', 'bin/jq-linux-armel',
 ]) {
   const info = await stat(path.join(output, relative));
   assert.ok(info.isFile() && info.size > 0, `missing one-click asset: ${relative}`);
@@ -35,7 +36,7 @@ const manifest = await readFile(path.join(output, 'bin/SHA256SUMS'), 'utf8');
 let verified = 0;
 for (const line of manifest.split(/\r?\n/)) {
   if (!line.trim()) continue;
-  const match = line.match(/^([a-f0-9]{64})\s+\*?(nstatus-metrics-[A-Za-z0-9._-]+)$/i);
+  const match = line.match(/^([a-f0-9]{64})\s+\*?((?:nstatus-metrics|jq)-[A-Za-z0-9._-]+)$/i);
   assert.ok(match, `invalid SHA256SUMS line: ${line}`);
   const bytes = await readFile(path.join(output, 'bin', match[2]));
   assert.equal(createHash('sha256').update(bytes).digest('hex'), match[1].toLowerCase(), `checksum mismatch: ${match[2]}`);
@@ -71,4 +72,4 @@ for (const name of ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'ADMIN_PATH']) {
 }
 assert.doesNotMatch(secretExample, /^AGENT_TOKEN=|^TOTP_ENCRYPTION_KEY=/m);
 
-console.log(`one-click build passed (${verified} Agent binaries, ${version})`);
+console.log(`one-click build passed (${verified} verified release assets, ${version})`);

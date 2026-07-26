@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.10",
-  "agent_version": "v1.0.27",
-  "source_ref": "app-v0.24.0-beta.10",
-  "published_at": "2026-07-26T15:34:49Z",
-  "title": "NIE-SLA 0.24 Beta 10",
+  "version": "0.24.0-beta.11",
+  "agent_version": "v1.0.28",
+  "source_ref": "app-v0.24.0-beta.11",
+  "published_at": "2026-07-26T16:04:16Z",
+  "title": "NIE-SLA 0.24 Beta 11",
   "changelog": [
-    "修复低权限 VPS 缺少 jq 时 IP.Check.Place 在检测初期退出的问题",
-    "仅在任务私有目录下载 jq 官方固定版本并校验 SHA-256，任务结束自动删除",
-    "后台操作列重新分组，常规管理与 Beta 任务的层级、对齐和窄屏换行更清晰",
+    "修复部分 VPS 无法访问 GitHub 时临时 jq 下载失败的问题",
+    "五架构 jq 官方固定产物随 Worker 静态资源发布，Agent 优先从当前 Worker 下载并校验 SHA-256",
+    "后台操作列保持 Beta 10 的重新分组、对齐和窄屏优化",
     "继续禁止 sudo、系统包安装和第三方报告上传",
-    "Rust Agent 更新至 v1.0.27，现有 Agent 可自动升级，无需重新安装"
+    "Rust Agent 更新至 v1.0.28，现有 Agent 可自动升级，无需重新安装"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

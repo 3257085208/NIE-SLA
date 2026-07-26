@@ -39,7 +39,10 @@ async function prepareAgentRelease(binRoot) {
   }
 
   const files = parseManifest(manifest);
-  for (const required of ['nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64', 'nstatus-metrics-windows-amd64.exe']) {
+  for (const required of [
+    'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64', 'nstatus-metrics-windows-amd64.exe',
+    'jq-linux-amd64', 'jq-linux-arm64', 'jq-linux-i386', 'jq-linux-armhf', 'jq-linux-armel',
+  ]) {
     if (!files.has(required)) throw new Error(`Release manifest is missing ${required}`);
   }
 
@@ -57,7 +60,11 @@ async function prepareAgentRelease(binRoot) {
 async function fetchLatestAgentRelease() {
   const releases = await fetchJson(`https://api.github.com/repos/${repository}/releases?per_page=30`);
   if (!Array.isArray(releases)) throw new Error('GitHub release list is invalid');
-  const requiredAssets = ['VERSION', 'SHA256SUMS', 'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64', 'nstatus-metrics-windows-amd64.exe'];
+  const requiredAssets = [
+    'VERSION', 'SHA256SUMS',
+    'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64', 'nstatus-metrics-windows-amd64.exe',
+    'jq-linux-amd64', 'jq-linux-arm64', 'jq-linux-i386', 'jq-linux-armhf', 'jq-linux-armel',
+  ];
   const release = releases.find((candidate) => {
     if (candidate?.draft || !/^v\d+\.\d+\.\d+$/.test(String(candidate?.tag_name || ''))) return false;
     const names = new Set((candidate.assets || []).map(asset => String(asset.name || '')));
@@ -71,7 +78,7 @@ function parseManifest(source) {
   const files = new Map();
   for (const line of String(source || '').split(/\r?\n/)) {
     if (!line.trim()) continue;
-    const match = line.match(/^([a-f0-9]{64})\s+\*?(nstatus-metrics-[A-Za-z0-9._-]+)$/i);
+    const match = line.match(/^([a-f0-9]{64})\s+\*?((?:nstatus-metrics|jq)-[A-Za-z0-9._-]+)$/i);
     if (!match || path.basename(match[2]) !== match[2]) throw new Error(`Invalid SHA256SUMS line: ${line}`);
     files.set(match[2], match[1].toLowerCase());
   }

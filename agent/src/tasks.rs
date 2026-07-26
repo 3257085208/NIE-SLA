@@ -279,7 +279,7 @@ fn run_fixed_remote_script(
         .write_all(&script)
         .context("write fixed Beta task file")?;
     drop(script_file);
-    let task_path = prepare_fixed_task_path(&task_dir, url, SYSTEM_TASK_PATH, http)?;
+    let task_path = prepare_fixed_task_path(&task_dir, url, SYSTEM_TASK_PATH, http, &cfg.api)?;
 
     let mut child = Command::new("timeout")
         .arg(format!("{}s", timeout_sec))
@@ -322,6 +322,7 @@ fn prepare_fixed_task_path(
     url: &str,
     system_path: &str,
     http: &HttpClient,
+    api_base: &str,
 ) -> Result<OsString> {
     if url != "https://IP.Check.Place" {
         return Ok(OsString::from(system_path));
@@ -344,7 +345,7 @@ fn prepare_fixed_task_path(
         )?;
     }
     if needs_jq {
-        install_pinned_task_jq(http, &bin_dir)?;
+        install_pinned_task_jq(http, &bin_dir, api_base)?;
     }
 
     let mut path = bin_dir.into_os_string();
@@ -353,22 +354,38 @@ fn prepare_fixed_task_path(
     Ok(path)
 }
 
-fn install_pinned_task_jq(http: &HttpClient, bin_dir: &Path) -> Result<()> {
+fn install_pinned_task_jq(http: &HttpClient, bin_dir: &Path, api_base: &str) -> Result<()> {
     let asset = jq_asset_for_current_target()
         .ok_or_else(|| anyhow!("IP unlock compatibility does not support this CPU architecture"))?;
-    let url = format!("{}/{}", JQ_RELEASE_BASE, asset.name);
-    let bytes = http
-        .get_public_bytes_limited(&url, MAX_JQ_BYTES)
-        .with_context(|| format!("download pinned jq compatibility asset {}", asset.name))?;
-    let actual = format!("{:x}", Sha256::digest(&bytes));
-    if actual != asset.sha256 {
-        return Err(anyhow!(
-            "pinned jq compatibility checksum mismatch: expected {}, got {}",
-            asset.sha256,
-            actual
-        ));
+    let mut failures = Vec::new();
+    for url in jq_download_urls(api_base, asset) {
+        match http.get_public_bytes_limited(&url, MAX_JQ_BYTES) {
+            Ok(bytes) => {
+                let actual = format!("{:x}", Sha256::digest(&bytes));
+                if actual == asset.sha256 {
+                    return write_private_executable(
+                        &bin_dir.join("jq"),
+                        &bytes,
+                        "pinned jq compatibility asset",
+                    );
+                }
+                failures.push(format!("{} returned SHA-256 {}", url, actual));
+            }
+            Err(error) => failures.push(format!("{}: {:#}", url, error)),
+        }
     }
-    write_private_executable(&bin_dir.join("jq"), &bytes, "pinned jq compatibility asset")
+    Err(anyhow!(
+        "download pinned jq compatibility asset {} failed: {}",
+        asset.name,
+        failures.join("; ")
+    ))
+}
+
+fn jq_download_urls(api_base: &str, asset: JqAsset) -> [String; 2] {
+    [
+        format!("{}/bin/{}", api_base.trim_end_matches('/'), asset.name),
+        format!("{}/{}", JQ_RELEASE_BASE, asset.name),
+    ]
 }
 
 fn jq_asset_for_current_target() -> Option<JqAsset> {
@@ -821,5 +838,16 @@ mod tests {
         );
         assert_eq!(jq_asset_for("arm", "eabi").unwrap().name, "jq-linux-armel");
         assert!(jq_asset_for("m68k", "").is_none());
+    }
+
+    #[test]
+    fn pinned_jq_prefers_the_configured_worker_asset() {
+        let asset = jq_asset_for("x86_64", "").unwrap();
+        let urls = jq_download_urls("https://status.example.com/", asset);
+        assert_eq!(urls[0], "https://status.example.com/bin/jq-linux-amd64");
+        assert_eq!(
+            urls[1],
+            "https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64"
+        );
     }
 }
