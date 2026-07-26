@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.12",
+  "version": "0.24.0-beta.13",
   "agent_version": "v1.0.29",
-  "source_ref": "app-v0.24.0-beta.12",
-  "published_at": "2026-07-26T18:27:48Z",
-  "title": "NIE-SLA 0.24 Beta 12",
+  "source_ref": "app-v0.24.0-beta.13",
+  "published_at": "2026-07-26T20:21:23Z",
+  "title": "NIE-SLA 0.24 Beta 13",
   "changelog": [
-    "TCP Ping 改为 1 秒严格超时并并行竞争双栈地址，避免失败回退时间累加成数秒尖峰",
-    "TCP Ping 新增每个目标独立丢包率，超时统一按丢包记录",
-    "修复一分钟快速状态覆盖五分钟持久检查时间后造成漏检的问题",
-    "移动端重新压缩 VPS 行、图表、弹窗和触控布局，IPv4 解锁固定为单行六格",
-    "普通 VPS 不再因历史 gpu_util=0 误显示 GPU，Rust Agent 更新至 v1.0.29"
+    "VPS 标题统一显示商家名称与节点名称，并自动避免重复商家前缀",
+    "移除独立商家徽标和粗粒度探测区域，只保留 Agent GeoIP 国家与城市",
+    "VPS 列表隐藏外部 Latency Agent 名称与数值，仅保留无名称的 Cloudflare 延迟；详细图表继续展示外部历史曲线",
+    "IPv4 解锁改为紧凑两行六列布局，服务名称在上、深色状态格与两位国家代码在下",
+    "桌面与移动端重新压缩 VPS 信息列，长名称在 320px 小屏下保持无横向溢出"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

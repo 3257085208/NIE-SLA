@@ -707,19 +707,18 @@ function renderService(t, days, summaries) {
   const status = checked ? (isUp ? (stale ? '数据延迟' : '运行正常') : '离线') : '待检查';
   const statusClass = checked ? (isUp ? (stale ? 'degraded' : '') : 'down') : 'unknown';
   const selectedClass = t.id === state.selectedId ? ' selected' : '';
-  const metaHtml = serviceMetaHtml(t);
+  const displayName = serviceDisplayName(t);
   const uptime = t.status_source === 'agent'
     ? (t.agent_online ? 'Agent 在线' : 'Agent 离线')
     : (t.uptime_24h == null ? '-' : `${Number(t.uptime_24h).toFixed(2)}%`);
   const hasLatency = targetHasPublicLatency(t);
-  const latencyHtml = hasLatency ? serviceLatencySourcesHtml(t) : '';
+  const latencyHtml = hasLatency ? serviceCloudflareLatencyHtml(t) : '';
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'service-traffic-progress');
   const nqButton = targetHasNodeQuality(t)
-    ? `<button type="button" class="nq-report-btn" data-nq-target="${escapeAttr(t.id)}" data-nq-name="${escapeAttr(t.name)}" title="查看 NodeQuality 报告">NQ</button>`
+    ? `<button type="button" class="nq-report-btn" data-nq-target="${escapeAttr(t.id)}" data-nq-name="${escapeAttr(displayName)}" title="查看 NodeQuality 报告">NQ</button>`
     : '';
   // Metadata badges
   let metaBadges = '';
-  if (t.provider) metaBadges += `<span class="meta-badge meta-provider">${escapeHtml(t.provider)}</span>`;
   if (t.line_type) metaBadges += `<span class="meta-badge meta-line">${escapeHtml(t.line_type)}</span>`;
   if (t.location || targetCityName(t)) {
     const locationText = targetLocationLabel(t);
@@ -751,19 +750,18 @@ function renderService(t, days, summaries) {
   const unlockStrip = unlockCompactHtml(t.unlock);
 
   return `
-    <div class="service ${statusClass}${selectedClass}${hasLatency ? '' : ' no-latency'}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(t.name)}">
+    <div class="service ${statusClass}${selectedClass}${hasLatency ? '' : ' no-latency'}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(displayName)}">
       <div class="service-name">
         <span class="service-title-line">
-          <span class="service-title-text">${escapeHtml(t.name)}</span>
+          <span class="service-title-text">${escapeHtml(displayName)}</span>
           ${nqButton}
         </span>
-        ${metaHtml ? `<span class="service-target">${metaHtml}</span>` : ''}
         ${metaBadges ? `<span class="service-meta">${metaBadges}</span>` : ''}
+        ${unlockStrip}
       </div>
       <div class="service-status">${status}</div>
       ${hasLatency ? `<div class="service-latency">${latencyHtml}</div>` : ''}
       <div class="service-uptime">${uptime}</div>
-      ${unlockStrip}
       <div class="service-bottom-row${trafficProgress ? ' has-traffic' : ''}">
         <div class="uptime-strip" title="${Number(t.no_public_ip || 0) === 1 ? 'Agent 在线记录' : '最近 30 天可用率'}">
           ${renderBars(t.id, days, summaries)}
@@ -835,27 +833,10 @@ function targetHasPublicLatency(target) {
   return Number(target?.no_public_ip || 0) !== 1;
 }
 
-function latencySourcesForTarget(target) {
-  if (!targetHasPublicLatency(target)) return [];
-  const sources = Array.isArray(target?.latency_sources) ? target.latency_sources : [];
-  const normalized = sources.map(source => ({
-    id: String(source?.id || ''),
-    name: String(source?.name || source?.id || 'Latency'),
-    kind: source?.kind || 'external',
-    latency_ms: source?.latency_ms == null ? null : Number(source.latency_ms),
-    ok: source?.ok === true || Number(source?.ok) === 1,
-  }));
-  if (!normalized.some(source => source.id === 'cloudflare')) {
-    normalized.unshift({ id: 'cloudflare', name: 'Cloudflare', kind: 'cloudflare', latency_ms: target?.latency_ms == null ? null : Number(target.latency_ms), ok: Number(target?.ok) === 1 });
-  }
-  return normalized.sort((a, b) => (a.id === 'cloudflare' ? -1 : b.id === 'cloudflare' ? 1 : 0));
-}
-
-function serviceLatencySourcesHtml(target) {
-  return latencySourcesForTarget(target).map(source => {
-    const value = source.ok && Number.isFinite(source.latency_ms) ? `${Math.round(source.latency_ms)} ms` : '-';
-    return `<span class="service-latency-source" title="${escapeAttr(source.name)}"><small>${escapeHtml(source.name)}</small><strong>${escapeHtml(value)}</strong></span>`;
-  }).join('');
+function serviceCloudflareLatencyHtml(target) {
+  const latency = Number(target?.latency_ms);
+  const value = Number(target?.ok) === 1 && Number.isFinite(latency) ? `${Math.round(latency)} ms` : '-';
+  return `<strong title="Cloudflare 延迟">${escapeHtml(value)}</strong>`;
 }
 
 function pingTargetColor(seed) {
@@ -1240,29 +1221,42 @@ function unlockServices(unlock) {
 }
 
 function unlockState(service) {
-  const status = String(service?.status || '').toLowerCase();
-  const method = String(service?.method || '').toLowerCase();
-  const value = `${status} ${method}`;
-  if (/失败|不支持|封锁|屏蔽|禁止|禁会员/.test(value) || /(?:^|\s)(?:blocked|failed|no|unsupported|restricted)(?:\s|$)/.test(value)) return 'bad';
-  if (/dns/.test(method)) return 'dns';
-  if (/解锁|原生|unlocked|native|yes|ok/.test(value)) return 'good';
+  const status = String(service?.status || '').trim().toLowerCase();
+  const method = String(service?.method || '').trim().toLowerCase();
+  if (/失败|未解锁|不支持|封锁|屏蔽|禁止|禁会员/.test(status) || /(?:^|\s)(?:blocked|failed|no|unsupported|restricted)(?:\s|$)/.test(status)) return 'bad';
+  if (/仅\s*app|部分|partial/.test(status)) return 'dns';
+  if (/解锁|原生|unlocked|native|yes|ok/.test(status)) return 'good';
+  if (/dns/.test(status) || /dns/.test(method)) return 'dns';
   return 'unknown';
 }
 
 function unlockCompactHtml(unlock) {
   const services = unlockServices(unlock);
   if (!services.length) return '';
-  return `<div class="unlock-strip" aria-label="IPv4 解锁状态">${services.map(unlockPillHtml).join('')}</div>`;
+  const states = services.map(service => ({ service, stateName: unlockState(service) }));
+  const details = states.map(({ service }) => [service.name, service.status, service.region, service.method].filter(Boolean).join(' · ')).join('\n');
+  const labels = states.map(({ service }) => `<span class="unlock-service-label" title="${escapeAttr(service.name)}">${escapeHtml(service.name)}</span>`).join('');
+  const countries = states.map(({ service, stateName }) => {
+    const title = [service.name, service.status, service.region, service.method].filter(Boolean).join(' · ');
+    return `<strong class="unlock-country ${stateName}" title="${escapeAttr(title)}" aria-label="${escapeAttr(title)}">${escapeHtml(unlockCountryCode(service, stateName))}</strong>`;
+  }).join('');
+  return `<div class="unlock-grid" title="${escapeAttr(details)}" aria-label="IPv4 解锁状态">${labels}${countries}</div>`;
 }
 
-function unlockPillHtml(service) {
-  const stateName = unlockState(service);
-  const rawRegion = String(service.region || '').replace(/^\[|\]$/g, '').trim();
-  const region = rawRegion && !/^(?:null|none|-)$/i.test(rawRegion)
-    ? rawRegion
-    : stateName === 'bad' ? '未解锁' : stateName === 'dns' ? 'DNS' : stateName === 'good' ? '已解锁' : '未知';
-  const title = [service.name, service.status, service.region, service.method].filter(Boolean).join(' · ');
-  return `<span class="unlock-pill ${stateName}" title="${escapeAttr(title)}"><b>${escapeHtml(service.name)}</b><strong>${escapeHtml(region)}</strong></span>`;
+function unlockCountryCode(service, stateName) {
+  if (stateName === 'bad') return '--';
+  const raw = String(service?.region || '').replace(/^\[|\]$/g, '').trim();
+  if (!raw || /^(?:null|none|-)$/i.test(raw)) return '--';
+  const normalized = raw.toUpperCase().replace(/[^A-Z\u4E00-\u9FFF]/g, '');
+  const aliases = {
+    中国: 'CN', 香港: 'HK', 台湾: 'TW', 日本: 'JP', 韩国: 'KR', 新加坡: 'SG',
+    UNITEDSTATES: 'US', UNITEDKINGDOM: 'GB', HONGKONG: 'HK', SINGAPORE: 'SG',
+    JAPAN: 'JP', KOREA: 'KR', TAIWAN: 'TW', CHINA: 'CN',
+  };
+  if (aliases[normalized]) return aliases[normalized];
+  const knownCodes = ['HK', 'SG', 'US', 'GB', 'JP', 'KR', 'TW', 'CN', 'CA', 'AU', 'IN', 'DE', 'FR', 'NL', 'BR', 'RU'];
+  if (knownCodes.includes(normalized)) return normalized;
+  return knownCodes.find(code => normalized.endsWith(code)) || '--';
 }
 
 function temperatureSensorItems(info = {}) {
@@ -2393,15 +2387,13 @@ function displayTarget(t) {
   return `${host || ''}`;
 }
 
-function serviceMetaHtml(t) {
-  const region = regionShort(t);
-  const parts = [];
-
-  if (region) {
-    parts.push(`<span class="meta-piece">${escapeHtml(region)}</span>`);
-  }
-
-  return parts.join('<span class="meta-sep">·</span>');
+function serviceDisplayName(t = {}) {
+  const provider = String(t.provider || '').trim();
+  const name = String(t.name || '').trim();
+  if (!provider) return name;
+  if (!name) return provider;
+  const normalize = value => value.toLocaleLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '');
+  return normalize(name).startsWith(normalize(provider)) ? name : `${provider} ${name}`;
 }
 
 function regionShort(t) {

@@ -1300,7 +1300,7 @@ function latencyNodeModal(node = null) {
     <h3>${edit ? "编辑" : "新增"} Latency 节点</h3>
     ${edit ? inputField("ID", "latencyNodeId", node.id, "readonly") : ""}
     ${inputField("显示名称", "latencyNodeName", node?.name || "", 'placeholder="例如：东京 IIJ、洛杉矶 CN2"')}
-    <p class="hint">名称会显示在前台 Latency 列表中；此节点与 VPS Agent、Ping 功能完全独立。</p>
+    <p class="hint">名称用于后台识别及详细延迟图表；VPS 列表不显示节点名称与延迟。此节点与 VPS Agent、Ping 功能完全独立。</p>
     <div class="ma"><button class="btn" data-close>取消</button><button class="btn btn-primary" id="saveLatencyNode">保存</button></div>`;
   byId("saveLatencyNode").onclick = () => saveLatencyNode(node);
   openModal();
