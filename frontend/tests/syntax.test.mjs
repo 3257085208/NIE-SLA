@@ -117,11 +117,12 @@ assert.match(appSource, /ping_stats[\s\S]*renderPingLossStats/, 'TCP Ping must r
 assert.match(appSource, /unlock-service-label[\s\S]*unlock-country/, 'unlock checks must render service labels above country boxes');
 assert.match(appSource, /function unlockCountryCode[\s\S]*ALISG|normalized\.endsWith\(code\)/, 'unlock regions must normalize provider values to two-letter country codes');
 assert.match(styleSource, /\.unlock-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(6, 40px\)[\s\S]*grid-template-rows:\s*10px 17px/, 'unlock checks must use a compact two-row six-column grid');
-assert.match(styleSource, /\.unlock-country\.good\s*\{\s*background:\s*#087a46/, 'successful unlock checks must use deep green');
-assert.match(styleSource, /\.unlock-country\.dns\s*\{\s*background:\s*#946200/, 'DNS unlock checks must use deep yellow');
-assert.match(styleSource, /\.unlock-country\.bad\s*\{\s*background:\s*#a92f2f/, 'failed unlock checks must use deep red');
+assert.match(styleSource, /\.unlock-country\.good\s*\{\s*color:\s*#17623b;\s*background:\s*#ccebd9/, 'successful unlock checks must use a readable light-green state');
+assert.match(styleSource, /\.unlock-country\.dns\s*\{\s*color:\s*#765708;\s*background:\s*#f2e2ad/, 'DNS unlock checks must use a readable light-yellow state');
+assert.match(styleSource, /\.unlock-country\.bad\s*\{\s*color:\s*#8e3035;\s*background:\s*#f2cccc/, 'failed unlock checks must use a readable light-red state');
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.unlock-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)/, 'mobile unlock checks must fit all six columns into the VPS metadata width');
 assert.match(styleSource, /\.metric-tabs\s*\{[\s\S]*flex-wrap:\s*nowrap[\s\S]*overflow-x:\s*auto/, 'metric tabs must remain on one horizontally scrollable row');
+assert.match(styleSource, /\.chart-toolbar\s*>\s*:first-child\s*\{[\s\S]*max-width:\s*720px[\s\S]*\.metric-tabs\s*\{[\s\S]*justify-content:\s*flex-start/, 'chart metric tabs must keep their first label visible instead of clipping the left edge');
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.service-list\s*\{\s*padding:\s*0 14px 14px 18px/, 'mobile VPS rows must reclaim horizontal space');
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.chart-canvas-wrap\s*\{\s*height:\s*232px/, 'mobile charts must retain a readable height');
 assert.match(appSource, /const mobileChart = isMobileChartViewport\(\)/, 'Chart.js must apply its mobile label profile');

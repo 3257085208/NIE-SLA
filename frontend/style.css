@@ -388,10 +388,15 @@ button { border: 0; cursor: pointer; }
   color: var(--muted);
   font-size: 13px;
 }
+.chart-toolbar > :first-child {
+  flex: 1 1 420px;
+  min-width: 0;
+  max-width: 720px;
+}
 
 .chart-actions {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 620px;
   align-items: flex-end;
   justify-content: flex-end;
   gap: 10px;
@@ -412,7 +417,7 @@ button { border: 0; cursor: pointer; }
   flex-wrap: nowrap;
   gap: 10px;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   width: 100%;
   min-width: 0;
   overflow-x: auto;
@@ -1326,17 +1331,17 @@ body:not(.is-loaded) .incident-log {
   min-width: 0;
   height: 17px;
   overflow: hidden;
-  color: #fff;
-  background: #64748b;
+  color: #4f6072;
+  background: #e2e8f0;
   border-radius: 2px;
   font-size: 9px;
   font-weight: 800;
   line-height: 1;
 }
-.unlock-country.good { background: #087a46; }
-.unlock-country.dns { background: #946200; }
-.unlock-country.bad { background: #a92f2f; }
-.unlock-country.unknown { background: #596779; }
+.unlock-country.good { color: #17623b; background: #ccebd9; }
+.unlock-country.dns { color: #765708; background: #f2e2ad; }
+.unlock-country.bad { color: #8e3035; background: #f2cccc; }
+.unlock-country.unknown { color: #4f6072; background: #e2e8f0; }
 
 .nq-report-btn {
   flex: 0 0 auto;

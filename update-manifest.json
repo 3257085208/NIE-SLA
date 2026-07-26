@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.13",
+  "version": "0.24.0-beta.14",
   "agent_version": "v1.0.29",
-  "source_ref": "app-v0.24.0-beta.13",
-  "published_at": "2026-07-26T20:21:23Z",
-  "title": "NIE-SLA 0.24 Beta 13",
+  "source_ref": "app-v0.24.0-beta.14",
+  "published_at": "2026-07-26T20:31:14Z",
+  "title": "NIE-SLA 0.24 Beta 14",
   "changelog": [
-    "VPS 标题统一显示商家名称与节点名称，并自动避免重复商家前缀",
-    "移除独立商家徽标和粗粒度探测区域，只保留 Agent GeoIP 国家与城市",
-    "VPS 列表隐藏外部 Latency Agent 名称与数值，仅保留无名称的 Cloudflare 延迟；详细图表继续展示外部历史曲线",
-    "IPv4 解锁改为紧凑两行六列布局，服务名称在上、深色状态格与两位国家代码在下",
-    "桌面与移动端重新压缩 VPS 信息列，长名称在 320px 小屏下保持无横向溢出"
+    "IPv4 解锁状态格改为浅绿、浅红、浅黄与浅灰蓝，使用对应深色文字保持小字号可读性",
+    "VPS 标题继续统一显示商家与节点名称，并移除重复商家徽标和粗粒度探测区域",
+    "VPS 列表仅显示无名称的 Cloudflare 延迟，外部 Latency Agent 历史仍保留在详细图表",
+    "修复图表指标栏左边缘裁切，Latency 与 CPU 标签始终从完整位置开始显示",
+    "桌面与 320px 移动端保持紧凑布局，无横向溢出"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
