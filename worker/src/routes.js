@@ -2,7 +2,7 @@ import { ALLOWED_REGIONS, clamp, sanitizeId, publicCachePrivacyVersion, sha256He
 import { requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
-import { listTargets, createTarget, updateTarget, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup } from './admin.js';
+import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
 import { VERSION } from './version.js';
@@ -148,6 +148,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/debug/latency-health', rl: 'write' },
   { method: 'GET', path: '/api/targets', rl: 'write' },
   { method: 'POST', path: '/api/targets', rl: 'write' },
+  { method: 'PATCH', path: '/api/targets/bulk', rl: 'write' },
   { method: 'PATCH', path: '/api/targets/order', rl: 'write' },
   { method: 'POST', path: '/api/sync-targets', rl: 'write' },
   { method: 'POST', path: '/api/probe-now', rl: 'write' },
@@ -309,6 +310,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/targets' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listTargets(env), 200, env); }
   if (path === '/api/sync-targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await syncEnvTargets(env, { force: true }), 200, env); }
   if (path === '/api/targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json({ ok: true, id: (await createTarget(request, env)).id }, 201, env); }
+  if (path === '/api/targets/bulk' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await bulkUpdateTargets(request, env); if (result.ok) await clearStatusCaches(url, env); return json(result, result.ok ? 200 : 400, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/targets/order' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await reorderTargets(request, env); if (result.ok) await clearStatusCaches(url, env); return json(result, result.ok ? 200 : 400, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/probe-now' && m === 'POST') { await withAdmin(request, env); if (!await rateLimitD1(env, 'probe-now', 5, 60)) return deny(); return json(await probeNow(env, (await safeJson(request))?.id || null), 200, env); }
   if (path === '/api/archive' && m === 'POST') { await withAdmin(request, env); return json(await archiveDay(env, (await safeJson(request))?.day || archiveYesterdayLocal(env)), 200, env); }

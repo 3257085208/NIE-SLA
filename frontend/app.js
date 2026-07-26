@@ -39,6 +39,7 @@ import {
 } from './js/shared/chart-data.js';
 import { buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
+import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -1218,16 +1219,6 @@ function unlockServices(unlock) {
   return primary
     .map(id => services.find(service => normalized(service).includes(id)))
     .filter(Boolean);
-}
-
-function unlockState(service) {
-  const status = String(service?.status || '').trim().toLowerCase();
-  const method = String(service?.method || '').trim().toLowerCase();
-  if (/失败|未解锁|不支持|封锁|屏蔽|禁止|禁会员/.test(status) || /(?:^|\s)(?:blocked|failed|no|unsupported|restricted)(?:\s|$)/.test(status)) return 'bad';
-  if (/仅\s*app|部分|partial/.test(status)) return 'dns';
-  if (/解锁|原生|unlocked|native|yes|ok/.test(status)) return 'good';
-  if (/dns/.test(status) || /dns/.test(method)) return 'dns';
-  return 'unknown';
 }
 
 function unlockCompactHtml(unlock) {

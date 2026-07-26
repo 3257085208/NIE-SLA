@@ -11,6 +11,7 @@ import { syncEnvTargetsMaybe, syncEnvTargets } from './sync.js';
 import { normalizeTargetOrder } from './target-order.js';
 import { convertPriceToCny, getExchangeRates, normalizeCurrency } from './settings.js';
 import { normalizeNodeQualityReport, publicNodeQualitySummary } from '../nodequality.js';
+import { applyBulkTargetColumns, normalizeBulkTargetUpdate } from './target-bulk.js';
 
 const TARGET_ORDER_SQL = `CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END, sort_order, group_name COLLATE NOCASE, name COLLATE NOCASE`;
 
@@ -128,6 +129,46 @@ export async function updateTarget(id, request, env) {
   const existing = await env.DB.prepare(`SELECT * FROM targets WHERE id = ?`).bind(id).first();
   if (!existing) return { ok: false, error: 'Target not found' };
   const body = await safeJson(request);
+  return updateTargetRecord(id, body, existing, env);
+}
+
+export async function bulkUpdateTargets(request, env) {
+  const normalized = normalizeBulkTargetUpdate(await safeJson(request));
+  if (!normalized.ok) return normalized;
+  const now = nowSec();
+  const changes = normalizeBulkTargetColumns(normalized.changes, env);
+  const applied = await applyBulkTargetColumns(env, normalized.ids, changes, now);
+  if (!applied.ok) return { ok: false, error: applied.error };
+
+  if ('traffic_reset_day' in changes) {
+    for (const id of normalized.ids) {
+      await rebuildAgentTrafficPeriod(env, sanitizeAgentId(id), { ...applied.byId.get(id), ...changes }, now);
+    }
+  }
+  await setMeta(env, 'targets_last_sync_at', String(now));
+  return { ok: true, count: normalized.ids.length, ids: normalized.ids, fields: Object.keys(normalized.changes) };
+}
+
+function normalizeBulkTargetColumns(changes, env) {
+  const normalized = {};
+  if ('provider' in changes) normalized.provider = String(changes.provider || '').trim() || null;
+  if ('line_type' in changes) normalized.line_type = String(changes.line_type || '').trim() || null;
+  if ('expires_at' in changes) normalized.expires_at = normalizeExpiresAt(changes.expires_at, env);
+  if ('price' in changes) normalized.price = normalizePrice(changes.price);
+  if ('currency' in changes) normalized.currency = normalizeCurrency(changes.currency, 'USD');
+  if ('billing_cycle' in changes) normalized.billing_cycle = String(changes.billing_cycle || '').trim() || null;
+  if ('traffic_enabled' in changes) normalized.traffic_enabled = parseBoolean(changes.traffic_enabled, false) ? 1 : 0;
+  if ('traffic_quota_gb' in changes) normalized.traffic_quota_gb = normalizeTrafficQuotaGb(changes.traffic_quota_gb);
+  if ('traffic_mode' in changes) normalized.traffic_mode = normalizeTrafficMode(changes.traffic_mode);
+  if ('traffic_reset_day' in changes) normalized.traffic_reset_day = normalizeTrafficResetDay(changes.traffic_reset_day);
+  if ('alert_enabled' in changes) normalized.alert_enabled = parseBoolean(changes.alert_enabled, true) ? 1 : 0;
+  if ('alert_expiry_days' in changes) normalized.alert_expiry_days = normalizeNullableNumber(changes.alert_expiry_days, 3650);
+  if ('alert_traffic_remaining_percent' in changes) normalized.alert_traffic_remaining_percent = normalizeNullableNumber(changes.alert_traffic_remaining_percent, 100);
+  if ('alert_traffic_remaining_gb' in changes) normalized.alert_traffic_remaining_gb = normalizeNullableNumber(changes.alert_traffic_remaining_gb, 1048576);
+  return normalized;
+}
+
+async function updateTargetRecord(id, body, existing, env, { updateMeta = true } = {}) {
   const merged = normalizeTarget({ ...existing, ...body }, true);
   const now = nowSec();
   const expiresAt = body?.expires_at !== undefined ? normalizeExpiresAt(body.expires_at, env) : (existing.expires_at ?? null);
@@ -166,7 +207,7 @@ export async function updateTarget(id, request, env) {
       traffic_reset_day: trafficResetDay,
     }, now);
   }
-  await setMeta(env, 'targets_last_sync_at', String(now));
+  if (updateMeta) await setMeta(env, 'targets_last_sync_at', String(now));
   return { ok: true, id };
 }
 

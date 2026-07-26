@@ -72,7 +72,8 @@ let targets = [],
   pingAdminLoaded = false,
   targetAdminFailed = false,
   pingAdminFailed = false,
-  targetOrderSaving = false;
+  targetOrderSaving = false,
+  selectedTargetIds = new Set();
 let toastTimer = 0;
 function toast(m, t = "info") {
   const e = byId("toast");
@@ -590,6 +591,9 @@ function targetRowHtml(target, index) {
   const enabledTag = target.enabled
     ? statusTag("已启用", "tag-on")
     : statusTag("已禁用", "tag-off");
+  const selectControl = targetAdminLoaded && target.type === "tcp"
+    ? `<label class="target-select-control" title="选择 ${escapeHtml(target.name)}"><input type="checkbox" class="target-select" data-target-id="${escapeHtml(target.id)}" aria-label="选择 ${escapeHtml(target.name)}"${checkedAttr(selectedTargetIds.has(target.id))}></label>`
+    : "";
 
   const probeUptime = status.status_source === "agent"
     ? (status.agent_online === true ? "Agent 在线" : "Agent 离线")
@@ -604,7 +608,7 @@ function targetRowHtml(target, index) {
     : `<div class="monitoring-item"><span class="monitoring-label">CF</span><div class="status-stack"><div>${statusTag(state.text, state.className)}<strong>${status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`}</strong></div><small>${escapeHtml(probeUptime)}</small></div></div>`;
   const monitorDetails = `<div class="monitoring-stack">${cfDetails}<div class="monitoring-item"><span class="monitoring-label">Agent</span>${agentDetails}</div></div>`;
   const cells = [
-    `<div class="sort-cell"><button type="button" class="drag-handle" data-sort-handle title="拖动排序" aria-label="拖动 ${escapeHtml(target.name)} 排序">⠿</button><span class="sort-index">${index + 1}</span><span class="mobile-order"><button type="button" data-a="move-up" title="上移" aria-label="上移">↑</button><button type="button" data-a="move-down" title="下移" aria-label="下移">↓</button></span></div>`,
+    `<div class="sort-cell">${selectControl}<button type="button" class="drag-handle" data-sort-handle title="拖动排序" aria-label="拖动 ${escapeHtml(target.name)} 排序">⠿</button><span class="sort-index">${index + 1}</span><span class="mobile-order"><button type="button" data-a="move-up" title="上移" aria-label="上移">↑</button><button type="button" data-a="move-down" title="下移" aria-label="下移">↓</button></span></div>`,
     `<div class="target-summary"><div><b>${escapeHtml(target.name)}</b>${typeTag}${enabledTag}</div><code>${escapeHtml(target.id)}</code><span title="${escapeHtml(host)}">${escapeHtml(host || "-")}</span><span class="group-cell" title="${escapeHtml(targetGroupCell(target))}">${escapeHtml(targetGroupCell(target))}</span></div>`,
     monitorDetails,
     trafficCell(target, status),
@@ -627,6 +631,8 @@ function renderTargets() {
     return;
   }
 
+  const currentVpsIds = new Set(targets.filter(target => target.type === "tcp").map(target => target.id));
+  selectedTargetIds = new Set([...selectedTargetIds].filter(id => currentVpsIds.has(id)));
   let rowIndex = 0;
   let rows = "";
   if (adminGroupBy !== "group") {
@@ -643,7 +649,8 @@ function renderTargets() {
     rows = targets.map((target, index) => targetRowHtml(target, index)).join("");
   }
   byId("tTable").innerHTML = `
-    <div class="target-order-bar">
+    ${targetBulkBarHtml(currentVpsIds.size)}
+    <div class="target-order-bar${targetAdminLoaded && currentVpsIds.size ? " has-bulk" : ""}">
       <div><strong>显示顺序</strong><span>拖动左侧手柄；可按商家/地区/价格/线路分组查看</span></div>
       <div class="order-tools">${groupByMenuHtml(adminGroupBy, "adminGroupByMenu")}<span class="order-state" id="targetOrderState">${targetAdminLoaded ? "已同步" : "读取中"}</span></div>
     </div>
@@ -663,6 +670,57 @@ function renderTargets() {
     </div>`;
   bindTargetSorting();
   bindAdminGroupBy();
+  bindTargetBulkControls();
+}
+
+function targetBulkBarHtml(vpsCount) {
+  if (!targetAdminLoaded || !vpsCount) return "";
+  const selectedCount = selectedTargetIds.size;
+  return `<div class="target-bulk-bar">
+    <label class="target-select-all"><input type="checkbox" id="bulkSelectAll"><span>全选 VPS</span></label>
+    <span class="target-bulk-count" id="bulkTargetCount">已选 ${selectedCount} / ${vpsCount}</span>
+    <div class="target-bulk-actions"><button type="button" class="btn btn-sm" id="clearBulkTargets"${selectedCount ? "" : " disabled"}>清除</button><button type="button" class="btn btn-sm btn-primary" id="editBulkTargets"${selectedCount ? "" : " disabled"}>批量设置</button></div>
+  </div>`;
+}
+
+function bindTargetBulkControls() {
+  const selectAll = byId("bulkSelectAll");
+  if (!selectAll) return;
+  const boxes = [...byId("tTable").querySelectorAll(".target-select")];
+  selectAll.onchange = () => {
+    selectedTargetIds = selectAll.checked
+      ? new Set(targets.filter(target => target.type === "tcp").map(target => target.id))
+      : new Set();
+    for (const box of boxes) box.checked = selectedTargetIds.has(box.dataset.targetId);
+    refreshTargetBulkControls();
+  };
+  for (const box of boxes) {
+    box.onchange = () => {
+      if (box.checked) selectedTargetIds.add(box.dataset.targetId);
+      else selectedTargetIds.delete(box.dataset.targetId);
+      refreshTargetBulkControls();
+    };
+  }
+  byId("clearBulkTargets").onclick = () => {
+    selectedTargetIds.clear();
+    for (const box of boxes) box.checked = false;
+    refreshTargetBulkControls();
+  };
+  byId("editBulkTargets").onclick = bulkTargetModal;
+  refreshTargetBulkControls();
+}
+
+function refreshTargetBulkControls() {
+  const vpsCount = targets.filter(target => target.type === "tcp").length;
+  const selectedCount = selectedTargetIds.size;
+  const selectAll = byId("bulkSelectAll");
+  if (selectAll) {
+    selectAll.checked = vpsCount > 0 && selectedCount === vpsCount;
+    selectAll.indeterminate = selectedCount > 0 && selectedCount < vpsCount;
+  }
+  if (byId("bulkTargetCount")) byId("bulkTargetCount").textContent = `已选 ${selectedCount} / ${vpsCount}`;
+  if (byId("clearBulkTargets")) byId("clearBulkTargets").disabled = selectedCount === 0;
+  if (byId("editBulkTargets")) byId("editBulkTargets").disabled = selectedCount === 0;
 }
 
 function bindAdminGroupBy() {
@@ -837,6 +895,135 @@ function moveTarget(target, offset) {
   targets = next;
   renderTargets();
   persistTargetOrder(next.map(item => item.id));
+}
+
+function bulkField(key, label, control, note = "") {
+  return `<div class="bulk-field" data-bulk-field="${key}">
+    <label class="bulk-field-toggle"><input type="checkbox" data-bulk-enable="${key}"><span>${escapeHtml(label)}</span></label>
+    <div class="bulk-field-control">${control}${note ? `<small class="hint">${escapeHtml(note)}</small>` : ""}</div>
+  </div>`;
+}
+
+function bulkBooleanOptions(onLabel = "开启", offLabel = "关闭") {
+  return `<option value="true">${escapeHtml(onLabel)}</option><option value="false">${escapeHtml(offLabel)}</option>`;
+}
+
+function bulkTargetModal() {
+  const selected = targets.filter(target => target.type === "tcp" && selectedTargetIds.has(target.id));
+  if (!selected.length) return toast("请先选择 VPS", "err");
+  const preview = selected.slice(0, 5).map(target => target.name).join("、");
+  byId("modal").className = "modal bulk-target-modal";
+  byId("modal").innerHTML = `
+    <h3>批量设置 VPS</h3>
+    <p class="hint bulk-target-summary">已选择 <b>${selected.length}</b> 台：${escapeHtml(preview)}${selected.length > 5 ? ` 等 ${selected.length} 台` : ""}</p>
+    <p class="bulk-target-warning">只有左侧已勾选的字段会被覆盖；未勾选字段保持原值。</p>
+    <div class="bulk-edit-form">
+      <fieldset class="bulk-section"><legend>基础资料</legend><div class="bulk-edit-grid">
+        ${bulkField("provider", "商家", `<select id="bulkProvider" disabled>${providerOptionsHtml("")}</select><input id="bulkProviderCustom" maxlength="80" placeholder="填写自定义商家" hidden disabled>`)}
+        ${bulkField("line_type", "机器类型", `<select id="bulkLineType" disabled>${lineTypeOptionsHtml("")}</select>`)}
+        ${bulkField("expires_at", "到期时间", '<input id="bulkExpires" type="date" disabled>', "留空并保存可清除到期时间")}
+      </div></fieldset>
+      <fieldset class="bulk-section"><legend>费用</legend><div class="bulk-edit-grid">
+        ${bulkField("price", "费用", '<input id="bulkPrice" type="number" min="0" step="0.01" placeholder="留空清除" disabled>')}
+        ${bulkField("currency", "币种", `<select id="bulkCurrency" disabled>${currencyOptionsHtml("USD")}</select>`)}
+        ${bulkField("billing_cycle", "计费周期", `<select id="bulkBilling" disabled>${targetBillingOptions("")}</select>`)}
+      </div></fieldset>
+      <fieldset class="bulk-section"><legend>流量</legend><div class="bulk-edit-grid">
+        ${bulkField("traffic_enabled", "流量统计", `<select id="bulkTrafficEnabled" disabled>${bulkBooleanOptions()}</select>`)}
+        ${bulkField("traffic_quota_gb", "每月流量上限 GB", '<input id="bulkTrafficQuota" type="number" min="0" max="1048576" step="0.1" value="0" disabled>')}
+        ${bulkField("traffic_mode", "流量计费方式", `<select id="bulkTrafficMode" disabled>${trafficModeOptions("total")}</select>`)}
+        ${bulkField("traffic_reset_day", "流量重置日", '<input id="bulkTrafficResetDay" type="number" min="1" max="31" step="1" value="1" disabled>', "修改后按每日记录重算当前周期")}
+      </div></fieldset>
+      <fieldset class="bulk-section"><legend>单机报警</legend><div class="bulk-edit-grid">
+        ${bulkField("alert_enabled", "目标报警", `<select id="bulkAlertEnabled" disabled>${bulkBooleanOptions()}</select>`)}
+        ${bulkField("alert_expiry_days", "到期前 N 天", '<input id="bulkAlertExpiryDays" type="number" min="0" max="3650" step="1" placeholder="留空使用全局" disabled>')}
+        ${bulkField("alert_traffic_remaining_percent", "流量剩余 %", '<input id="bulkAlertTrafficPercent" type="number" min="0" max="100" step="0.1" placeholder="留空使用全局" disabled>')}
+        ${bulkField("alert_traffic_remaining_gb", "流量剩余 GB", '<input id="bulkAlertTrafficGb" type="number" min="0" max="1048576" step="0.1" placeholder="留空使用全局" disabled>')}
+      </div></fieldset>
+    </div>
+    <div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="saveBulkTargets">应用到 ${selected.length} 台</button></div>`;
+
+  for (const toggle of byId("modal").querySelectorAll("[data-bulk-enable]")) {
+    toggle.onchange = () => toggleBulkField(toggle);
+  }
+  byId("bulkProvider").onchange = toggleBulkCustomProvider;
+  byId("saveBulkTargets").onclick = saveBulkTargets;
+  openModal();
+}
+
+function toggleBulkField(toggle) {
+  const field = toggle.closest(".bulk-field");
+  field.classList.toggle("is-enabled", toggle.checked);
+  for (const control of field.querySelectorAll(".bulk-field-control input, .bulk-field-control select, .bulk-field-control textarea")) {
+    control.disabled = !toggle.checked;
+  }
+  if (toggle.dataset.bulkEnable === "provider") toggleBulkCustomProvider();
+}
+
+function toggleBulkCustomProvider() {
+  const custom = byId("bulkProviderCustom");
+  const enabled = !!byId("modal").querySelector('[data-bulk-enable="provider"]')?.checked;
+  const active = enabled && byId("bulkProvider")?.value === "__custom__";
+  if (!custom) return;
+  custom.hidden = !active;
+  custom.disabled = !active;
+}
+
+function bulkNullableNumber(id, label, max) {
+  const raw = (byId(id)?.value || "").trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0 || value > max) throw new Error(`${label}数值无效`);
+  return value;
+}
+
+async function saveBulkTargets() {
+  const ids = targets.filter(target => target.type === "tcp" && selectedTargetIds.has(target.id)).map(target => target.id);
+  if (!ids.length) return toast("选择已失效，请刷新后重试", "err");
+  const enabled = new Set([...byId("modal").querySelectorAll("[data-bulk-enable]:checked")].map(input => input.dataset.bulkEnable));
+  if (!enabled.size) return toast("请至少勾选一个要修改的字段", "err");
+  const changes = {};
+  try {
+    if (enabled.has("provider")) changes.provider = byId("bulkProvider").value === "__custom__" ? byId("bulkProviderCustom").value.trim() : byId("bulkProvider").value;
+    if (enabled.has("line_type")) changes.line_type = byId("bulkLineType").value;
+    if (enabled.has("expires_at")) changes.expires_at = byId("bulkExpires").value || null;
+    if (enabled.has("price")) changes.price = bulkNullableNumber("bulkPrice", "费用", 100000000);
+    if (enabled.has("currency")) changes.currency = byId("bulkCurrency").value;
+    if (enabled.has("billing_cycle")) changes.billing_cycle = byId("bulkBilling").value;
+    if (enabled.has("traffic_enabled")) changes.traffic_enabled = byId("bulkTrafficEnabled").value === "true";
+    if (enabled.has("traffic_quota_gb")) changes.traffic_quota_gb = bulkNullableNumber("bulkTrafficQuota", "流量上限", 1048576) ?? 0;
+    if (enabled.has("traffic_mode")) changes.traffic_mode = byId("bulkTrafficMode").value;
+    if (enabled.has("traffic_reset_day")) {
+      const day = Number(byId("bulkTrafficResetDay").value);
+      if (!Number.isInteger(day) || day < 1 || day > 31) throw new Error("流量重置日需要是 1–31 的整数");
+      changes.traffic_reset_day = day;
+    }
+    if (enabled.has("alert_enabled")) changes.alert_enabled = byId("bulkAlertEnabled").value === "true";
+    if (enabled.has("alert_expiry_days")) changes.alert_expiry_days = bulkNullableNumber("bulkAlertExpiryDays", "到期报警天数", 3650);
+    if (enabled.has("alert_traffic_remaining_percent")) changes.alert_traffic_remaining_percent = bulkNullableNumber("bulkAlertTrafficPercent", "流量报警百分比", 100);
+    if (enabled.has("alert_traffic_remaining_gb")) changes.alert_traffic_remaining_gb = bulkNullableNumber("bulkAlertTrafficGb", "流量报警值", 1048576);
+  } catch (error) {
+    return toast(error.message, "err");
+  }
+  const labels = [...byId("modal").querySelectorAll("[data-bulk-enable]:checked")].map(input => input.closest(".bulk-field")?.querySelector(".bulk-field-toggle span")?.textContent).filter(Boolean);
+  const resetWarning = enabled.has("traffic_reset_day") ? "\n流量会按已有每日记录重新汇总。" : "";
+  if (!confirm(`确定把“${labels.join("、")}”应用到 ${ids.length} 台 VPS？${resetWarning}`)) return;
+  const button = byId("saveBulkTargets");
+  button.disabled = true;
+  button.textContent = "批量保存中...";
+  try {
+    const result = await apiAdmin("/api/targets/bulk", { method: "PATCH", body: JSON.stringify({ ids, changes }) }, 60000);
+    selectedTargetIds.clear();
+    closeModal();
+    toast(`已更新 ${result.count || ids.length} 台 VPS`, "ok");
+    await loadTargets();
+  } catch (error) {
+    toast(error.message, "err");
+    if (document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = `应用到 ${ids.length} 台`;
+    }
+  }
 }
 
 function formField(label, html, className = "") {
@@ -2183,6 +2370,7 @@ function openModal() {
 function closeModal() {
   byId("overlay").classList.remove("on");
   byId("modal").innerHTML = "";
+  byId("modal").className = "modal";
 }
 byId("loginBtn").onclick = login;
 byId("loginUsername").onkeydown = (e) => {

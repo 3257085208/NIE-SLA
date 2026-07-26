@@ -26,6 +26,7 @@ const [appSource, adminSource, adminCss, adminHtml, indexHtml, apiProxySource, l
   readFile(path.join(root, 'install-latency.sh'), 'utf8'),
 ]);
 const styleSource = await readFile(path.join(root, 'style.css'), 'utf8');
+const unlockSource = await readFile(path.join(root, 'js', 'shared', 'unlock.js'), 'utf8');
 assert.match(adminSource, /showInstallProgress\(t\);[\s\S]*apiAdmin\(/, 'deploy must show feedback before requesting the command');
 assert.match(adminSource, /data-retry-install/, 'deploy failures must offer a retry action');
 assert.match(adminSource, /data-target-id=/, 'deploy buttons must carry a stable target id');
@@ -50,9 +51,19 @@ assert.doesNotMatch(adminCss, /\.stat(?:\.\w+)?::before/, 'dashboard stats must 
 assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector must use the custom admin menu');
 assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
+assert.match(adminCss, /html,\s*body\s*\{[\s\S]*max-width:\s*100%[\s\S]*overflow-x:\s*hidden/, 'admin pages must prevent viewport-level horizontal overflow');
+assert.match(adminCss, /\.modal\s*\{[\s\S]*min-width:\s*0[\s\S]*max-width:\s*100%[\s\S]*overflow-x:\s*hidden/, 'admin dialogs must stay within the mobile viewport');
+assert.match(adminCss, /@media \(max-width: 720px\)\s*\{[\s\S]*\.f input,\s*\.f select,\s*\.f textarea,[\s\S]*font-size:\s*16px/, 'mobile form controls must use a sufficiently specific 16px rule to prevent iOS focus zoom');
+assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/, 'mobile dialog form grids must collapse to one shrinkable column');
+assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
+assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260726-action-layout1/, 'admin CSS cache key must publish the target action layout');
-assert.match(adminHtml, /js\/admin\.js\?v=20260726-action-layout1/, 'admin JS cache key must publish the target action layout');
+assert.match(adminHtml, /admin\.css\?v=20260727-bulk-editor1/, 'admin CSS cache key must publish the mobile and bulk editor fixes');
+assert.match(adminHtml, /js\/admin\.js\?v=20260727-bulk-editor1/, 'admin JS cache key must publish batch target editing');
+assert.match(adminSource, /selectedTargetIds[\s\S]*targetBulkBarHtml[\s\S]*bulkTargetModal/, 'admin must support selecting and batch-editing VPS targets');
+assert.match(adminSource, /apiAdmin\("\/api\/targets\/bulk"[\s\S]*method:\s*"PATCH"/, 'batch target editing must use one protected Worker request');
+assert.match(adminSource, /只有左侧已勾选的字段会被覆盖/, 'batch editor must explain selective field updates');
+assert.match(adminCss, /@media \(max-width: 720px\)\s*\{[\s\S]*\.target-bulk-bar\s*\{[\s\S]*flex-wrap:\s*wrap/, 'batch target controls must wrap on mobile');
 assert.match(adminSource, /target-action-main[\s\S]*targetActionsHtml\(target\)[\s\S]*betaTaskControlsHtml\(target\)/, 'standard target actions must render before Beta tasks');
 assert.match(adminCss, /\.beta-task-actions\s*\{[\s\S]*border-top:/, 'Beta tasks must form a distinct action group');
 assert.match(adminCss, /\.beta-task-meta\s*\{[\s\S]*flex-wrap:\s*wrap[\s\S]*justify-content:\s*flex-start/, 'Beta metadata must wrap without creating a detached right-aligned label');
@@ -75,7 +86,7 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260727-mobile1/, 'frontend cache key must publish the mobile status view');
+assert.match(indexHtml, /app\.js\?v=20260727-dns-unlock1/, 'frontend cache key must publish DNS unlock classification');
 assert.match(indexHtml, /style\.css\?v=20260727-mobile1/, 'frontend CSS cache key must publish the mobile status view');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
@@ -110,7 +121,7 @@ assert.doesNotMatch(appSource, /status_source === 'agent'[\s\S]{0,120}Cloudflare
 assert.match(appSource, /vps-info-toggle/, 'mobile VPS details must be collapsible');
 assert.match(appSource, /openNodeQualityReport/, 'frontend must open NodeQuality reports');
 assert.match(appSource, /const primary = \['tiktok', 'disney', 'netflix', 'youtube', 'amazonpv', 'chatgpt'\]/, 'public VPS rows must show the six primary unlock services');
-assert.match(appSource, /if \(\/解锁\|原生\|unlocked\|native\|yes\|ok\/\.test\(status\)\) return 'good';\s*if \(\/dns\/\.test\(status\) \|\| \/dns\/\.test\(method\)\) return 'dns'/, 'successful unlocks must stay green before the DNS fallback state');
+assert.match(unlockSource, /if \(\/dns\/\.test\(status\) \|\| \/dns\/\.test\(method\)\) return 'dns';[\s\S]*if \(\/解锁\|原生\|unlocked\|native\|yes\|ok\/\.test\(status\)\) return 'good'/, 'DNS unlock methods must stay yellow even when the service reports success');
 assert.match(appSource, /\$\{metaBadges[\s\S]*\$\{unlockStrip\}\s*<\/div>\s*<div class="service-status">/, 'unlock summary must stay with the VPS metadata above the uptime bars');
 assert.doesNotMatch(appSource, /unlockDetailSection|vps-unlock-section/, 'unlock checks must not be duplicated in the lower VPS details panel');
 assert.match(appSource, /ping_stats[\s\S]*renderPingLossStats/, 'TCP Ping must render per-target packet-loss statistics');

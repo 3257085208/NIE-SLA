@@ -24,6 +24,7 @@ import {
 import { formatLocationLabel, normalizeCityName } from '../js/shared/format.js';
 import { buildNqModalHtml, renderNqAnsiHtml, renderNqReportHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from '../js/shared/appearance.js';
+import { unlockState } from '../js/shared/unlock.js';
 import { onRequest as routeAdminPage } from '../functions/[[path]].js';
 
 const rows = normalizeChartRows([
@@ -151,6 +152,12 @@ assert.equal(formatLocationLabel('香港', '香港'), '香港');
 assert.equal(formatLocationLabel('', 'Singapore'), 'Singapore');
 assert.equal(formatLocationLabel('德国', ''), '德国');
 console.log('location label helpers ok');
+
+assert.equal(unlockState({ status: 'Yes', region: 'US', method: 'DNS' }), 'dns');
+assert.equal(unlockState({ status: '解锁', region: 'CA', method: 'DNS' }), 'dns');
+assert.equal(unlockState({ status: 'Yes', region: 'US', method: 'Native' }), 'good');
+assert.equal(unlockState({ status: 'No', region: '', method: 'DNS' }), 'bad');
+console.log('unlock state helpers ok');
 
 const previousFetch = globalThis.fetch;
 globalThis.fetch = async (url) => {
