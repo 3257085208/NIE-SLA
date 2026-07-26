@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.7",
-  "agent_version": "v1.0.24",
-  "source_ref": "app-v0.24.0-beta.7",
-  "published_at": "2026-07-26T14:17:23Z",
-  "title": "NIE-SLA 0.24 Beta 7",
+  "version": "0.24.0-beta.8",
+  "agent_version": "v1.0.25",
+  "source_ref": "app-v0.24.0-beta.8",
+  "published_at": "2026-07-26T14:32:17Z",
+  "title": "NIE-SLA 0.24 Beta 8",
   "changelog": [
-    "IP 解锁改为先解析媒体结果，再判断第三方脚本退出码",
-    "缺少可选 dig 等工具但媒体表完整时会保存有效解锁结果",
-    "IPv4 不可用或没有有效媒体行时仍保持失败，不伪造成功",
-    "NodeQuality 继续严格要求脚本成功退出，不放宽其他任务",
-    "Rust Agent 更新至 v1.0.24，现有 Agent 可自动升级，无需重新安装"
+    "IP 解锁恢复官方结构化 JSON 输出，稳定提取最终媒体解锁字段",
+    "继续禁止依赖安装和报告上传，低权限 Agent 不调用 sudo 或 apt",
+    "脚本因缺少可选 dig 返回非零时，只要媒体结果有效仍会保存",
+    "IPv4 不可用或没有有效媒体结果时仍保持失败，不伪造成功",
+    "Rust Agent 更新至 v1.0.25，现有 Agent 可自动升级，无需重新安装"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
