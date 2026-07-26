@@ -43,6 +43,13 @@ export function shouldRunScheduledFollowups(probe) {
   return Number(probe?.count || 0) > 0;
 }
 
+export function lastPersistedCheckAt(target, latestStatus) {
+  return Math.max(
+    Number(target?.last_checked_at || 0),
+    Number(latestStatus?.checked_at || 0),
+  );
+}
+
 function pad2(n) {
   return String(n).padStart(2, '0');
 }

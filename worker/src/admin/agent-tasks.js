@@ -8,6 +8,7 @@ export const AGENT_TASK_ACTIONS = Object.freeze({
 
 const MAX_RESULT_BYTES = 256 * 1024;
 const MAX_EXCERPT_CHARS = 16 * 1024;
+const AGENT_TASK_POLL_SEC = 300;
 
 export async function createAgentTask(request, env) {
   const body = await safeJson(request, 16 * 1024);
@@ -77,19 +78,19 @@ export async function claimAgentTask(env, agentIdValue, allowedActionsValue = ''
     : await env.DB.prepare(`SELECT id FROM agent_tasks
       WHERE agent_id = ? AND status = 'queued' AND expires_at > ?
       ORDER BY requested_at ASC LIMIT 1`).bind(agentId, nowSec()).first();
-  if (!queued) return { ok: true, beta: true, poll_after_sec: 60, task: null };
+  if (!queued) return { ok: true, beta: true, poll_after_sec: AGENT_TASK_POLL_SEC, task: null };
 
   const claimedAt = nowSec();
   const update = await env.DB.prepare(`UPDATE agent_tasks SET status = 'running', claimed_at = ?
     WHERE id = ? AND agent_id = ? AND status = 'queued'`)
     .bind(claimedAt, queued.id, agentId).run();
-  if (Number(update?.meta?.changes || 0) < 1) return { ok: true, beta: true, poll_after_sec: 60, task: null };
+  if (Number(update?.meta?.changes || 0) < 1) return { ok: true, beta: true, poll_after_sec: AGENT_TASK_POLL_SEC, task: null };
   const row = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).bind(queued.id).first();
   const policy = AGENT_TASK_ACTIONS[row.action];
   return {
     ok: true,
     beta: true,
-    poll_after_sec: 60,
+    poll_after_sec: AGENT_TASK_POLL_SEC,
     task: {
       id: row.id,
       action: row.action,

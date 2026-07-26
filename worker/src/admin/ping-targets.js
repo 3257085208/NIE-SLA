@@ -1,7 +1,7 @@
 // Admin sub-module: ping target CRUD and agent TCP ping operations.
 import { nowSec, clamp, parseBoolean, sanitizeAgentId, retentionSeconds } from '../utils.js';
 import { safeJson, requireAgentForId, ApiError } from '../auth.js';
-import { writeAgentTelemetryR2History, compactPingPointsByTarget, loadAgentPingsR2History, pingPointsToSeries } from '../metrics.js';
+import { writeAgentTelemetryR2History, compactPingPointsByTarget, loadAgentPingsR2History, pingPointsToSeries, summarizePingPointsByTarget } from '../metrics.js';
 import { rateLimitByIp } from '../ratelimit.js';
 
 function normalizeOkInt(value) {
@@ -135,6 +135,7 @@ export async function getAgentPings(env, url, ctx = null) {
     ok: true,
     targets: targets.results || [],
     pings: responseFormat === 'series' ? [] : pings,
+    ping_stats: summarizePingPointsByTarget(rawPings),
     pings_raw_count: rawPings.length,
     pings_downsampled: rawPings.length > pings.length,
     source: r2.loaded ? 'r2+d1-fallback' : 'd1',

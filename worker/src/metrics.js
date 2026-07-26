@@ -877,6 +877,23 @@ export function compactPingPointsByTarget(pings, maxPerTarget = 360) {
   return out.sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
 }
 
+export function summarizePingPointsByTarget(pings) {
+  const grouped = new Map();
+  for (const ping of pings || []) {
+    const point = normalizePingPoint(ping);
+    if (!point.target_id || !point.ts) continue;
+    const item = grouped.get(point.target_id) || { target_id: point.target_id, total: 0, ok: 0 };
+    item.total += 1;
+    item.ok += Number(point.ok) === 1 ? 1 : 0;
+    grouped.set(point.target_id, item);
+  }
+  return [...grouped.values()].sort((a, b) => a.target_id.localeCompare(b.target_id)).map(item => ({
+    ...item,
+    lost: item.total - item.ok,
+    loss_rate: item.total ? Number((((item.total - item.ok) / item.total) * 100).toFixed(4)) : null,
+  }));
+}
+
 export function pingPointsToSeries(pings) {
   const grouped = new Map();
   for (const ping of pings || []) {

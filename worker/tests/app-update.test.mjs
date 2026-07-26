@@ -36,7 +36,7 @@ const info = await getAppUpdateInfo(env, {
   }),
 });
 
-assert.equal(info.current_version, '0.24.0-beta.11');
+assert.equal(info.current_version, '0.24.0-beta.12');
 assert.equal(info.latest_version, '1.1.0');
 assert.equal(info.update_available, true);
 assert.equal(info.update_mode, 'github-actions');

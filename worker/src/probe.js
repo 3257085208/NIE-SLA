@@ -1,5 +1,5 @@
 import { connect } from 'cloudflare:sockets';
-import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatus, withTimeout, ALLOWED_REGIONS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC, BUCKET_SEC, isPrivateHost, buildMissedPoints } from './utils.js';
+import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatus, withTimeout, ALLOWED_REGIONS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC, BUCKET_SEC, isPrivateHost, buildMissedPoints, lastPersistedCheckAt } from './utils.js';
 import { readR2State, mergeR2StateUpdates, setDailySummary, cachedDailySummaryBefore, dailySummaryFromPoints, statsFromDailySummaries } from './storage.js';
 import { applyProbeWriteBatch, readCheckBucketDaySummary } from './admin.js';
 
@@ -197,9 +197,9 @@ export async function runDueTargets(env) {
   try {
     const state = await readR2State(env);
     const d1Latest = await readLatestStatusMap(env, allTargets.map(target => target.id));
-    const previousById = buildPreviousStateMap(allTargets, state, d1Latest);
+    const previousById = buildHistoryPreviousStateMap(allTargets, state, d1Latest);
     const targets = allTargets
-      .map(target => ({ target, lastCheckedAt: Math.max(Number(previousById.get(target.id)?.checked_at || 0), Number(target.last_checked_at || 0)) }))
+      .map(target => ({ target, lastCheckedAt: lastPersistedCheckAt(target, d1Latest.get(String(target.id))) }))
       .filter(item => item.lastCheckedAt <= now - Math.max(Number(item.target.interval_sec || DEFAULT_INTERVAL_SEC), MIN_INTERVAL_SEC))
       .sort((a, b) => a.lastCheckedAt - b.lastCheckedAt).slice(0, maxTargets).map(item => item.target);
     if (!targets.length) return { ok: true, count: 0, results: [] };
@@ -356,6 +356,19 @@ function buildPreviousStateMap(targets, r2State, d1Latest) {
     const r2 = r2State?.targets?.[target.id] || null;
     const d1 = d1Latest?.get(String(target.id)) || null;
     map.set(target.id, mergePreviousState(r2, d1));
+  }
+  return map;
+}
+
+function buildHistoryPreviousStateMap(targets, r2State, d1Latest) {
+  const map = buildPreviousStateMap(targets, r2State, d1Latest);
+  for (const target of targets || []) {
+    const previous = map.get(target.id);
+    if (!previous) continue;
+    map.set(target.id, {
+      ...previous,
+      checked_at: lastPersistedCheckAt(target, d1Latest?.get(String(target.id))),
+    });
   }
   return map;
 }

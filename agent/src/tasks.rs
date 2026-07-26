@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
-const TASK_POLL_SEC: u64 = 60;
+pub(crate) const TASK_POLL_SEC: u64 = 300;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const IP_UNLOCK_ARGS: [&str; 4] = ["-4", "-j", "-n", "-p"];
@@ -701,6 +701,11 @@ fn output_excerpt(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn idle_task_polling_uses_the_cost_aware_interval() {
+        assert_eq!(TASK_POLL_SEC, 300);
+    }
 
     #[test]
     fn extracts_nodequality_report_url() {

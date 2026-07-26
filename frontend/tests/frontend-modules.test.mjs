@@ -11,7 +11,7 @@ import {
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
 import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, priceBandKey } from '../js/shared/grouping.js';
-import { canShowTemperature, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
 import {
   CURRENCIES,
   COUNTRIES,
@@ -101,6 +101,9 @@ assert.equal(canShowTemperature({ virtualization: '' }), true);
 assert.equal(hasTemperatureData({ virtualization: 'kvm', cpu_temp_c: 40 }), false);
 assert.equal(hasTemperatureData({ virtualization: '', disk_temp_c: 36 }), true);
 assert.equal(hasTemperatureData({ virtualization: '', temperature_sensors: [{ temp_c: 42 }] }), true);
+assert.equal(hasGpuData({ gpu_util: 0 }), false);
+assert.equal(hasGpuData({ gpu_count: 1 }), true);
+assert.equal(hasGpuData({ gpu_name: 'NVIDIA RTX A4000' }), true);
 assert.equal(COUNTRIES.length, 249);
 for (const country of COUNTRIES) {
   assert.equal(existsSync(new URL(`../assets/flags/4x3/${country.code.toLowerCase()}.svg`, import.meta.url)), true);

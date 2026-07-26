@@ -24,7 +24,7 @@ import {
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
 import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260725-machine-types1';
-import { canShowTemperature, hasTemperatureData } from './js/shared/hardware.js';
+import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
   buildLinePoints,
@@ -94,6 +94,7 @@ const els = {
   chartMeta: $('#chartMeta'),
   chartServiceName: $('#chartServiceName'),
   chartAvg: $('#chartAvg'),
+  pingLossStats: $('#pingLossStats'),
   checks: $('#checks'),
   checksHint: $('#checksHint'),
   checksPanel: $('.checks-panel'),
@@ -758,11 +759,11 @@ function renderService(t, days, summaries) {
         </span>
         ${metaHtml ? `<span class="service-target">${metaHtml}</span>` : ''}
         ${metaBadges ? `<span class="service-meta">${metaBadges}</span>` : ''}
-        ${unlockStrip}
       </div>
       <div class="service-status">${status}</div>
       ${hasLatency ? `<div class="service-latency">${latencyHtml}</div>` : ''}
       <div class="service-uptime">${uptime}</div>
+      ${unlockStrip}
       <div class="service-bottom-row${trafficProgress ? ' has-traffic' : ''}">
         <div class="uptime-strip" title="${Number(t.no_public_ip || 0) === 1 ? 'Agent 在线记录' : '最近 30 天可用率'}">
           ${renderBars(t.id, days, summaries)}
@@ -955,8 +956,13 @@ async function selectService(id, name, el) {
       b.style.display = hasLatency ? '' : 'none';
     } else {
       const isTemperature = b.dataset.metric === 'temp';
+      const isGpu = b.dataset.metric === 'gpu';
       const info = target?.agent_metrics?.vps_info || {};
-      b.style.display = isHttp || (isTemperature && !hasTemperatureData(info)) ? 'none' : '';
+      b.style.display = isHttp
+        || (isTemperature && !hasTemperatureData(info))
+        || (isGpu && !hasGpuData(info))
+        ? 'none'
+        : '';
     }
   });
   const rangeTabs = document.getElementById('rangeTabs');
@@ -1141,6 +1147,8 @@ function renderVPSInfo() {
   const info = m?.latest?.vps_info || {};
   const tempTab = document.querySelector('.metric-tab[data-metric="temp"]');
   if (tempTab) tempTab.style.display = hasTemperatureData(info) ? '' : 'none';
+  const gpuTab = document.querySelector('.metric-tab[data-metric="gpu"]');
+  if (gpuTab) gpuTab.style.display = hasGpuData(info) ? '' : 'none';
   const selectedTarget = (state.data?.targets || []).find(t => t.id === state.selectedId) || null;
   const uptimeSec = Number(m?.latest?.uptime_sec ?? selectedTarget?.machine_uptime_sec ?? 0);
   const net = latest.net || {};
@@ -1206,7 +1214,6 @@ function renderVPSInfo() {
     <div class="vps-info-body" id="vpsInfoBody">
       <section class="vps-info-section"><h4>系统信息</h4>${systemItems.join('')}</section>
       <section class="vps-info-section"><h4>网络与负载</h4>${networkItems.join('')}</section>
-      ${unlockDetailSection(selectedTarget?.unlock)}
       ${temperatureItems.length ? `<section class="vps-info-section vps-temperature-section"><h4>温度传感器</h4>${temperatureItems.join('')}</section>` : ''}
     </div>
   `;
@@ -1223,29 +1230,39 @@ function renderVPSInfo() {
 }
 
 function unlockServices(unlock) {
-  return (Array.isArray(unlock?.services) ? unlock.services : []).filter(service =>
-    service?.name && (service.status || service.region || service.method));
+  const primary = ['tiktok', 'disney', 'netflix', 'youtube', 'amazonpv', 'chatgpt'];
+  const services = (Array.isArray(unlock?.services) ? unlock.services : [])
+    .filter(service => service?.name && (service.status || service.region || service.method));
+  const normalized = (service) => String(service.id || service.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return primary
+    .map(id => services.find(service => normalized(service).includes(id)))
+    .filter(Boolean);
 }
 
-function unlockState(status) {
-  const value = String(status || '').toLowerCase();
+function unlockState(service) {
+  const status = String(service?.status || '').toLowerCase();
+  const method = String(service?.method || '').toLowerCase();
+  const value = `${status} ${method}`;
+  if (/失败|不支持|封锁|屏蔽|禁止|禁会员/.test(value) || /(?:^|\s)(?:blocked|failed|no|unsupported|restricted)(?:\s|$)/.test(value)) return 'bad';
+  if (/dns/.test(method)) return 'dns';
   if (/解锁|原生|unlocked|native|yes|ok/.test(value)) return 'good';
-  if (/失败|不支持|封锁|blocked|failed|no/.test(value)) return 'bad';
   return 'unknown';
 }
 
 function unlockCompactHtml(unlock) {
   const services = unlockServices(unlock);
   if (!services.length) return '';
-  const good = services.filter(service => unlockState(service.status || service.method) === 'good').length;
-  return `<span class="unlock-summary" title="${escapeAttr(`IPv4 解锁 ${good}/${services.length} · ${unlock.source || 'IP.Check.Place'}`)}"><b>IPv4 解锁</b><span>${good}/${services.length}</span></span>`;
+  return `<div class="unlock-strip" aria-label="IPv4 解锁状态">${services.map(unlockPillHtml).join('')}</div>`;
 }
 
-function unlockDetailSection(unlock) {
-  const services = unlockServices(unlock);
-  if (!services.length) return '';
-  const checked = unlock.checked_at ? `${timeAgoSec(Number(unlock.checked_at))}前` : '';
-  return `<section class="vps-info-section vps-unlock-section"><h4>IPv4 解锁${checked ? `<span>${escapeHtml(checked)}</span>` : ''}</h4><div class="unlock-grid">${services.map(service => `<span class="unlock-pill ${unlockState(service.status || service.method)}" title="${escapeAttr([service.status, service.region, service.method].filter(Boolean).join(' · '))}"><b>${escapeHtml(service.name)}</b><em>${escapeHtml(service.status || '-')}</em><small>${escapeHtml(service.region || service.method || '-')}</small></span>`).join('')}</div></section>`;
+function unlockPillHtml(service) {
+  const stateName = unlockState(service);
+  const rawRegion = String(service.region || '').replace(/^\[|\]$/g, '').trim();
+  const region = rawRegion && !/^(?:null|none|-)$/i.test(rawRegion)
+    ? rawRegion
+    : stateName === 'bad' ? '未解锁' : stateName === 'dns' ? 'DNS' : stateName === 'good' ? '已解锁' : '未知';
+  const title = [service.name, service.status, service.region, service.method].filter(Boolean).join(' · ');
+  return `<span class="unlock-pill ${stateName}" title="${escapeAttr(title)}"><b>${escapeHtml(service.name)}</b><strong>${escapeHtml(region)}</strong></span>`;
 }
 
 function temperatureSensorItems(info = {}) {
@@ -1303,6 +1320,7 @@ async function updatePingChart() {
   } catch (err) {
     state.pingData = { pings: [] };
     els.chartMeta.textContent = '暂无 Ping 数据';
+    renderPingLossStats([]);
     if (state.chart) { state.chart.data.datasets = []; state.chart.update(); }
     return;
   }
@@ -1310,18 +1328,26 @@ async function updatePingChart() {
   const pings = state.pingData.pings || [];
   const byTarget = new Map();
   for (const p of pings) {
-    const arr = byTarget.get(p.target_id) || [];
+    const targetId = String(p.target_id || '');
+    if (!targetId) continue;
+    const arr = byTarget.get(targetId) || [];
     const ok = p.ok === undefined ? Number(p.latency_ms) >= 0 : Number(p.ok) === 1;
     arr.push({ x: Number(p.ts), y: ok && Number(p.latency_ms) >= 0 ? Number(p.latency_ms) : null });
-    byTarget.set(p.target_id, arr);
+    byTarget.set(targetId, arr);
   }
 
   if (!state.chart) return;
   const datasets = [];
   let idx = 0;
   const targets = state.pingData.targets || [];
-  for (const [tid, points] of byTarget) {
-    const tgt = targets.find(t => t.id === tid) || {};
+  const targetById = new Map(targets.map(target => [String(target.id), target]));
+  const targetIds = [
+    ...targets.map(target => String(target.id)),
+    ...[...byTarget.keys()].filter(id => !targetById.has(String(id))),
+  ];
+  for (const tid of targetIds) {
+    const points = byTarget.get(tid) || [];
+    const tgt = targetById.get(String(tid)) || {};
     datasets.push({
       label: tgt.name || tid,
       data: points.sort((a, b) => a.x - b.x),
@@ -1353,14 +1379,45 @@ async function updatePingChart() {
     delete state.chart.options.scales.x.min;
     delete state.chart.options.scales.x.max;
   }
-  const totalPings = pings.length;
+  const rawStats = Array.isArray(state.pingData.ping_stats) ? state.pingData.ping_stats : fallbackPingStats(pings);
+  const totalPings = rawStats.reduce((sum, item) => sum + Number(item.total || 0), 0);
   tuneChartAnimation(totalPings);
   state.chart.update();
   updateChartZoomButton();
 
-  const okPings = pings.filter(p => p.ok === undefined ? Number(p.latency_ms) >= 0 : Number(p.ok) === 1).length;
+  const okPings = rawStats.reduce((sum, item) => sum + Number(item.ok || 0), 0);
   els.chartAvg.textContent = `Ping 总数：${totalPings} · 成功：${okPings}`;
-  els.chartMeta.textContent = `最近 ${hours} 小时 · ${byTarget.size} 个目标`;
+  els.chartMeta.textContent = `最近 ${hours} 小时 · ${targetIds.length} 个目标`;
+  renderPingLossStats(rawStats, targetById, targetIds);
+}
+
+function fallbackPingStats(pings) {
+  const stats = new Map();
+  for (const ping of pings) {
+    const id = String(ping.target_id || '');
+    if (!id) continue;
+    const item = stats.get(id) || { target_id: id, total: 0, ok: 0 };
+    item.total += 1;
+    if (ping.ok === undefined ? Number(ping.latency_ms) >= 0 : Number(ping.ok) === 1) item.ok += 1;
+    stats.set(id, item);
+  }
+  return [...stats.values()].map(item => ({ ...item, lost: item.total - item.ok, loss_rate: item.total ? ((item.total - item.ok) / item.total) * 100 : null }));
+}
+
+function renderPingLossStats(stats, targetById = new Map(), targetIds = []) {
+  if (!els.pingLossStats) return;
+  const byId = new Map((stats || []).map(item => [String(item.target_id), item]));
+  const ids = targetIds.length ? targetIds : [...byId.keys()];
+  els.pingLossStats.hidden = !ids.length;
+  els.pingLossStats.innerHTML = ids.map((id, index) => {
+    const item = byId.get(String(id)) || {};
+    const total = Number(item.total || 0);
+    const ok = Number(item.ok || 0);
+    const loss = Number.isFinite(Number(item.loss_rate)) ? Number(item.loss_rate) : (total ? ((total - ok) / total) * 100 : null);
+    const name = targetById.get(String(id))?.name || id;
+    const level = loss == null ? 'unknown' : loss === 0 ? 'good' : loss < 5 ? 'warn' : 'bad';
+    return `<span class="ping-loss-item ${level}" title="${escapeAttr(`${name} · ${total} 次 Ping · 丢失 ${Math.max(0, total - ok)} 次`)}"><i style="--ping-color:${PING_COLORS[index % PING_COLORS.length]}"></i><b>${escapeHtml(name)}</b><strong>${loss == null ? '-' : `${loss.toFixed(loss > 0 && loss < 1 ? 2 : 1)}%`}</strong></span>`;
+  }).join('');
 }
 
 function normalizePingPayload(data) {
@@ -1469,6 +1526,7 @@ function initChart() {
 
   registerChartNearestTimeMode();
 
+  const mobileChart = isMobileChartViewport();
   state.chart = new Chart(ctx, {
     type: 'line',
     data: {
@@ -1492,15 +1550,16 @@ function initChart() {
       plugins: {
         legend: {
           display: true,
-          align: 'end',
+          align: mobileChart ? 'start' : 'end',
           labels: {
-            boxWidth: 10,
-            boxHeight: 10,
+            boxWidth: mobileChart ? 8 : 10,
+            boxHeight: mobileChart ? 8 : 10,
+            padding: mobileChart ? 8 : 10,
             usePointStyle: true,
             color: '#5f6b78',
             font: {
               family: 'Varela Round',
-              size: 12,
+              size: mobileChart ? 10 : 12,
             },
             filter(item) {
               return !String(item.text || '').match(/\bDown\b/);
@@ -1554,7 +1613,7 @@ function initChart() {
 
           ticks: {
             color: '#5f6b78',
-            maxTicksLimit: 12,
+            maxTicksLimit: mobileChart ? 5 : 12,
             autoSkip: true,
 
             callback(value) {
@@ -1563,7 +1622,7 @@ function initChart() {
 
             font: {
               family: 'Varela Round',
-              size: 12,
+              size: mobileChart ? 10 : 12,
             }
           },
 
@@ -1582,11 +1641,11 @@ function initChart() {
 
           ticks: {
             color: '#5f6b78',
-            maxTicksLimit: 5,
+            maxTicksLimit: mobileChart ? 4 : 5,
 
             font: {
               family: 'Varela Round',
-              size: 12,
+              size: mobileChart ? 10 : 12,
             }
           },
 
@@ -1600,11 +1659,16 @@ function initChart() {
   });
 }
 
+function isMobileChartViewport() {
+  return Number(window.innerWidth || 0) <= 760;
+}
+
 function updateChartForCurrentRange() {
   if (state.selectedMetric === 'ping') {
     updatePingChart();
     return;
   }
+  renderPingLossStats([]);
   if (state.selectedMetric !== 'latency') {
     updateMetricsChart();
     return;

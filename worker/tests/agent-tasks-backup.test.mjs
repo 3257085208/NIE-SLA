@@ -98,6 +98,7 @@ await assert.rejects(
 const claimed = await claimAgentTask(env, 'vps-a');
 assert.equal(claimed.task.action, 'ip_unlock');
 assert.equal(claimed.task.timeout_sec, 600);
+assert.equal(claimed.poll_after_sec, 300);
 const completed = await completeAgentTask(jsonRequest({
   status: 'succeeded',
   result: { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }] },

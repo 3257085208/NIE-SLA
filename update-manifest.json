@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.11",
-  "agent_version": "v1.0.28",
-  "source_ref": "app-v0.24.0-beta.11",
-  "published_at": "2026-07-26T16:04:16Z",
-  "title": "NIE-SLA 0.24 Beta 11",
+  "version": "0.24.0-beta.12",
+  "agent_version": "v1.0.29",
+  "source_ref": "app-v0.24.0-beta.12",
+  "published_at": "2026-07-26T18:27:48Z",
+  "title": "NIE-SLA 0.24 Beta 12",
   "changelog": [
-    "修复部分 VPS 无法访问 GitHub 时临时 jq 下载失败的问题",
-    "五架构 jq 官方固定产物随 Worker 静态资源发布，Agent 优先从当前 Worker 下载并校验 SHA-256",
-    "后台操作列保持 Beta 10 的重新分组、对齐和窄屏优化",
-    "继续禁止 sudo、系统包安装和第三方报告上传",
-    "Rust Agent 更新至 v1.0.28，现有 Agent 可自动升级，无需重新安装"
+    "TCP Ping 改为 1 秒严格超时并并行竞争双栈地址，避免失败回退时间累加成数秒尖峰",
+    "TCP Ping 新增每个目标独立丢包率，超时统一按丢包记录",
+    "修复一分钟快速状态覆盖五分钟持久检查时间后造成漏检的问题",
+    "移动端重新压缩 VPS 行、图表、弹窗和触控布局，IPv4 解锁固定为单行六格",
+    "普通 VPS 不再因历史 gpu_util=0 误显示 GPU，Rust Agent 更新至 v1.0.29"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

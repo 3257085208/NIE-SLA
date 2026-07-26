@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 const HEARTBEAT_MAX_AGE_SEC: u64 = 180;
 const HEARTBEAT_INTERVAL_SEC: u64 = 15;
-const TASK_POLL_SEC: u64 = 60;
+const TASK_POLL_SEC: u64 = crate::tasks::TASK_POLL_SEC;
 const SERVICE_RECONCILE_SEC: u64 = 3600;
 const AGENT_BINARY: &str = "/opt/nstatus-metrics/nstatus-metrics";
 const ENV_FILE: &str = "/opt/nstatus-metrics/nstatus-metrics.env";

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, normalizeTarget, parseBoolean, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
+import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, lastPersistedCheckAt, normalizeTarget, parseBoolean, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
 import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, requireLatencyAgentForId, safeJson } from '../src/auth.js';
 import { rateLimitD1 } from '../src/ratelimit.js';
-import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries, writeAgentTelemetryR2History } from '../src/metrics.js';
+import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
 import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
@@ -28,6 +28,9 @@ assert.equal(parseBoolean('enabled', false), false);
 assert.equal(shouldRunScheduledFollowups({ count: 38 }), true);
 assert.equal(shouldRunScheduledFollowups({ count: 0 }), false);
 assert.equal(shouldRunScheduledFollowups(null), false);
+assert.equal(lastPersistedCheckAt({ last_checked_at: 100 }, { checked_at: 120 }), 120);
+assert.equal(lastPersistedCheckAt({ last_checked_at: 140 }, { checked_at: 120 }), 140);
+assert.equal(lastPersistedCheckAt({ last_checked_at: null }, null), 0);
 
 const emptyId = sanitizeId('');
 assert.equal(emptyId, sanitizeId(''));
@@ -422,6 +425,14 @@ const compactPings = compactPingPointsByTarget(pingPoints, 50);
 assert.ok(compactPings.filter(p => p.target_id === 'a').length <= 50);
 assert.equal(compactPings.filter(p => p.target_id === 'b').length, 20);
 assert.equal(compactPings.find(p => p.target_id === 'a').ts, 2000);
+assert.deepEqual(summarizePingPointsByTarget([
+  { target_id: 'a', ts: 1, latency_ms: 10, ok: 1 },
+  { target_id: 'a', ts: 2, latency_ms: null, ok: 0 },
+  { target_id: 'b', ts: 3, latency_ms: 20, ok: 1 },
+]), [
+  { target_id: 'a', total: 2, ok: 1, lost: 1, loss_rate: 50 },
+  { target_id: 'b', total: 1, ok: 1, lost: 0, loss_rate: 0 },
+]);
 const pingSeries = pingPointsToSeries(pingPoints.slice(0, 3));
 assert.deepEqual(pingSeries[0].dt, [0, 1, 2]);
 assert.deepEqual(pingSeries[0].latency_ms, [10, 11, 12]);

@@ -7,6 +7,7 @@ import { getDeveloperApiManifest, resolveDeveloperApiOrigin, withDeveloperApiHea
 
 const routesSource = await readFile(new URL('../src/routes.js', import.meta.url), 'utf8');
 const statusSource = await readFile(new URL('../src/status.js', import.meta.url), 'utf8');
+const probeSource = await readFile(new URL('../src/probe.js', import.meta.url), 'utf8');
 assert.match(
   routesSource,
   /\/api\/settings\/geoip[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}'cache-control': 'no-store'/,
@@ -16,6 +17,10 @@ assert.match(routesSource, /\/api\/backup\/restore[\s\S]{0,300}withAdmin\(reques
 assert.doesNotMatch(routesSource, /\/api\/(?:extensions|themes|plugins)(?:['/])/, 'extension package routes must stay disabled');
 assert.match(statusSource, /getStatusFresh\(env, url\)[\s\S]{0,240}await ensureV6Schema\(env\)/, 'the first public page view must initialize a fresh D1 database');
 assert.match(statusSource, /async function getChecks\(env, url\)\s*\{\s*await ensureV6Schema\(env\)/, 'direct checks reads must initialize a fresh D1 database');
+const dueTargetsSource = probeSource.slice(probeSource.indexOf('export async function runDueTargets'), probeSource.indexOf('export async function runFastStatusTargets'));
+assert.match(dueTargetsSource, /lastPersistedCheckAt\(target, d1Latest\.get\(String\(target\.id\)\)\)/, 'history scheduling must use persisted five-minute checks');
+assert.match(dueTargetsSource, /buildHistoryPreviousStateMap\(allTargets, state, d1Latest\)/, 'missed-history backfill must use persisted five-minute checks');
+assert.doesNotMatch(dueTargetsSource, /previousById\.get\(target\.id\)\?\.checked_at/, 'one-minute R2 status must not postpone five-minute history checks');
 
 function urlWith(qs) {
   return new URL('https://example.test/api/agent/metrics?' + qs);

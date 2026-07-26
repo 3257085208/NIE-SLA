@@ -564,7 +564,7 @@ async function runAgentTask(target, action) {
       method: "POST",
       body: JSON.stringify({ agent_id: target.id, action }),
     });
-    toast(`${label} 已排队，通常 1 分钟内开始`, "ok");
+    toast(`${label} 已排队，Agent 最多约 5 分钟内领取`, "ok");
     await loadAgentTasks();
   } catch (error) {
     toast(error.message, "err");

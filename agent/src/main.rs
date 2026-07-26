@@ -35,6 +35,8 @@ const QUEUE_FLUSH_SEC: u64 = 10;
 const MIN_PING_QUEUE_CAPACITY: usize = 200;
 const MAX_PING_QUEUE_CAPACITY: usize = 10_000;
 const MAX_PING_CONCURRENCY: usize = 32;
+const TCP_PING_TIMEOUT: Duration = Duration::from_secs(1);
+const MAX_PING_RESOLVED_ADDRESSES: usize = 8;
 
 #[derive(Clone, Debug)]
 struct Config {
@@ -1113,25 +1115,59 @@ fn ping_target_selected(id: &str, selector: &str) -> bool {
 
 fn ping_target(target: &PingTarget) -> PingResult {
     let ts = now_sec();
-    let timeout = Duration::from_secs(3);
-    let start = Instant::now();
-    let mut ok = false;
-    let mut latency_ms = None;
-    if let Ok(addrs) = target.target.to_socket_addrs() {
-        for addr in addrs {
-            if TcpStream::connect_timeout(&addr, timeout).is_ok() {
-                ok = true;
-                latency_ms = Some(start.elapsed().as_millis());
-                break;
+    let addresses = target
+        .target
+        .to_socket_addrs()
+        .map(|resolved| {
+            let mut unique = Vec::new();
+            for address in resolved {
+                if !unique.contains(&address) {
+                    unique.push(address);
+                }
+                if unique.len() >= MAX_PING_RESOLVED_ADDRESSES {
+                    break;
+                }
             }
-        }
-    }
+            unique
+        })
+        .unwrap_or_default();
+    let latency_ms = ping_resolved_addresses(&addresses, TCP_PING_TIMEOUT, |address, timeout| {
+        let started = Instant::now();
+        TcpStream::connect_timeout(&address, timeout)
+            .ok()
+            .map(|_| started.elapsed().as_millis())
+    });
     PingResult {
         target_id: target.id.clone(),
         ts,
         latency_ms,
-        ok,
+        ok: latency_ms.is_some(),
     }
+}
+
+fn ping_resolved_addresses<F>(
+    addresses: &[std::net::SocketAddr],
+    timeout: Duration,
+    connect: F,
+) -> Option<u128>
+where
+    F: Fn(std::net::SocketAddr, Duration) -> Option<u128> + Sync,
+{
+    if addresses.is_empty() {
+        return None;
+    }
+    thread::scope(|scope| {
+        let (tx, rx) = mpsc::channel();
+        for &address in addresses {
+            let tx = tx.clone();
+            let connect = &connect;
+            scope.spawn(move || {
+                let _ = tx.send(connect(address, timeout));
+            });
+        }
+        drop(tx);
+        rx.into_iter().flatten().min()
+    })
 }
 
 fn aggregate(samples: &[SamplePoint]) -> AggStats {
@@ -1243,6 +1279,25 @@ mod tests {
         assert!(ping_target_selected("alpha", "beta, alpha, gamma"));
         assert!(!ping_target_selected("alpha", "beta,gamma"));
         assert!(!ping_target_selected("alpha", "alphabet"));
+    }
+
+    #[test]
+    fn tcp_ping_uses_a_strict_one_second_connect_timeout() {
+        assert_eq!(TCP_PING_TIMEOUT, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn tcp_ping_races_resolved_addresses_without_accumulating_failed_attempts() {
+        use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+        let failed = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1);
+        let successful = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 2);
+        let latency =
+            ping_resolved_addresses(&[failed, successful], TCP_PING_TIMEOUT, |address, _| {
+                (address == successful).then_some(37)
+            });
+
+        assert_eq!(latency, Some(37));
     }
 }
 

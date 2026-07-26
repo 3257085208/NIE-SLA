@@ -21,3 +21,9 @@ export function hasTemperatureData(info = {}) {
   if (['cpu_temp_c', 'gpu_temp_c', 'motherboard_temp_c', 'disk_temp_c', 'chipset_temp_c'].some(key => info?.[key] != null && Number.isFinite(Number(info[key])))) return true;
   return Array.isArray(info?.temperature_sensors) && info.temperature_sensors.some(sensor => sensor?.temp_c != null && Number.isFinite(Number(sensor.temp_c)));
 }
+
+export function hasGpuData(info = {}) {
+  const name = String(info?.gpu_name || '').trim();
+  const count = Number(info?.gpu_count || 0);
+  return Boolean(name) || (Number.isFinite(count) && count > 0);
+}
