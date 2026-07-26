@@ -9,9 +9,9 @@ PASS=0
 FAIL=0
 CARGO_BIN="${CARGO_BIN:-cargo}"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python || true)}"
-if command -v npx >/dev/null 2>&1; then
+if command -v npx >/dev/null 2>&1 && npx --version >/dev/null 2>&1; then
   PACKAGE_EXEC="npx --yes"
-elif command -v pnpm >/dev/null 2>&1; then
+elif command -v pnpm >/dev/null 2>&1 && pnpm --version >/dev/null 2>&1; then
   PACKAGE_EXEC="pnpm dlx"
 else
   echo "npx or pnpm is required" >&2

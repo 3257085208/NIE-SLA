@@ -1,6 +1,7 @@
 use crate::{percent_encode_query, Config, HttpClient, AGENT_VERSION};
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -15,6 +16,14 @@ const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const IP_UNLOCK_ARGS: [&str; 4] = ["-4", "-j", "-n", "-p"];
 const SYSTEM_TASK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const OPTIONAL_DIG_STUB: &[u8] = b"#!/bin/sh\nexit 0\n";
+const JQ_RELEASE_BASE: &str = "https://github.com/jqlang/jq/releases/download/jq-1.8.1";
+const MAX_JQ_BYTES: usize = 4 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct JqAsset {
+    name: &'static str,
+    sha256: &'static str,
+}
 
 pub(crate) fn spawn_ip_unlock_fallback(cfg: Config, http: HttpClient) {
     if !cfg!(target_os = "linux") {
@@ -270,7 +279,7 @@ fn run_fixed_remote_script(
         .write_all(&script)
         .context("write fixed Beta task file")?;
     drop(script_file);
-    let task_path = prepare_fixed_task_path(&task_dir, url, SYSTEM_TASK_PATH)?;
+    let task_path = prepare_fixed_task_path(&task_dir, url, SYSTEM_TASK_PATH, http)?;
 
     let mut child = Command::new("timeout")
         .arg(format!("{}s", timeout_sec))
@@ -308,31 +317,105 @@ fn run_fixed_remote_script(
     Ok(FixedScriptOutput { text, status })
 }
 
-fn prepare_fixed_task_path(task_dir: &Path, url: &str, system_path: &str) -> Result<OsString> {
-    if url != "https://IP.Check.Place" || task_command_exists(system_path, "dig") {
+fn prepare_fixed_task_path(
+    task_dir: &Path,
+    url: &str,
+    system_path: &str,
+    http: &HttpClient,
+) -> Result<OsString> {
+    if url != "https://IP.Check.Place" {
+        return Ok(OsString::from(system_path));
+    }
+    let needs_dig = !task_command_exists(system_path, "dig");
+    let needs_jq = !task_command_exists(system_path, "jq");
+    if !needs_dig && !needs_jq {
         return Ok(OsString::from(system_path));
     }
 
-    // The upstream script treats an optional DNSBL lookup as fatal after media checks.
     let bin_dir = task_dir.join("bin");
     fs::create_dir(&bin_dir).context("create fixed task compatibility directory")?;
     set_private_directory_permissions(&bin_dir)?;
-    let dig_path = bin_dir.join("dig");
-    let mut dig_file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&dig_path)
-        .context("create optional DNS compatibility helper")?;
-    dig_file
-        .write_all(OPTIONAL_DIG_STUB)
-        .context("write optional DNS compatibility helper")?;
-    drop(dig_file);
-    set_private_executable_permissions(&dig_path)?;
+    if needs_dig {
+        // The upstream script treats an optional DNSBL lookup as fatal after media checks.
+        write_private_executable(
+            &bin_dir.join("dig"),
+            OPTIONAL_DIG_STUB,
+            "optional DNS compatibility helper",
+        )?;
+    }
+    if needs_jq {
+        install_pinned_task_jq(http, &bin_dir)?;
+    }
 
     let mut path = bin_dir.into_os_string();
     path.push(":");
     path.push(system_path);
     Ok(path)
+}
+
+fn install_pinned_task_jq(http: &HttpClient, bin_dir: &Path) -> Result<()> {
+    let asset = jq_asset_for_current_target()
+        .ok_or_else(|| anyhow!("IP unlock compatibility does not support this CPU architecture"))?;
+    let url = format!("{}/{}", JQ_RELEASE_BASE, asset.name);
+    let bytes = http
+        .get_public_bytes_limited(&url, MAX_JQ_BYTES)
+        .with_context(|| format!("download pinned jq compatibility asset {}", asset.name))?;
+    let actual = format!("{:x}", Sha256::digest(&bytes));
+    if actual != asset.sha256 {
+        return Err(anyhow!(
+            "pinned jq compatibility checksum mismatch: expected {}, got {}",
+            asset.sha256,
+            actual
+        ));
+    }
+    write_private_executable(&bin_dir.join("jq"), &bytes, "pinned jq compatibility asset")
+}
+
+fn jq_asset_for_current_target() -> Option<JqAsset> {
+    let abi = if cfg!(target_abi = "eabihf") {
+        "eabihf"
+    } else {
+        ""
+    };
+    jq_asset_for(std::env::consts::ARCH, abi)
+}
+
+fn jq_asset_for(arch: &str, abi: &str) -> Option<JqAsset> {
+    match (arch, abi) {
+        ("x86_64", _) => Some(JqAsset {
+            name: "jq-linux-amd64",
+            sha256: "020468de7539ce70ef1bceaf7cde2e8c4f2ca6c3afb84642aabc5c97d9fc2a0d",
+        }),
+        ("aarch64", _) => Some(JqAsset {
+            name: "jq-linux-arm64",
+            sha256: "6bc62f25981328edd3cfcfe6fe51b073f2d7e7710d7ef7fcdac28d4e384fc3d4",
+        }),
+        ("x86", _) => Some(JqAsset {
+            name: "jq-linux-i386",
+            sha256: "ee8489cb8acfddf2e6d2ab4308877b5cbb6ec6b55beedb7c6d5a4fafb2879c86",
+        }),
+        ("arm", "eabihf") => Some(JqAsset {
+            name: "jq-linux-armhf",
+            sha256: "ac304e50cf7cd24933d83dc7d0e4f79892a71a92fb02336d4ecaffa8933760bd",
+        }),
+        ("arm", _) => Some(JqAsset {
+            name: "jq-linux-armel",
+            sha256: "b98e283ff26cd7478f6fb18cc081ca0e0cb2e9980300f0bfc8bb26854d347eb2",
+        }),
+        _ => None,
+    }
+}
+
+fn write_private_executable(path: &Path, contents: &[u8], label: &str) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| format!("create {}", label))?;
+    file.write_all(contents)
+        .with_context(|| format!("write {}", label))?;
+    drop(file);
+    set_private_executable_permissions(path)
 }
 
 #[cfg(unix)]
@@ -713,11 +796,10 @@ mod tests {
                 .as_nanos()
         ));
         fs::create_dir(&base).unwrap();
-        let path = prepare_fixed_task_path(&base, "https://IP.Check.Place", "/missing").unwrap();
-        let dig = base.join("bin/dig");
-        assert!(path
-            .to_string_lossy()
-            .starts_with(base.to_string_lossy().as_ref()));
+        let bin = base.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let dig = bin.join("dig");
+        write_private_executable(&dig, OPTIONAL_DIG_STUB, "test dig helper").unwrap();
         assert_eq!(
             fs::metadata(&dig).unwrap().permissions().mode() & 0o777,
             0o700
@@ -726,5 +808,18 @@ mod tests {
         assert!(output.status.success());
         assert!(output.stdout.is_empty());
         fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn pinned_jq_assets_cover_every_linux_release_architecture() {
+        assert_eq!(jq_asset_for("x86_64", "").unwrap().name, "jq-linux-amd64");
+        assert_eq!(jq_asset_for("aarch64", "").unwrap().name, "jq-linux-arm64");
+        assert_eq!(jq_asset_for("x86", "").unwrap().name, "jq-linux-i386");
+        assert_eq!(
+            jq_asset_for("arm", "eabihf").unwrap().name,
+            "jq-linux-armhf"
+        );
+        assert_eq!(jq_asset_for("arm", "eabi").unwrap().name, "jq-linux-armel");
+        assert!(jq_asset_for("m68k", "").is_none());
     }
 }

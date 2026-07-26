@@ -529,12 +529,16 @@ function betaTaskControlsHtml(target) {
   }[task.status] || task.status : "";
   const reportUrl = target.nq_url || task?.result?.report_url || "";
   return `<div class="beta-task-actions">
-    <span class="beta-label">Beta</span>
-    <button type="button" class="btn btn-xs" data-a="task-nq"${active || !nqAvailable ? " disabled" : ""} title="${escapeHtml(nqAvailable ? "运行固定 NodeQuality 任务" : "此 Agent 尚未上报 NQ 能力")}">运行 NQ</button>
-    <button type="button" class="btn btn-xs" data-a="task-unlock"${active || !unlockAvailable ? " disabled" : ""} title="${escapeHtml(unlockAvailable ? "运行固定 IP 解锁任务" : "此 Agent 尚未上报 IP 解锁能力")}">IP 解锁</button>
-    ${reportUrl ? `<a class="btn btn-xs btn-blue" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">NQ 报告</a>` : ""}
+    <div class="beta-task-meta">
+      <span class="beta-label">Beta 功能</span>
+      <small class="task-mode" title="Agent ${escapeHtml(runtime.agent_version || "未知版本")}">${escapeHtml(managerState)}</small>
+    </div>
+    <div class="beta-task-buttons">
+      <button type="button" class="btn btn-xs" data-a="task-nq"${active || !nqAvailable ? " disabled" : ""} title="${escapeHtml(nqAvailable ? "运行固定 NodeQuality 任务" : "此 Agent 尚未上报 NQ 能力")}">运行 NQ</button>
+      <button type="button" class="btn btn-xs" data-a="task-unlock"${active || !unlockAvailable ? " disabled" : ""} title="${escapeHtml(unlockAvailable ? "运行固定 IP 解锁任务" : "此 Agent 尚未上报 IP 解锁能力")}">IP 解锁</button>
+      ${reportUrl ? `<a class="btn btn-xs btn-blue" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">NQ 报告</a>` : ""}
+    </div>
     ${state ? `<small class="task-state task-${escapeHtml(task.status)}" title="${escapeHtml(task.error || "")}">${escapeHtml(task.action_label || "任务")} · ${escapeHtml(state)}</small>` : ""}
-    <small class="task-state" title="Agent ${escapeHtml(runtime.agent_version || "未知版本")}">${escapeHtml(managerState)}</small>
   </div>`;
 }
 
@@ -604,7 +608,7 @@ function targetRowHtml(target, index) {
     `<div class="target-summary"><div><b>${escapeHtml(target.name)}</b>${typeTag}${enabledTag}</div><code>${escapeHtml(target.id)}</code><span title="${escapeHtml(host)}">${escapeHtml(host || "-")}</span><span class="group-cell" title="${escapeHtml(targetGroupCell(target))}">${escapeHtml(targetGroupCell(target))}</span></div>`,
     monitorDetails,
     trafficCell(target, status),
-    `<div class="actions">${isWeb ? "" : `<button type="button" class="btn btn-xs btn-deploy" data-a="deploy" data-target-id="${escapeHtml(target.id)}">部署 Agent</button>${betaTaskControlsHtml(target)}`}${targetActionsHtml(target)}</div>`,
+    `<div class="actions target-actions"><div class="target-action-main">${isWeb ? "" : `<button type="button" class="btn btn-xs btn-deploy" data-a="deploy" data-target-id="${escapeHtml(target.id)}">部署 Agent</button>`}${targetActionsHtml(target)}</div>${isWeb ? "" : betaTaskControlsHtml(target)}</div>`,
   ];
 
   return `

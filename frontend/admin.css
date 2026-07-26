@@ -1250,9 +1250,14 @@ code,
 
 tr.group-sep td{background:rgba(127,127,127,.12);font-size:13px;padding:8px 10px}
 
-.beta-task-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 5px; width: 100%; }
-.beta-label { padding: 2px 5px; border: 1px solid #c99031; color: #8a5a12; background: #fff8e7; border-radius: 3px; font-size: 9px; font-weight: 800; letter-spacing: 0; }
-.task-state { width: 100%; color: var(--muted); font-size: 10px; text-align: right; }
+.target-actions { display: grid; gap: 8px; align-content: start; }
+.target-action-main, .beta-task-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.beta-task-actions { display: grid; gap: 6px; width: 100%; padding-top: 8px; border-top: 1px solid var(--line); }
+.beta-task-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 4px 8px; min-width: 0; }
+.beta-label { flex: 0 0 auto; padding: 2px 6px; border: 1px solid #c99031; color: #8a5a12; background: #fff8e7; border-radius: 3px; font-size: 9px; font-weight: 800; letter-spacing: 0; }
+.task-mode, .task-state { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.task-mode { min-width: 0; text-align: left; }
+.task-state { width: 100%; text-align: left; }
 .task-running, .task-queued { color: #8a5a12; }
 .task-succeeded { color: #23824d; }
 .task-failed, .task-expired { color: #b43b35; }

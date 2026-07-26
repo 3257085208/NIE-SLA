@@ -51,8 +51,11 @@ assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector
 assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260726-beta-actions1/, 'admin CSS cache key must publish Beta actions');
-assert.match(adminHtml, /js\/admin\.js\?v=20260726-beta-actions1/, 'admin JS cache key must publish Beta actions');
+assert.match(adminHtml, /admin\.css\?v=20260726-action-layout1/, 'admin CSS cache key must publish the target action layout');
+assert.match(adminHtml, /js\/admin\.js\?v=20260726-action-layout1/, 'admin JS cache key must publish the target action layout');
+assert.match(adminSource, /target-action-main[\s\S]*targetActionsHtml\(target\)[\s\S]*betaTaskControlsHtml\(target\)/, 'standard target actions must render before Beta tasks');
+assert.match(adminCss, /\.beta-task-actions\s*\{[\s\S]*border-top:/, 'Beta tasks must form a distinct action group');
+assert.match(adminCss, /\.beta-task-meta\s*\{[\s\S]*flex-wrap:\s*wrap[\s\S]*justify-content:\s*flex-start/, 'Beta metadata must wrap without creating a detached right-aligned label');
 assert.match(adminHtml, /settings-primary[\s\S]*settings-columns[\s\S]*settings-column/, 'settings must separate wide forms from independent card columns');
 assert.match(adminCss, /\.settings-columns\s*\{[\s\S]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/, 'desktop settings cards must use three independent columns');
 assert.match(adminCss, /@media \(max-width: 820px\) \{[\s\S]*\.settings-columns\s*\{\s*grid-template-columns:\s*1fr/, 'mobile settings cards must collapse to one column');
