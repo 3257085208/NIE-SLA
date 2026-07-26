@@ -1250,26 +1250,15 @@ code,
 
 tr.group-sep td{background:rgba(127,127,127,.12);font-size:13px;padding:8px 10px}
 
-.extension-security-note {
-  margin: 0 0 16px;
-  padding: 11px 13px;
-  border: 1px solid #f0c36a;
-  border-radius: 6px;
-  background: #fff8e6;
-  color: #654a13;
-  font-size: 13px;
-}
-.extension-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
-.extension-card { padding: 16px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
-.extension-card.active { border-color: #44a06b; box-shadow: inset 3px 0 #44a06b; }
-.extension-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
-.extension-card-head span { color: var(--muted); font-size: 11px; font-weight: 700; }
-.extension-card-head h3 { margin: 4px 0 0; font-size: 17px; }
-.extension-card-head em { color: var(--muted); font-size: 12px; font-style: normal; white-space: nowrap; }
-.extension-card.active .extension-card-head em { color: #23824d; font-weight: 700; }
-.extension-card > p { min-height: 38px; color: var(--muted); font-size: 13px; }
-.extension-card dl { display: grid; gap: 5px; margin: 12px 0; font-size: 12px; }
-.extension-card dl div { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; }
-.extension-card dt { color: var(--muted); }
-.extension-card dd { margin: 0; overflow-wrap: anywhere; }
-.extension-card-actions { display: flex; gap: 8px; }
+.beta-task-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 5px; width: 100%; }
+.beta-label { padding: 2px 5px; border: 1px solid #c99031; color: #8a5a12; background: #fff8e7; border-radius: 3px; font-size: 9px; font-weight: 800; letter-spacing: 0; }
+.task-state { width: 100%; color: var(--muted); font-size: 10px; text-align: right; }
+.task-running, .task-queued { color: #8a5a12; }
+.task-succeeded { color: #23824d; }
+.task-failed, .task-expired { color: #b43b35; }
+.auto-location-preview { display: grid; gap: 3px; min-height: 36px; align-content: center; }
+.auto-location-preview strong { font-size: 13px; }
+.auto-location-preview span { color: var(--muted); font-size: 10px; }
+#mProviderCustom { margin-top: 7px; }
+.backup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.backup-warning { color: #9a5b18; }

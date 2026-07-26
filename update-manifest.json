@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.23.0-beta.2",
-  "source_ref": "app-v0.23.0-beta.2",
-  "published_at": "2026-07-25T18:00:33Z",
-  "title": "NIE-SLA 0.23 Beta 2",
+  "version": "0.24.0-beta.1",
+  "source_ref": "app-v0.24.0-beta.1",
+  "published_at": "2026-07-26T16:00:00Z",
+  "title": "NIE-SLA 0.24 Beta 1",
   "changelog": [
-    "全球城市目录统一返回简体中文，不再混入英文或拼音",
-    "中国目录使用标准地级行政区划，正确显示直辖市、地区、盟和自治州",
-    "城市选择框新增中文关键字搜索和匹配结果计数",
-    "覆盖后台可选的全部 249 个国家和地区，并兼容旧节点已保存城市",
-    "切换目录缓存版本，部署后立即使用新的中文数据",
-    "外部目录固定版本，并继续执行超时、大小限制、去重和缓存保护"
+    "新部署合并为 Worker Static Assets、D1、R2、Durable Objects 和 Cron 的单 Worker 架构",
+    "国家与城市改由 Agent 通过可选 GeoIP 服务自动获取 IPv4/IPv6 位置",
+    "新增 NodeQuality 与 IPv4 解锁两个固定白名单 Beta 动作",
+    "新增便携备份、密码保护敏感备份、预览、合并或替换恢复与恢复前 R2 快照",
+    "保留商家目录、自定义商家、机器类型、Telegram、邮件和内置外观自定义",
+    "移除主题、插件上传与包运行时，并保持公开只读开发 API"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

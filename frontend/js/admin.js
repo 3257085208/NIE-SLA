@@ -3,10 +3,7 @@ import { createAdminClient } from "./admin/api.js";
 import { canShowTemperature } from "./shared/hardware.js";
 import {
   CURRENCIES,
-  COUNTRIES,
   PROVIDERS,
-  countryFlagAsset,
-  normalizeCountryCode,
 } from "./shared/target-catalogs.js";
 import {
   groupByDimension,
@@ -58,6 +55,7 @@ let targets = [],
   statusMap = new Map(),
   latencyNodes = [],
   pingTargets = [],
+  agentTasks = new Map(),
   targetRegions = {
     auto: "自动（当前 Worker 执行位置）",
     apac: "亚太",
@@ -218,110 +216,7 @@ function nav(p) {
   if (p === "targets") loadTargets();
   if (p === "latency") loadLatencyNodes();
   if (p === "pings") loadPings();
-  if (p === "themes") loadThemes();
-  if (p === "plugins") loadPlugins();
   if (p === "settings") loadSettings();
-}
-
-async function loadManagedExtensions(resource) {
-  const apiBase = resource === "themes" ? "/api/themes" : "/api/plugins";
-  const tableId = resource === "themes" ? "themeTable" : "pluginTable";
-  const emptyName = resource === "themes" ? "主题" : "插件";
-  loading(tableId);
-  try {
-    const data = await api(`${apiBase}/manage`);
-    const rows = data.extensions || [];
-    if (!rows.length) {
-      byId(tableId).innerHTML = `<div class="empty">尚未安装${emptyName}。</div>`;
-      return;
-    }
-    byId(tableId).innerHTML = `<div class="extension-grid">${rows.map((extension) => extensionCardHtml(extension, resource)).join("")}</div>`;
-  } catch (error) {
-    errBox(tableId, error);
-  }
-}
-
-function loadThemes() { return loadManagedExtensions("themes"); }
-function loadPlugins() { return loadManagedExtensions("plugins"); }
-
-function extensionCardHtml(extension, resource) {
-  const type = extension.type === "theme" ? "主题" : "插件";
-  const state = extension.enabled ? "已启用" : "未启用";
-  const runtime = extension.type === "theme"
-    ? (extension.mode === "canvas" ? "交互画布" : `CSS · ${extension.base_theme === "cards" ? "卡片布局" : "经典布局"}`)
-    : "隔离面板";
-  return `<article class="extension-card${extension.enabled ? " active" : ""}">
-    <div class="extension-card-head">
-      <div><span>${escapeHtml(type)}</span><h3>${escapeHtml(extension.name)}</h3></div>
-      <em>${escapeHtml(state)}</em>
-    </div>
-    <p>${escapeHtml(extension.description || "暂无说明")}</p>
-    <dl>
-      <div><dt>ID</dt><dd><code>${escapeHtml(extension.id)}</code></dd></div>
-      <div><dt>版本</dt><dd>${escapeHtml(extension.version)}</dd></div>
-      <div><dt>作者</dt><dd>${escapeHtml(extension.author || "未署名")}</dd></div>
-      <div><dt>模式</dt><dd>${escapeHtml(runtime)}</dd></div>
-      <div><dt>许可</dt><dd>${escapeHtml(extension.license || "未声明")}</dd></div>
-      <div><dt>SHA</dt><dd><code title="${escapeHtml(extension.package_sha256 || "")}">${escapeHtml((extension.package_sha256 || "未提供").slice(0, 16))}${extension.package_sha256 ? "…" : ""}</code></dd></div>
-    </dl>
-    <div class="extension-card-actions">
-      <button class="btn btn-sm ${extension.enabled ? "" : "btn-primary"}" data-extension-action="toggle" data-extension-resource="${resource}" data-extension-id="${escapeHtml(extension.id)}" data-extension-enabled="${extension.enabled ? "1" : "0"}">${extension.enabled ? "停用" : "启用"}</button>
-      <button class="btn btn-sm btn-danger" data-extension-action="delete" data-extension-resource="${resource}" data-extension-id="${escapeHtml(extension.id)}">删除</button>
-    </div>
-  </article>`;
-}
-
-async function uploadExtensionPackage(resource, file) {
-  if (!file) return;
-  const isTheme = resource === "themes";
-  const apiBase = isTheme ? "/api/themes" : "/api/plugins";
-  const displayName = isTheme ? "主题" : "插件";
-  const inputId = isTheme ? "themeZip" : "pluginZip";
-  const button = byId(isTheme ? "uploadThemeBtn" : "uploadPluginBtn");
-  if (!file.name.toLowerCase().endsWith(".zip")) return toast(`请选择 ZIP ${displayName}包`, "err");
-  if (file.size > 8 * 1024 * 1024) return toast(`${displayName} ZIP 不能超过 8 MB`, "err");
-  button.disabled = true;
-  button.textContent = "正在校验并上传...";
-  try {
-    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-    const sha256 = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("");
-    const result = await api(`${apiBase}/upload`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/zip",
-        "x-extension-filename": file.name,
-        "x-extension-sha256": sha256,
-      },
-      body: file,
-    });
-    toast(`已安装 ${result.extension.name}，请确认后启用`, "ok");
-    await loadManagedExtensions(resource);
-  } catch (error) {
-    toast(error.message, "err");
-  } finally {
-    button.disabled = false;
-    button.textContent = `上传${displayName} ZIP`;
-    byId(inputId).value = "";
-  }
-}
-
-async function toggleExtension(resource, id, enabled) {
-  const apiBase = resource === "themes" ? "/api/themes" : "/api/plugins";
-  try {
-    await api(`${apiBase}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ enabled: !enabled }) });
-    toast(enabled ? "已停用" : "已启用", "ok");
-    await loadManagedExtensions(resource);
-  } catch (error) { toast(error.message, "err"); }
-}
-
-async function removeExtension(resource, id) {
-  const apiBase = resource === "themes" ? "/api/themes" : "/api/plugins";
-  if (!confirm(`确认删除 ${id}？其 R2 文件也会被删除。`)) return;
-  try {
-    await api(`${apiBase}/${encodeURIComponent(id)}`, { method: "DELETE" });
-    toast("已删除", "ok");
-    await loadManagedExtensions(resource);
-  } catch (error) { toast(error.message, "err"); }
 }
 async function loadDash() {
   loading("dStats");
@@ -536,6 +431,7 @@ async function loadTargets() {
       );
     }
     targetAdminLoaded = true;
+    await loadAgentTasks(false);
     renderTargets();
   } catch (e) {
     targetAdminFailed = true;
@@ -604,14 +500,54 @@ function targetActionsHtml(target) {
   ].join("");
 }
 
-function nodeQualityEditorValue(target = {}) {
-  const raw = target.nq_report;
-  if (!raw) return '';
+function betaTaskControlsHtml(target) {
+  if (target.type !== "tcp" || !targetAdminLoaded) return "";
+  const task = agentTasks.get(target.id);
+  const active = task && ["queued", "running"].includes(task.status);
+  const state = task ? {
+    queued: "排队中",
+    running: "运行中",
+    succeeded: "已完成",
+    failed: "失败",
+    expired: "已过期",
+    cancelled: "已取消",
+  }[task.status] || task.status : "";
+  const reportUrl = target.nq_url || task?.result?.report_url || "";
+  return `<div class="beta-task-actions">
+    <span class="beta-label">Beta</span>
+    <button type="button" class="btn btn-xs" data-a="task-nq"${active ? " disabled" : ""}>运行 NQ</button>
+    <button type="button" class="btn btn-xs" data-a="task-unlock"${active ? " disabled" : ""}>IP 解锁</button>
+    ${reportUrl ? `<a class="btn btn-xs btn-blue" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">NQ 报告</a>` : ""}
+    ${state ? `<small class="task-state task-${escapeHtml(task.status)}" title="${escapeHtml(task.error || "")}">${escapeHtml(task.action_label || "任务")} · ${escapeHtml(state)}</small>` : ""}
+  </div>`;
+}
+
+async function loadAgentTasks(render = true) {
+  if (!hasSession()) return;
   try {
-    const report = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    return String(report?.raw || '').trim();
-  } catch (_) {
-    return String(raw || '').trim();
+    const data = await api("/api/agent-tasks?limit=100");
+    const latest = new Map();
+    for (const task of data.tasks || []) if (!latest.has(task.agent_id)) latest.set(task.agent_id, task);
+    agentTasks = latest;
+    if (render && byId("pg-targets")?.classList.contains("on")) renderTargets();
+  } catch (_) {}
+}
+
+async function runAgentTask(target, action) {
+  const label = action === "nodequality" ? "NodeQuality" : "IP 解锁";
+  const detail = action === "nodequality"
+    ? "Agent 将运行固定的 NodeQuality 官方脚本，通常需要数分钟，可能需要较高系统权限。"
+    : "Agent 将运行固定的 IP.Check.Place 脚本，只保存 IPv4 解锁结果，不保存纯净度。";
+  if (!confirm(`${label} 是 Beta 功能。\n\n${detail}\n\n确认在 ${target.name} 上运行？`)) return;
+  try {
+    await api("/api/agent-tasks", {
+      method: "POST",
+      body: JSON.stringify({ agent_id: target.id, action }),
+    });
+    toast(`${label} 已排队，通常 1 分钟内开始`, "ok");
+    await loadAgentTasks();
+  } catch (error) {
+    toast(error.message, "err");
   }
 }
 
@@ -652,7 +588,7 @@ function targetRowHtml(target, index) {
     `<div class="target-summary"><div><b>${escapeHtml(target.name)}</b>${typeTag}${enabledTag}</div><code>${escapeHtml(target.id)}</code><span title="${escapeHtml(host)}">${escapeHtml(host || "-")}</span><span class="group-cell" title="${escapeHtml(targetGroupCell(target))}">${escapeHtml(targetGroupCell(target))}</span></div>`,
     monitorDetails,
     trafficCell(target, status),
-    `<div class="actions">${isWeb ? "" : `<button type="button" class="btn btn-xs btn-deploy" data-a="deploy" data-target-id="${escapeHtml(target.id)}">部署 Agent</button>`}${targetActionsHtml(target)}</div>`,
+    `<div class="actions">${isWeb ? "" : `<button type="button" class="btn btn-xs btn-deploy" data-a="deploy" data-target-id="${escapeHtml(target.id)}">部署 Agent</button>${betaTaskControlsHtml(target)}`}${targetActionsHtml(target)}</div>`,
   ];
 
   return `
@@ -948,50 +884,24 @@ function targetGroupOptions(type = "tcp", current = "") {
     .join("");
 }
 
-function countryOptionsHtml(current = "") {
-  const selected = normalizeCountryCode(current);
-  return [
-    '<option value="">请选择国家或地区</option>',
-    ...COUNTRIES.map((country) =>
-      `<option value="${country.code}"${selectedAttr(country.code === selected)}>${escapeHtml(country.name)} (${country.code})</option>`),
-  ].join("");
-}
-
 function providerOptionsHtml(current = "") {
   const selected = String(current || "").trim();
-  const options = selected && !PROVIDERS.includes(selected)
-    ? [selected, ...PROVIDERS]
-    : PROVIDERS;
+  const custom = Boolean(selected && !PROVIDERS.includes(selected));
   return [
     '<option value="">请选择商家</option>',
-    ...options.map((provider) =>
+    ...PROVIDERS.map((provider) =>
       `<option value="${escapeHtml(provider)}"${selectedAttr(provider === selected)}>${escapeHtml(provider)}</option>`),
+    `<option value="__custom__"${selectedAttr(custom)}>自定义商家</option>`,
   ].join("");
 }
 
-function cityOptionsHtml(current = "", cities = [], state = "ready") {
-  const selected = String(current || "").trim().slice(0, 64);
-  const normalizedCities = Array.isArray(cities)
-    ? cities.map((city) => String(city || "").trim().slice(0, 64)).filter(Boolean)
-    : [];
-  const hasSelected = normalizedCities.some((city) => city === selected);
-  const placeholder = state === "loading"
-    ? "正在加载城市..."
-    : state === "error"
-      ? "城市目录暂时不可用"
-      : state === "country-required"
-        ? "请先选择国家或地区"
-        : state === "no-results"
-          ? "没有匹配的中文城市"
-        : "请选择城市";
-  return [
-    `<option value="">${placeholder}</option>`,
-    ...(selected && !hasSelected
-      ? [`<option value="${escapeHtml(selected)}" selected>${escapeHtml(selected)}（已保存）</option>`]
-      : []),
-    ...normalizedCities.map((city) =>
-      `<option value="${escapeHtml(city)}"${selectedAttr(city === selected)}>${escapeHtml(city)}</option>`),
-  ].join("");
+function toggleCustomProvider() {
+  const custom = byId("mProviderCustom");
+  if (!custom) return;
+  const active = byId("mProvider")?.value === "__custom__";
+  custom.hidden = !active;
+  custom.disabled = !active;
+  if (active) custom.focus();
 }
 
 function currencyOptionsHtml(current = "USD") {
@@ -1000,97 +910,6 @@ function currencyOptionsHtml(current = "USD") {
     `<option value="${currency.code}"${selectedAttr(currency.code === selected)}>${escapeHtml(currency.name)} (${currency.code})</option>`).join("");
 }
 
-function countryCatalogField(current = "") {
-  const code = normalizeCountryCode(current);
-  const asset = countryFlagAsset(code);
-  return formField("国家或地区（可选）", `
-    <div class="country-select-row">
-      <img id="mLocationFlag" class="country-flag-preview" src="${escapeHtml(asset)}" alt=""${asset ? "" : " hidden"}>
-      <select id="mLocation">${countryOptionsHtml(current)}</select>
-    </div>`);
-}
-
-function cityCatalogField(current = "", country = "") {
-  const hasCountry = Boolean(normalizeCountryCode(country));
-  return formField("城市（可选）", `
-    <div class="city-select-stack">
-      <input id="mCitySearch" type="search" placeholder="搜索中文城市" autocomplete="off" disabled>
-      <select id="mCity"${hasCountry ? "" : " disabled"}>${cityOptionsHtml(current, [], hasCountry ? "loading" : "country-required")}</select>
-    </div>
-    <p class="hint" id="mCityHint">${hasCountry ? "正在加载城市目录..." : "选择国家或地区后加载城市。"}</p>`);
-}
-
-function updateCountryPreview(code) {
-  const preview = byId("mLocationFlag");
-  if (!preview) return;
-  const country = COUNTRIES.find((item) => item.code === code);
-  const asset = countryFlagAsset(code);
-  preview.hidden = !asset;
-  preview.src = asset;
-  preview.alt = country ? `${country.name}国旗` : "";
-}
-
-let cityCatalogRequest = 0;
-let cityCatalogCountry = "";
-let cityCatalogCities = [];
-
-function filterLoadedCities() {
-  const citySelect = byId("mCity");
-  const search = byId("mCitySearch");
-  const hint = byId("mCityHint");
-  if (!citySelect || !search) return;
-  const query = search.value.trim().toLocaleLowerCase("zh-CN");
-  const selected = citySelect.value;
-  const matches = query
-    ? cityCatalogCities.filter((city) => city.toLocaleLowerCase("zh-CN").includes(query))
-    : cityCatalogCities;
-  citySelect.innerHTML = cityOptionsHtml(selected, matches, matches.length ? "ready" : "no-results");
-  if (hint) hint.textContent = query
-    ? `找到 ${matches.length} / ${cityCatalogCities.length} 个中文城市。`
-    : `已加载 ${cityCatalogCities.length} 个中文城市。`;
-}
-
-async function loadCitiesForCountry({ preserveCity = false } = {}) {
-  const countrySelect = byId("mLocation");
-  const citySelect = byId("mCity");
-  const search = byId("mCitySearch");
-  const hint = byId("mCityHint");
-  if (!countrySelect || !citySelect || !search) return;
-  const requestId = ++cityCatalogRequest;
-  const countryCode = normalizeCountryCode(countrySelect.value);
-  const currentCity = preserveCity ? citySelect.value : "";
-  cityCatalogCountry = countryCode;
-  cityCatalogCities = [];
-  search.value = "";
-  search.disabled = true;
-  updateCountryPreview(countryCode);
-  if (!countryCode) {
-    citySelect.innerHTML = cityOptionsHtml(currentCity, [], "country-required");
-    citySelect.disabled = true;
-    if (hint) hint.textContent = "选择国家或地区后加载城市。";
-    return;
-  }
-
-  citySelect.innerHTML = cityOptionsHtml(currentCity, [], "loading");
-  citySelect.disabled = true;
-  if (hint) hint.textContent = "正在加载城市目录...";
-  try {
-    const result = await apiAdmin(`/api/catalog/cities?country=${encodeURIComponent(countryCode)}`, {}, 15_000);
-    if (requestId !== cityCatalogRequest) return;
-    const cities = Array.isArray(result.cities) ? result.cities : [];
-    if (normalizeCountryCode(result.country_code) !== cityCatalogCountry) return;
-    cityCatalogCities = cities;
-    citySelect.innerHTML = cityOptionsHtml(currentCity, cities);
-    citySelect.disabled = false;
-    search.disabled = false;
-    if (hint) hint.textContent = `已加载 ${cities.length} 个中文城市。`;
-  } catch (error) {
-    if (requestId !== cityCatalogRequest) return;
-    citySelect.innerHTML = cityOptionsHtml(currentCity, [], "error");
-    citySelect.disabled = true;
-    if (hint) hint.textContent = error.message || "城市目录暂时不可用，请重新选择国家后重试。";
-  }
-}
 
 function displayGroupName(value) {
   return sharedDisplayGroupName(value);
@@ -1139,12 +958,11 @@ function targetModalHtml(target, isEdit) {
 
     <div class="form-grid">
       ${inputField("标签", "mTags", target.tags || "", 'placeholder="逗号分隔"')}
-      ${countryCatalogField(target.location || "")}
-      ${cityCatalogField(target.city || "", target.location || "")}
-      ${formField("商家", `<select id="mProvider">${providerOptionsHtml(target.provider || "")}</select>`)}
+      ${formField("自动位置", `<div class="auto-location-preview"><strong>${escapeHtml([target.location, target.city].filter(Boolean).join(" · ") || "等待 Agent 获取")}</strong><span>${target.location_source ? `来源 ${escapeHtml(target.location_source)}` : "安装或更新 Agent 后自动获取"}${target.location_updated_at ? ` · ${escapeHtml(formatDateTime(target.location_updated_at))}` : ""}</span></div>`)}
+      ${formField("商家", `<select id="mProvider">${providerOptionsHtml(target.provider || "")}</select><input id="mProviderCustom" maxlength="80" placeholder="填写自定义商家" value="${escapeHtml(PROVIDERS.includes(target.provider || "") ? "" : target.provider || "")}">`)}
       ${formField("机器类型", `<select id="mLineType">${lineTypeOptionsHtml(target.line_type || "")}</select>`)}
     </div>
-    ${formField("NodeQuality 报告", `<textarea id="mNqReport" rows="8" placeholder="粘贴 NodeQuality 原始报告（包含 ::: tab-item、ANSI 文本和图片链接）">${escapeHtml(nodeQualityEditorValue(target))}</textarea><p class="hint">保存后前台 VPS 卡片会显示 NQ 按钮。再次保存空白内容会清除报告。</p>`)}
+    <p class="hint fvps">国家与城市由 Agent 根据出口 IPv4/IPv6 自动获取；定位服务商在“设置 → 自动地理位置”中统一选择。</p>
 
     <div class="form-grid">
       ${formField("到期时间（可选）", `<input id="mExpires" type="date" value="${dateInput(target.expires_at)}">`)}
@@ -1229,9 +1047,8 @@ function targetModal(target = null) {
   byId("modal").innerHTML = targetModalHtml(target || {}, isEdit);
   byId("mType").onchange = toggleTargetTypeFields;
   byId("mNoPublicIp").onchange = toggleNoPublicIpFields;
-  byId("mLocation").onchange = () => loadCitiesForCountry({ preserveCity: false });
-  byId("mCitySearch").oninput = filterLoadedCities;
-  loadCitiesForCountry({ preserveCity: true });
+  byId("mProvider").onchange = toggleCustomProvider;
+  toggleCustomProvider();
   toggleTargetTypeFields();
   byId("saveTarget").onclick = () => saveTarget(isEdit);
   openModal();
@@ -1257,11 +1074,10 @@ async function saveTarget(edit) {
     probe_region: byId("mRegion")?.value || "auto",
     no_public_ip: byId("mType").value === "tcp" && !!byId("mNoPublicIp")?.checked,
     tags: byId("mTags")?.value.trim() || "",
-    location: byId("mLocation")?.value || "",
-    city: (byId("mCity")?.value || "").trim().slice(0, 64),
-    provider: byId("mProvider")?.value || "",
+    provider: byId("mProvider")?.value === "__custom__"
+      ? (byId("mProviderCustom")?.value || "").trim().slice(0, 80)
+      : byId("mProvider")?.value || "",
     line_type: byId("mLineType")?.value || "",
-    nq_report: (byId("mNqReport")?.value || "").trim(),
     expires_at: byId("mExpires")?.value || null,
     price,
     billing_cycle: byId("mBilling")?.value || "",
@@ -1694,11 +1510,116 @@ async function loadSettings() {
   loadTotp();
   loadAccount();
   loadAdminPath();
-  loadTheme();
+  loadGeoIp();
+  loadBackup();
   loadAgentUpdate();
   loadTraffic();
   loadAlerts();
   loadAppearance();
+}
+
+async function loadGeoIp() {
+  const box = byId("sGeoIp");
+  if (!box) return;
+  try {
+    const data = await api("/api/settings/geoip");
+    box.innerHTML = `
+      <div class="f"><label>IP 定位服务商</label><select id="geoIpProvider">${(data.providers || []).map((provider) => `<option value="${escapeHtml(provider.id)}"${selectedAttr(provider.id === data.provider)}>${escapeHtml(provider.name)}${provider.city ? "" : "（仅国家）"}</option>`).join("")}</select></div>
+      <div class="f" id="geoIpCustomRow"><label>自定义 HTTPS JSON 接口</label><input id="geoIpCustomUrl" type="url" value="${escapeHtml(data.custom_url || "")}" placeholder="https://geo.example.com/lookup"></div>
+      <p class="hint">Agent 启动后自动查询出口 IPv4/IPv6，此后每 24 小时刷新。自定义接口需返回 <code>ip/ipv4/ipv6</code>、<code>country_code</code>、<code>country</code>、<code>city</code>。</p>
+      <button class="btn btn-primary btn-sm" id="saveGeoIp">保存定位设置</button>`;
+    const toggle = () => { byId("geoIpCustomRow").hidden = byId("geoIpProvider").value !== "custom"; };
+    byId("geoIpProvider").onchange = toggle;
+    byId("saveGeoIp").onclick = saveGeoIp;
+    toggle();
+  } catch (error) {
+    errBox("sGeoIp", error);
+  }
+}
+
+async function saveGeoIp() {
+  const button = byId("saveGeoIp");
+  if (button) button.disabled = true;
+  try {
+    await api("/api/settings/geoip", {
+      method: "PATCH",
+      body: JSON.stringify({ provider: byId("geoIpProvider").value, custom_url: byId("geoIpCustomUrl").value.trim() }),
+    });
+    toast("自动地理位置设置已保存", "ok");
+    loadGeoIp();
+  } catch (error) {
+    toast(error.message, "err");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function loadBackup() {
+  const box = byId("sBackup");
+  if (!box) return;
+  box.innerHTML = `
+    <p class="hint">普通备份包含节点、检测、商家、机器类型、账单、通知非秘密配置和外观。历史数据不塞进 JSON；从 Pages + Worker 切换到单 Worker 时，优先复用原 D1、R2 和加密密钥，现有 Agent 无需改地址。</p>
+    <label class="switch-line"><input id="backupSecrets" type="checkbox"><span>同时导出 Agent/TOTP/通知凭据（密码加密）</span></label>
+    <p class="hint backup-warning">敏感备份恢复后仍需使用原 <code>TOTP_ENCRYPTION_KEY</code>；未保留时，已安装 Agent 和加密通知凭据将无法读取。</p>
+    <div class="backup-actions"><button class="btn btn-blue btn-sm" id="exportBackup">导出备份</button><button class="btn btn-sm" id="chooseRestoreBackup">恢复备份</button></div>`;
+  byId("exportBackup").onclick = downloadBackup;
+  byId("chooseRestoreBackup").onclick = () => byId("restoreBackupFile").click();
+  byId("restoreBackupFile").onchange = restoreBackupFile;
+}
+
+async function downloadBackup() {
+  const includeSecrets = !!byId("backupSecrets")?.checked;
+  let password = "";
+  if (includeSecrets) {
+    password = prompt("为敏感备份设置至少 10 位密码。此密码无法找回：") || "";
+    if (!password) return;
+  }
+  const button = byId("exportBackup");
+  if (button) button.disabled = true;
+  try {
+    const data = await api("/api/backup/export", {
+      method: "POST",
+      body: JSON.stringify({ include_secrets: includeSecrets, password }),
+    });
+    const blob = new globalThis.Blob([JSON.stringify(data.backup, null, 2)], { type: "application/json" });
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = `nie-sla-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(href);
+    toast("备份已导出", "ok");
+  } catch (error) {
+    toast(error.message, "err");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function restoreBackupFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) return toast("备份文件不能超过 2 MB", "err");
+  try {
+    const backup = JSON.parse(await file.text());
+    const password = backup.sensitive ? (prompt("请输入敏感备份密码：") || "") : "";
+    const preview = await api("/api/backup/preview", {
+      method: "POST",
+      body: JSON.stringify({ backup, password }),
+    });
+    const counts = preview.preview?.counts || {};
+    const secretWarning = backup.sensitive ? "\n\n此文件包含敏感密文。请先确认新部署使用原 TOTP_ENCRYPTION_KEY，否则现有 Agent 凭据无法读取。" : "";
+    if (!confirm(`将恢复 ${counts.targets || 0} 个目标、${counts.ping_targets || 0} 个 Ping 目标和 ${counts.latency_agents || 0} 个 Latency Agent。\n\n默认采用合并模式；恢复前会自动在 R2 创建快照。${secretWarning}\n\n继续？`)) return;
+    await api("/api/backup/restore", {
+      method: "POST",
+      body: JSON.stringify({ backup, password, mode: "merge", confirm: "RESTORE" }),
+    });
+    toast("备份恢复完成", "ok");
+    loadTargets();
+  } catch (error) {
+    toast(error.message, "err");
+  }
 }
 
 async function loadAppUpdate(refresh = false) {
@@ -1809,14 +1730,13 @@ const appearanceSections = [
     ['site_name', '站点名称'], ['site_subtitle', '页头副标题'], ['hero_subtitle', '状态横幅下方说明'], ['page_title', '浏览器页面标题'],
     ['favicon_url', '浏览器图标 URL'], ['brand_home_url', '左上角品牌链接'], ['brand_logo_url', '左上角 Logo URL'],
     ['brand_logo_alt', 'Logo 替代文字'], ['brand_logo_height', 'Logo 高度（20-64px）', 'number'],
-    ['brand_avatar_url', '卡片主题头像 URL'],
     ['header_right_mode', '右上角显示方式', 'select', [['image', '显示图片'], ['text', '显示文字'], ['hidden', '隐藏']]],
     ['header_right_text', '右上角文字'], ['header_right_image_url', '右上角图片 URL'],
     ['header_right_image_alt', '右上角图片替代文字'], ['header_right_image_width', '右上角图片宽度（40-240px）', 'number'],
     ['header_right_link', '右上角跳转链接'],
   ] },
   { title: '状态与导航文案', fields: [
-    ['search_placeholder', '列表主题搜索提示'], ['cards_search_placeholder', '卡片主题搜索提示'], ['group_by_title', '分组栏标题'],
+    ['search_placeholder', '搜索框提示'], ['group_by_title', '分组栏标题'],
     ['banner_normal', '全部正常文案'], ['banner_down', '服务离线文案'], ['banner_degraded', '数据延迟文案'],
     ['banner_unknown', '等待检查文案'], ['summary_total', '服务总数摘要'], ['summary_up', '正常服务摘要'],
     ['summary_down', '离线服务摘要'], ['summary_degraded', '延迟服务摘要'], ['summary_unknown', '待检查服务摘要'],
@@ -1826,8 +1746,7 @@ const appearanceSections = [
     ['incident_title', '故障区标题'], ['incident_empty', '无故障摘要'], ['incident_empty_detail', '无故障详情'],
     ['checks_title', '最近检查标题'], ['checks_hint', '最近检查提示'], ['checks_empty', '未选择服务提示'],
     ['checks_unselected', '未选择服务标题'], ['checks_no_records', '无检查记录提示'], ['no_search_results', '无搜索结果提示'],
-    ['chart_title', '响应时间图表标题'], ['chart_unselected', '图表未选择提示'], ['latency_title', '卡片延迟区标题'],
-    ['latency_subtitle', '卡片延迟区副标题'], ['vps_details_label', 'VPS 详情折叠标题'],
+    ['chart_title', '响应时间图表标题'], ['chart_unselected', '图表未选择提示'], ['vps_details_label', 'VPS 详情折叠标题'],
   ] },
   { title: '页脚与颜色', fields: [
     ['footer_text', '页脚文案'], ['footer_link_text', '页脚链接文字'], ['footer_link_url', '页脚链接 URL'],
@@ -1836,9 +1755,8 @@ const appearanceSections = [
   { title: '首页显示区域', fields: [
     ['show_header', '显示页头', 'checkbox'], ['show_banner', '显示状态横幅', 'checkbox'], ['show_summary', '显示状态摘要', 'checkbox'],
     ['show_search', '显示搜索框', 'checkbox'], ['show_group_by', '显示分组栏', 'checkbox'],
-    ['show_region_filter', '卡片主题显示地区筛选', 'checkbox'], ['show_card_sidebar', '卡片主题显示统计侧栏', 'checkbox'],
     ['show_incidents', '显示故障记录', 'checkbox'], ['show_chart', '显示监控图表', 'checkbox'],
-    ['show_card_latency', '卡片显示 Latency 区', 'checkbox'], ['show_vps_details', '显示 VPS 详情', 'checkbox'],
+    ['show_vps_details', '显示 VPS 详情', 'checkbox'],
     ['show_checks', '显示最近检查', 'checkbox'],
     ['show_footer', '显示页脚', 'checkbox'],
   ] },
@@ -1879,15 +1797,6 @@ async function saveAppearance(reset) {
     loadAppearance();
   } catch (e) { toast(e.message, 'err'); }
 }
-async function loadTheme() {
-  try {
-    const d = await api("/api/settings");
-    const builtIn = d.themes?.[0]?.name || "原版列表";
-    byId("sTheme").innerHTML = `<p class="hint">内置只保留稳定基础布局。卡片布局及其他视觉方案请在“主题”页面上传 ZIP 并启用；停用扩展主题会自动回到这里。</p><div class="seg"><button class="btn on" type="button" disabled>${escapeHtml(builtIn)}</button></div>`;
-  } catch (e) {
-    errBox("sTheme", e);
-  }
-}
 async function loadAgentUpdate() {
   try {
     const d = await api("/api/settings");
@@ -1896,7 +1805,7 @@ async function loadAgentUpdate() {
       '<label class="switch-line"><input type="checkbox" id="agentAutoUpdate"' +
       (enabled ? " checked" : "") +
       "><span>发现新版本后自动更新</span></label>" +
-      '<p class="hint">关闭时 Agent 不会修改自身；需要用户在 VPS 中执行 <code>cftz update</code>。开启后仍会先完成版本与 SHA-256 校验。目前仅 Linux 支持自动安装，旧版 Agent 需要先手动更新一次。</p>';
+      '<p class="hint">关闭时 Agent 不会修改自身；需要用户在 VPS 中执行 <code>cftz update</code>。开启后只会安装更高版本，并先完成版本与 SHA-256 校验，绝不会自动降级。目前仅 Linux 支持自动安装；旧安装需要重新粘贴一次最新部署命令，以安装 root updater 和定时器。</p>';
     byId("agentAutoUpdate").onchange = saveAgentUpdate;
   } catch (e) {
     errBox("sAgentUpdate", e);
@@ -2289,20 +2198,6 @@ byId("probeBtn").onclick = async () => {
   }
 };
 byId("addPingBtn").onclick = () => pingModal();
-byId("uploadThemeBtn").onclick = () => byId("themeZip").click();
-byId("themeZip").onchange = () => uploadExtensionPackage("themes", byId("themeZip").files?.[0]);
-byId("uploadPluginBtn").onclick = () => byId("pluginZip").click();
-byId("pluginZip").onchange = () => uploadExtensionPackage("plugins", byId("pluginZip").files?.[0]);
-function handleManagedExtensionClick(event) {
-  const button = event.target.closest("button[data-extension-action]");
-  if (!button) return;
-  const id = button.dataset.extensionId;
-  const resource = button.dataset.extensionResource;
-  if (button.dataset.extensionAction === "toggle") toggleExtension(resource, id, button.dataset.extensionEnabled === "1");
-  if (button.dataset.extensionAction === "delete") removeExtension(resource, id);
-}
-byId("themeTable").onclick = handleManagedExtensionClick;
-byId("pluginTable").onclick = handleManagedExtensionClick;
 byId("archiveBtn").onclick = async () => {
   try {
     await api("/api/archive", { method: "POST", body: "{}" });
@@ -2333,6 +2228,8 @@ byId("tTable").onclick = (e) => {
   if (b.dataset.a === "toggle") toggleTarget(t);
   if (b.dataset.a === "delete") deleteTarget(t);
   if (b.dataset.a === "deploy") deploy(t, b);
+  if (b.dataset.a === "task-nq") runAgentTask(t, "nodequality");
+  if (b.dataset.a === "task-unlock") runAgentTask(t, "ip_unlock");
   if (b.dataset.a === "move-up") moveTarget(t, -1);
   if (b.dataset.a === "move-down") moveTarget(t, 1);
   if (b.dataset.a === "reload") loadTargets();
@@ -2356,6 +2253,9 @@ byId("latencyTable").onclick = (e) => {
   if (button.dataset.a === "latency-toggle") toggleLatencyNode(node);
   if (button.dataset.a === "latency-delete") deleteLatencyNode(node);
 };
+setInterval(() => {
+  if (byId("pg-targets")?.classList.contains("on")) loadAgentTasks();
+}, 15_000);
 loadAuthConfig();
 if (await completeGitHubRedirect()) {
   // OAuth completion owns the initial login state.

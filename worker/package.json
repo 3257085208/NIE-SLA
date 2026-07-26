@@ -4,8 +4,5 @@
   "type": "module",
   "scripts": {
     "admin:reset": "node scripts/reset-admin.mjs"
-  },
-  "dependencies": {
-    "fflate": "0.8.2"
   }
 }

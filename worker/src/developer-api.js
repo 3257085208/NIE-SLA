@@ -20,12 +20,7 @@ export function getDeveloperApiManifest(request, env, workerVersion) {
     base_url: baseUrl,
     authentication: { read: 'none', write: 'not_available' },
     cors: { mode: 'explicit-origin-allowlist', environment: 'DEVELOPER_API_ORIGINS' },
-    extensions: {
-      alternate_frontends: true,
-      themes: true,
-      read_only_plugins: true,
-      privileged_plugins: false,
-    },
+    alternate_frontends: true,
     endpoints: ENDPOINTS.map(endpoint => ({ method: 'GET', url: baseUrl + endpoint.path, ...endpoint })),
   };
 }

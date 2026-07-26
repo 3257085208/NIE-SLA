@@ -7,13 +7,20 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = path.join(root, 'frontend');
 const outputRoot = path.join(root, 'dist-one-click');
 const repository = '3257085208/NIE-SLA';
-const excluded = new Set(['.git', '.wrangler', 'README.md', '_redirects', 'functions', 'node_modules', 'package.json', 'tests', 'bin']);
+const excluded = new Set([
+  '.git', '.gitattributes', '.github', '.gitignore', '.wrangler', 'AGENTS.md', 'README.md', '_redirects',
+  'functions', 'node_modules', 'package.json', 'pnpm-lock.yaml', 'tests', 'bin',
+]);
 
 await assertDirectory(frontendRoot);
 await rm(outputRoot, { recursive: true, force: true });
 await cp(frontendRoot, outputRoot, {
   recursive: true,
-  filter: (entry) => !path.relative(frontendRoot, entry).split(path.sep).some((part) => excluded.has(part)),
+  filter(entry) {
+    const relative = path.relative(frontendRoot, entry);
+    if (relative === path.join('js', 'themes') || relative.startsWith(`${path.join('js', 'themes')}${path.sep}`)) return false;
+    return !relative.split(path.sep).some(part => excluded.has(part));
+  },
 });
 await prepareAgentRelease(path.join(outputRoot, 'bin'));
 console.log(`One-click assets prepared in ${path.relative(root, outputRoot)}`);
@@ -24,7 +31,7 @@ async function prepareAgentRelease(binRoot) {
     ? `https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(requestedTag)}`
     : `https://api.github.com/repos/${repository}/releases/latest`;
   const release = await fetchJson(endpoint);
-  const assets = new Map((release.assets || []).map((asset) => [String(asset.name), String(asset.browser_download_url)]));
+  const assets = new Map((release.assets || []).map(asset => [String(asset.name), String(asset.browser_download_url)]));
   const version = await downloadText(requiredAsset(assets, 'VERSION'));
   const manifest = await downloadText(requiredAsset(assets, 'SHA256SUMS'));
   const normalizedVersion = version.trim();

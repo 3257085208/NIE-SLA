@@ -58,12 +58,15 @@ export async function listTargets(env) {
     const settings = trafficSettingsFromTarget(target, env);
     const priceCny = convertPriceToCny(target.price, target.currency, rates);
     const nq = publicNodeQualitySummary(target);
+    const unlock = parseJsonObject(target.unlock_data);
     return {
       ...target,
       ...(priceCny == null ? {} : { price_cny: priceCny }),
       traffic: summarizeTraffic(trafficRows[`${sanitizeAgentId(target.id)}|${settings.month}`], settings),
       nq,
-      has_nq: Boolean(nq?.has_report),
+      nq_url: target.nq_url || nq?.report_url || null,
+      has_nq: Boolean(nq?.has_report || target.nq_url),
+      unlock: Array.isArray(unlock?.services) ? unlock : null,
     };
   });
   return { ok: true, targets, regions: REGION_LABELS };
@@ -98,6 +101,7 @@ export async function createTarget(request, env) {
   const maxSort = await env.DB.prepare(`SELECT MAX(sort_order) AS value FROM targets`).first().catch(() => null);
   const sortOrder = maxSort?.value == null ? null : Number(maxSort.value) + 1;
   await env.DB.prepare(`INSERT INTO targets (id, name, group_name, type, target_host, target_port, url, method, expected_status, timeout_ms, interval_sec, probe_region, enabled, no_public_ip, sort_order, created_at, updated_at, expires_at, price, billing_cycle, tags, location, city, currency, traffic_enabled, traffic_quota_gb, traffic_mode, traffic_reset_day, alert_enabled, alert_expiry_days, alert_traffic_remaining_percent, alert_traffic_remaining_gb, provider, line_type, nq_report, nq_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, normalized.name, normalized.group_name, normalized.type, normalized.target_host, normalized.target_port, normalized.url, normalized.method, normalized.expected_status, normalized.timeout_ms, normalized.interval_sec, normalized.probe_region, normalized.enabled ? 1 : 0, normalized.no_public_ip ? 1 : 0, sortOrder, now, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, trafficResetDay, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nq.report, nq.updatedAt).run();
+  await syncTargetCompatibility(env, id);
   await setMeta(env, 'targets_last_sync_at', String(now));
   return { ok: true, id };
 }
@@ -134,6 +138,7 @@ export async function updateTarget(id, request, env) {
   const alertTrafficPercent = body?.alert_traffic_remaining_percent !== undefined ? normalizeNullableNumber(body.alert_traffic_remaining_percent, 100) : (existing.alert_traffic_remaining_percent ?? null);
   const alertTrafficGb = body?.alert_traffic_remaining_gb !== undefined ? normalizeNullableNumber(body.alert_traffic_remaining_gb, 1048576) : (existing.alert_traffic_remaining_gb ?? null);
   await env.DB.prepare(`UPDATE targets SET name = ?, group_name = ?, type = ?, target_host = ?, target_port = ?, url = ?, method = ?, expected_status = ?, timeout_ms = ?, interval_sec = ?, probe_region = ?, enabled = ?, no_public_ip = ?, updated_at = ?, expires_at = ?, price = ?, billing_cycle = ?, tags = ?, location = ?, city = ?, currency = ?, traffic_enabled = ?, traffic_quota_gb = ?, traffic_mode = ?, traffic_reset_day = ?, alert_enabled = ?, alert_expiry_days = ?, alert_traffic_remaining_percent = ?, alert_traffic_remaining_gb = ?, provider = ?, line_type = ?, nq_report = ?, nq_updated_at = ? WHERE id = ?`).bind(merged.name, merged.group_name, merged.type, merged.target_host, merged.target_port, merged.url, merged.method, merged.expected_status, merged.timeout_ms, merged.interval_sec, merged.probe_region, merged.enabled ? 1 : 0, merged.no_public_ip ? 1 : 0, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, trafficResetDay, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nqReport, nqUpdatedAt, id).run();
+  await syncTargetCompatibility(env, id);
   if (trafficResetDayChanged) {
     await rebuildAgentTrafficPeriod(env, sanitizeAgentId(id), {
       ...existing,
@@ -160,6 +165,7 @@ export async function reorderTargets(request, env) {
     if (batch.length) await env.DB.batch(batch);
   }
   await setMeta(env, 'targets_last_sync_at', String(nowSec()));
+  for (const id of orderedIds) await syncTargetCompatibility(env, id);
   return { ok: true, ids: orderedIds, count: orderedIds.length };
 }
 
@@ -170,12 +176,85 @@ export async function deleteTarget(id, env) {
     env.DB.prepare(`DELETE FROM incident_events WHERE target_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM alert_state WHERE target_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM agent_credentials WHERE subject_type = 'agent' AND subject_id = ?`).bind(sanitizeAgentId(id)),
+    env.DB.prepare(`DELETE FROM agent_tasks WHERE agent_id = ?`).bind(sanitizeAgentId(id)),
+    env.DB.prepare(`DELETE FROM checks WHERE legacy_target_id = ? OR node_id = ?`).bind(id, id),
+    env.DB.prepare(`DELETE FROM nodes WHERE legacy_target_id = ? OR id = ?`).bind(id, id),
     env.DB.prepare(`DELETE FROM targets WHERE id = ?`).bind(id),
   ]);
   await removeTargetFromR2State(env, id);
   const telemetry = await deleteAgentTelemetry(env, id);
   await setMeta(env, 'targets_last_sync_at', String(nowSec()));
   return { ok: true, id, telemetry };
+}
+
+export async function syncTargetCompatibility(env, id) {
+  const target = await env.DB.prepare(`SELECT * FROM targets WHERE id = ?`).bind(id).first();
+  if (!target) return;
+  if (target.type === 'tcp') {
+    await env.DB.prepare(`INSERT INTO nodes (
+      id, legacy_target_id, name, group_name, enabled, sort_order, provider, machine_type, tags,
+      ipv4, ipv6, country_code, country, city, location_source, location_updated_at,
+      expires_at, price, billing_cycle, currency, traffic_enabled, traffic_quota_gb, traffic_mode,
+      traffic_reset_day, alert_enabled, alert_expiry_days, alert_traffic_remaining_percent,
+      alert_traffic_remaining_gb, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      legacy_target_id=excluded.legacy_target_id, name=excluded.name, group_name=excluded.group_name,
+      enabled=excluded.enabled, sort_order=excluded.sort_order, provider=excluded.provider,
+      machine_type=excluded.machine_type, tags=excluded.tags, ipv4=excluded.ipv4, ipv6=excluded.ipv6,
+      country_code=excluded.country_code, country=excluded.country, city=excluded.city,
+      location_source=excluded.location_source, location_updated_at=excluded.location_updated_at,
+      expires_at=excluded.expires_at, price=excluded.price, billing_cycle=excluded.billing_cycle,
+      currency=excluded.currency, traffic_enabled=excluded.traffic_enabled,
+      traffic_quota_gb=excluded.traffic_quota_gb, traffic_mode=excluded.traffic_mode,
+      traffic_reset_day=excluded.traffic_reset_day, alert_enabled=excluded.alert_enabled,
+      alert_expiry_days=excluded.alert_expiry_days,
+      alert_traffic_remaining_percent=excluded.alert_traffic_remaining_percent,
+      alert_traffic_remaining_gb=excluded.alert_traffic_remaining_gb, updated_at=excluded.updated_at`)
+      .bind(
+        target.id, target.id, target.name, target.group_name, target.enabled, target.sort_order,
+        target.provider || '', target.line_type || '', target.tags || '', target.ipv4 || null,
+        target.ipv6 || null, /^[A-Za-z]{2}$/.test(target.location || '') ? String(target.location).toUpperCase() : '',
+        target.location || '', target.city || '', target.location_source || null, target.location_updated_at || null,
+        target.expires_at || null, target.price ?? null, target.billing_cycle || '', target.currency || 'USD',
+        target.traffic_enabled || 0, target.traffic_quota_gb || 0, target.traffic_mode || 'total',
+        target.traffic_reset_day || 1, target.alert_enabled == null ? 1 : target.alert_enabled,
+        target.alert_expiry_days ?? null, target.alert_traffic_remaining_percent ?? null,
+        target.alert_traffic_remaining_gb ?? null, target.created_at, target.updated_at,
+      ).run();
+  } else {
+    await env.DB.prepare(`DELETE FROM nodes WHERE legacy_target_id = ?`).bind(target.id).run();
+  }
+
+  if (target.type === 'http' || Number(target.no_public_ip || 0) === 0) {
+    await env.DB.prepare(`INSERT INTO checks (
+      id, legacy_target_id, node_id, name, group_name, type, target_host, target_port, url,
+      method, expected_status, timeout_ms, interval_sec, probe_region, enabled, sort_order,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      legacy_target_id=excluded.legacy_target_id, node_id=excluded.node_id, name=excluded.name,
+      group_name=excluded.group_name, type=excluded.type, target_host=excluded.target_host,
+      target_port=excluded.target_port, url=excluded.url, method=excluded.method,
+      expected_status=excluded.expected_status, timeout_ms=excluded.timeout_ms,
+      interval_sec=excluded.interval_sec, probe_region=excluded.probe_region,
+      enabled=excluded.enabled, sort_order=excluded.sort_order, updated_at=excluded.updated_at`)
+      .bind(
+        target.id, target.id, target.type === 'tcp' ? target.id : null, target.name,
+        target.group_name, target.type, target.target_host, target.target_port, target.url,
+        target.method || 'GET', target.expected_status || '', target.timeout_ms,
+        target.interval_sec, target.probe_region || 'auto', target.enabled, target.sort_order,
+        target.created_at, target.updated_at,
+      ).run();
+  } else {
+    await env.DB.prepare(`DELETE FROM checks WHERE legacy_target_id = ?`).bind(target.id).run();
+  }
+}
+
+function parseJsonObject(value) {
+  if (!value) return null;
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); } catch (_) { return null; }
 }
 
 // ── Probe now (admin) ────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ set -euo pipefail
 
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 SERVICE_NAME="nstatus-metrics"
+TASK_SERVICE_NAME="${SERVICE_NAME}-tasks"
 INSTALL_DIR="/usr/local/bin"
 WORK_DIR="/opt/nstatus-metrics"
 STATE_DIR="/var/lib/nstatus-metrics"
@@ -155,6 +156,19 @@ json_string_value() {
     sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1
 }
 
+version_is_newer() {
+    local candidate="${1#v}" current="${2#v}"
+    local candidate_major candidate_minor candidate_patch current_major current_minor current_patch
+    [[ "$candidate" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 2
+    IFS=. read -r candidate_major candidate_minor candidate_patch <<< "$candidate"
+    IFS=. read -r current_major current_minor current_patch <<< "$current"
+    (( 10#$candidate_major > 10#$current_major )) && return 0
+    (( 10#$candidate_major < 10#$current_major )) && return 1
+    (( 10#$candidate_minor > 10#$current_minor )) && return 0
+    (( 10#$candidate_minor < 10#$current_minor )) && return 1
+    (( 10#$candidate_patch > 10#$current_patch ))
+}
+
 
 detect_arch() {
     case "$(uname -m)" in
@@ -183,14 +197,23 @@ download_binary() {
         echo "__AUTO_UPDATE_DISABLED__"
         return 0
     fi
+    [[ -n "$latest_version" ]] || { err "update policy has no version"; exit 1; }
     current_version="$("${WORK_DIR}/${BIN_NAME}" --version 2>/dev/null || true)"
-    if [[ "$automatic" == "1" && "$current_version" == "$latest_version" ]]; then
-        echo "__ALREADY_CURRENT__"
-        return 0
+    if [[ "$automatic" == "1" ]]; then
+        if version_is_newer "$latest_version" "$current_version"; then
+            :
+        else
+            local version_status=$?
+            if [[ "$version_status" == "1" ]]; then
+                echo "__ALREADY_CURRENT__"
+                return 0
+            fi
+            err "invalid Agent version comparison: ${latest_version} / ${current_version}"
+            exit 1
+        fi
     fi
     [[ "$download_base" == https://* ]] || { err "update download base must use HTTPS"; exit 1; }
     [[ "$manifest_hash" =~ ^[0-9a-f]{64}$ ]] || { err "update policy has no valid manifest hash"; exit 1; }
-    [[ -n "$latest_version" ]] || { err "update policy has no version"; exit 1; }
 
     local tmpbin sums expected actual sums_actual reported
     tmpbin="$(mktemp)"
@@ -242,6 +265,30 @@ read_env() {
     fi
 }
 
+install_openrc_update_job() {
+    local job_dir=""
+    if [[ -d /etc/periodic/hourly ]]; then
+        job_dir="/etc/periodic/hourly"
+    elif [[ -d /etc/cron.hourly ]]; then
+        job_dir="/etc/cron.hourly"
+    else
+        warn "未找到 OpenRC 每小时任务目录；请使用 cftz update 手动更新"
+        return 0
+    fi
+    cat > "${job_dir}/${SERVICE_NAME}-update" <<EOF
+#!/bin/sh
+exec ${INSTALL_DIR}/cftz update --automatic >>/var/log/${SERVICE_NAME}-update.log 2>&1
+EOF
+    chmod 0755 "${job_dir}/${SERVICE_NAME}-update"
+    if [[ -x /etc/init.d/crond ]]; then
+        rc-update add crond default >/dev/null 2>&1 || true
+        rc-service crond start >/dev/null 2>&1 || true
+    elif [[ -x /etc/init.d/cron ]]; then
+        rc-update add cron default >/dev/null 2>&1 || true
+        rc-service cron start >/dev/null 2>&1 || true
+    fi
+}
+
 write_service_unit() {
     local init
     init=$(detect_init)
@@ -266,6 +313,29 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=${STATE_DIR}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            cat > "/etc/systemd/system/${TASK_SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=聶.NET fixed Beta task runner
+After=network-online.target ${SERVICE_NAME}.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${STATE_DIR}
+EnvironmentFile=${ENV_FILE}
+Environment=NSTATUS_TASK_RUNNER_ONLY=1
+ExecStart=${WORK_DIR}/${BIN_NAME} --task-runner-only
+Restart=always
+RestartSec=20
+User=root
+PrivateTmp=true
+ProtectHome=true
 StandardOutput=journal
 StandardError=journal
 
@@ -322,6 +392,30 @@ stop() {
 depend() { need net; }
 EOF
             chmod +x "/etc/init.d/${SERVICE_NAME}"
+            cat > "/etc/init.d/${TASK_SERVICE_NAME}" <<EOF
+#!/sbin/openrc-run
+name="${TASK_SERVICE_NAME}"
+description="聶.NET fixed Beta task runner"
+
+start() {
+    ebegin "Starting ${TASK_SERVICE_NAME}"
+    start-stop-daemon --start --background --make-pidfile \
+        --pidfile /run/${TASK_SERVICE_NAME}.pid \
+        --exec /bin/sh -- \
+        -c 'cd "${STATE_DIR}"; set -a; . "${ENV_FILE}"; set +a; export NSTATUS_TASK_RUNNER_ONLY=1; exec "${WORK_DIR}/${BIN_NAME}" --task-runner-only >>"/var/log/${TASK_SERVICE_NAME}.log" 2>&1'
+    eend \$?
+}
+
+stop() {
+    ebegin "Stopping ${TASK_SERVICE_NAME}"
+    start-stop-daemon --stop --pidfile /run/${TASK_SERVICE_NAME}.pid
+    eend \$?
+}
+
+depend() { need net; after ${SERVICE_NAME}; }
+EOF
+            chmod +x "/etc/init.d/${TASK_SERVICE_NAME}"
+            install_openrc_update_job
             ;;
     esac
 }
@@ -331,12 +425,16 @@ start_service() {
         systemd)
             systemctl daemon-reload
             systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+            systemctl enable "$TASK_SERVICE_NAME" >/dev/null 2>&1 || true
             systemctl enable --now "${SERVICE_NAME}-update.timer" >/dev/null 2>&1 || true
             systemctl restart "$SERVICE_NAME"
+            systemctl restart "$TASK_SERVICE_NAME"
             ;;
         openrc)
             rc-update add "$SERVICE_NAME" default 2>/dev/null || true
+            rc-update add "$TASK_SERVICE_NAME" default 2>/dev/null || true
             rc-service "$SERVICE_NAME" start 2>/dev/null || true
+            rc-service "$TASK_SERVICE_NAME" start 2>/dev/null || true
             ;;
         *)       "${WORK_DIR}/${BIN_NAME}" & ;;
     esac
@@ -413,17 +511,22 @@ do_uninstall() {
     local init=$(detect_init)
     case "$init" in
         systemd)
-            systemctl stop "$SERVICE_NAME" 2>/dev/null || true
+            systemctl stop "$SERVICE_NAME" "$TASK_SERVICE_NAME" 2>/dev/null || true
             systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+            systemctl disable "$TASK_SERVICE_NAME" 2>/dev/null || true
             systemctl disable --now "${SERVICE_NAME}-update.timer" 2>/dev/null || true
             rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+            rm -f "/etc/systemd/system/${TASK_SERVICE_NAME}.service"
             rm -f "/etc/systemd/system/${SERVICE_NAME}-update.service" "/etc/systemd/system/${SERVICE_NAME}-update.timer"
             systemctl daemon-reload 2>/dev/null || true
             ;;
         openrc)
             rc-service "$SERVICE_NAME" stop 2>/dev/null || true
+            rc-service "$TASK_SERVICE_NAME" stop 2>/dev/null || true
             rc-update del "$SERVICE_NAME" 2>/dev/null || true
-            rm -f "/etc/init.d/${SERVICE_NAME}"
+            rc-update del "$TASK_SERVICE_NAME" 2>/dev/null || true
+            rm -f "/etc/init.d/${SERVICE_NAME}" "/etc/init.d/${TASK_SERVICE_NAME}"
+            rm -f "/etc/periodic/hourly/${SERVICE_NAME}-update" "/etc/cron.hourly/${SERVICE_NAME}-update"
             ;;
     esac
     rm -f "${INSTALL_DIR}/${BIN_NAME}"
@@ -463,8 +566,8 @@ do_update() {
     cp -p "${WORK_DIR}/${BIN_NAME}" "$backup"
     local init=$(detect_init)
     case "$init" in
-        systemd) systemctl stop "$SERVICE_NAME" 2>/dev/null || true ;;
-        openrc)  rc-service "$SERVICE_NAME" stop 2>/dev/null || true ;;
+        systemd) systemctl stop "$SERVICE_NAME" "$TASK_SERVICE_NAME" 2>/dev/null || true ;;
+        openrc)  rc-service "$SERVICE_NAME" stop 2>/dev/null || true; rc-service "$TASK_SERVICE_NAME" stop 2>/dev/null || true ;;
     esac
     mkdir -p "$WORK_DIR"
     if command -v install &>/dev/null; then
@@ -511,8 +614,8 @@ do_log() {
 
 restart_service() {
     case "$(detect_init)" in
-        systemd) systemctl restart "$SERVICE_NAME" ;;
-        openrc)  rc-service "$SERVICE_NAME" restart ;;
+        systemd) systemctl restart "$SERVICE_NAME" "$TASK_SERVICE_NAME" ;;
+        openrc)  rc-service "$SERVICE_NAME" restart; rc-service "$TASK_SERVICE_NAME" restart ;;
         *)       pkill -f "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || true; "${WORK_DIR}/${BIN_NAME}" & ;;
     esac
 }

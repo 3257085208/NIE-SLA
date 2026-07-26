@@ -17,7 +17,7 @@
 
 - Linux，并使用 systemd 管理服务。
 - 系统可执行 Python 3 和 `curl`。
-- 节点能通过 HTTPS 访问 Worker API 和 Pages 安装域名。
+- 节点能通过 HTTPS 访问 Worker 站点域名和 API。
 - 只探测已启用、类型为 TCP、公开地址与端口完整、且没有启用“隐藏公网地址”的目标。
 
 外部 Latency Agent 不安装 Rust 指标 Agent，不上报自身 CPU、内存或流量，也不需要监听公网端口。
@@ -97,7 +97,7 @@ npx wrangler d1 execute nstatus-db --remote --command \
 后台设置页的“Agent 自动更新”开关同时控制普通 Rust Agent 和外部 Latency Agent。Latency Agent 使用自己的节点 scoped Token 定期读取 `/api/latency-agent/update-policy`：
 
 - 关闭时只读取策略，不修改本地脚本。
-- 开启时从安装命令记录的 HTTPS Pages 地址下载当前脚本。
+- 开启时从安装命令记录的 HTTPS Worker 站点地址下载当前脚本。
 - 下载后先限制文件大小、比较 SHA-256 并执行 Python 编译检查。
 - 校验通过后在 `/opt/nstatus-latency` 内原子替换脚本，并通过 `exec` 重启当前进程。
 - 更新检查失败只写入 journal，不会中止后续延迟探测；默认一小时后重试。

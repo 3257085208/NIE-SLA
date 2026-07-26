@@ -77,27 +77,24 @@ export function convertPriceToCny(amount, currency, rates) {
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
-const FRONTEND_THEMES = new Set(['classic']);
-
 export const DEFAULT_FRONTEND_APPEARANCE = Object.freeze({
   site_name: 'NIE-SLA', site_subtitle: '', hero_subtitle: '', page_title: '', favicon_url: '', brand_home_url: './',
   brand_logo_url: '', brand_logo_alt: '站点 Logo', brand_logo_height: 36,
-  brand_avatar_url: '', header_right_text: '', header_right_image_url: './assets/cloudflare.svg?v=20260719-official',
+  header_right_text: '', header_right_image_url: './assets/cloudflare.svg?v=20260719-official',
   header_right_image_alt: 'Cloudflare', header_right_image_width: 109, header_right_link: 'https://www.cloudflare.com/', header_right_mode: 'image',
-  search_placeholder: '搜索服务、IP、域名或分组...', cards_search_placeholder: '搜索节点...', group_by_title: '分组方式',
+  search_placeholder: '搜索服务、IP、域名或分组...', group_by_title: '分组方式',
   banner_normal: '所有系统运行正常', banner_down: '{count} 个服务离线', banner_degraded: '{count} 个服务数据延迟',
   banner_unknown: '{count} 个服务等待检查', incident_title: '故障记录', incident_empty: '暂无故障',
   incident_empty_detail: '暂无离线事件。', checks_title: '最近检查', checks_hint: '请选择服务以查看最近检查记录。',
   checks_empty: '请选择服务以查看最近检查记录。', checks_unselected: '未选择服务', chart_title: '响应时间',
-  chart_unselected: '未选择服务', latency_title: 'Latency', latency_subtitle: '多节点 TCP 建连延迟',
+  chart_unselected: '未选择服务',
   vps_details_label: 'VPS 详情', no_search_results: '没有匹配的服务。', checks_no_records: '暂无检查记录。',
   summary_total: '{count} 个服务', summary_up: '{count} 个正常', summary_down: '{count} 个离线',
   summary_degraded: '{count} 个延迟', summary_unknown: '{count} 个待检查', summary_latency: '平均延迟 {value}',
   summary_updated: '更新于 {value}', footer_text: '版权所有 © {site_name} 2026', footer_link_text: '', footer_link_url: '',
   accent_color: '#2ea36d', page_background: '#f4f8fc', surface_color: '#ffffff',
   show_header: true, show_banner: true, show_summary: true, show_search: true, show_group_by: true,
-  show_region_filter: true, show_card_sidebar: true, show_incidents: true, show_chart: true,
-  show_card_latency: true, show_vps_details: true, show_checks: true, show_footer: true,
+  show_incidents: true, show_chart: true, show_vps_details: true, show_checks: true, show_footer: true,
 });
 
 function appearanceText(value, fallback, max = 160) {
@@ -154,7 +151,6 @@ export function normalizeFrontendAppearance(input = {}, env = {}) {
     brand_logo_url: appearanceOptionalUrl(raw, 'brand_logo_url', d.brand_logo_url),
     brand_logo_alt: appearanceText(raw.brand_logo_alt, d.brand_logo_alt, 80),
     brand_logo_height: appearanceInteger(raw, 'brand_logo_height', d.brand_logo_height, 20, 64),
-    brand_avatar_url: appearanceOptionalUrl(raw, 'brand_avatar_url', d.brand_avatar_url),
     header_right_text: appearanceOptionalText(raw, 'header_right_text', d.header_right_text, 120),
     header_right_image_url: appearanceOptionalUrl(raw, 'header_right_image_url', d.header_right_image_url),
     header_right_image_alt: appearanceText(raw.header_right_image_alt, d.header_right_image_alt, 80),
@@ -162,7 +158,6 @@ export function normalizeFrontendAppearance(input = {}, env = {}) {
     header_right_link: appearanceOptionalUrl(raw, 'header_right_link', d.header_right_link),
     header_right_mode: appearanceChoice(raw.header_right_mode, new Set(['image', 'text', 'hidden']), d.header_right_mode),
     search_placeholder: appearanceText(raw.search_placeholder, d.search_placeholder, 120),
-    cards_search_placeholder: appearanceText(raw.cards_search_placeholder, d.cards_search_placeholder, 120),
     group_by_title: appearanceText(raw.group_by_title, d.group_by_title, 40),
     banner_normal: appearanceText(raw.banner_normal, d.banner_normal, 120),
     banner_down: appearanceText(raw.banner_down, d.banner_down, 120),
@@ -177,8 +172,6 @@ export function normalizeFrontendAppearance(input = {}, env = {}) {
     checks_unselected: appearanceText(raw.checks_unselected, d.checks_unselected, 80),
     chart_title: appearanceText(raw.chart_title, d.chart_title, 80),
     chart_unselected: appearanceText(raw.chart_unselected, d.chart_unselected, 80),
-    latency_title: appearanceText(raw.latency_title, d.latency_title, 40),
-    latency_subtitle: appearanceText(raw.latency_subtitle, d.latency_subtitle, 80),
     vps_details_label: appearanceText(raw.vps_details_label, d.vps_details_label, 40),
     no_search_results: appearanceText(raw.no_search_results, d.no_search_results, 120),
     checks_no_records: appearanceText(raw.checks_no_records, d.checks_no_records, 120),
@@ -200,20 +193,12 @@ export function normalizeFrontendAppearance(input = {}, env = {}) {
     show_summary: appearanceBoolean(raw, 'show_summary', d.show_summary),
     show_search: appearanceBoolean(raw, 'show_search', d.show_search),
     show_group_by: appearanceBoolean(raw, 'show_group_by', d.show_group_by),
-    show_region_filter: appearanceBoolean(raw, 'show_region_filter', d.show_region_filter),
-    show_card_sidebar: appearanceBoolean(raw, 'show_card_sidebar', d.show_card_sidebar),
     show_incidents: appearanceBoolean(raw, 'show_incidents', d.show_incidents),
     show_chart: appearanceBoolean(raw, 'show_chart', d.show_chart),
-    show_card_latency: appearanceBoolean(raw, 'show_card_latency', d.show_card_latency),
     show_vps_details: appearanceBoolean(raw, 'show_vps_details', d.show_vps_details),
     show_checks: appearanceBoolean(raw, 'show_checks', d.show_checks),
     show_footer: appearanceBoolean(raw, 'show_footer', d.show_footer),
   };
-}
-
-function normalizeFrontendTheme(value) {
-  const theme = String(value || 'classic').trim().toLowerCase();
-  return FRONTEND_THEMES.has(theme) ? theme : 'classic';
 }
 
 export function hasOwn(obj, key) {
@@ -221,25 +206,19 @@ export function hasOwn(obj, key) {
 }
 
 export async function getPublicSettings(env, { includeAdmin = false } = {}) {
-  let saved = null;
   let autoUpdate = null;
   let appearanceSaved = null;
-  try { saved = await getMeta(env, 'frontend_theme'); } catch (_) {}
   try { autoUpdate = await getMeta(env, 'agent_auto_update'); } catch (_) {}
   try { appearanceSaved = await getMeta(env, 'frontend_appearance'); } catch (_) {}
-  const frontendTheme = normalizeFrontendTheme(saved || env.PUBLIC_FRONTEND_THEME || 'classic');
   let parsedAppearance = {};
   try { parsedAppearance = appearanceSaved ? JSON.parse(appearanceSaved) : {}; } catch (_) {}
   const { trafficPeriod } = await import('../traffic.js');
   const settings = {
     ok: true,
-    frontend_theme: frontendTheme,
-    agent_auto_update: parseBoolean(autoUpdate ?? env.AGENT_AUTO_UPDATE_DEFAULT, false),
+    frontend_theme: 'classic',
+    agent_auto_update: parseBoolean(autoUpdate ?? env.AGENT_AUTO_UPDATE_DEFAULT, true),
     appearance: normalizeFrontendAppearance(parsedAppearance, env),
     traffic: trafficPeriod(env),
-    themes: [
-      { id: 'classic', name: '原版列表' },
-    ],
   };
   if (includeAdmin) settings.admin_path = await getAdminPath(env);
   return settings;
@@ -247,9 +226,6 @@ export async function getPublicSettings(env, { includeAdmin = false } = {}) {
 
 export async function updatePublicSettings(request, env) {
   const body = await safeJson(request);
-  if (hasOwn(body, 'frontend_theme') || hasOwn(body, 'theme')) {
-    await setMeta(env, 'frontend_theme', normalizeFrontendTheme(body?.frontend_theme ?? body?.theme));
-  }
   if (hasOwn(body, 'agent_auto_update')) {
     await setMeta(env, 'agent_auto_update', parseBoolean(body.agent_auto_update, false) ? 'true' : 'false');
   }

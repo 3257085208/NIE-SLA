@@ -1,8 +1,21 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { resolvePublicMetricsQuery, defaultMetricsMaxPointsForHours } from '../src/metrics.js';
 import { isPrivateHost, assertPublicHttpUrl, buildOpenMissedPoints } from '../src/utils.js';
 import { resolveCorsOrigin } from '../src/auth.js';
 import { getDeveloperApiManifest, resolveDeveloperApiOrigin, withDeveloperApiHeaders } from '../src/developer-api.js';
+
+const routesSource = await readFile(new URL('../src/routes.js', import.meta.url), 'utf8');
+const statusSource = await readFile(new URL('../src/status.js', import.meta.url), 'utf8');
+assert.match(
+  routesSource,
+  /\/api\/settings\/geoip[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}'cache-control': 'no-store'/,
+  'GeoIP settings must require an admin session and must not be cached',
+);
+assert.match(routesSource, /\/api\/backup\/restore[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}ensureV6Schema\(env\)/, 'restore must require an admin session and an initialized schema');
+assert.doesNotMatch(routesSource, /\/api\/(?:extensions|themes|plugins)(?:['/])/, 'extension package routes must stay disabled');
+assert.match(statusSource, /getStatusFresh\(env, url\)[\s\S]{0,240}await ensureV6Schema\(env\)/, 'the first public page view must initialize a fresh D1 database');
+assert.match(statusSource, /async function getChecks\(env, url\)\s*\{\s*await ensureV6Schema\(env\)/, 'direct checks reads must initialize a fresh D1 database');
 
 function urlWith(qs) {
   return new URL('https://example.test/api/agent/metrics?' + qs);
@@ -66,7 +79,8 @@ console.log('cors tests passed');
   const manifest = getDeveloperApiManifest(request, env, 'v1.2.3');
   assert.equal(manifest.api_version, 'v1');
   assert.equal(manifest.authentication.write, 'not_available');
-  assert.equal(manifest.extensions.privileged_plugins, false);
+  assert.equal(manifest.alternate_frontends, true);
+  assert.equal('extensions' in manifest, false);
   assert.ok(manifest.endpoints.every(endpoint => endpoint.method === 'GET' && endpoint.url.startsWith('https://api.example.test/api/v1/')));
   const response = withDeveloperApiHeaders(new Response('{}'), request, env);
   assert.equal(response.headers.get('access-control-allow-origin'), 'https://theme.example.test');

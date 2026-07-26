@@ -9,12 +9,22 @@ PASS=0
 FAIL=0
 CARGO_BIN="${CARGO_BIN:-cargo}"
 PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python || true)}"
-TMP_DIR="${TMPDIR:-/tmp}"
+if command -v npx >/dev/null 2>&1; then
+  PACKAGE_EXEC="npx --yes"
+elif command -v pnpm >/dev/null 2>&1; then
+  PACKAGE_EXEC="pnpm dlx"
+else
+  echo "npx or pnpm is required" >&2
+  exit 1
+fi
+export PACKAGE_EXEC
+TMP_PARENT="${TMPDIR:-/tmp}"
+TMP_DIR="$(mktemp -d "$TMP_PARENT/nstatus-test.XXXXXX")"
+trap 'rm -rf -- "$TMP_DIR"' EXIT
 # Keep linker intermediates out of Unicode/OneDrive paths without sharing stale
 # artifacts between repositories or test runs.
 if [[ -z "${CARGO_TARGET_DIR:-}" ]]; then
-  CARGO_TARGET_DIR="$(mktemp -d "$TMP_DIR/nstatus-cargo-target.XXXXXX")"
-  trap 'rm -rf -- "$CARGO_TARGET_DIR"' EXIT
+  CARGO_TARGET_DIR="$TMP_DIR/cargo-target"
 fi
 export CARGO_TARGET_DIR
 
@@ -44,10 +54,6 @@ run_shell() {
 
 rm -f "$TMP_DIR/nstatus-test.out"
 
-if [[ -f "$ROOT/worker/package-lock.json" && ! -d "$ROOT/worker/node_modules/fflate" ]]; then
-  npm ci --prefix "$ROOT/worker" --ignore-scripts --no-audit --no-fund
-fi
-
 echo "=== Worker JS Syntax ==="
 for f in "$ROOT/worker/src"/*.js; do
   run_check "$(basename "$f")" node --check "$f"
@@ -58,18 +64,17 @@ run_check "admin authentication tests" node "$ROOT/worker/tests/admin-auth.test.
 run_check "custom admin path tests" node "$ROOT/worker/tests/admin-path.test.mjs"
 run_check "admin reset tests" node "$ROOT/worker/tests/reset-admin.test.mjs"
 run_check "application update tests" node "$ROOT/worker/tests/app-update.test.mjs"
-run_check "location catalog tests" node "$ROOT/worker/tests/location-catalog.test.mjs"
 run_check "independent traffic reset day tests" node "$ROOT/worker/tests/traffic-reset.test.mjs"
 run_check "per-node Agent credential tests" node "$ROOT/worker/tests/agent-credentials.test.mjs"
+run_check "Agent task, GeoIP, and backup tests" node "$ROOT/worker/tests/agent-tasks-backup.test.mjs"
 run_check "email alert tests" node "$ROOT/worker/tests/alerts.test.mjs"
 run_check "admin reset tool" node --check "$ROOT/worker/scripts/reset-admin.mjs"
 run_check "external Latency agent tests" node "$ROOT/worker/tests/latency-agents.test.mjs"
-run_check "extension package tests" node "$ROOT/worker/tests/extensions.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
   run_check "public export tool" node --check "$ROOT/scripts/export-public.mjs"
 fi
-run_shell "worker module bundle" "cd '$ROOT' && npx --yes esbuild worker/src/index.js --bundle --format=esm --platform=browser --external:cloudflare:sockets --outfile='$TMP_DIR/nstatus-worker-bundle.mjs' && rm -f '$TMP_DIR/nstatus-worker-bundle.mjs'"
-run_shell "js undefined references" "cd '$ROOT' && npx --yes eslint@10.6.0 -c tests/eslint.config.mjs worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests --no-error-on-unmatched-pattern"
+run_shell "worker module bundle" "cd '$ROOT' && $PACKAGE_EXEC esbuild worker/src/index.js --bundle --format=esm --platform=browser --external:cloudflare:sockets --outfile='$TMP_DIR/nstatus-worker-bundle.mjs' && rm -f '$TMP_DIR/nstatus-worker-bundle.mjs'"
+run_shell "js undefined references" "cd '$ROOT' && $PACKAGE_EXEC eslint@10.6.0 -c tests/eslint.config.mjs worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests --no-error-on-unmatched-pattern"
 
 echo ""
 echo "=== Frontend JS Syntax ==="
@@ -90,7 +95,6 @@ for rel in [
     'frontend/js/shared/format.js',
     'frontend/js/shared/html.js',
     'frontend/js/shared/traffic.js',
-    'frontend/js/themes/card-detail.js',
     'frontend/functions/api/[[path]].js',
 ]:
     subprocess.check_call(['node', '--check', str(root / rel)])
@@ -129,14 +133,16 @@ run_shell "generated install command pins installer and version" "cd '$ROOT' && 
 run_shell "linux reinstall replaces legacy agent" "cd '$ROOT' && grep -q 'stop_existing_agent' agent/setup.sh && grep -q 'verify_agent_version' agent/setup.sh && grep -q 'setup.sh?v=' agent/install.sh"
 run_shell "linux agent keeps secrets root-owned" "cd '$ROOT' && grep -q 'chown \"root:\${agent_group}\" \"\$ENV_FILE\"' agent/setup.sh && grep -q 'EnvironmentFile=\${ENV_FILE}' agent/setup.sh && ! grep -q 'chown -R \"\$AGENT_USER\" \"\$WORK_DIR\"' agent/setup.sh"
 run_shell "manual updates verify policy and checksums" "cd '$ROOT' && grep -q 'manifest_sha256' agent/cftz && grep -q 'Agent binary checksum mismatch' agent/cftz && ! grep -q 'download_binary_unverified' agent/cftz"
+run_shell "automatic updates reject downgrades" "cd '$ROOT' && bash -c 'set --; source agent/cftz >/dev/null; version_is_newer v1.0.20 v1.0.19; ! version_is_newer v1.0.18 v1.0.19; ! version_is_newer v1.0.19 v1.0.19'"
+run_shell "OpenRC installs hourly verified updates" "cd '$ROOT' && grep -q '/etc/periodic/hourly' agent/setup.sh && grep -q '/etc/cron.hourly' agent/setup.sh && grep -q 'update --automatic' agent/setup.sh && grep -q '/etc/periodic/hourly' agent/cftz && grep -q '/etc/cron.hourly' agent/cftz && grep -q 'update --automatic' agent/cftz"
 run_shell "cftz hides auth header args" "cd '$ROOT' && ! grep -R \"Authorization: Bearer \\\${tok}\" cftz agent/cftz frontend/cftz"
 run_shell "admin reset never accepts password args" "cd '$ROOT' && ! grep -E \"argumentValue\\(['\\\"]--password|--password[= ]\" worker/scripts/reset-admin.mjs"
 run_shell "no stale pages install host" "cd '$ROOT' && ! git grep -n \"nstatus-5fi.pages.dev\" -- agent frontend cftz docs README.md"
 run_shell "missed write backfill enabled" "cd '$ROOT' && grep -q 'MISSED_WRITE_BACKFILL_MAX_BUCKETS = \"6\"' worker/wrangler.toml && ! grep -q 'MISSED_WRITE_BACKFILL_MAX_BUCKETS = \"0\"' worker/wrangler.toml"
 run_shell "probe cron uses full target concurrency" "cd '$ROOT' && grep -q 'CONCURRENCY = \"40\"' worker/wrangler.toml && grep -q \"scheduled:probe:last\" worker/src/index.js"
 run_shell "probe cron has one-minute retry windows" "cd '$ROOT' && grep -q 'crons = \[\"\* \* \* \* \*\"\]' worker/wrangler.toml && grep -q 'no_targets_due' worker/src/index.js"
-run_shell "deploy script keeps full target concurrency" "cd '$ROOT' && grep -q 'CONCURRENCY = \"40\"' worker/deploy.sh && ! grep -q 'CONCURRENCY = \"8\"' worker/deploy.sh"
-run_shell "no legacy IP unlock checks" "cd '$ROOT' && ! grep -R -E 'NSTATUS_UNLOCK_CHECK|IP\.Check\.Place|install_unlock_deps' cftz agent/cftz frontend/cftz"
+run_shell "deployment keeps full target concurrency" "cd '$ROOT' && grep -q 'CONCURRENCY = \"40\"' worker/wrangler.toml && grep -q 'MAX_TARGETS_PER_RUN = \"60\"' worker/wrangler.toml"
+run_shell "fixed Beta tasks only" "cd '$ROOT' && grep -q 'https://run.NodeQuality.com' agent/src/tasks.rs && grep -q 'https://IP.Check.Place' agent/src/tasks.rs && grep -q 'v\\\\ny\\\\ny\\\\ny' agent/src/tasks.rs && ! grep -R -E 'NSTATUS_UNLOCK_CHECK|install_unlock_deps' cftz agent/cftz frontend/cftz && ! grep -R -E 'body\?\.(command|script|args|stdin)|body\[(.command.|.script.|.args.|.stdin.)\]' worker/src/admin/agent-tasks.js"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

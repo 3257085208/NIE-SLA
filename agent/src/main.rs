@@ -10,8 +10,10 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, System};
 
+mod geoip;
 mod platform;
 mod queue;
+mod tasks;
 mod updater;
 
 use queue::{default_queue_file, load_sample_queue, save_sample_queue, spawn_queue_writer};
@@ -46,6 +48,7 @@ struct Config {
     queue_max_samples: usize,
     update_check_sec: u64,
     once: bool,
+    task_runner_only: bool,
 }
 
 #[derive(Clone)]
@@ -266,6 +269,9 @@ fn run() -> Result<()> {
     }
 
     let http = HttpClient::new();
+    if cfg.task_runner_only {
+        return tasks::run_task_worker(&cfg, &http);
+    }
     let mut collector = Collector::new();
     let hostname = hostname_string();
     let vps_info = collector.vps_info();
@@ -286,6 +292,7 @@ fn run() -> Result<()> {
     } else {
         Some(spawn_update_worker(cfg.clone(), http.clone()))
     };
+    geoip::spawn_geoip_worker(cfg.clone(), http.clone());
     let mut last_report = Instant::now();
     let mut first_report = true;
     let mut uploading = false;
@@ -457,6 +464,7 @@ impl Config {
             ) as usize,
             update_check_sec: env_u64("NSTATUS_UPDATE_CHECK_SEC", DEFAULT_UPDATE_CHECK_SEC),
             once: false,
+            task_runner_only: env_or("NSTATUS_TASK_RUNNER_ONLY", "") == "1",
         };
 
         let mut args = env::args().skip(1);
@@ -484,6 +492,7 @@ impl Config {
                         parse_u64(args.next(), cfg.queue_max_samples as u64) as usize
                 }
                 "--once" => cfg.once = true,
+                "--task-runner-only" => cfg.task_runner_only = true,
                 "--version" | "-V" => {
                     println!("v{}", AGENT_VERSION);
                     std::process::exit(0);
@@ -960,6 +969,17 @@ impl HttpClient {
             .with_context(|| format!("HTTP POST failed while reading {}", url))
     }
 
+    fn get_public(&self, url: &str) -> Result<String> {
+        let mut res = self
+            .agent
+            .get(url)
+            .call()
+            .map_err(|err| http_error("GET", url, err))?;
+        res.body_mut()
+            .read_to_string()
+            .with_context(|| format!("HTTP GET failed while reading {}", url))
+    }
+
     #[cfg(target_os = "linux")]
     fn get_public_bytes(&self, url: &str) -> Result<Vec<u8>> {
         let mut res = self
@@ -1396,7 +1416,7 @@ fn json_string(value: &str) -> String {
 
 fn print_help() {
     println!("NIE-SLA Agent v{}", AGENT_VERSION);
-    println!("Usage: nstatus-metrics --api URL --token TOKEN [--once]");
+    println!("Usage: nstatus-metrics --api URL --token TOKEN [--once|--task-runner-only]");
     println!(
         "Environment: NSTATUS_API_BASE, NSTATUS_AGENT_TOKEN, NSTATUS_AGENT_ID, NSTATUS_AGENT_LABEL, NSTATUS_PING_TARGET_REFRESH_SEC"
     );

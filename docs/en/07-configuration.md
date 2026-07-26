@@ -18,6 +18,7 @@
 | `FAST_STATUS_ENABLED` | `true` | Enable lightweight R2 current-status probes |
 | `FAST_STATUS_INTERVAL_SEC` | `60` | Current-status interval, bounded to 60-300 seconds |
 | `FAST_STATUS_MAX_TARGETS` | `50` | Maximum fast targets per cron invocation |
+| `AGENT_AUTO_UPDATE_DEFAULT` | `true` | Default verified Agent update policy until an administrator explicitly changes it in D1 |
 | `STATUS_CACHE_TTL` | `20` | Status cache seconds |
 | `AGENT_OFFLINE_AFTER_SEC` | `900` | Heartbeat gap before an Agent is considered offline |
 | `AGENT_AVAILABILITY_RETENTION_DAYS` | `90` | Daily Agent heartbeat availability retention, bounded to 30-180 days |

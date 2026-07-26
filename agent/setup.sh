@@ -7,6 +7,7 @@ DEFAULT_SHA256SUMS_SHA256=""
 DEFAULT_EXPECTED_VERSION=""
 BIN_NAME="nstatus-metrics"
 SERVICE_NAME="nstatus-metrics"
+TASK_SERVICE_NAME="${SERVICE_NAME}-tasks"
 INSTALL_DIR="/usr/local/bin"
 WORK_DIR="/opt/nstatus-metrics"
 STATE_DIR="/var/lib/nstatus-metrics"
@@ -105,8 +106,8 @@ verify_agent_version() {
 
 stop_existing_agent() {
   case "$INIT" in
-    systemd) systemctl stop "$SERVICE_NAME" 2>/dev/null || true ;;
-    openrc) rc-service "$SERVICE_NAME" stop 2>/dev/null || true ;;
+    systemd) systemctl stop "$SERVICE_NAME" "$TASK_SERVICE_NAME" 2>/dev/null || true ;;
+    openrc) rc-service "$SERVICE_NAME" stop 2>/dev/null || true; rc-service "$TASK_SERVICE_NAME" stop 2>/dev/null || true ;;
   esac
   if command -v pkill >/dev/null 2>&1; then
     pkill -x "$BIN_NAME" 2>/dev/null || true
@@ -195,6 +196,29 @@ StandardError=journal
 [Install]
 WantedBy=multi-user.target
 EOF
+  cat > "/etc/systemd/system/${TASK_SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=聶.NET fixed Beta task runner
+After=network-online.target ${SERVICE_NAME}.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${STATE_DIR}
+EnvironmentFile=${ENV_FILE}
+Environment=NSTATUS_TASK_RUNNER_ONLY=1
+ExecStart=${WORK_DIR}/${BIN_NAME} --task-runner-only
+Restart=always
+RestartSec=20
+User=root
+PrivateTmp=true
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
   cat > "/etc/systemd/system/${SERVICE_NAME}-update.service" <<EOF
 [Unit]
 Description=聶.NET Agent verified update check
@@ -219,8 +243,34 @@ WantedBy=timers.target
 EOF
   systemctl daemon-reload
   systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+  systemctl enable "$TASK_SERVICE_NAME" >/dev/null 2>&1 || true
   systemctl enable --now "${SERVICE_NAME}-update.timer" >/dev/null 2>&1 || true
   systemctl restart "$SERVICE_NAME"
+  systemctl restart "$TASK_SERVICE_NAME"
+}
+
+install_openrc_update_job() {
+  local job_dir=""
+  if [[ -d /etc/periodic/hourly ]]; then
+    job_dir="/etc/periodic/hourly"
+  elif [[ -d /etc/cron.hourly ]]; then
+    job_dir="/etc/cron.hourly"
+  else
+    warn "未找到 OpenRC 每小时任务目录；请使用 cftz update 手动更新"
+    return 0
+  fi
+  cat > "${job_dir}/${SERVICE_NAME}-update" <<EOF
+#!/bin/sh
+exec ${CFTZ_BIN} update --automatic >>/var/log/${SERVICE_NAME}-update.log 2>&1
+EOF
+  chmod 0755 "${job_dir}/${SERVICE_NAME}-update"
+  if [[ -x /etc/init.d/crond ]]; then
+    rc-update add crond default >/dev/null 2>&1 || true
+    rc-service crond start >/dev/null 2>&1 || true
+  elif [[ -x /etc/init.d/cron ]]; then
+    rc-update add cron default >/dev/null 2>&1 || true
+    rc-service cron start >/dev/null 2>&1 || true
+  fi
 }
 
 install_openrc_service() {
@@ -250,8 +300,34 @@ stop() {
 depend() { need net; }
 EOF
   chmod +x "/etc/init.d/${SERVICE_NAME}"
+  cat > "/etc/init.d/${TASK_SERVICE_NAME}" <<EOF
+#!/sbin/openrc-run
+name="${TASK_SERVICE_NAME}"
+description="聶.NET fixed Beta task runner"
+
+start() {
+    ebegin "Starting ${TASK_SERVICE_NAME}"
+    start-stop-daemon --start --background --make-pidfile \
+        --pidfile /run/${TASK_SERVICE_NAME}.pid \
+        --exec /bin/sh -- \
+        -c 'cd "${STATE_DIR}"; set -a; . "${ENV_FILE}"; set +a; export NSTATUS_TASK_RUNNER_ONLY=1; exec "${WORK_DIR}/${BIN_NAME}" --task-runner-only >>"/var/log/${TASK_SERVICE_NAME}.log" 2>&1'
+    eend \$?
+}
+
+stop() {
+    ebegin "Stopping ${TASK_SERVICE_NAME}"
+    start-stop-daemon --stop --pidfile /run/${TASK_SERVICE_NAME}.pid
+    eend \$?
+}
+
+depend() { need net; after ${SERVICE_NAME}; }
+EOF
+  chmod +x "/etc/init.d/${TASK_SERVICE_NAME}"
+  install_openrc_update_job
   rc-update add "$SERVICE_NAME" default >/dev/null 2>&1 || true
+  rc-update add "$TASK_SERVICE_NAME" default >/dev/null 2>&1 || true
   rc-service "$SERVICE_NAME" restart
+  rc-service "$TASK_SERVICE_NAME" restart
 }
 
 do_uninstall() {
@@ -261,15 +337,20 @@ do_uninstall() {
     systemd)
       systemctl stop "$SERVICE_NAME" 2>/dev/null || true
       systemctl disable "$SERVICE_NAME" 2>/dev/null || true
+      systemctl disable --now "$TASK_SERVICE_NAME" 2>/dev/null || true
       systemctl disable --now "${SERVICE_NAME}-update.timer" 2>/dev/null || true
       rm -f "/etc/systemd/system/${SERVICE_NAME}.service"
+      rm -f "/etc/systemd/system/${TASK_SERVICE_NAME}.service"
       rm -f "/etc/systemd/system/${SERVICE_NAME}-update.service" "/etc/systemd/system/${SERVICE_NAME}-update.timer"
       systemctl daemon-reload 2>/dev/null || true
       ;;
     openrc)
       rc-service "$SERVICE_NAME" stop 2>/dev/null || true
       rc-update del "$SERVICE_NAME" 2>/dev/null || true
-      rm -f "/etc/init.d/${SERVICE_NAME}"
+      rc-service "$TASK_SERVICE_NAME" stop 2>/dev/null || true
+      rc-update del "$TASK_SERVICE_NAME" 2>/dev/null || true
+      rm -f "/etc/init.d/${SERVICE_NAME}" "/etc/init.d/${TASK_SERVICE_NAME}"
+      rm -f "/etc/periodic/hourly/${SERVICE_NAME}-update" "/etc/cron.hourly/${SERVICE_NAME}-update"
       ;;
   esac
   rm -f "${INSTALL_DIR}/${BIN_NAME}" "$CFTZ_BIN"
@@ -353,7 +434,7 @@ secure_install_permissions
 case "$INIT" in
   systemd) install_systemd_service; ok "systemd service started"; info "logs: journalctl -u ${SERVICE_NAME} -f" ;;
   openrc) install_openrc_service; ok "OpenRC service started"; info "logs: tail -f /var/log/${SERVICE_NAME}.log" ;;
-  *) warn "systemd/OpenRC not detected; starting in background"; set -a; . "$ENV_FILE"; set +a; "${WORK_DIR}/${BIN_NAME}" >/var/log/${SERVICE_NAME}.log 2>&1 & ok "started pid $!" ;;
+  *) warn "systemd/OpenRC not detected; starting in background"; set -a; . "$ENV_FILE"; set +a; "${WORK_DIR}/${BIN_NAME}" >/var/log/${SERVICE_NAME}.log 2>&1 & ok "started pid $!"; NSTATUS_TASK_RUNNER_ONLY=1 "${WORK_DIR}/${BIN_NAME}" --task-runner-only >/var/log/${TASK_SERVICE_NAME}.log 2>&1 & ;;
 esac
 
 verify_agent_version "${WORK_DIR}/${BIN_NAME}"

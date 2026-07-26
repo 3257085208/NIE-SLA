@@ -25,7 +25,7 @@ export async function onRequestOptions({ request }) {
   const origin = request.headers.get('Origin') || '*';
   headers.set('Access-Control-Allow-Origin', origin);
   headers.set('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-  headers.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,x-admin-session,x-extension-filename,x-extension-sha256');
+  headers.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,x-admin-session');
   headers.set('Access-Control-Max-Age', '86400');
   headers.set('Vary', 'Origin');
   return new Response(null, { status: 204, headers });

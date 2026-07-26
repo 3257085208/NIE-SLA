@@ -3,7 +3,7 @@ import { dayFromSec, nowSec, parseBoolean, timezoneOffsetMin } from '../utils.js
 
 let schemaEnsured = false;
 let schemaPromise = null;
-const SCHEMA_MARKER = 'schema:worker-v15-20260725-daily-traffic';
+const SCHEMA_MARKER = 'schema:worker-v16-20260726-nodes-tasks-backup';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -31,6 +31,17 @@ export async function ensureV6Schema(env) {
   if (installed?.value === '1') { schemaEnsured = true; return; }
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, no_public_ip INTEGER NOT NULL DEFAULT 0, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', city TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', traffic_reset_day INTEGER NOT NULL DEFAULT 1, alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '', nq_report TEXT DEFAULT '', nq_updated_at INTEGER)`).run();
   for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN traffic_reset_day INTEGER', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN no_public_ip INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN city TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_report TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_updated_at INTEGER']) {
+    await runOptionalSchemaChange(env, stmt);
+  }
+  for (const stmt of [
+    'ALTER TABLE targets ADD COLUMN ipv4 TEXT',
+    'ALTER TABLE targets ADD COLUMN ipv6 TEXT',
+    'ALTER TABLE targets ADD COLUMN location_source TEXT',
+    'ALTER TABLE targets ADD COLUMN location_updated_at INTEGER',
+    'ALTER TABLE targets ADD COLUMN nq_url TEXT',
+    'ALTER TABLE targets ADD COLUMN unlock_data TEXT',
+    'ALTER TABLE targets ADD COLUMN unlock_updated_at INTEGER',
+  ]) {
     await runOptionalSchemaChange(env, stmt);
   }
   await env.DB.prepare(`UPDATE targets SET traffic_reset_day = CASE WHEN expires_at IS NOT NULL AND expires_at > 0 THEN CAST(strftime('%d', expires_at + ?, 'unixepoch') AS INTEGER) ELSE 1 END WHERE traffic_reset_day IS NULL`)
@@ -212,6 +223,107 @@ export async function ensureV6Schema(env) {
     PRIMARY KEY (target_id, rule_key)
   )`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_alert_state_updated ON alert_state(updated_at DESC)`).run();
+
+  // 0.24 introduces explicit node/check ownership while legacy target APIs stay
+  // active. IDs are preserved so installed Agents and their credentials remain valid.
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS nodes (
+    id TEXT PRIMARY KEY,
+    legacy_target_id TEXT UNIQUE,
+    name TEXT NOT NULL,
+    group_name TEXT NOT NULL DEFAULT 'Default',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER,
+    provider TEXT DEFAULT '',
+    provider_custom TEXT DEFAULT '',
+    machine_type TEXT DEFAULT '',
+    tags TEXT DEFAULT '',
+    ipv4 TEXT,
+    ipv6 TEXT,
+    country_code TEXT DEFAULT '',
+    country TEXT DEFAULT '',
+    city TEXT DEFAULT '',
+    location_source TEXT,
+    location_updated_at INTEGER,
+    expires_at INTEGER,
+    price REAL,
+    billing_cycle TEXT DEFAULT '',
+    currency TEXT DEFAULT 'USD',
+    traffic_enabled INTEGER NOT NULL DEFAULT 0,
+    traffic_quota_gb REAL NOT NULL DEFAULT 0,
+    traffic_mode TEXT DEFAULT 'total',
+    traffic_reset_day INTEGER NOT NULL DEFAULT 1,
+    alert_enabled INTEGER NOT NULL DEFAULT 1,
+    alert_expiry_days INTEGER,
+    alert_traffic_remaining_percent REAL,
+    alert_traffic_remaining_gb REAL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_nodes_group_order ON nodes(group_name, sort_order, name)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_nodes_provider ON nodes(provider, name)`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS checks (
+    id TEXT PRIMARY KEY,
+    legacy_target_id TEXT UNIQUE,
+    node_id TEXT,
+    name TEXT NOT NULL,
+    group_name TEXT NOT NULL DEFAULT 'Default',
+    type TEXT NOT NULL CHECK (type IN ('tcp', 'http')),
+    target_host TEXT,
+    target_port INTEGER,
+    url TEXT,
+    method TEXT DEFAULT 'GET',
+    expected_status TEXT DEFAULT '',
+    timeout_ms INTEGER NOT NULL DEFAULT 5000,
+    interval_sec INTEGER NOT NULL DEFAULT 300,
+    probe_region TEXT NOT NULL DEFAULT 'auto',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_checks_node ON checks(node_id, enabled)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_checks_due ON checks(enabled, interval_sec)`).run();
+  await env.DB.prepare(`INSERT OR IGNORE INTO nodes (
+    id, legacy_target_id, name, group_name, enabled, sort_order, provider, machine_type, tags,
+    ipv4, ipv6, country_code, country, city, location_source, location_updated_at,
+    expires_at, price, billing_cycle, currency, traffic_enabled, traffic_quota_gb, traffic_mode,
+    traffic_reset_day, alert_enabled, alert_expiry_days, alert_traffic_remaining_percent,
+    alert_traffic_remaining_gb, created_at, updated_at
+  ) SELECT
+    id, id, name, group_name, enabled, sort_order, provider, line_type, tags,
+    ipv4, ipv6, CASE WHEN length(location) = 2 THEN upper(location) ELSE '' END,
+    location, city, location_source, location_updated_at,
+    expires_at, price, billing_cycle, currency, traffic_enabled, traffic_quota_gb, traffic_mode,
+    traffic_reset_day, alert_enabled, alert_expiry_days, alert_traffic_remaining_percent,
+    alert_traffic_remaining_gb, created_at, updated_at
+  FROM targets WHERE type = 'tcp'`).run();
+  await env.DB.prepare(`INSERT OR IGNORE INTO checks (
+    id, legacy_target_id, node_id, name, group_name, type, target_host, target_port, url,
+    method, expected_status, timeout_ms, interval_sec, probe_region, enabled, sort_order,
+    created_at, updated_at
+  ) SELECT
+    id, id, CASE WHEN type = 'tcp' THEN id ELSE NULL END, name, group_name, type,
+    target_host, target_port, url, method, expected_status, timeout_ms, interval_sec,
+    probe_region, enabled, sort_order, created_at, updated_at
+  FROM targets WHERE type = 'http' OR COALESCE(no_public_ip, 0) = 0`).run();
+
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_tasks (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('nodequality', 'ip_unlock')),
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'expired', 'cancelled')),
+    requested_at INTEGER NOT NULL,
+    claimed_at INTEGER,
+    finished_at INTEGER,
+    expires_at INTEGER NOT NULL,
+    result TEXT,
+    error TEXT,
+    output_excerpt TEXT,
+    agent_version TEXT
+  )`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_claim ON agent_tasks(agent_id, status, requested_at)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_recent ON agent_tasks(requested_at DESC)`).run();
+  await env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_tasks_one_active ON agent_tasks(agent_id) WHERE status IN ('queued', 'running')`).run();
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
     .bind(SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   schemaEnsured = true;

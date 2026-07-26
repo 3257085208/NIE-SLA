@@ -5,11 +5,15 @@ const AGENT_API_PATHS = new Set([
   '/api/agent/update-policy',
   '/api/agent/ping-targets',
   '/api/agent/pings',
+  '/api/agent/config',
+  '/api/agent/location',
+  '/api/agent/tasks',
   '/api/latency-agent/targets',
   '/api/latency-agent/results',
   '/api/latency-agent/update-policy',
 ]);
 
 export function isAgentApiPath(path) {
-  return AGENT_API_PATHS.has(String(path || ''));
+  const normalized = String(path || '');
+  return AGENT_API_PATHS.has(normalized) || normalized.startsWith('/api/agent/tasks/');
 }

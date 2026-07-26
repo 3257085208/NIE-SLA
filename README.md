@@ -4,9 +4,9 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**当前阶段：Beta**
+**Beta · 0.24.0-beta.1**
 
-Cloudflare Worker + D1 + R2 + Durable Objects + Rust Agent
+Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
 [![Agent Version](docs/badges/agent-version.svg)](https://github.com/3257085208/NIE-SLA/releases)
 [![Public CI](https://github.com/3257085208/NIE-SLA/actions/workflows/public-ci.yml/badge.svg?branch=main)](https://github.com/3257085208/NIE-SLA/actions/workflows/public-ci.yml)
@@ -14,178 +14,80 @@ Cloudflare Worker + D1 + R2 + Durable Objects + Rust Agent
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
 
-[权威文档](https://nie-sla.pages.dev/) · [部署教程](https://nie-sla.pages.dev/quickstart/) · [English](README.en.md) · [安全说明](SECURITY.md)
+[部署教程](https://nie-sla.pages.dev/quickstart/) · [完整文档](https://nie-sla.pages.dev/) · [English](README.en.md) · [安全说明](SECURITY.md)
 
 </div>
 
-## 这是什么
+## 项目简介
 
-NIE-SLA 把公开状态页、Cloudflare HTTP/TCP 检查和 VPS 系统数据放在一起。控制面运行在 Cloudflare，VPS 只安装一个主动上报的 Rust Agent，不需要额外购买中心服务器，也不需要开放 Agent 管理端口。
+NIE-SLA 把 Cloudflare 公网探测、公开状态页和 VPS 系统数据放在一起。控制面运行在 Cloudflare，VPS 安装主动上报的 Rust Agent，不需要购买中心服务器，也不需要开放 Agent 管理端口。
 
-适合个人站点、小型服务和几十台 VPS 的统一监控。
+当前项目处于 Beta，适合个人与小型团队自托管、测试和逐步上线。
 
 ## 一键部署
 
-不需要先安装 Node.js、Wrangler 或数据库。
-
-NIE-SLA 支持“Pages 前端 + Worker API”分离部署。由于 Cloudflare 官方一键部署按钮只支持 Workers 应用，按钮模式会把前端作为 Workers Static Assets 与 API 部署到同一个 Worker；不需要再单独创建 Pages 项目，D1、R2、Durable Object 和每分钟 Cron 也会同时配置。
-
 1. 点击上方 **Deploy to Cloudflare**。
-2. 按页面提示登录 GitHub 和 Cloudflare 并完成授权。
+2. 登录并授权 GitHub、Cloudflare。
 3. 填写后台账号、后台密码和后台路径。
-4. 等待构建完成，打开 Cloudflare 给出的 `workers.dev` 地址。
+4. 等待构建完成，打开 Worker 地址。
+5. 访问 `Worker 地址 + 后台路径`，登录后跟随 UI 添加 VPS。
 
-需要填写：
+不需要填写 Agent Token。每台 VPS 的 Token 会在后台首次生成部署命令时随机创建。TOTP 默认关闭。
 
-| 配置 | 用途 |
+新部署使用一个 Worker 同时承载静态前端、管理后台、API、D1、R2、Durable Objects 与每分钟 Cron，不需要单独创建 Pages。
+
+## 主要能力
+
+| 能力 | 说明 |
 | --- | --- |
-| `ADMIN_USERNAME` | 后台管理员账号，创建时必填 |
-| `ADMIN_PASSWORD` | 至少 9 位，同时包含大写字母、小写字母、数字和特殊符号 |
-| `ADMIN_PATH` | 后台入口，3-64 位字母、数字、连字符或下划线，例如 `/console-7f3a` |
+| 公网探测 | Cloudflare HTTP/TCP、当前状态、SLA、事件与多区域探测 |
+| Rust Agent | CPU、内存、磁盘、负载、IO、网络、进程、线程、运行时长与温度 |
+| 网络测量 | Cloudflare Latency、Agent TCP Ping、External Latency Agent |
+| 节点管理 | 商家、自定义商家、机器类型、标签、价格、到期时间和独立流量重置日 |
+| 自动 GeoIP | Agent 查询 IPv4/IPv6；可选 IP.SB、Cloudflare、IPIP.net 或自定义 HTTPS JSON |
+| 流量 | 低写入每日账本、额度、统计方式与修改重置日后重算 |
+| 通知 | Telegram 与邮件，支持测试、格式和模板 |
+| 安全 | 账号密码 Session、可选 OAuth/TOTP、每节点 Token、校验和更新 |
+| 备份 | 普通/加密敏感备份、预览、合并/替换恢复和恢复前 R2 快照 |
+| 开发接口 | `/api/v1` 公开只读接口，可用于第三方前端 |
 
-密码不要与其他服务复用，也不要公开。Agent Token 会在后台首次生成部署命令时按节点自动创建，不需要填写全局 Token。TOTP 默认关闭，登录后台后可按需启用；专用加密密钥是高级可选配置，不再出现在一键部署表单中。探测并发、限流、历史保留等内部参数使用固定安全默认值。
+## 固定 Beta 动作
 
-部署成功后，管理后台地址为：
+后台可手动触发 NodeQuality 与 IPv4 解锁检测。两者均为固定动作，不接受任意命令、参数、脚本地址、stdin 或定时计划。
 
-```text
-https://你的项目.你的账号.workers.dev/你填写的后台路径
-```
+- NodeQuality 固定输入 `v/y/y/y`，后台只保存并展示 `nodequality.com` 报告链接。
+- IPv4 解锁使用 `IP.Check.Place` JSON 模式，只保存最终媒体解锁字段，不保存纯净度。
+- Linux 主遥测服务继续低权限运行，独立 root runner 只识别这两个动作。
 
-登录后仍可在“设置 → 后台入口”修改路径。保存后旧入口会返回 404，GitHub OAuth 也会使用新入口；当前地址应立即保存到密码管理器或书签。自定义路径只减少通用扫描噪声，不能替代账号密码、Session 和可选 TOTP。
+旧 Linux Agent 需要重新执行一次最新部署命令，才能安装任务 runner；普通监控不受影响。
 
-使用账号密码登录，然后按后台 UI 操作：
+## 从旧 Pages + Worker 迁移
 
-1. 打开“探针”。
-2. 新增一台 VPS。
-3. 点击该节点的部署按钮。
-4. 复制 Linux 或 Windows 命令到对应机器执行。
+优先复用原 D1、R2、Agent API 域名和加密密钥。这样已有 Agent ID 与 Token 不变，VPS 无需逐台重装。
 
-首台 VPS 正常上报后，再按需配置 Ping、Latency Agent、GitHub 登录、Telegram/邮件告警、流量、主题和插件。
+后台提供便携备份与密码保护敏感备份用于兜底。高频历史不写入 JSON，复用原 R2 才能完整保留。
 
-完整步骤以 [NIE-SLA 快速上手](https://nie-sla.pages.dev/quickstart/) 为准。
+## 安全边界
 
-## 在线更新
-
-一键部署生成的仓库默认每 6 小时检查官方最新发布版本，包括当前 Beta 版本。发现更新后，GitHub Actions 会保留现有 `wrangler.jsonc` 中的 Cloudflare 绑定，执行安全扫描、应用测试和 Wrangler dry-run，通过后提交更新并由 Cloudflare 自动重新部署。后台“设置 → 系统更新”可检查版本，并通过站内弹窗查看更新日志和操作指引。
-
-整个过程不要求填写部署仓库、GitHub Token 或 Cloudflare Token。需要立即检查时，只需在部署仓库的 **Actions → NIE-SLA Online Update** 点击 **Run workflow**，无需填写参数。具体步骤见[快速上手](https://nie-sla.pages.dev/quickstart/#后续在线更新)。
-
-## 主要功能
-
-| 功能 | 说明 |
-| --- | --- |
-| Cloudflare 探测 | 分钟级当前状态、5 分钟 SLA、HTTP/TCP、状态码、延迟与可选区域 |
-| Rust Agent | 单文件程序，Linux 多架构与 Windows amd64 |
-| VPS 数据 | CPU、内存、磁盘、负载、网络、IO、连接数、进程和线程 |
-| 温度 | 支持 CPU、GPU、主板、硬盘和芯片组传感器 |
-| 高频历史 | 本地 1 秒采样，默认 5 分钟批量上传到 R2 |
-| 网络测量 | VPS TCP Ping、Cloudflare Latency、外部 Latency Agent |
-| 节点管理 | 按日流量账本、独立重置日、价格、到期日、币种、标签、位置和 NodeQuality 报告 |
-| 告警 | Telegram 与邮件发送离线、恢复、资源、流量和到期提醒 |
-| 扩展 | 后台分别上传主题 ZIP 和插件 ZIP |
-| 安全 | 账号密码 Session、GitHub OAuth 白名单、TOTP、每节点 scoped Token、SHA-256 更新校验 |
-| 应用更新 | 每 6 小时自动检查、站内更新日志、无参数手动运行与部署前验证 |
-
-## 监控链路
-
-四类数据彼此独立：
-
-| 链路 | 用途 |
-| --- | --- |
-| Cloudflare HTTP/TCP | 检查公网服务是否可达 |
-| Agent 心跳与指标 | 判断 VPS 是否运行并采集系统数据 |
-| Agent TCP Ping | 测量该 VPS 到指定目标的延迟 |
-| External Latency Agent | 从家庭宽带或其他网络测量公开 TCP 目标 |
-
-Agent 在线不代表目标端口一定能被 Cloudflare 访问，反过来也一样。
-
-## 与常见方案的区别
-
-| 类型 | 更适合 |
-| --- | --- |
-| Cloudflare uptime 工具 | 只监控网站、API 或端口，需要简单状态页 |
-| 传统中心式探针 | 需要 Web 终端、批量命令和远程运维 |
-| NIE-SLA | 需要 Cloudflare 外部视角、公开状态页和完整 VPS 数据，但不需要远程命令执行 |
-
-NIE-SLA 不提供 Web Shell 或任意命令执行。它的 Agent 权限只用于采集、Ping、配置刷新和经过校验的更新。
-
-## 状态与 SLA 分层
-
-NIE-SLA 不用增加 5 倍 D1 写入来换取更快的状态：
-
-- **当前状态层**：Cron 每分钟运行，最多快速探测 50 个目标，结果合并为一次 R2 状态写入。
-- **SLA 历史层**：每 5 分钟持久化 D1 检查桶，用于日格、可用率和长期统计。
-- **Agent 指标层**：VPS 本地 1 秒采样，默认 5 分钟批量上传 R2，失败批次进入有界队列。
-
-因此，离线状态和报警通常可在约 1 分钟粒度变化，历史写入仍维持原有免费额度模型。
-
-流量上报在当天只更新当前周期行，跨天后每台 Agent 才封存一条每日记录。修改流量重置日时会按已有日记录重新汇总，因此不会把每次 5 分钟上报都变成额外的日账本写入。
-
-## 数据存储
-
-```text
-Browser
-   |
-Cloudflare Worker + Static Assets
-   |-- D1: 配置、状态、事件、聚合数据
-   |-- R2: Agent Metrics、Ping、快照
-   |-- Durable Objects: 可选区域探测
-   ^
-   |
-Rust Agent on VPS
-```
-
-原始 Metrics 与 Ping 主要写入 R2，不把每个采样点逐行写进 D1。D1 负责关系配置、SLA 桶、事件、会话哈希、限流与告警状态。
-
-## 免费额度
-
-默认配置下的保守规划：
-
-| 规模 | 建议 |
-| --- | --- |
-| 1-50 台 | 适合 Cloudflare Free 日常使用 |
-| 50-80 台 | 需要观察 D1 写入、R2 Class A 和访问量 |
-| 80-110 台 | 接近免费额度边界，不建议无监控长期运行 |
-
-5 分钟上传模式按当前模型的理论边界约为 110 台，稳定规划建议不超过 80 台。实际用量取决于访问量、重试、Ping 数量和历史保留时间。
-
-额度参考：[Workers Limits](https://developers.cloudflare.com/workers/platform/limits/)、[D1 Pricing](https://developers.cloudflare.com/d1/platform/pricing/)、[R2 Pricing](https://developers.cloudflare.com/r2/pricing/)。
-
-## 安全要点
-
-- 管理员密码必须符合复杂度要求且不与其他服务复用；每个 Agent 使用后台自动生成的随机独立 Token。
-- 密码只进入登录端点；后台 API 统一使用 24 小时 Session，D1 只保存 Session SHA-256 哈希。
-- GitHub OAuth 默认关闭；启用时必须同时配置 Client ID、Client Secret 和 GitHub 用户名白名单。
-- OAuth state 有时效并绑定 HttpOnly Cookie，登录票据短期、一次使用，TOTP 不能被 OAuth 绕过。
-- 每台 Agent 使用与 Target 绑定的独立 Token。
-- 安装与自动更新会校验 manifest 和二进制 SHA-256。
-- 公共接口会裁剪敏感字段并可掩码 IP/端口。
-- 主题和插件包会检查 ZIP 路径、Manifest、内容类型、大小和哈希。
-
-详细边界见 [开发者安全规范](https://nie-sla.pages.dev/dev/security/) 和 [SECURITY.md](SECURITY.md)。
-
-## 文档
-
-| 文档 | 内容 |
-| --- | --- |
-| [一键部署](https://nie-sla.pages.dev/quickstart/) | Cloudflare 按钮部署与首次添加 VPS |
-| [API](https://nie-sla.pages.dev/api/) | 公开只读 API、参数与在线调试 |
-| [主题与插件](https://nie-sla.pages.dev/dev/) | 扩展格式、权限、消息协议和发布规范 |
-| [安全规范](https://nie-sla.pages.dev/dev/security/) | 沙箱、上传校验与开发者安全边界 |
+- Agent 只主动 HTTPS 上报，不监听远程管理端口。
+- 每台 Agent 使用独立 scoped Token。
+- 管理 API 只接受短期 Session。
+- 不提供 Web Shell 和任意定时脚本。
+- 主题/插件上传、包运行时与市场导入当前已移除。
+- 安装和更新校验版本、manifest 与二进制 SHA-256。
+- 敏感备份使用 PBKDF2-SHA256 与 AES-256-GCM。
 
 ## 本地验证
-
-开发者克隆仓库后可运行：
 
 ```bash
 bash test.sh
 ```
 
-一键部署构建检查：
+Agent release 在本地生成：
 
 ```bash
-npm install
-npm run check:deploy
+cd agent
+./build-release.sh
 ```
 
 ## License

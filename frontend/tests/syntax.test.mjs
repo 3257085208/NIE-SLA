@@ -15,13 +15,12 @@ for (const file of files) {
   assert.equal(result.status, 0, `${path.relative(root, file)} syntax failed:\n${result.stderr}`);
 }
 
-const [appSource, adminSource, adminCss, adminHtml, indexHtml, extensionsSource, apiProxySource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
+const [appSource, adminSource, adminCss, adminHtml, indexHtml, apiProxySource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
   readFile(path.join(root, 'app.js'), 'utf8'),
   readFile(path.join(root, 'js', 'admin.js'), 'utf8'),
   readFile(path.join(root, 'admin.css'), 'utf8'),
   readFile(path.join(root, 'admin.html'), 'utf8'),
   readFile(path.join(root, 'index.html'), 'utf8'),
-  readFile(path.join(root, 'js', 'extensions.js'), 'utf8'),
   readFile(path.join(root, 'functions', 'api', '[[path]].js'), 'utf8'),
   readFile(path.join(root, 'latency-agent.py'), 'utf8'),
   readFile(path.join(root, 'install-latency.sh'), 'utf8'),
@@ -32,16 +31,10 @@ assert.match(adminSource, /data-retry-install/, 'deploy failures must offer a re
 assert.match(adminSource, /data-target-id=/, 'deploy buttons must carry a stable target id');
 assert.match(adminSource, /button\?\.dataset\.targetId \|\| button\?\.closest\("tr"\)\?\.dataset\.id/, 'deploy actions must resolve the stable button target id first');
 assert.match(adminSource, /targetGroupOptions\(type, target\.group_name\)/, 'target grouping must be a VPS/Web selector');
-assert.match(adminSource, /<select id="mLocation">/, 'country must use a single selector');
-assert.match(adminSource, /<select id="mCity"/, 'city must use a selector');
-assert.match(adminSource, /id="mCitySearch" type="search"/, 'city selector must provide a search field');
-assert.match(adminSource, /mCitySearch"\)\.oninput = filterLoadedCities/, 'city search must filter the loaded catalog');
 assert.match(adminSource, /<select id="mProvider">/, 'provider must use a single selector');
-assert.doesNotMatch(adminSource, /mLocationSearch|mProviderSearch/, 'country and provider must not render duplicate search inputs');
-assert.match(adminSource, /\/api\/catalog\/cities\?country=/, 'country changes must load the city catalog API');
-assert.match(adminSource, /mLocation"\)\.onchange[\s\S]*loadCitiesForCountry/, 'country selector must drive the city selector');
-assert.doesNotMatch(adminSource, /<select id="mLocation" required>/, 'country must remain optional when saving a target');
-assert.doesNotMatch(adminSource, /if \(!b\.location\) return toast/, 'target saves must not require a country');
+assert.match(adminSource, /id="mProviderCustom"/, 'provider selector must support a custom vendor');
+assert.match(adminSource, /location_source/, 'target editor must show the Agent location source');
+assert.doesNotMatch(adminSource, /id="mLocation"|id="mCity"|\/api\/catalog\/cities/, 'country and city must not be manually editable');
 assert.match(adminSource, /到期时间（可选）/, 'target expiry must be clearly optional');
 assert.match(adminSource, /formField\("机器类型"/, 'target editor must label line_type as machine type');
 assert.doesNotMatch(adminSource, /formField\("线路类型"/, 'target editor must not expose the old line type label');
@@ -58,8 +51,8 @@ assert.match(adminCss, /\.group-by-menu\s*\{[\s\S]*box-shadow:/, 'group selector
 assert.match(adminSource, /data-group-value/, 'group selector must use structured custom options');
 assert.match(adminCss, /\.modal::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none/, 'long edit dialogs must hide the native scrollbar');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260726-location-catalog2/, 'admin CSS cache key must publish searchable location selectors');
-assert.match(adminHtml, /js\/admin\.js\?v=20260726-location-catalog2/, 'admin JS cache key must publish searchable location selectors');
+assert.match(adminHtml, /admin\.css\?v=20260726-beta-actions1/, 'admin CSS cache key must publish Beta actions');
+assert.match(adminHtml, /js\/admin\.js\?v=20260726-beta-actions1/, 'admin JS cache key must publish Beta actions');
 assert.match(adminHtml, /settings-primary[\s\S]*settings-columns[\s\S]*settings-column/, 'settings must separate wide forms from independent card columns');
 assert.match(adminCss, /\.settings-columns\s*\{[\s\S]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/, 'desktop settings cards must use three independent columns');
 assert.match(adminCss, /@media \(max-width: 820px\) \{[\s\S]*\.settings-columns\s*\{\s*grid-template-columns:\s*1fr/, 'mobile settings cards must collapse to one column');
@@ -82,33 +75,18 @@ assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的
 assert.match(indexHtml, /app\.js\?v=20260725-daily-traffic1/, 'frontend cache key must publish daily traffic changes');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
-assert.match(indexHtml, /body class="theme-pending" data-frontend-theme="classic"/, 'theme resolution must hide the classic shell before startup');
-assert.match(indexHtml, /id="themeCanvas"/, 'frontend must provide a sandboxed full-layout theme mount');
-assert.match(indexHtml, /id="themeBoot"/, 'frontend must show a neutral loader while resolving the active theme');
-assert.doesNotMatch(adminSource, /data-theme="cards"/, 'cards must not remain a built-in settings choice');
-assert.match(extensionsSource, /THEME_API_RESOURCES = new Set\(\['status', 'checks', 'metrics', 'pings', 'latency'\]\)/, 'canvas themes must use the read-only resource allowlist');
-assert.match(extensionsSource, /frame\.sandbox = 'allow-scripts'/, 'canvas themes must run without same-origin access');
-assert.match(extensionsSource, /credentials: 'omit'/, 'canvas theme read-only requests must not carry browser credentials');
-assert.match(extensionsSource, /NSTATUS_EXTENSION_BOOTSTRAP/, 'extension runtime must reuse the pre-render registry request');
-assert.match(extensionsSource, /waitForElementLoad\(link, 2500\)/, 'CSS themes must load before the classic shell is revealed');
-assert.match(styleSource, /body\.theme-pending > \.topbar,[\s\S]*visibility:\s*hidden/, 'classic UI must stay hidden while the active theme resolves');
+assert.doesNotMatch(indexHtml, /data-frontend-theme|themeCanvas|themeBoot|theme-pending/, 'removed themes must not leave a startup shell');
 assert.match(adminHtml, /id="sAppearance"/, 'admin must provide a centralized appearance editor');
-assert.match(adminHtml, /id="pg-themes"[\s\S]*id="themeZip"[\s\S]*id="themeTable"/, 'admin must provide an independent theme page and upload path');
-assert.match(adminHtml, /id="pg-plugins"[\s\S]*id="pluginZip"[\s\S]*id="pluginTable"/, 'admin must provide an independent plugin page and upload path');
+assert.doesNotMatch(adminHtml, /id="pg-themes"|id="pg-plugins"|themeZip|pluginZip/, 'theme and plugin package UI must stay removed');
 assert.match(adminSource, /appearanceSections/, 'admin must expose grouped frontend appearance fields');
 assert.match(adminSource, /brand_home_url[\s\S]*header_right_image_width/, 'admin must expose brand and header media controls');
 assert.match(adminSource, /show_header[\s\S]*show_chart[\s\S]*show_vps_details/, 'admin must expose frontend section visibility controls');
 assert.match(appSource, /data\?\.frontend\?\.appearance/, 'frontend must consume public appearance settings');
 assert.match(appSource, /--appearance-brand-logo-height/, 'frontend must apply the configured brand dimensions');
 assert.match(adminSource, /JSON\.stringify\(\{ appearance \}\)/, 'admin must save frontend appearance settings');
-assert.match(adminSource, /"\/api\/themes"/, 'admin must use the dedicated theme API');
-assert.match(adminSource, /"\/api\/plugins"/, 'admin must use the dedicated plugin API');
-assert.doesNotMatch(adminSource, /\/api\/extensions\/(?:manage|upload)/, 'admin must not use the legacy combined management API');
-assert.match(adminSource, /data-extension-action/, 'admin must manage installed extensions');
-assert.match(adminSource, /crypto\.subtle\.digest\("SHA-256"/, 'admin must hash extension ZIPs before upload');
-assert.match(adminSource, /"x-extension-sha256": sha256/, 'extension uploads must bind the browser digest to the request');
-assert.match(apiProxySource, /x-extension-filename,x-extension-sha256/, 'Pages proxy preflight must allow extension integrity headers');
-assert.match(appSource, /initializeFrontendExtensions\(\)/, 'frontend must initialize enabled extensions');
+assert.doesNotMatch(adminSource, /\/api\/(?:extensions|themes|plugins)|data-extension-action|x-extension-sha256/, 'admin must not retain extension package management');
+assert.doesNotMatch(appSource, /js\/themes|frontendTheme|cardTheme/, 'frontend must not retain a theme runtime');
+assert.doesNotMatch(apiProxySource, /x-extension-filename|x-extension-sha256/, 'Pages proxy must not retain extension upload headers');
 assert.doesNotMatch(appSource, /meta-provider">🏪/, 'provider metadata must use typography instead of decorative emoji');
 assert.doesNotMatch(appSource, /meta-line">🔀/, 'line type metadata must use typography instead of decorative emoji');
 assert.doesNotMatch(appSource, /`📍 \$\{t\.location\}`/, 'fallback location metadata must not add decorative emoji');
@@ -128,14 +106,15 @@ assert.match(appSource, /service-title-line[\s\S]*nqButton/, 'classic VPS cards 
 assert.match(styleSource, /\.nq-image\s*\{[\s\S]*width:\s*min\(100%,\s*760px\)/, 'NQ images must use a readable content width');
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-image\s*\{\s*width:\s*100%/, 'NQ images must fill the available mobile content width');
 assert.match(styleSource, /\.nq-ansi-panel\s*\{[\s\S]*-webkit-overflow-scrolling:\s*touch/, 'ANSI reports must support touch scrolling on iPhone');
-assert.match(styleSource, /body\[data-frontend-theme="cards"\] \.service-name\s*\{\s*font-size:\s*16px/, 'narrow card layouts must emphasize the VPS name');
-assert.match(styleSource, /body\[data-frontend-theme="cards"\] \.node-uptime-strip \.daybar\s*\{\s*height:\s*14px/, 'narrow card layouts must enlarge SLA bars');
 assert.match(styleSource, /\.nq-panels\s*\{[\s\S]*flex:\s*1 1 auto[\s\S]*overscroll-behavior:\s*contain/, 'NQ report content must scroll without covering tabs');
 assert.match(appSource, /panels\.scrollTop\s*=\s*0/, 'switching NQ tabs must reset vertical scroll');
-assert.match(adminSource, /mNqReport/, 'admin target editor must accept NodeQuality reports');
+assert.match(adminSource, /data-a="task-nq"/, 'admin must expose the fixed NodeQuality action');
+assert.match(adminSource, /data-a="task-unlock"/, 'admin must expose the fixed IPv4 unlock action');
+assert.match(adminSource, /\/api\/agent-tasks/, 'Beta actions must use the fixed task API');
+assert.doesNotMatch(adminSource, /mNqReport|id="m(?:Command|Script|Args|Stdin)"|body:\s*JSON\.stringify\(\{[^}]*\b(?:command|script|args|stdin)\b/, 'admin must not accept reports or arbitrary command input');
 assert.match(appSource, /Always keep explicit bounds/, 'chart zoom-out must keep explicit x bounds');
-assert.match(adminSource, /id="mCity"/, 'admin target editor must accept a city field');
-assert.match(adminSource, /city:\s*\(byId\("mCity"\)/, 'admin save payload must include city');
+assert.match(adminHtml, /id="sGeoIp"/, 'settings must expose the GeoIP provider');
+assert.match(adminHtml, /id="sBackup"/, 'settings must expose backup and restore');
 assert.match(latencyAgentSource, /"User-Agent": USER_AGENT/, 'Latency agent must avoid Cloudflare rejecting Python urllib requests');
 assert.match(latencyAgentSource, /sys\.argv\[1:\] == \["--once"\]/, 'Latency agent must support an installation preflight cycle');
 assert.match(latencyAgentSource, /def update_if_needed\(\):/, 'Latency agent must support automatic updates');

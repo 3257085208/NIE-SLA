@@ -2,7 +2,7 @@ import { ALLOWED_REGIONS, clamp, sanitizeId, publicCachePrivacyVersion, sha256He
 import { requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
-import { listTargets, createTarget, updateTarget, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency } from './admin.js';
+import { listTargets, createTarget, updateTarget, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
 import { VERSION } from './version.js';
@@ -10,11 +10,9 @@ import { setupTOTP, verifyTOTP, disableTOTP, validateAdminSession, checkTOTP } f
 import { getAlertSettings, updateAlertSettings, sendTestAlert, runAlertChecks } from './alerts.js';
 import { isAgentApiPath } from './route-policy.js';
 import { developerApiPreflight, developerApiUrl, getDeveloperApiManifest, withDeveloperApiHeaders } from './developer-api.js';
-import { deleteExtension, getExtensionFile, listManagedExtensions, listManagedExtensionsByType, listPublicExtensions, updateExtension, uploadExtension } from './extensions.js';
 import { publicNodeQualityReport } from './nodequality.js';
 import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from './admin-auth.js';
 import { getAppUpdateInfo } from './app-update.js';
-import { getCountryCities } from './location-catalog.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
@@ -90,7 +88,6 @@ const ROUTES = [
   { method: 'GET', path: '/api/v1/metrics', rl: 'public' },
   { method: 'GET', path: '/api/v1/pings', rl: 'public' },
   { method: 'GET', path: '/api/v1/latency', rl: 'public' },
-  { method: 'GET', path: '/api/extensions', rl: 'public' },
   { method: 'GET', path: '/api/nq/:id', rl: 'public' },
   { method: 'GET', path: '/api/nq/:id/image/:tab', rl: 'public' },
 
@@ -101,6 +98,9 @@ const ROUTES = [
   { method: 'GET', path: '/api/agent/update-policy', rl: 'write' },
   { method: 'GET', path: '/api/agent/ping-targets', rl: 'write' },
   { method: 'POST', path: '/api/agent/pings', rl: 'write' },
+  { method: 'GET', path: '/api/agent/config', rl: 'write' },
+  { method: 'POST', path: '/api/agent/location', rl: 'write' },
+  { method: 'GET', path: '/api/agent/tasks', rl: 'write' },
   { method: 'GET', path: '/api/latency-agent/targets', rl: 'write' },
   { method: 'POST', path: '/api/latency-agent/results', rl: 'write' },
   { method: 'GET', path: '/api/latency-agent/update-policy', rl: 'write' },
@@ -128,19 +128,20 @@ const ROUTES = [
   { method: 'POST', path: '/api/alerts/test', rl: 'write' },
   { method: 'POST', path: '/api/alerts/check', rl: 'write' },
   { method: 'GET', path: '/api/system/update', rl: 'write' },
-  { method: 'GET', path: '/api/catalog/cities', rl: 'write' },
+  { method: 'GET', path: '/api/settings/geoip', rl: 'write' },
+  { method: 'PATCH', path: '/api/settings/geoip', rl: 'write' },
+  { method: 'GET', path: '/api/agent-tasks', rl: 'write' },
+  { method: 'POST', path: '/api/agent-tasks', rl: 'write' },
+  { method: 'GET', path: '/api/backup/export', rl: 'write' },
+  { method: 'POST', path: '/api/backup/export', rl: 'write' },
+  { method: 'POST', path: '/api/backup/preview', rl: 'write' },
+  { method: 'POST', path: '/api/backup/restore', rl: 'write' },
 
   // Stats & maintenance
   { method: 'GET', path: '/api/stats', rl: 'write' },
   { method: 'GET', path: '/api/agent/install-command', rl: 'write' },
   { method: 'GET', path: '/api/latency-agent/install-command', rl: 'write' },
   { method: 'POST', path: '/api/maintenance/cleanup', rl: 'write' },
-  { method: 'GET', path: '/api/extensions/manage', rl: 'write' },
-  { method: 'POST', path: '/api/extensions/upload', rl: 'write' },
-  { method: 'GET', path: '/api/themes/manage', rl: 'write' },
-  { method: 'POST', path: '/api/themes/upload', rl: 'write' },
-  { method: 'GET', path: '/api/plugins/manage', rl: 'write' },
-  { method: 'POST', path: '/api/plugins/upload', rl: 'write' },
 
   // Admin CRUD
   { method: 'GET', path: '/api/debug-colo', rl: 'write' },
@@ -181,7 +182,6 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/v1/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getAgentMetricsCached(request, env, developerApiUrl(url, '/api/agent/metrics'), ctx), request, env); }
   if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/v1/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(json(await getPublicLatency(env, developerApiUrl(url, '/api/latency')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
-  if (path === '/api/extensions' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny(); return json(await listPublicExtensions(env), 200, env, { 'cache-control': 'public, max-age=20' }); }
   const nqImageMatch = path.match(/^\/api\/(?:nq|nodequality)\/([^/]+)\/image\/([^/]+)$/);
   if (nqImageMatch && m === 'GET') {
     if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny();
@@ -227,9 +227,6 @@ async function dispatchStatic(env, url, request, ctx) {
     if (!report) return json({ ok: false, error: '该探针尚未上传 NodeQuality 报告' }, 404, env);
     return json(report, 200, env, { 'cache-control': 'public, max-age=30' });
   }
-  const extensionFileMatch = path.match(/^\/api\/extensions\/file\/([^/]+)\/(.+)$/);
-  if (extensionFileMatch && m === 'GET') { if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true })) return deny(); return getExtensionFile(env, pathParam(extensionFileMatch[1]), pathParam(extensionFileMatch[2])); }
-
   // Prefer cheap bearer presence check before durable D1 rate-limit tables.
   // Unauthenticated admin probes should not burn durable counters.
   const hasBearer = /^bearer\s+\S+/i.test(request.headers.get('authorization') || '');
@@ -258,6 +255,11 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/agent/update-policy' && m === 'GET') { const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getAgentUpdatePolicy(env, request), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent/ping-targets' && m === 'GET') { const agentId = url.searchParams.get('agent_id') || ''; if (agentId) await requireAgentForId(request, env, agentId); else await requireAnyAgent(request, env); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getPingTargets(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent/pings' && m === 'POST') return json(await submitAgentPings(request, env), 200, env, { 'cache-control': 'no-store' });
+  if (path === '/api/agent/config' && m === 'GET') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); return json(await getAgentRuntimeConfig(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/agent/location' && m === 'POST') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); return json(await submitAgentLocation(request, env, agentId), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/agent/tasks' && m === 'GET') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); return json(await claimAgentTask(env, agentId), 200, env, { 'cache-control': 'no-store' }); }
+  const agentTaskResultMatch = path.match(/^\/api\/agent\/tasks\/([^/]+)$/);
+  if (agentTaskResultMatch && m === 'POST') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); return json(await completeAgentTask(request, env, pathParam(agentTaskResultMatch[1]), agentId), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agent/targets' && m === 'GET') { await ensureV6Schema(env); const nodeId = url.searchParams.get('node_id') || ''; await requireLatencyAgentForId(request, env, nodeId); return json(await getLatencyAgentTargets(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agent/results' && m === 'POST') { await ensureV6Schema(env); const body = await safeJson(request); await requireLatencyAgentForId(request, env, body.node_id); return json(await submitLatencyAgentResults(request, env, body), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agent/update-policy' && m === 'GET') { await ensureV6Schema(env); const nodeId = url.searchParams.get('node_id') || ''; await requireLatencyAgentForId(request, env, nodeId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getLatencyAgentUpdatePolicy(env), 200, env, { 'cache-control': 'no-store' }); }
@@ -281,7 +283,13 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/settings' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getPublicSettings(env, { includeAdmin: true }), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/settings' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updatePublicSettings(request, env); clearStatusCaches(url, env).catch(() => {}); return json(result, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/system/update' && m === 'GET') { await withAdmin(request, env); return json(await getAppUpdateInfo(env, { force: url.searchParams.get('refresh') === '1' }), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/catalog/cities' && m === 'GET') { await withAdmin(request, env); return json(await getCountryCities(url.searchParams.get('country')), 200, env, { 'cache-control': 'private, max-age=86400' }); }
+  if (path === '/api/settings/geoip' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json({ ok: true, ...(await getGeoIpSettings(env, { includeAdmin: true })) }, 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/settings/geoip' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateGeoIpSettings(request, env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/agent-tasks' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listAgentTasks(env, url), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/agent-tasks' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await createAgentTask(request, env), 201, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/backup/export' && (m === 'GET' || m === 'POST')) { await withAdmin(request, env); await ensureV6Schema(env); return json(await exportBackup(request, env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/backup/preview' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await previewBackup(request), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/backup/restore' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await restoreBackup(request, env), 200, env, { 'cache-control': 'no-store' }); }
 
   // Alerts
   if (path === '/api/alerts/settings' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json({ ok: true, ...(await getAlertSettings(env)) }, 200, env, { 'cache-control': 'no-store' }); }
@@ -294,12 +302,6 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/agent/install-command' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getAgentInstallCommand(env, url, request), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agent/install-command' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getLatencyAgentInstallCommand(env, url, request), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/maintenance/cleanup' && m === 'POST') { await withAdmin(request, env); const body = await safeJson(request).catch(() => ({})); return json({ ok: true, d1: await cleanupVolatileHistory(env, body), r2: await cleanupAgentMetricsR2(env, body) }, 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/extensions/manage' && m === 'GET') { await withAdmin(request, env); return json(await listManagedExtensions(env), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/extensions/upload' && m === 'POST') { await withAdmin(request, env); return json(await uploadExtension(request, env), 201, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/themes/manage' && m === 'GET') { await withAdmin(request, env); return json(await listManagedExtensionsByType(env, 'theme'), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/themes/upload' && m === 'POST') { await withAdmin(request, env); return json(await uploadExtension(request, env, 'theme'), 201, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/plugins/manage' && m === 'GET') { await withAdmin(request, env); return json(await listManagedExtensionsByType(env, 'plugin'), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/plugins/upload' && m === 'POST') { await withAdmin(request, env); return json(await uploadExtension(request, env, 'plugin'), 201, env, { 'cache-control': 'no-store' }); }
 
   // Admin CRUD
   if (path === '/api/debug-colo' && m === 'GET') { await withAdmin(request, env); return debugColo(env, url); }
@@ -328,18 +330,8 @@ async function dispatchStatic(env, url, request, ctx) {
   if (latencyAgentMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateLatencyAgent(pathParam(latencyAgentMatch[1]), request, env), 200, env); }
   if (latencyAgentMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); return json(await deleteLatencyAgent(pathParam(latencyAgentMatch[1]), env), 200, env); }
 
-  const extensionMatch = path.match(/^\/api\/extensions\/([^/]+)$/);
-  if (extensionMatch && m === 'PATCH') { await withAdmin(request, env); return json(await updateExtension(pathParam(extensionMatch[1]), request, env), 200, env, { 'cache-control': 'no-store' }); }
-  if (extensionMatch && m === 'DELETE') { await withAdmin(request, env); return json(await deleteExtension(pathParam(extensionMatch[1]), env), 200, env, { 'cache-control': 'no-store' }); }
-
-  const managedExtensionMatch = path.match(/^\/api\/(themes|plugins)\/([^/]+)$/);
-  if (managedExtensionMatch) {
-    await withAdmin(request, env);
-    const expectedType = managedExtensionMatch[1] === 'themes' ? 'theme' : 'plugin';
-    const extensionId = pathParam(managedExtensionMatch[2]);
-    if (m === 'PATCH') return json(await updateExtension(extensionId, request, env, expectedType), 200, env, { 'cache-control': 'no-store' });
-    if (m === 'DELETE') return json(await deleteExtension(extensionId, env, expectedType), 200, env, { 'cache-control': 'no-store' });
-  }
+  const adminTaskMatch = path.match(/^\/api\/agent-tasks\/([^/]+)$/);
+  if (adminTaskMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); return json(await cancelAgentTask(env, pathParam(adminTaskMatch[1])), 200, env, { 'cache-control': 'no-store' }); }
 
   return null;
 }

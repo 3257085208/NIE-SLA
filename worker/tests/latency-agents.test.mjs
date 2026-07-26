@@ -31,12 +31,12 @@ const targets = await getLatencyAgentTargets(env);
 assert.deepEqual(targets.targets.map(target => target.id), ['public-vps']);
 assert.deepEqual(await getLatencyAgentUpdatePolicy(env), {
   ok: true,
-  auto_update: false,
+  auto_update: true,
   check_interval_sec: 3600,
   script_version: 4,
 });
-database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES ('agent_auto_update', 'true', ?)`).run(now);
-assert.equal((await getLatencyAgentUpdatePolicy(env)).auto_update, true);
+database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES ('agent_auto_update', 'false', ?)`).run(now);
+assert.equal((await getLatencyAgentUpdatePolicy(env)).auto_update, false);
 
 const created = await createLatencyAgent(jsonRequest({ name: '东京 IIJ' }), env);
 assert.equal(created.ok, true);

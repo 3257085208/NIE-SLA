@@ -47,7 +47,7 @@
 | `PUBLIC_AGENT_API_BASE` | Agent 上报 API Base |
 | `AGENT_LATEST_VERSION` | Worker 返回的最新版本，例如 `v1.0.14` |
 | `NSTATUS_SHA256SUMS_SHA256` | 发布 manifest 自身 SHA-256 |
-| `AGENT_AUTO_UPDATE_DEFAULT` | 后台无设置时默认策略 |
+| `AGENT_AUTO_UPDATE_DEFAULT` | 后台无设置时默认策略，默认 `true`；用户明确关闭后以 D1 设置为准 |
 | `AGENT_UPDATE_CHECK_SEC` | Agent 策略检查建议间隔 |
 | `AGENT_PING_SEC` | 安装命令默认 Ping 间隔 |
 

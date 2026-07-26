@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./admin.css?v=20260726-location-catalog2" />
+    <link rel="stylesheet" href="./admin.css?v=20260726-beta-actions1" />
   </head>
   <body>
     <div class="login-bg" id="loginPage">
@@ -80,8 +80,6 @@
             ><a href="#" data-p="targets">探针</a
             ><a href="#" data-p="latency">Latency</a
             ><a href="#" data-p="pings">Ping</a
-            ><a href="#" data-p="themes">主题</a
-            ><a href="#" data-p="plugins">插件</a
             ><a href="#" data-p="settings">设置</a>
           </div>
           <div class="right">
@@ -156,36 +154,6 @@
           </div>
           <div id="pTable"><div class="loading">加载中...</div></div>
         </section>
-        <section class="page" id="pg-themes">
-          <div class="top-actions">
-            <div class="page-intro">
-              <span class="page-kicker">THEMES / 05</span>
-              <h2>主题</h2>
-              <p>安装 CSS 主题或拥有完整布局自由度的交互画布主题。</p>
-            </div>
-            <div class="extension-upload-actions">
-              <input id="themeZip" type="file" accept=".zip,application/zip" hidden />
-              <button class="btn btn-primary" id="uploadThemeBtn">上传主题 ZIP</button>
-            </div>
-          </div>
-          <div class="extension-security-note">CSS 主题只调整主页面样式；交互画布主题在隔离 iframe 中运行，可自行布局并读取脱敏只读数据，但不能访问后台 Token、主页面 DOM 或任意联网。</div>
-          <div id="themeTable"><div class="loading">加载中...</div></div>
-        </section>
-        <section class="page" id="pg-plugins">
-          <div class="top-actions">
-            <div class="page-intro">
-              <span class="page-kicker">PLUGINS / 06</span>
-              <h2>插件</h2>
-              <p>安装并管理通过只读状态接口扩展前台内容的插件包。</p>
-            </div>
-            <div class="extension-upload-actions">
-              <input id="pluginZip" type="file" accept=".zip,application/zip" hidden />
-              <button class="btn btn-primary" id="uploadPluginBtn">上传插件 ZIP</button>
-            </div>
-          </div>
-          <div class="extension-security-note">插件运行在隔离 iframe 中，只能读取脱敏公开状态，不能访问主页面 DOM、管理 Token 或发起网络请求。</div>
-          <div id="pluginTable"><div class="loading">加载中...</div></div>
-        </section>
         <section class="page" id="pg-settings">
           <div class="page-intro">
             <span class="page-kicker">SYSTEM / 07</span>
@@ -207,8 +175,8 @@
             <div class="settings-columns">
               <div class="settings-column">
                 <div class="card">
-                  <h3>前端样式</h3>
-                  <div id="sTheme">加载中...</div>
+                  <h3>自动地理位置</h3>
+                  <div id="sGeoIp">加载中...</div>
                 </div>
                 <div class="card">
                   <h3>Agent 自动更新</h3>
@@ -239,6 +207,11 @@
                   <div id="sAdminPath">加载中...</div>
                 </div>
                 <div class="card">
+                  <h3>备份与恢复</h3>
+                  <div id="sBackup">加载中...</div>
+                  <input id="restoreBackupFile" type="file" accept="application/json,.json" hidden>
+                </div>
+                <div class="card">
                   <h3>归档</h3>
                   <p class="hint">手动触发昨日数据归档。</p>
                   <button class="btn btn-blue" id="archiveBtn">立即归档</button>
@@ -264,7 +237,7 @@
 
     <script
       type="module"
-      src="./js/admin.js?v=20260726-location-catalog2"
+      src="./js/admin.js?v=20260726-beta-actions1"
     ></script>
   </body>
 </html>

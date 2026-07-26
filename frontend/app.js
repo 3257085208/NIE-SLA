@@ -1,13 +1,9 @@
 import { escapeAttr, escapeHtml } from './js/shared/html.js';
 import {
   billingCycleSuffix,
-  daysUntil,
-  estimateMonthlyCny,
-  estimateRemainingCny,
   formatDateOnly,
   isLifetimeBilling,
   normalizeBillingCycle,
-  targetExpiryValueHtml,
 } from './js/shared/billing.js';
 import {
   cssEscape,
@@ -18,7 +14,6 @@ import {
   fmtSizeMB,
   fmtTime,
   formatDuration,
-  formatGb,
   formatLocationLabel,
   formatMachineUptime,
   minMax,
@@ -30,7 +25,6 @@ import {
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
 import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260725-machine-types1';
 import { canShowTemperature, hasTemperatureData } from './js/shared/hardware.js';
-import { extensionBaseTheme, initializeFrontendExtensions, publishExtensionStatus } from './js/extensions.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
   buildLinePoints,
@@ -43,37 +37,12 @@ import {
   normalizeChartRows,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import {
-  mountCardThemeDetailChecksPanel,
-  cardThemeDetailPageHtml,
-} from './js/themes/card-detail.js';
-import {
-  cardThemeAvatarHtml,
-  cardThemeMetaLine,
-  cardThemeFlagHtml,
-  cardThemeOsBadgeHtml,
-  cardThemeStatusDotClass,
-  cardThemeTopbarToolsHtml,
-} from './js/themes/card-theme.js?v=20260721-flag-harmony';
 import { buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 
 const $ = (sel) => document.querySelector(sel);
-const FRONTEND_THEME_KEY = 'nstatus.frontendTheme';
 
 requestAnimationFrame(() => document.body.classList.add('is-loaded'));
-
-function initialFrontendTheme() {
-  const bodyTheme = document.body?.dataset.frontendTheme;
-  if (bodyTheme === 'classic') return bodyTheme;
-
-  try {
-    const savedTheme = localStorage.getItem(FRONTEND_THEME_KEY);
-    if (savedTheme === 'classic') return savedTheme;
-  } catch (_) {}
-
-  return 'classic';
-}
 
 const state = {
   apiBase: window.NSTATUS_API_BASE || '',
@@ -104,11 +73,7 @@ const state = {
   externalLatencySources: [],
   metricsCache: new Map(),
   pingsCache: new Map(),
-  frontendTheme: initialFrontendTheme(),
-  cardRegion: localStorage.getItem('nstatus.cardRegion') || 'all',
   groupByMode: localStorage.getItem('nstatus.groupByMode') || 'group',
-  cardDetailId: new URLSearchParams(window.location.search).get('target') || '',
-  searchInTopbar: false,
   statusRequestSeq: 0,
   statusController: null,
   lastGroupsRenderKey: '',
@@ -268,9 +233,6 @@ window.addEventListener('nstatus:chartjs-ready', () => {
     if (state.selectedId) updateChartForCurrentRange();
   }
 });
-initializeFrontendExtensions().then(() => {
-  if (state.data) render(state.data);
-});
 loadStatus();
 setInterval(loadStatus, 60_000);
 
@@ -320,8 +282,6 @@ async function loadStatus() {
 }
 
 function render(data) {
-  applyFrontendTheme(data);
-
   applyAppearance(data?.frontend?.appearance || { site_name: data.name });
 
   const targets = data.targets || [];
@@ -370,10 +330,8 @@ function render(data) {
     ].join('');
   }
 
-  renderCardThemeExtras(data);
   renderIncidentLog(data);
   renderGroupsIfChanged(data);
-  publishExtensionStatus(data);
 }
 
 function renderGroupsIfChanged(data) {
@@ -385,10 +343,7 @@ function renderGroupsIfChanged(data) {
 
 function statusGroupsRenderKey(data) {
   return JSON.stringify({
-    theme: state.frontendTheme,
     groupByMode: state.groupByMode,
-    cardRegion: state.cardRegion,
-    cardDetailId: state.cardDetailId,
     filter: state.filteredText,
     // Relative time labels only need periodic refresh when status data is unchanged.
     relativeBucket: Math.floor(Date.now() / 300000),
@@ -397,17 +352,6 @@ function statusGroupsRenderKey(data) {
     targets: data?.targets || [],
     summaries: data?.summaries || [],
   });
-}
-
-function applyFrontendTheme(data) {
-  const raw = extensionBaseTheme() || 'classic';
-  const theme = raw === 'cards' ? 'cards' : 'classic';
-  state.frontendTheme = theme;
-  document.body.dataset.frontendTheme = theme;
-  try {
-    localStorage.setItem(FRONTEND_THEME_KEY, theme);
-  } catch (_) {}
-  syncCardTopbar(theme === 'cards');
 }
 
 function appearanceText(template, count = 0, value = '') {
@@ -449,12 +393,6 @@ function applyAppearance(raw) {
       subtitle.textContent = state.appearance.site_subtitle;
       subtitle.hidden = false;
     } else if (subtitle) subtitle.hidden = true;
-    const avatar = brand.querySelector('.brand-avatar');
-    if (avatar) {
-      avatar.innerHTML = state.appearance.brand_avatar_url
-        ? `<img src="${escapeAttr(state.appearance.brand_avatar_url)}" alt="">`
-        : cardThemeAvatarHtml();
-    }
   }
   const right = document.querySelector('.topbar-cf');
   if (right) {
@@ -480,7 +418,7 @@ function applyAppearance(raw) {
   if (els.checksPanel) els.checksPanel.hidden = !state.appearance.show_checks;
   const footerRoot = document.querySelector('.footer');
   if (footerRoot) footerRoot.hidden = !state.appearance.show_footer;
-  if (els.serviceSearch) els.serviceSearch.placeholder = state.frontendTheme === 'cards' ? state.appearance.cards_search_placeholder : state.appearance.search_placeholder;
+  if (els.serviceSearch) els.serviceSearch.placeholder = state.appearance.search_placeholder;
   const incidentTitle = document.querySelector('#incidentToggle > span');
   if (incidentTitle) incidentTitle.textContent = state.appearance.incident_title;
   const checksTitle = document.querySelector('.checks-head h2');
@@ -496,164 +434,6 @@ function applyAppearance(raw) {
   }
 }
 
-function syncCardTopbar(enabled) {
-  const topbarInner = document.querySelector('.topbar-inner');
-  const brand = document.querySelector('.brand');
-  const cloudflare = topbarInner?.querySelector('.topbar-cf');
-  const main = document.querySelector('main.main');
-  const searchRow = document.querySelector('.search-row');
-  if (!topbarInner || !brand || !main || !searchRow) return;
-
-  let avatar = brand.querySelector('.brand-avatar');
-  let tools = topbarInner.querySelector('.card-top-tools');
-
-  if (!enabled) {
-    if (state.searchInTopbar) {
-      const before = document.getElementById('incidentLogPanel') || document.getElementById('groups');
-      main.insertBefore(searchRow, before);
-      state.searchInTopbar = false;
-    }
-    avatar?.remove();
-    tools?.remove();
-    if (els.serviceSearch) els.serviceSearch.placeholder = state.appearance.search_placeholder;
-    return;
-  }
-
-  if (!avatar) {
-    avatar = document.createElement('span');
-    avatar.className = 'brand-avatar';
-    avatar.setAttribute('aria-hidden', 'true');
-    avatar.innerHTML = state.appearance.brand_avatar_url
-      ? `<img src="${escapeAttr(state.appearance.brand_avatar_url)}" alt="">`
-      : cardThemeAvatarHtml();
-    brand.insertBefore(avatar, brand.firstChild);
-  }
-
-  if (!tools) {
-    tools = document.createElement('div');
-    tools.className = 'card-top-tools';
-    tools.innerHTML = cardThemeTopbarToolsHtml();
-  }
-
-  if (!state.searchInTopbar) {
-    topbarInner.appendChild(searchRow);
-    state.searchInTopbar = true;
-  }
-  if (!tools.parentNode) topbarInner.appendChild(tools);
-  if (cloudflare) topbarInner.appendChild(cloudflare);
-  if (els.serviceSearch) els.serviceSearch.placeholder = state.appearance.cards_search_placeholder;
-}
-
-function renderCardThemeExtras(data) {
-  const main = document.querySelector('main.main');
-  if (!main) return;
-
-  let filter = document.getElementById('cardRegionBar');
-  let sidebar = document.getElementById('cardSidebar');
-
-  if (!filter) {
-    filter = document.createElement('section');
-    filter.id = 'cardRegionBar';
-    filter.className = 'card-region-bar';
-    main.insertBefore(filter, els.incidentLogPanel || els.groups || null);
-  }
-
-  if (!sidebar) {
-    sidebar = document.createElement('aside');
-    sidebar.id = 'cardSidebar';
-    sidebar.className = 'card-sidebar';
-    main.insertBefore(sidebar, filter);
-  }
-
-  const enabled = state.frontendTheme === 'cards';
-  filter.hidden = !enabled || !state.appearance.show_region_filter;
-  sidebar.hidden = !enabled || !state.appearance.show_card_sidebar;
-  if (!enabled) return;
-
-  const targets = data.targets || [];
-  const regions = buildCardRegionBuckets(targets);
-  if (state.cardRegion !== 'all' && !regions.some(r => r.code === state.cardRegion)) {
-    state.cardRegion = 'all';
-    localStorage.setItem('nstatus.cardRegion', state.cardRegion);
-  }
-
-  filter.innerHTML = [
-    cardRegionButton({ code: 'all', flag: '', label: '全部', count: targets.length }),
-    ...regions.map(cardRegionButton),
-  ].join('');
-
-  filter.querySelectorAll('button[data-region]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.cardRegion = button.dataset.region || 'all';
-      localStorage.setItem('nstatus.cardRegion', state.cardRegion);
-      renderCardThemeExtras(state.data || data);
-      renderGroups(state.data || data);
-    });
-  });
-
-  sidebar.innerHTML = renderCardSidebar(data);
-}
-
-function cardRegionButton(region) {
-  const active = state.cardRegion === region.code;
-  return `
-    <button type="button" class="card-region-pill ${active ? 'active' : ''}" data-region="${escapeAttr(region.code)}">
-      ${cardThemeFlagHtml(region.code)}
-      <strong>${escapeHtml(region.label)}</strong>
-      <em>${Number(region.count || 0)}</em>
-    </button>
-  `;
-}
-
-function buildCardRegionBuckets(targets) {
-  const byCode = new Map();
-  for (const target of targets || []) {
-    const code = targetRegionCode(target);
-    if (!code || code === 'OTHER') continue;
-    const existing = byCode.get(code) || { code, count: 0, ...regionMeta(code) };
-    existing.count += 1;
-    byCode.set(code, existing);
-  }
-  const order = new Map(['HK', 'US', 'DE', 'JP', 'CN', 'SG'].map((code, index) => [code, index]));
-  return [...byCode.values()].sort((a, b) => (order.get(a.code) ?? 99) - (order.get(b.code) ?? 99) || a.label.localeCompare(b.label));
-}
-
-function targetRegionCode(t) {
-  const locationCode = normalizeCountryCode(t.location);
-  if (locationCode) return locationCode;
-  const text = [
-    t.location,
-    t.region_label,
-    t.probe_region,
-    t.group_name,
-    t.name,
-    t.target_host,
-    t.url,
-  ].filter(Boolean).join(' ').toLowerCase();
-
-  if (/(hong ?kong|\bhk\b|香港|hytron|cn\.hk)/i.test(text)) return 'HK';
-  if (/(singapore|\bsg\b|新加坡)/i.test(text)) return 'SG';
-  if (/(japan|tokyo|osaka|\bjp\b|日本|东京|大阪)/i.test(text)) return 'JP';
-  if (/(united states|usa|america|los angeles|san jose|\bus\b|美国|洛杉矶|圣何塞)/i.test(text)) return 'US';
-  if (/(germany|frankfurt|\bde\b|德国|法兰克福)/i.test(text)) return 'DE';
-  if (/(china|mainland|\bcn\b|中国|大陆|aliyun|tencent|huawei|阿里云|腾讯|华为)/i.test(text)) return 'CN';
-  return 'OTHER';
-}
-
-function regionMeta(code) {
-  const country = countryByCode(code);
-  if (country) return { flag: country.flag, label: country.name };
-  const map = {
-    HK: { flag: '🇭🇰', label: 'HK' },
-    US: { flag: '🇺🇸', label: 'US' },
-    DE: { flag: '🇩🇪', label: 'DE' },
-    JP: { flag: '🇯🇵', label: 'JP' },
-    CN: { flag: '🇨🇳', label: 'CN' },
-    SG: { flag: '🇸🇬', label: 'SG' },
-  };
-  return map[code] || { flag: '', label: code };
-}
-
 function targetCityName(t = {}) {
   return normalizeCityName(t?.city || t?.location_city || '');
 }
@@ -662,49 +442,6 @@ function targetLocationLabel(t = {}) {
   const country = countryByCode(t?.location);
   const countryName = country?.name || String(t?.location || '').trim();
   return formatLocationLabel(countryName, targetCityName(t), t?.location || '');
-}
-
-function renderCardSidebar(data) {
-  const targets = data.targets || [];
-  const checked = targets.filter(targetHasStatus);
-  const online = checked.filter(t => targetIsUp(t) && !isTargetStale(t)).length;
-  const expiring = targets.filter(t => {
-    const days = daysUntil(t.expires_at);
-    return days != null && days >= 0 && days <= 30;
-  });
-  const near = expiring.slice(0, 3);
-  const monthlyCny = estimateMonthlyCny(targets);
-  const remainingCny = estimateRemainingCny(targets);
-
-  return `
-    <div class="card-side-box value-box">
-      <div class="side-title">
-        <span class="side-icon">♧</span>
-        <div><strong>剩余价值统计</strong><small>CNY</small></div>
-      </div>
-      <div class="value-panel">
-        <span>折算月成本</span><strong>¥${monthlyCny.toFixed(2)}</strong>
-        <span>剩余价值</span><strong>¥${remainingCny.toFixed(2)}</strong>
-      </div>
-    </div>
-    <div class="card-side-box compact">
-      <div class="side-title">
-        <span class="side-icon">▤</span>
-        <div><strong>在线 / 总节点</strong><b>${online} / ${targets.length}</b><small>当前可见节点</small></div>
-      </div>
-    </div>
-    <div class="card-side-box compact">
-      <div class="side-title">
-        <span class="side-icon">⚠</span>
-        <div><strong>30 天内到期</strong><b>${expiring.length}</b><small>建议优先关注</small></div>
-      </div>
-    </div>
-    <div class="card-side-box expiry-list">
-      <strong>临近到期</strong>
-      <small>显示最需要关注的几台</small>
-      ${near.length ? near.map(t => `<p><span>${escapeHtml(t.name)}</span><em>${daysUntil(t.expires_at)} 天</em></p>`).join('') : '<p class="empty-expiry">暂无已设置到期时间的节点</p>'}
-    </div>
-  `;
 }
 
 function renderIncidentLog(data) {
@@ -873,55 +610,17 @@ function renderGroups(data) {
   const days = data.days || [];
   const allTargets = data.targets || [];
   const text = state.filteredText;
-  const isCardDetail = state.frontendTheme === 'cards' && state.cardDetailId;
-  document.body.classList.toggle('card-detail-mode', Boolean(isCardDetail));
-
-  if (isCardDetail) {
-    const detailTarget = allTargets.find(t => t.id === state.cardDetailId);
-    if (!detailTarget) {
-      els.groups.innerHTML = `
-        <section class="node-detail-page card-soft">
-          <button type="button" class="node-detail-back" data-card-back>← 返回节点列表</button>
-          <div class="empty">未找到这个节点。</div>
-        </section>
-      `;
-      document.querySelector('[data-card-back]')?.addEventListener('click', closeCardDetail);
-      return;
-    }
-
-    els.groups.innerHTML = renderCardDetailPage(detailTarget, days, summaries);
-    document.querySelector('[data-card-back]')?.addEventListener('click', closeCardDetail);
-    document.querySelector('.nq-report-btn')?.addEventListener('click', (event) => {
-      event.stopPropagation();
-      openNodeQualityReport(event.currentTarget.dataset.nqTarget, event.currentTarget.dataset.nqName || detailTarget.name);
-    });
-    const detailCard = document.querySelector('.node-detail-summary .service');
-    selectService(detailTarget.id, detailTarget.name, detailCard, { detail: true }).catch(() => {});
-    return;
-  }
-
-  let targets = text
-    ? allTargets.filter(t => targetSearchText(t).includes(text))
+  const targets = text
+    ? allTargets.filter(target => targetSearchText(target).includes(text))
     : allTargets;
-
-  if (state.frontendTheme === 'cards' && state.cardRegion !== 'all') {
-    targets = targets.filter(t => targetRegionCode(t) === state.cardRegion);
-  }
 
   if (!targets.length) {
     els.groups.innerHTML = `<div class="empty">${escapeHtml(state.appearance.no_search_results)}</div>`;
-
-    if (els.inlineChartPanel) {
-      els.inlineChartPanel.hidden = true;
-    }
-
+    if (els.inlineChartPanel) els.inlineChartPanel.hidden = true;
     return;
   }
 
-  const groups = state.frontendTheme === 'cards'
-    ? { 节点: targets }
-    : groupByDimension(targets, state.groupByMode || 'group');
-
+  const groups = groupByDimension(targets, state.groupByMode || 'group');
   els.groups.innerHTML = Object.entries(groups)
     .map(([name, list], index) => renderGroup(name, list, days, summaries, index))
     .join('');
@@ -930,34 +629,25 @@ function renderGroups(data) {
     head.addEventListener('click', () => {
       const group = head.closest('.group');
       const toggle = group.querySelector('.group-toggle');
-
       group.classList.toggle('collapsed');
-
-      if (toggle) {
-        toggle.textContent = group.classList.contains('collapsed') ? '+' : '−';
-      }
+      if (toggle) toggle.textContent = group.classList.contains('collapsed') ? '+' : '−';
     });
   });
 
-document.querySelectorAll('.service').forEach((el) => {
-    el.addEventListener('click', (event) => {
+  document.querySelectorAll('.service').forEach((element) => {
+    element.addEventListener('click', (event) => {
       event.stopPropagation();
       const nqButton = event.target.closest('.nq-report-btn');
       if (nqButton) {
-        openNodeQualityReport(nqButton.dataset.nqTarget, nqButton.dataset.nqName || el.dataset.name);
+        openNodeQualityReport(nqButton.dataset.nqTarget, nqButton.dataset.nqName || element.dataset.name);
         return;
       }
-      if (state.frontendTheme === 'cards') {
-        openCardDetail(el.dataset.id);
-        return;
-      }
-      selectService(el.dataset.id, el.dataset.name, el);
+      selectService(element.dataset.id, element.dataset.name, element);
     });
   });
 
-  if (state.frontendTheme !== 'cards' && state.selectedId) {
+  if (state.selectedId) {
     const selected = document.querySelector(`.service[data-id="${cssEscape(state.selectedId)}"]`);
-
     if (selected) {
       selected.classList.add('selected');
       attachInlineChart(selected);
@@ -966,7 +656,6 @@ document.querySelectorAll('.service').forEach((el) => {
     }
   }
 }
-
 function renderGroup(name, list, days, summaries, index = 0) {
   const checked = list.filter(targetHasStatus);
   const down = checked.filter(t => !targetIsUp(t)).length;
@@ -1011,10 +700,6 @@ function renderGroup(name, list, days, summaries, index = 0) {
 }
 
 function renderService(t, days, summaries) {
-  if (state.frontendTheme === 'cards') {
-    return renderServiceCard(t, days, summaries);
-  }
-
   const checked = targetHasStatus(t);
   const isUp = targetIsUp(t);
   const stale = checked && isUp && isTargetStale(t);
@@ -1036,10 +721,8 @@ function renderService(t, days, summaries) {
   if (t.provider) metaBadges += `<span class="meta-badge meta-provider">${escapeHtml(t.provider)}</span>`;
   if (t.line_type) metaBadges += `<span class="meta-badge meta-line">${escapeHtml(t.line_type)}</span>`;
   if (t.location || targetCityName(t)) {
-    const country = countryByCode(t.location);
-    const locationFlag = country ? cardThemeFlagHtml(country.code) : '';
     const locationText = targetLocationLabel(t);
-    if (locationText) metaBadges += `<span class="meta-badge meta-loc">${locationFlag}${escapeHtml(locationText)}</span>`;
+    if (locationText) metaBadges += `<span class="meta-badge meta-loc">${escapeHtml(locationText)}</span>`;
   }
   if (t.machine_uptime_sec) metaBadges += `<span class="meta-badge meta-uptime">运行时长 ${escapeHtml(formatMachineUptime(t.machine_uptime_sec))}</span>`;
   if (t.tags) {
@@ -1064,6 +747,7 @@ function renderService(t, days, summaries) {
       : `${cur} ${t.price}${cycle}`;
     metaBadges += `<span class="meta-badge meta-price">${escapeHtml(priceText)}</span>`;
   }
+  const unlockStrip = unlockCompactHtml(t.unlock);
 
   return `
     <div class="service ${statusClass}${selectedClass}${hasLatency ? '' : ' no-latency'}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(t.name)}">
@@ -1074,6 +758,7 @@ function renderService(t, days, summaries) {
         </span>
         ${metaHtml ? `<span class="service-target">${metaHtml}</span>` : ''}
         ${metaBadges ? `<span class="service-meta">${metaBadges}</span>` : ''}
+        ${unlockStrip}
       </div>
       <div class="service-status">${status}</div>
       ${hasLatency ? `<div class="service-latency">${latencyHtml}</div>` : ''}
@@ -1083,72 +768,6 @@ function renderService(t, days, summaries) {
           ${renderBars(t.id, days, summaries)}
         </div>
         ${trafficProgress}
-      </div>
-    </div>
-  `;
-}
-
-function renderServiceCard(t, days, summaries) {
-  const checked = targetHasStatus(t);
-  const isUp = targetIsUp(t);
-  const stale = checked && isUp && isTargetStale(t);
-  const status = checked ? (isUp ? (stale ? '延迟' : '在线') : '离线') : '待定';
-  const statusClass = checked ? (isUp ? (stale ? 'degraded' : '') : 'down') : 'unknown';
-  const selectedClass = t.id === state.selectedId ? ' selected' : '';
-  const m = t.agent_metrics || {};
-  const info = m.vps_info || {};
-  const region = targetRegionCode(t);
-  const regionFlag = cardThemeFlagHtml(region, 'node-region-flag');
-  const osLine = cardOsLine(info);
-  const locationLabel = targetLocationLabel(t);
-  const titleMeta = cardThemeMetaLine([locationLabel || (region !== 'OTHER' ? regionMeta(region).label : regionShort(t))]);
-  const age = m.updated_at || t.last_metrics_at ? timeAgoSec(Math.floor(new Date(m.updated_at || t.last_metrics_at).getTime() / 1000)) : '-';
-  const latencySamples = cardLatencySamples(t, days, summaries);
-  const hasLatency = targetHasPublicLatency(t);
-  const latencyRows = cardLatencySourceRows(t, latencySamples);
-  const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'node-traffic-progress');
-  const slaBars = trafficProgress ? 20 : 30;
-  const nqButton = targetHasNodeQuality(t)
-    ? `<button type="button" class="nq-report-btn" data-nq-target="${escapeAttr(t.id)}" data-nq-name="${escapeAttr(t.name)}" title="查看 NodeQuality 报告">NQ</button>`
-    : '';
-
-  return `
-    <div class="service node-card card-soft node-card-hover ${statusClass}${selectedClass}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(t.name)}">
-      <div class="node-card-head">
-        <span class="node-dot ${cardThemeStatusDotClass(statusClass)}"></span>
-        <span class="node-logo">${cardThemeOsBadgeHtml(info)}</span>
-        <div class="service-name">
-          <span class="service-title-line">
-            <span class="service-title-text">${escapeHtml(t.name)}</span>
-            ${nqButton}
-          </span>
-          ${titleMeta ? `<span class="service-target">${escapeHtml(titleMeta)}</span>` : ''}
-        </div>
-        <span class="node-flag">${regionFlag}</span>
-        <span class="service-status node-status-text">${escapeHtml(status)}</span>
-      </div>
-      <div class="node-os-line">${escapeHtml(osLine)}</div>
-      <div class="node-resource-grid">
-        ${cardResourceMetric('CPU', Number(m.cpu_percent || 0), cardCpuSub(info), 'cpu')}
-        ${cardResourceMetric('内存', Number(m.memory?.percent || 0), cardMemorySub(m.memory), 'mem')}
-        ${cardResourceMetric('磁盘', Number(m.disk?.percent || 0), cardDiskSub(m.disk), 'disk')}
-      </div>
-      ${hasLatency && state.appearance.show_card_latency ? `<div class="node-latency-panel">
-        <strong>⌁ ${escapeHtml(state.appearance.latency_title)}</strong>
-        <small>${escapeHtml(state.appearance.latency_subtitle)}</small>
-        ${latencyRows}
-      </div>` : ''}
-      <div class="node-sla-row${trafficProgress ? ' has-traffic' : ''}">
-        <div class="node-uptime-strip" style="--sla-bars:${slaBars}" title="${Number(t.no_public_ip || 0) === 1 ? 'Agent 在线记录' : `最近 ${slaBars} 天可用率`}">
-          ${renderBars(t.id, days, summaries, slaBars)}
-        </div>
-        ${trafficProgress}
-      </div>
-      <div class="node-card-foot">
-        <span>↓ ${escapeHtml(fmtBytesPerSec(m.net?.rx_bytes_sec || 0))}</span>
-        <span>↑ ${escapeHtml(fmtBytesPerSec(m.net?.tx_bytes_sec || 0))}</span>
-        <span>◷ ${escapeHtml(formatMachineUptime(m.uptime_sec || t.machine_uptime_sec || 0))}</span>
-        <em>${escapeHtml(age)}</em>
       </div>
     </div>
   `;
@@ -1211,65 +830,6 @@ if (document.addEventListener) {
   });
 }
 
-function cardResourceMetric(label, value, sub, tone) {
-  const pct = Number.isFinite(Number(value)) ? clampNumber(Number(value), 0, 100) : 0;
-  const radius = 44;
-  const strokeWidth = 9;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (circumference * pct / 100);
-  const color = metricStrokeColor(pct, tone);
-  const glow = metricGlowColor(color);
-  return `
-    <div class="node-resource-ring ${escapeAttr(tone)}" title="${escapeAttr(sub || '')}">
-      <div class="resource-ring" style="--metric-glow:${escapeAttr(glow)};--metric-color:${escapeAttr(color)};">
-        <svg viewBox="0 0 100 100" aria-label="${escapeAttr(`${label} ${formatMetricPct(pct)}`)}">
-          <circle class="ring-track" cx="50" cy="50" r="${radius}" fill="none" stroke-width="${strokeWidth}"></circle>
-          <circle class="ring-value" cx="50" cy="50" r="${radius}" fill="none" stroke-width="${strokeWidth}" stroke-dasharray="${circumference.toFixed(3)}" stroke-dashoffset="${offset.toFixed(3)}"></circle>
-        </svg>
-        <span class="ring-core">
-          <strong>${escapeHtml(formatMetricPct(pct))}</strong>
-          <em>${escapeHtml(label)}</em>
-        </span>
-      </div>
-      ${sub ? `<small>${escapeHtml(sub)}</small>` : ''}
-    </div>
-  `;
-}
-
-function renderCardDetailPage(target, days, summaries) {
-  return cardThemeDetailPageHtml(renderServiceCard(target, days, summaries), targetExpiryValueHtml(target));
-}
-
-function openCardDetail(id) {
-  if (!id) return;
-  const url = new URL(window.location.href);
-  url.searchParams.set('target', id);
-  window.location.href = url.toString();
-}
-
-function closeCardDetail() {
-  const url = new URL(window.location.href);
-  url.searchParams.delete('target');
-  window.location.href = url.toString();
-}
-
-function formatMetricPct(value) {
-  return `${Number(value).toFixed(1)}%`;
-}
-
-function metricStrokeColor(value, tone = '') {
-  void tone;
-  if (value >= 90) return '#f56565';
-  if (value >= 70) return '#f6ad55';
-  return '#42b983';
-}
-
-function metricGlowColor(color) {
-  if (color === '#f56565') return 'rgba(245, 101, 101, 0.20)';
-  if (color === '#f6ad55') return 'rgba(246, 173, 85, 0.18)';
-  return 'rgba(66, 185, 131, 0.18)';
-}
-
 function targetHasPublicLatency(target) {
   return Number(target?.no_public_ip || 0) !== 1;
 }
@@ -1297,138 +857,12 @@ function serviceLatencySourcesHtml(target) {
   }).join('');
 }
 
-function cardLatencySourceRows(target, cloudflareSamples = []) {
-  return latencySourcesForTarget(target).map(source => cardLatencyRow(
-    source.name,
-    source.ok ? source.latency_ms : null,
-    source.id === 'cloudflare' ? cloudflareSamples : [],
-  )).join('');
-}
-
-function cardLatencyRow(label, rawLatency, samples = []) {
-  const latency = rawLatency == null || !Number.isFinite(Number(rawLatency)) ? null : Math.max(0, Number(rawLatency));
-  const tone = latency == null ? '' : latency < 80 ? 'good' : latency < 180 ? 'warn' : 'bad';
-  return `
-    <div class="lat-row">
-      <span title="${escapeAttr(label)}">${escapeHtml(label)}</span>
-      <div class="lat-bars ${tone}">${renderLatencyDots(samples)}</div>
-      <strong>${latency == null ? '-' : Math.round(latency) + 'ms'}</strong>
-    </div>
-  `;
-}
-
-function cardPingRows(target) {
-  const pingTargets = Array.isArray(state.data?.ping_targets) ? state.data.ping_targets : [];
-  const pings = Array.isArray(target?.agent_metrics?.pings) ? target.agent_metrics.pings : [];
-  if (!pingTargets.length || !pings.length) return '';
-  return pingTargets.map((pingTarget, index) => {
-    const targetId = String(pingTarget.id || '');
-    const samples = pings
-      .filter(p => String(p.target_id || '') === targetId)
-      .sort((a, b) => Number(a.ts || 0) - Number(b.ts || 0))
-      .slice(-30);
-    const values = samples.map(p => Number(p.ok) === 1 && p.latency_ms != null ? Number(p.latency_ms) : null);
-    const last = [...samples].reverse().find(p => p.latency_ms != null || Number(p.ok) === 0);
-    const latency = last && Number(last.ok) === 1 && last.latency_ms != null ? Math.round(Number(last.latency_ms)) : null;
-    const loss = samples.length ? Math.round(samples.filter(p => Number(p.ok) !== 1).length / samples.length * 100) : null;
-    const color = pingTargetColor(pingTarget.name || targetId || String(index));
-    return `
-      <div class="node-ping-row" style="--ping-color:${escapeAttr(color)}">
-        <span class="node-ping-name"><i></i>${escapeHtml(pingTarget.name || targetId || '-')}</span>
-        <div class="lat-bars node-ping-bars">${renderLatencyDots(values)}</div>
-        <strong>${latency == null ? '-' : latency + 'ms'}${loss == null ? '' : `<em>${loss}%</em>`}</strong>
-      </div>
-    `;
-  }).join('');
-}
-
 function pingTargetColor(seed) {
   const palette = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6'];
   const text = String(seed || '');
   let hash = 0;
   for (let i = 0; i < text.length; i += 1) hash = ((hash * 31) + text.charCodeAt(i)) >>> 0;
   return palette[hash % palette.length];
-}
-
-function cardLatencySamples(target, days = [], summaries = new Map()) {
-  const sourceDays = days.length ? days : Object.keys(target.daily || {}).sort();
-  return sourceDays.slice(-30).map((day) => {
-    const item = target.daily?.[day] || summaries.get(`${target.id}:${day}`);
-    if (!item || !Number(item.total)) return undefined;
-    if (Number(item.ok_count || 0) <= 0) return null;
-    const avg = Number(item.sum_latency_ms || 0) / Math.max(1, Number(item.ok_count || 0));
-    const fallback = Number(item.last_latency_ms);
-    const value = Number.isFinite(avg) && avg > 0 ? avg : fallback;
-    return Number.isFinite(value) ? value : undefined;
-  });
-}
-
-function renderLatencyDots(samples = []) {
-  const values = samples.slice(-30);
-  while (values.length < 30) values.unshift(undefined);
-  return values.map((value) => {
-    const color = latencyBarColor(value);
-    const height = latencyBarHeight(value);
-    const title = value === undefined ? '无数据' : value === null ? '丢包' : `${Math.round(value)}ms`;
-    return `<i style="height:${escapeAttr(height)};background-color:${escapeAttr(color)}" title="${escapeAttr(title)}"></i>`;
-  }).join('');
-}
-
-function latencyBarColor(value) {
-  if (value === undefined) return 'rgba(148, 163, 184, 0.28)';
-  if (value === null) return '#d96b6b';
-  if (value <= 50) return '#69be7b';
-  if (value <= 100) return '#a7d879';
-  if (value <= 180) return '#e8cc68';
-  if (value <= 300) return '#efa85f';
-  return '#e98686';
-}
-
-function latencyBarHeight(value) {
-  if (value === undefined) return '16%';
-  if (value === null) return '86%';
-  if (value <= 50) return '22%';
-  if (value <= 100) return '38%';
-  if (value <= 180) return '54%';
-  if (value <= 300) return '70%';
-  return '86%';
-}
-
-function cardOsLine(info) {
-  const os = info.os || 'Linux';
-  const virt = info.virtualization || '';
-  const temp = canShowTemperature(info) && info.cpu_temp_c != null ? `CPU ${Number(info.cpu_temp_c).toFixed(0)}°C` : '';
-  const gpu = info.gpu_util != null ? `GPU ${Number(info.gpu_util).toFixed(0)}%` : (info.gpu_name || '');
-  return [os, virt, temp, gpu].filter(Boolean).join(' · ');
-}
-
-function cardCpuSub(info) {
-  const cores = Number(info.cpu_cores || 0);
-  return cores ? `${cores} 核` : 'Agent';
-}
-
-function cardMemorySub(memory = {}) {
-  const used = Number(memory.used_mb || 0);
-  const total = Number(memory.total_mb || 0);
-  return total ? `${fmtSizeMB(used)} / ${fmtSizeMB(total)}` : '-';
-}
-
-function cardDiskSub(disk = {}) {
-  const used = Number(disk.used_gb || 0);
-  const total = Number(disk.total_gb || 0);
-  return total ? `${formatGb(used)} / ${formatGb(total)}` : '-';
-}
-
-function cardLoadPercent(load = {}, info = {}) {
-  const cores = Math.max(1, Number(info.cpu_cores || 1));
-  const load1 = Number(load.load1 || 0);
-  return clampNumber(load1 / cores * 100, 0, 100);
-}
-
-function cardLoadSub(load = {}, info = {}) {
-  const cores = Math.max(1, Number(info.cpu_cores || 1));
-  const load1 = Number(load.load1 || 0);
-  return `${load1.toFixed(2)} / ${cores} 核`;
 }
 
 function isTargetStale(t) {
@@ -1475,14 +909,8 @@ function renderBars(targetId, days, summaries, count = 30) {
   }).join('');
 }
 
-async function selectService(id, name, el, options = {}) {
-  const detailMode = options.detail === true;
-  if (state.frontendTheme === 'cards' && !detailMode) {
-    openCardDetail(id);
-    return;
-  }
-
-  const isSame = !detailMode && state.selectedId === id && !els.inlineChartPanel.hidden;
+async function selectService(id, name, el) {
+  const isSame = state.selectedId === id && !els.inlineChartPanel.hidden;
 
   document.querySelectorAll('.service').forEach(s => s.classList.remove('selected'));
 
@@ -1539,13 +967,7 @@ async function selectService(id, name, el, options = {}) {
   document.querySelector('.metric-range-tab[data-range="1h"]')?.classList.add('active');
 
   el?.classList.add('selected');
-  attachInlineChart(detailMode ? document.querySelector('.node-detail-chart-slot') || el : el);
-  if (detailMode) {
-    mountCardThemeDetailChecksPanel(
-      els.checksPanel,
-      document.querySelector('.node-detail-checks-slot'),
-    );
-  }
+  attachInlineChart(el);
 
   if (hasLatency) {
     await loadChecks(id, name, target, { hours: rangeHours('day') });
@@ -1784,6 +1206,7 @@ function renderVPSInfo() {
     <div class="vps-info-body" id="vpsInfoBody">
       <section class="vps-info-section"><h4>系统信息</h4>${systemItems.join('')}</section>
       <section class="vps-info-section"><h4>网络与负载</h4>${networkItems.join('')}</section>
+      ${unlockDetailSection(selectedTarget?.unlock)}
       ${temperatureItems.length ? `<section class="vps-info-section vps-temperature-section"><h4>温度传感器</h4>${temperatureItems.join('')}</section>` : ''}
     </div>
   `;
@@ -1797,6 +1220,32 @@ function renderVPSInfo() {
       toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     });
   }
+}
+
+function unlockServices(unlock) {
+  return (Array.isArray(unlock?.services) ? unlock.services : []).filter(service =>
+    service?.name && (service.status || service.region || service.method));
+}
+
+function unlockState(status) {
+  const value = String(status || '').toLowerCase();
+  if (/解锁|原生|unlocked|native|yes|ok/.test(value)) return 'good';
+  if (/失败|不支持|封锁|blocked|failed|no/.test(value)) return 'bad';
+  return 'unknown';
+}
+
+function unlockCompactHtml(unlock) {
+  const services = unlockServices(unlock);
+  if (!services.length) return '';
+  const good = services.filter(service => unlockState(service.status || service.method) === 'good').length;
+  return `<span class="unlock-summary" title="${escapeAttr(`IPv4 解锁 ${good}/${services.length} · ${unlock.source || 'IP.Check.Place'}`)}"><b>IPv4 解锁</b><span>${good}/${services.length}</span></span>`;
+}
+
+function unlockDetailSection(unlock) {
+  const services = unlockServices(unlock);
+  if (!services.length) return '';
+  const checked = unlock.checked_at ? `${timeAgoSec(Number(unlock.checked_at))}前` : '';
+  return `<section class="vps-info-section vps-unlock-section"><h4>IPv4 解锁${checked ? `<span>${escapeHtml(checked)}</span>` : ''}</h4><div class="unlock-grid">${services.map(service => `<span class="unlock-pill ${unlockState(service.status || service.method)}" title="${escapeAttr([service.status, service.region, service.method].filter(Boolean).join(' · '))}"><b>${escapeHtml(service.name)}</b><em>${escapeHtml(service.status || '-')}</em><small>${escapeHtml(service.region || service.method || '-')}</small></span>`).join('')}</div></section>`;
 }
 
 function temperatureSensorItems(info = {}) {

@@ -252,8 +252,8 @@ const latencyToken = await latencyAgentScopedToken(latencyAuthEnv, 'latency-toky
 assert.deepEqual(await requireLatencyAgentForId(agentRequest(latencyToken), latencyAuthEnv, 'latency-tokyo'), { type: 'scoped', node_id: 'latency-tokyo' });
 
 const settingsEnv = fakeD1Env();
-assert.equal((await getPublicSettings(settingsEnv)).agent_auto_update, false);
-assert.deepEqual((await getPublicSettings(settingsEnv)).themes, [{ id: 'classic', name: '原版列表' }]);
+assert.equal((await getPublicSettings(settingsEnv)).agent_auto_update, true);
+assert.equal('themes' in (await getPublicSettings(settingsEnv)), false);
 await updatePublicSettings(new Request('https://example.com', { method: 'PATCH', body: JSON.stringify({ frontend_theme: 'cards' }) }), settingsEnv);
 assert.equal((await getPublicSettings(settingsEnv)).frontend_theme, 'classic');
 assert.equal(normalizeFrontendAppearance({ site_name: ' Demo ', brand_logo_url: 'javascript:bad', accent_color: 'red' }).site_name, 'Demo');

@@ -17,7 +17,7 @@ Creating a Latency node in the admin panel only creates its database identity. T
 
 - Linux with systemd.
 - Python 3 and `curl`.
-- HTTPS access to the Pages install host and Worker API.
+- HTTPS access to the Worker site origin and API.
 - At least one enabled public TCP target with a host and port.
 
 The service does not install the Rust metrics Agent, report its own system metrics, or listen on a public port.
@@ -72,7 +72,7 @@ npx wrangler d1 execute nstatus-db --remote --command \
 
 The Agent automatic-update setting controls both the Rust telemetry Agent and external Latency Agents. Each Latency Agent authenticates with its node-scoped token and periodically reads `/api/latency-agent/update-policy`.
 
-When enabled, it downloads the current script from the HTTPS Pages install origin, enforces a size limit, compares SHA-256, compiles the candidate, atomically replaces the installed script, and restarts itself with `exec`. Update failures are logged without stopping probe cycles. Re-run the latest deployment command once on older nodes to install the update origin and required systemd write permission.
+When enabled, it downloads the current script from the HTTPS Worker site origin, enforces a size limit, compares SHA-256, compiles the candidate, atomically replaces the installed script, and restarts itself with `exec`. Update failures are logged without stopping probe cycles. Re-run the latest deployment command once on older nodes to install the update origin and required systemd write permission.
 
 ## Upgrading Old Installations
 

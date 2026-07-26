@@ -11,7 +11,6 @@ import {
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
 import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, priceBandKey } from '../js/shared/grouping.js';
-import { cardThemeFlagHtml } from '../js/themes/card-theme.js';
 import { canShowTemperature, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
 import {
   CURRENCIES,
@@ -94,10 +93,7 @@ for (const type of ['建站机', '线路机', '落地机', '中转机', '家宽�
 }
 assert.match(lineTypeOptionsHtml('落地鸡'), /value="落地鸡" selected>落地鸡（旧数据）<\/option>/);
 assert.equal(groupKeyFor({}, 'line_type'), '未设置机器类型');
-assert.match(cardThemeFlagHtml('HK'), /assets\/flags\/4x3\/hk\.svg/);
-assert.match(cardThemeFlagHtml('HK'), /width="18" height="13"/);
 assert.equal(countryFlagAsset('HK'), './assets/flags/4x3/hk.svg');
-assert.doesNotMatch(cardThemeFlagHtml('HK'), /flagcdn\.com/);
 assert.equal(isVirtualized({ virtualization: 'kvm' }), true);
 assert.equal(isVirtualized({ virtualization: 'bare-metal' }), false);
 assert.equal(canShowTemperature({ virtualization: 'docker' }), false);
