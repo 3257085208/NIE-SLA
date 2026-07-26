@@ -300,10 +300,26 @@ globalThis.fetch = async (url) => String(url).endsWith('/bin/VERSION')
   : new Response('abc  nstatus-metrics-linux-amd64\n');
 const updatePolicy = await getAgentUpdatePolicy({ ...settingsEnv, AGENT_DOWNLOAD_BASE: 'https://downloads.example' });
 assert.equal(updatePolicy.auto_update, true);
+assert.equal(updatePolicy.release_ready, true);
 assert.equal(updatePolicy.latest_version, 'v1.0.9');
 assert.match(updatePolicy.manifest_sha256, /^[a-f0-9]{64}$/);
-const sameOriginPolicy = await getAgentUpdatePolicy(settingsEnv, new Request('https://one-click.example/api/agent/update-policy?agent_id=vps-a'));
+const assetRequests = [];
+globalThis.fetch = async () => { throw new Error('same-origin Worker fetch must not be used for bound assets'); };
+const sameOriginPolicy = await getAgentUpdatePolicy({
+  ...settingsEnv,
+  ASSETS: {
+    async fetch(request) {
+      assetRequests.push(new URL(request.url).pathname);
+      return request.url.endsWith('/bin/VERSION')
+        ? new Response('v1.0.21\n')
+        : new Response('abc  nstatus-metrics-linux-amd64\n');
+    },
+  },
+}, new Request('https://one-click.example/api/agent/update-policy?agent_id=vps-a'));
 assert.equal(sameOriginPolicy.download_base, 'https://one-click.example');
+assert.equal(sameOriginPolicy.release_ready, true);
+assert.equal(sameOriginPolicy.latest_version, 'v1.0.21');
+assert.deepEqual(assetRequests.sort(), ['/bin/SHA256SUMS', '/bin/VERSION']);
 globalThis.fetch = originalFetch;
 
 const reordered = normalizeTargetOrder(['web-c', 'vps-a'], ['vps-a', 'vps-b', 'web-c']);

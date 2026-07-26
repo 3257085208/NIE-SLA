@@ -239,22 +239,30 @@ export async function updatePublicSettings(request, env) {
 
 export async function getAgentUpdatePolicy(env, request = null) {
   const settings = await getPublicSettings(env);
-  const release = await loadAgentRelease(env, request).catch(() => null);
+  const release = await loadAgentRelease(env, request).catch((err) => {
+    console.error('loadAgentRelease failed:', String(err?.message || err));
+    return null;
+  });
   return {
     ok: true,
     auto_update: settings.agent_auto_update,
     check_interval_sec: clamp(Number(env.AGENT_UPDATE_CHECK_SEC || 3600), 900, 86400),
+    release_ready: Boolean(release),
     ...(release || {}),
   };
 }
 
 export async function loadAgentRelease(env, request = null) {
   const requestOrigin = request ? new URL(request.url).origin : '';
-  const downloadBase = String(env.AGENT_DOWNLOAD_BASE || requestOrigin || 'https://status.example.com').trim().replace(/\/+$/, '');
+  const configuredDownloadBase = String(env.AGENT_DOWNLOAD_BASE || '').trim();
+  const downloadBase = String(configuredDownloadBase || requestOrigin || 'https://status.example.com').trim().replace(/\/+$/, '');
   if (!downloadBase.startsWith('https://')) throw new Error('AGENT_DOWNLOAD_BASE must use HTTPS');
+  const fetchMetadata = !configuredDownloadBase && typeof env.ASSETS?.fetch === 'function'
+    ? (url) => env.ASSETS.fetch(new Request(url))
+    : (url) => fetch(url, { cache: 'no-store' });
   const [versionResponse, manifestResponse] = await Promise.all([
-    fetch(`${downloadBase}/bin/VERSION`, { cache: 'no-store' }),
-    fetch(`${downloadBase}/bin/SHA256SUMS`, { cache: 'no-store' }),
+    fetchMetadata(`${downloadBase}/bin/VERSION`),
+    fetchMetadata(`${downloadBase}/bin/SHA256SUMS`),
   ]);
   if (!versionResponse.ok || !manifestResponse.ok) throw new Error('agent release metadata is unavailable');
   const version = String(await versionResponse.text()).trim();
