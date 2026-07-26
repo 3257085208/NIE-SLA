@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.6",
-  "agent_version": "v1.0.23",
-  "source_ref": "app-v0.24.0-beta.6",
-  "published_at": "2026-07-26T13:52:13Z",
-  "title": "NIE-SLA 0.24 Beta 6",
+  "version": "0.24.0-beta.7",
+  "agent_version": "v1.0.24",
+  "source_ref": "app-v0.24.0-beta.7",
+  "published_at": "2026-07-26T14:17:23Z",
+  "title": "NIE-SLA 0.24 Beta 7",
   "changelog": [
-    "IP.Check.Place 改用官方跳过依赖安装参数，低权限任务不再调用 sudo 或包管理器",
-    "启用隐私参数，不向第三方上传检测报告",
-    "直接解析脚本底部媒体解锁表，避免依赖本机生成 JSON",
-    "兼容模式继续使用 Agent 私有任务沙箱且不要求 root",
-    "Rust Agent 更新至 v1.0.23，现有 Agent 可自动升级，无需重新安装"
+    "IP 解锁改为先解析媒体结果，再判断第三方脚本退出码",
+    "缺少可选 dig 等工具但媒体表完整时会保存有效解锁结果",
+    "IPv4 不可用或没有有效媒体行时仍保持失败，不伪造成功",
+    "NodeQuality 继续严格要求脚本成功退出，不放宽其他任务",
+    "Rust Agent 更新至 v1.0.24，现有 Agent 可自动升级，无需重新安装"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

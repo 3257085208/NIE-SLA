@@ -11,7 +11,7 @@
 - `nstatus-metrics`：低权限遥测、Ping、GeoIP 与更新。
 - `nstatus-metrics-tasks`：常驻 root Manager，负责固定动作、更新与服务维护。服务名为兼容旧安装而保留。
 
-旧安装可能只有主服务。`v1.0.23` 起主 Agent 可在 Manager 缺失时通过自身私有状态目录低权限执行 IP 解锁，不要求 root，也不会尝试安装系统依赖或上传第三方报告；已有 root 更新任务或以 root 运行的旧 Agent 会自动补齐 Manager。只有两种 root 通道都不存在的早期低权限安装需要执行一次修复，后台会单独标识。
+旧安装可能只有主服务。`v1.0.24` 起主 Agent 可在 Manager 缺失时通过自身私有状态目录低权限执行 IP 解锁，不要求 root，也不会尝试安装系统依赖或上传第三方报告；可选 DNS 工具缺失但媒体解锁表完整时仍会保存有效结果。已有 root 更新任务或以 root 运行的旧 Agent 会自动补齐 Manager。只有两种 root 通道都不存在的早期低权限安装需要执行一次修复，后台会单独标识。
 
 ```bash
 systemctl status nstatus-metrics

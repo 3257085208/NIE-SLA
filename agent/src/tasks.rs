@@ -129,7 +129,8 @@ fn run_nodequality(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<
         &[],
         Some(b"v\ny\ny\ny\n"),
     )?;
-    let clean = strip_ansi_codes(&output);
+    ensure_script_success(&output)?;
+    let clean = strip_ansi_codes(&output.text);
     let report_url = extract_report_url(&clean)
         .ok_or_else(|| anyhow!("NodeQuality completed without a report URL"))?;
     Ok(TaskOutput {
@@ -147,15 +148,39 @@ fn run_ip_unlock(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<Ta
         &IP_UNLOCK_ARGS,
         None,
     )?;
-    let clean = strip_ansi_codes(&output);
+    if let Some(result) = parse_ip_unlock_task_output(&output.text) {
+        return Ok(result);
+    }
+    ensure_script_success(&output)?;
+    Err(anyhow!("IP unlock check produced no IPv4 unlock rows"))
+}
+
+fn parse_ip_unlock_task_output(output: &str) -> Option<TaskOutput> {
+    let clean = strip_ansi_codes(output);
     let services = parse_unlock_json(&clean).unwrap_or_else(|| parse_unlock_services(&clean));
     if services.is_empty() {
-        return Err(anyhow!("IP unlock check produced no IPv4 unlock rows"));
+        return None;
     }
-    Ok(TaskOutput {
+    Some(TaskOutput {
         result: json!({ "services": services }),
         excerpt: output_excerpt(&unlock_section(&clean)),
     })
+}
+
+struct FixedScriptOutput {
+    text: String,
+    status: std::process::ExitStatus,
+}
+
+fn ensure_script_success(output: &FixedScriptOutput) -> Result<()> {
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "fixed Beta task exited with {}; {}",
+        output.status,
+        output_excerpt(&strip_ansi_codes(&output.text))
+    ))
 }
 
 fn parse_unlock_json(output: &str) -> Option<Vec<Value>> {
@@ -202,7 +227,7 @@ fn run_fixed_remote_script(
     url: &str,
     args: &[&str],
     stdin: Option<&[u8]>,
-) -> Result<String> {
+) -> Result<FixedScriptOutput> {
     if !matches!(
         url,
         "https://run.NodeQuality.com" | "https://IP.Check.Place"
@@ -272,14 +297,7 @@ fn run_fixed_remote_script(
     bytes.push(b'\n');
     bytes.extend(stderr_reader.join().unwrap_or_default());
     let text = String::from_utf8_lossy(&bytes).to_string();
-    if !status.success() {
-        return Err(anyhow!(
-            "fixed Beta task exited with {}; {}",
-            status,
-            output_excerpt(&strip_ansi_codes(&text))
-        ));
-    }
-    Ok(text)
+    Ok(FixedScriptOutput { text, status })
 }
 
 struct TaskDirectoryCleanup(PathBuf);
@@ -538,6 +556,14 @@ mod tests {
         assert!(services
             .iter()
             .all(|service| service.get("purity").is_none()));
+    }
+
+    #[test]
+    fn usable_unlock_rows_are_kept_even_when_optional_checks_fail() {
+        let output = "服务商： TikTok Disney+ Netflix Youtube AmazonPV Reddit ChatGPT\n状态： 解锁 失败 解锁 解锁 解锁 解锁 解锁\n地区： [US] [] [US] [US] [US] [US] [US]\n方式： 原生 DNS 原生 原生 原生 原生 原生\nbash: dig: command not found";
+        let result = parse_ip_unlock_task_output(output).unwrap();
+        assert_eq!(result.result["services"].as_array().unwrap().len(), 7);
+        assert!(result.excerpt.contains("服务商"));
     }
 
     #[test]
