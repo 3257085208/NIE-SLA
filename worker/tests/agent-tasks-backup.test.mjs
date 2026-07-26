@@ -30,6 +30,27 @@ assert.deepEqual(
 
 const sqlite = new DatabaseSync(':memory:');
 sqlite.exec(`CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`);
+sqlite.exec(`CREATE TABLE agent_metrics_state (
+  agent_id TEXT PRIMARY KEY,
+  agent_label TEXT,
+  updated_at TEXT,
+  hostname TEXT,
+  cpu_percent REAL,
+  memory TEXT,
+  load TEXT,
+  disk TEXT,
+  net TEXT,
+  diskio TEXT,
+  stats TEXT,
+  uptime_sec INTEGER,
+  vps_info TEXT,
+  agent_version TEXT,
+  process_count INTEGER,
+  pings TEXT,
+  thread_count INTEGER
+)`);
+sqlite.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?)`)
+  .run('schema:worker-v16-20260726-nodes-tasks-backup', Math.floor(Date.now() / 1000));
 const env = {
   DB: d1(sqlite),
   ARCHIVE: {
@@ -40,6 +61,10 @@ const env = {
   TIMEZONE_OFFSET_MINUTES: '480',
 };
 await ensureV6Schema(env);
+assert.equal(
+  sqlite.prepare(`SELECT COUNT(*) AS count FROM pragma_table_info('agent_metrics_state') WHERE name = 'capabilities'`).get().count,
+  1,
+);
 
 const now = Math.floor(Date.now() / 1000);
 sqlite.prepare(`INSERT INTO targets (id, name, group_name, type, enabled, no_public_ip, created_at, updated_at, traffic_reset_day)

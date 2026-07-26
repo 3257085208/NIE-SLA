@@ -3,7 +3,8 @@ import { dayFromSec, nowSec, parseBoolean, timezoneOffsetMin } from '../utils.js
 
 let schemaEnsured = false;
 let schemaPromise = null;
-const SCHEMA_MARKER = 'schema:worker-v16-20260726-nodes-tasks-backup';
+// Bump this marker whenever an existing installation needs new D1 objects.
+const SCHEMA_MARKER = 'schema:worker-v17-20260726-agent-capabilities';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -18,6 +19,16 @@ async function runOptionalSchemaChange(env, statement) {
 function isAlreadyAppliedSchemaChange(err) {
   const message = String(err?.message || err || '').toLowerCase();
   return message.includes('duplicate column name') || message.includes('already exists');
+}
+
+export function isMissingAgentCapabilitiesColumn(err) {
+  const message = String(err?.message || err || '').toLowerCase();
+  return message.includes('no such column: capabilities')
+    || message.includes('has no column named capabilities');
+}
+
+export async function ensureAgentCapabilitiesColumn(env) {
+  await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN capabilities TEXT`);
 }
 
 export async function ensureV6Schema(env) {
@@ -98,7 +109,7 @@ export async function ensureV6Schema(env) {
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN process_count INTEGER`);
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN thread_count INTEGER`);
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN pings TEXT`);
-  await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN capabilities TEXT`);
+  await ensureAgentCapabilitiesColumn(env);
 
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_metrics_history (
     agent_id TEXT NOT NULL,

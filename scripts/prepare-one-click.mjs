@@ -27,10 +27,9 @@ console.log(`One-click assets prepared in ${path.relative(root, outputRoot)}`);
 
 async function prepareAgentRelease(binRoot) {
   const requestedTag = String(process.env.NSTATUS_AGENT_RELEASE_TAG || '').trim();
-  const endpoint = requestedTag
-    ? `https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(requestedTag)}`
-    : `https://api.github.com/repos/${repository}/releases/latest`;
-  const release = await fetchJson(endpoint);
+  const release = requestedTag
+    ? await fetchJson(`https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(requestedTag)}`)
+    : await fetchLatestAgentRelease();
   const assets = new Map((release.assets || []).map(asset => [String(asset.name), String(asset.browser_download_url)]));
   const version = await downloadText(requiredAsset(assets, 'VERSION'));
   const manifest = await downloadText(requiredAsset(assets, 'SHA256SUMS'));
@@ -53,6 +52,19 @@ async function prepareAgentRelease(binRoot) {
     if (actualHash !== expectedHash) throw new Error(`SHA-256 mismatch for ${name}`);
     await writeFile(path.join(binRoot, name), bytes, { mode: name.endsWith('.exe') ? 0o644 : 0o755 });
   }
+}
+
+async function fetchLatestAgentRelease() {
+  const releases = await fetchJson(`https://api.github.com/repos/${repository}/releases?per_page=30`);
+  if (!Array.isArray(releases)) throw new Error('GitHub release list is invalid');
+  const requiredAssets = ['VERSION', 'SHA256SUMS', 'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64', 'nstatus-metrics-windows-amd64.exe'];
+  const release = releases.find((candidate) => {
+    if (candidate?.draft || !/^v\d+\.\d+\.\d+$/.test(String(candidate?.tag_name || ''))) return false;
+    const names = new Set((candidate.assets || []).map(asset => String(asset.name || '')));
+    return requiredAssets.every(name => names.has(name));
+  });
+  if (!release) throw new Error('No complete Agent release was found');
+  return release;
 }
 
 function parseManifest(source) {

@@ -28,6 +28,8 @@ assert.doesNotMatch(frontendConfig, /https?:\/\//, 'one-click frontend must use 
 
 const version = (await readFile(path.join(output, 'bin/VERSION'), 'utf8')).trim();
 assert.match(version, /^v\d+\.\d+\.\d+$/);
+const updateManifest = JSON.parse(await readFile(path.join(root, 'update-manifest.json'), 'utf8'));
+assert.equal(version, updateManifest.agent_version, 'one-click build must bundle the declared Agent release');
 
 const manifest = await readFile(path.join(output, 'bin/SHA256SUMS'), 'utf8');
 let verified = 0;

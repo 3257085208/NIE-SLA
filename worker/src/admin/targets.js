@@ -5,7 +5,7 @@ import { safeJson } from '../auth.js';
 import { removeTargetFromR2State } from '../storage.js';
 import { runTargetBatch } from '../probe.js';
 import { deleteAgentTelemetry, rebuildAgentTrafficPeriod } from '../metrics.js';
-import { ensureV6Schema } from './schema.js';
+import { ensureV6Schema, isMissingAgentCapabilitiesColumn } from './schema.js';
 import { setMeta } from './settings.js';
 import { syncEnvTargetsMaybe, syncEnvTargets } from './sync.js';
 import { normalizeTargetOrder } from './target-order.js';
@@ -55,7 +55,13 @@ export async function listTargets(env) {
     for (const row of result.results || []) trafficRows[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
   } catch (_) {}
   try {
-    const result = await env.DB.prepare(`SELECT agent_id, agent_version, updated_at, capabilities FROM agent_metrics_state`).all();
+    let result;
+    try {
+      result = await env.DB.prepare(`SELECT agent_id, agent_version, updated_at, capabilities FROM agent_metrics_state`).all();
+    } catch (err) {
+      if (!isMissingAgentCapabilitiesColumn(err)) throw err;
+      result = await env.DB.prepare(`SELECT agent_id, agent_version, updated_at, NULL AS capabilities FROM agent_metrics_state`).all();
+    }
     for (const row of result.results || []) {
       agentStates[sanitizeAgentId(row.agent_id)] = {
         agent_version: row.agent_version || null,

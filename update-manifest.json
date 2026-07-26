@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.2",
-  "source_ref": "app-v0.24.0-beta.2",
-  "published_at": "2026-07-26T11:24:26Z",
-  "title": "NIE-SLA 0.24 Beta 2",
+  "version": "0.24.0-beta.3",
+  "agent_version": "v1.0.21",
+  "source_ref": "app-v0.24.0-beta.3",
+  "published_at": "2026-07-26T12:01:18Z",
+  "title": "NIE-SLA 0.24 Beta 3",
   "changelog": [
-    "常驻 root Manager 统一负责固定动作、验证更新、服务维护与能力心跳",
-    "以后增删固定动作只更新同一 Agent 二进制，不再为每台 VPS 新装服务",
-    "后台按每台 Agent 的真实能力启用任务按钮，并拒绝无能力或离线任务",
-    "固定脚本执行限制地址、参数、环境、下载大小、运行时间和输出",
-    "Agent 更新经过稳定观察期，Manager 或遥测服务异常时自动回滚上一版",
-    "Rust Agent 更新至 v1.0.21"
+    "修复旧 D1 缺少 Agent 能力列时全部上报中断的问题",
+    "Schema v17 会为现有安装自动补齐缺失列",
+    "Agent 上报遇到迁移未完成时会自动补列并重试",
+    "后台在数据库升级期间继续显示旧 Agent 运行信息",
+    "Rust Agent 保持 v1.0.21，无需重新安装"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
