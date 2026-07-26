@@ -11,6 +11,7 @@ use std::time::{Duration, SystemTime};
 const TASK_POLL_SEC: u64 = 60;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
+const IP_UNLOCK_ARGS: [&str; 3] = ["-4", "-n", "-p"];
 
 pub(crate) fn spawn_ip_unlock_fallback(cfg: Config, http: HttpClient) {
     if !cfg!(target_os = "linux") {
@@ -143,7 +144,7 @@ fn run_ip_unlock(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<Ta
         http,
         timeout_sec.min(600),
         "https://IP.Check.Place",
-        &["-4", "-j", "-y"],
+        &IP_UNLOCK_ARGS,
         None,
     )?;
     let clean = strip_ansi_codes(&output);
@@ -549,6 +550,13 @@ mod tests {
         assert!(services
             .iter()
             .all(|service| service.get("purity").is_none()));
+    }
+
+    #[test]
+    fn ip_unlock_never_installs_dependencies_or_uploads_a_report() {
+        assert_eq!(IP_UNLOCK_ARGS, ["-4", "-n", "-p"]);
+        assert!(!IP_UNLOCK_ARGS.contains(&"-y"));
+        assert!(!IP_UNLOCK_ARGS.contains(&"-j"));
     }
 
     #[test]

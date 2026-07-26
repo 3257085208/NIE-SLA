@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.5",
-  "agent_version": "v1.0.22",
-  "source_ref": "app-v0.24.0-beta.5",
-  "published_at": "2026-07-26T13:27:37Z",
-  "title": "NIE-SLA 0.24 Beta 5",
+  "version": "0.24.0-beta.6",
+  "agent_version": "v1.0.23",
+  "source_ref": "app-v0.24.0-beta.6",
+  "published_at": "2026-07-26T13:52:13Z",
+  "title": "NIE-SLA 0.24 Beta 6",
   "changelog": [
-    "修复兼容模式领取 IP 解锁任务后因误用 root Manager 目录而立即失败的问题",
-    "低权限 IP 解锁改用 Agent 自身状态目录中的隔离任务沙箱，不要求 root",
-    "任务目录继续校验进程所有权、私有权限并拒绝符号链接",
-    "root Manager 仍使用独立的 root 专用任务目录",
-    "Rust Agent 更新至 v1.0.22，现有 Agent 可自动升级，无需重新安装"
+    "IP.Check.Place 改用官方跳过依赖安装参数，低权限任务不再调用 sudo 或包管理器",
+    "启用隐私参数，不向第三方上传检测报告",
+    "直接解析脚本底部媒体解锁表，避免依赖本机生成 JSON",
+    "兼容模式继续使用 Agent 私有任务沙箱且不要求 root",
+    "Rust Agent 更新至 v1.0.23，现有 Agent 可自动升级，无需重新安装"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

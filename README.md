@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Beta · 0.24.0-beta.5**
+**Beta · 0.24.0-beta.6**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
