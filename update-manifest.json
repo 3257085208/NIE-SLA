@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.8",
-  "agent_version": "v1.0.25",
-  "source_ref": "app-v0.24.0-beta.8",
-  "published_at": "2026-07-26T14:32:17Z",
-  "title": "NIE-SLA 0.24 Beta 8",
+  "version": "0.24.0-beta.9",
+  "agent_version": "v1.0.26",
+  "source_ref": "app-v0.24.0-beta.9",
+  "published_at": "2026-07-26T14:57:23Z",
+  "title": "NIE-SLA 0.24 Beta 9",
   "changelog": [
-    "IP 解锁恢复官方结构化 JSON 输出，稳定提取最终媒体解锁字段",
-    "继续禁止依赖安装和报告上传，低权限 Agent 不调用 sudo 或 apt",
-    "脚本因缺少可选 dig 返回非零时，只要媒体结果有效仍会保存",
-    "IPv4 不可用或没有有效媒体结果时仍保持失败，不伪造成功",
-    "Rust Agent 更新至 v1.0.25，现有 Agent 可自动升级，无需重新安装"
+    "真实低权限节点回归修复 IP.Check.Place 在可选 dig 缺失时中断的问题",
+    "任务私有目录提供一次性 DNS 兼容入口，不安装依赖且不修改系统",
+    "结构化结果解析可跳过广告和进度文本中的非 JSON 内容",
+    "继续禁止 sudo、系统包安装和第三方报告上传",
+    "Rust Agent 更新至 v1.0.26，现有 Agent 可自动升级，无需重新安装"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

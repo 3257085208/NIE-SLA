@@ -1,6 +1,7 @@
 use crate::{percent_encode_query, Config, HttpClient, AGENT_VERSION};
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -12,6 +13,8 @@ const TASK_POLL_SEC: u64 = 60;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const IP_UNLOCK_ARGS: [&str; 4] = ["-4", "-j", "-n", "-p"];
+const SYSTEM_TASK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const OPTIONAL_DIG_STUB: &[u8] = b"#!/bin/sh\nexit 0\n";
 
 pub(crate) fn spawn_ip_unlock_fallback(cfg: Config, http: HttpClient) {
     if !cfg!(target_os = "linux") {
@@ -184,9 +187,16 @@ fn ensure_script_success(output: &FixedScriptOutput) -> Result<()> {
 }
 
 fn parse_unlock_json(output: &str) -> Option<Vec<Value>> {
-    let start = output.find('{')?;
-    let end = output.rfind('}')?;
-    let value: Value = serde_json::from_str(&output[start..=end]).ok()?;
+    output.match_indices('{').find_map(|(start, _)| {
+        let value = serde_json::Deserializer::from_str(&output[start..])
+            .into_iter::<Value>()
+            .next()?
+            .ok()?;
+        unlock_services_from_json(&value)
+    })
+}
+
+fn unlock_services_from_json(value: &Value) -> Option<Vec<Value>> {
     let media = value.get("Media")?.as_object()?;
     let keys = [
         ("tiktok", "TikTok", "TikTok"),
@@ -260,6 +270,7 @@ fn run_fixed_remote_script(
         .write_all(&script)
         .context("write fixed Beta task file")?;
     drop(script_file);
+    let task_path = prepare_fixed_task_path(&task_dir, url, SYSTEM_TASK_PATH)?;
 
     let mut child = Command::new("timeout")
         .arg(format!("{}s", timeout_sec))
@@ -268,10 +279,7 @@ fn run_fixed_remote_script(
         .args(args)
         .current_dir(&task_dir)
         .env_clear()
-        .env(
-            "PATH",
-            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-        )
+        .env("PATH", task_path)
         .env("HOME", &task_dir)
         .env("LANG", "C.UTF-8")
         .stdin(if stdin.is_some() {
@@ -300,6 +308,50 @@ fn run_fixed_remote_script(
     Ok(FixedScriptOutput { text, status })
 }
 
+fn prepare_fixed_task_path(task_dir: &Path, url: &str, system_path: &str) -> Result<OsString> {
+    if url != "https://IP.Check.Place" || task_command_exists(system_path, "dig") {
+        return Ok(OsString::from(system_path));
+    }
+
+    // The upstream script treats an optional DNSBL lookup as fatal after media checks.
+    let bin_dir = task_dir.join("bin");
+    fs::create_dir(&bin_dir).context("create fixed task compatibility directory")?;
+    set_private_directory_permissions(&bin_dir)?;
+    let dig_path = bin_dir.join("dig");
+    let mut dig_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&dig_path)
+        .context("create optional DNS compatibility helper")?;
+    dig_file
+        .write_all(OPTIONAL_DIG_STUB)
+        .context("write optional DNS compatibility helper")?;
+    drop(dig_file);
+    set_private_executable_permissions(&dig_path)?;
+
+    let mut path = bin_dir.into_os_string();
+    path.push(":");
+    path.push(system_path);
+    Ok(path)
+}
+
+#[cfg(unix)]
+fn task_command_exists(system_path: &str, name: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    system_path.split(':').any(|directory| {
+        let Ok(metadata) = fs::metadata(Path::new(directory).join(name)) else {
+            return false;
+        };
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    })
+}
+
+#[cfg(not(unix))]
+fn task_command_exists(_system_path: &str, _name: &str) -> bool {
+    false
+}
+
 struct TaskDirectoryCleanup(PathBuf);
 
 impl Drop for TaskDirectoryCleanup {
@@ -322,6 +374,13 @@ fn set_private_directory_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn set_private_executable_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
 #[cfg(not(unix))]
 fn set_private_file_permissions(_path: &Path) -> Result<()> {
     Ok(())
@@ -329,6 +388,11 @@ fn set_private_file_permissions(_path: &Path) -> Result<()> {
 
 #[cfg(not(unix))]
 fn set_private_directory_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_private_executable_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -579,6 +643,14 @@ mod tests {
     }
 
     #[test]
+    fn parses_structured_media_from_mixed_output() {
+        let output = r#"ad {not-json}\nprogress\n{"Media":{"TikTok":{"Status":"Yes","Region":"JP","Type":"Native"}}}\nbash: dig: command not found"#;
+        let services = parse_unlock_json(output).unwrap();
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0]["region"], "JP");
+    }
+
+    #[test]
     fn ip_unlock_never_installs_dependencies_or_uploads_a_report() {
         assert_eq!(IP_UNLOCK_ARGS, ["-4", "-j", "-n", "-p"]);
         assert!(!IP_UNLOCK_ARGS.contains(&"-y"));
@@ -625,5 +697,34 @@ mod tests {
         assert!(prepare_secure_task_directory(&tasks, uid).is_err());
         fs::remove_file(&tasks).unwrap();
         fs::remove_dir(&base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ip_unlock_uses_an_ephemeral_optional_dns_helper() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::temp_dir().join(format!(
+            "nie-sla-task-path-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&base).unwrap();
+        let path = prepare_fixed_task_path(&base, "https://IP.Check.Place", "/missing").unwrap();
+        let dig = base.join("bin/dig");
+        assert!(path
+            .to_string_lossy()
+            .starts_with(base.to_string_lossy().as_ref()));
+        assert_eq!(
+            fs::metadata(&dig).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let output = Command::new(&dig).output().unwrap();
+        assert!(output.status.success());
+        assert!(output.stdout.is_empty());
+        fs::remove_dir_all(&base).unwrap();
     }
 }
