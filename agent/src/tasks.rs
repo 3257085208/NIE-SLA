@@ -70,7 +70,7 @@ fn poll_once(cfg: &Config, http: &HttpClient, allowed_actions: Option<&str>) -> 
         .unwrap_or(600)
         .clamp(30, 1800);
 
-    let outcome = execute_fixed_task(http, action, timeout_sec);
+    let outcome = execute_fixed_task(cfg, http, action, timeout_sec);
     let payload = match outcome {
         Ok(result) => json!({
             "status": "succeeded",
@@ -103,19 +103,25 @@ struct TaskOutput {
     excerpt: String,
 }
 
-fn execute_fixed_task(http: &HttpClient, action: &str, timeout_sec: u64) -> Result<TaskOutput> {
+fn execute_fixed_task(
+    cfg: &Config,
+    http: &HttpClient,
+    action: &str,
+    timeout_sec: u64,
+) -> Result<TaskOutput> {
     if !cfg!(target_os = "linux") {
         return Err(anyhow!("Beta task actions currently require Linux"));
     }
     match action {
-        "nodequality" => run_nodequality(http, timeout_sec),
-        "ip_unlock" => run_ip_unlock(http, timeout_sec),
+        "nodequality" => run_nodequality(cfg, http, timeout_sec),
+        "ip_unlock" => run_ip_unlock(cfg, http, timeout_sec),
         _ => Err(anyhow!("unsupported fixed task action")),
     }
 }
 
-fn run_nodequality(http: &HttpClient, timeout_sec: u64) -> Result<TaskOutput> {
+fn run_nodequality(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<TaskOutput> {
     let output = run_fixed_remote_script(
+        cfg,
         http,
         timeout_sec.min(1800),
         "https://run.NodeQuality.com",
@@ -131,8 +137,9 @@ fn run_nodequality(http: &HttpClient, timeout_sec: u64) -> Result<TaskOutput> {
     })
 }
 
-fn run_ip_unlock(http: &HttpClient, timeout_sec: u64) -> Result<TaskOutput> {
+fn run_ip_unlock(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<TaskOutput> {
     let output = run_fixed_remote_script(
+        cfg,
         http,
         timeout_sec.min(600),
         "https://IP.Check.Place",
@@ -188,6 +195,7 @@ fn json_text(value: Option<&Value>) -> String {
 }
 
 fn run_fixed_remote_script(
+    cfg: &Config,
     http: &HttpClient,
     timeout_sec: u64,
     url: &str,
@@ -200,7 +208,7 @@ fn run_fixed_remote_script(
     ) {
         return Err(anyhow!("unsupported fixed task source"));
     }
-    let task_dir = secure_task_directory()?.join(format!(
+    let task_dir = secure_task_directory(cfg)?.join(format!(
         "{}-{}",
         std::process::id(),
         SystemTime::now()
@@ -238,7 +246,7 @@ fn run_fixed_remote_script(
             "PATH",
             "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         )
-        .env("HOME", "/root")
+        .env("HOME", &task_dir)
         .env("LANG", "C.UTF-8")
         .stdin(if stdin.is_some() {
             Stdio::piped()
@@ -306,28 +314,51 @@ fn set_private_directory_permissions(_path: &Path) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn secure_task_directory() -> Result<PathBuf> {
+fn secure_task_directory(cfg: &Config) -> Result<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+
+    let uid = fs::metadata("/proc/self")
+        .context("inspect fixed task process identity")?
+        .uid();
+    let path = task_runtime_directory(&cfg.queue_file, uid);
+    prepare_secure_task_directory(&path, uid)?;
+    Ok(path)
+}
+
+#[cfg(any(target_os = "linux", all(test, unix)))]
+fn prepare_secure_task_directory(path: &Path, uid: u32) -> Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    let path = PathBuf::from("/var/lib/nstatus-manager/tasks");
     fs::create_dir_all(&path).context("create fixed task runtime directory")?;
     let metadata = fs::symlink_metadata(&path).context("inspect fixed task runtime directory")?;
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()
-        || metadata.uid() != 0
+        || metadata.uid() != uid
         || metadata.mode() & 0o022 != 0
     {
         return Err(anyhow!(
-            "fixed task runtime directory is not root-owned and private"
+            "fixed task runtime directory is not owned by the Agent process and private"
         ));
     }
     fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
-    Ok(path)
+    Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
-fn secure_task_directory() -> Result<PathBuf> {
+fn secure_task_directory(_cfg: &Config) -> Result<PathBuf> {
     Err(anyhow!("fixed Beta tasks currently require Linux"))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn task_runtime_directory(queue_file: &Path, uid: u32) -> PathBuf {
+    if uid == 0 {
+        return PathBuf::from("/var/lib/nstatus-manager/tasks");
+    }
+    queue_file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("/var/lib/nstatus-metrics"))
+        .join("tasks")
 }
 
 fn read_capped<R: Read>(mut reader: R, limit: usize) -> Vec<u8> {
@@ -518,5 +549,47 @@ mod tests {
         assert!(services
             .iter()
             .all(|service| service.get("purity").is_none()));
+    }
+
+    #[test]
+    fn compatibility_tasks_use_the_unprivileged_agent_state_directory() {
+        let queue = Path::new("/var/lib/nstatus-metrics/samples-queue.json");
+        assert_eq!(
+            task_runtime_directory(queue, 1000),
+            PathBuf::from("/var/lib/nstatus-metrics/tasks")
+        );
+        assert_eq!(
+            task_runtime_directory(queue, 0),
+            PathBuf::from("/var/lib/nstatus-manager/tasks")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compatibility_task_directory_is_private_and_rejects_symlinks() {
+        use std::os::unix::fs::{symlink, MetadataExt, PermissionsExt};
+
+        let base = std::env::temp_dir().join(format!(
+            "nie-sla-task-sandbox-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&base).unwrap();
+        let uid = fs::metadata(&base).unwrap().uid();
+        let tasks = base.join("tasks");
+        prepare_secure_task_directory(&tasks, uid).unwrap();
+        assert_eq!(
+            fs::metadata(&tasks).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+
+        fs::remove_dir(&tasks).unwrap();
+        symlink(base.parent().unwrap(), &tasks).unwrap();
+        assert!(prepare_secure_task_directory(&tasks, uid).is_err());
+        fs::remove_file(&tasks).unwrap();
+        fs::remove_dir(&base).unwrap();
     }
 }

@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.4",
-  "agent_version": "v1.0.21",
-  "source_ref": "app-v0.24.0-beta.4",
-  "published_at": "2026-07-26T12:47:30Z",
-  "title": "NIE-SLA 0.24 Beta 4",
+  "version": "0.24.0-beta.5",
+  "agent_version": "v1.0.22",
+  "source_ref": "app-v0.24.0-beta.5",
+  "published_at": "2026-07-26T13:27:37Z",
+  "title": "NIE-SLA 0.24 Beta 5",
   "changelog": [
-    "修复单 Worker 更新策略无法读取自身静态 Agent 资产的问题",
-    "Agent 版本、下载地址与校验和改为从 Static Assets 绑定直接读取",
-    "外部 Agent 下载源继续兼容公网读取方式",
-    "更新策略新增 release_ready 状态并记录元数据读取错误",
-    "Rust Agent 保持 v1.0.21，无需重新安装"
+    "修复兼容模式领取 IP 解锁任务后因误用 root Manager 目录而立即失败的问题",
+    "低权限 IP 解锁改用 Agent 自身状态目录中的隔离任务沙箱，不要求 root",
+    "任务目录继续校验进程所有权、私有权限并拒绝符号链接",
+    "root Manager 仍使用独立的 root 专用任务目录",
+    "Rust Agent 更新至 v1.0.22，现有 Agent 可自动升级，无需重新安装"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
