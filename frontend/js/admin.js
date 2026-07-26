@@ -504,8 +504,23 @@ function betaTaskControlsHtml(target) {
   if (target.type !== "tcp" || !targetAdminLoaded) return "";
   const task = agentTasks.get(target.id);
   const active = task && ["queued", "running"].includes(task.status);
+  const runtime = target.agent_runtime || {};
+  const capabilities = runtime.capabilities || {};
+  const actions = new Set(Array.isArray(capabilities.actions) ? capabilities.actions : []);
+  const nqAvailable = actions.has("nodequality");
+  const unlockAvailable = actions.has("ip_unlock");
+  const managerState = capabilities.mode === "manager"
+    ? "Manager 已接管"
+    : capabilities.mode === "compatibility"
+      ? "兼容模式，仅 IP 解锁"
+      : runtime.last_metrics_at
+        ? "等待 Agent 自动更新"
+        : "Agent 尚未上报";
+  const queuedTooLong = task?.status === "queued"
+    && Number(task.requested_at || 0) > 0
+    && nowSec() - Number(task.requested_at) >= 120;
   const state = task ? {
-    queued: "排队中",
+    queued: queuedTooLong ? "排队超过 2 分钟，请检查 Manager 状态" : "排队中",
     running: "运行中",
     succeeded: "已完成",
     failed: "失败",
@@ -515,10 +530,11 @@ function betaTaskControlsHtml(target) {
   const reportUrl = target.nq_url || task?.result?.report_url || "";
   return `<div class="beta-task-actions">
     <span class="beta-label">Beta</span>
-    <button type="button" class="btn btn-xs" data-a="task-nq"${active ? " disabled" : ""}>运行 NQ</button>
-    <button type="button" class="btn btn-xs" data-a="task-unlock"${active ? " disabled" : ""}>IP 解锁</button>
+    <button type="button" class="btn btn-xs" data-a="task-nq"${active || !nqAvailable ? " disabled" : ""} title="${escapeHtml(nqAvailable ? "运行固定 NodeQuality 任务" : "此 Agent 尚未上报 NQ 能力")}">运行 NQ</button>
+    <button type="button" class="btn btn-xs" data-a="task-unlock"${active || !unlockAvailable ? " disabled" : ""} title="${escapeHtml(unlockAvailable ? "运行固定 IP 解锁任务" : "此 Agent 尚未上报 IP 解锁能力")}">IP 解锁</button>
     ${reportUrl ? `<a class="btn btn-xs btn-blue" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">NQ 报告</a>` : ""}
     ${state ? `<small class="task-state task-${escapeHtml(task.status)}" title="${escapeHtml(task.error || "")}">${escapeHtml(task.action_label || "任务")} · ${escapeHtml(state)}</small>` : ""}
+    <small class="task-state" title="Agent ${escapeHtml(runtime.agent_version || "未知版本")}">${escapeHtml(managerState)}</small>
   </div>`;
 }
 

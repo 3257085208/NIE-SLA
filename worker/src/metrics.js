@@ -10,6 +10,37 @@ const MAX_AGENT_PINGS_PER_REPORT = 5_000;
 const MAX_TELEMETRY_HOURS_PER_REPORT = 25;
 const MAX_TELEMETRY_AGE_SEC = 7 * 86400;
 const MAX_TELEMETRY_FUTURE_SEC = 300;
+const AGENT_ACTIONS = new Set(['nodequality', 'ip_unlock']);
+
+export function normalizeAgentCapabilities(value, observedAt = nowSec()) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Number(value.protocol) !== 1) return null;
+  const mode = ['manager', 'compatibility', 'telemetry_only'].includes(String(value.mode || ''))
+    ? String(value.mode)
+    : 'telemetry_only';
+  let actions = Array.isArray(value.actions)
+    ? [...new Set(value.actions.map(action => String(action || '').trim()).filter(action => AGENT_ACTIONS.has(action)))].slice(0, 8)
+    : [];
+  if (mode === 'compatibility') actions = actions.filter(action => action === 'ip_unlock');
+  if (mode === 'telemetry_only') actions = [];
+  const privileged = mode === 'manager' && value.privileged === true;
+  if (!privileged) actions = actions.filter(action => action !== 'nodequality');
+  const managerVersion = /^v?\d+\.\d+\.\d+$/.test(String(value.manager_version || ''))
+    ? String(value.manager_version).slice(0, 32)
+    : null;
+  const updateState = ['current', 'restarting'].includes(String(value.update_state || ''))
+    ? String(value.update_state)
+    : null;
+  return {
+    protocol: 1,
+    mode,
+    manager_version: managerVersion,
+    privileged,
+    actions,
+    service_schema: privileged ? clamp(Number(value.service_schema || 0), 0, 1000) : 0,
+    update_state: updateState,
+    observed_at: Math.floor(Number(observedAt) || nowSec()),
+  };
+}
 
 export async function submitAgentMetrics(request, env, ctx = null) {
   if (!env.DB) return json({ ok: false, error: '缺少 D1 的 DB 绑定' }, 500, env);
@@ -22,6 +53,7 @@ export async function submitAgentMetrics(request, env, ctx = null) {
   }
   const agentLabel = String(body?.agent_label || agentId).trim().slice(0, 64) || agentId;
   const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
+  const capabilities = normalizeAgentCapabilities(body?.capabilities);
   const metrics = body?.metrics;
   if (!metrics || typeof metrics !== 'object') return json({ ok: false, error: '必须提供 metrics 对象' }, 400, env);
   const rawSamples = Array.isArray(metrics.samples) ? metrics.samples : [];
@@ -50,7 +82,7 @@ export async function submitAgentMetrics(request, env, ctx = null) {
   if (telemetryError) return json({ ok: false, error: telemetryError }, 400, env);
 
   try {
-    await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, metrics, state, vpsInfo, rawSamples, pings, ts });
+    await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts });
   } catch (err) {
     console.error('persistAgentMetrics failed:', String(err?.message || err));
     return json({ ok: false, error: '保存 Agent 监控数据失败' }, 500, env, { 'cache-control': 'no-store' });
@@ -963,15 +995,15 @@ function normalizeOkInt(value) {
 }
 
 async function persistAgentMetrics(env, data) {
-  const { agentId, agentLabel, agentVersion, metrics, state, vpsInfo, rawSamples, pings, ts } = data;
+  const { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts } = data;
   const rawPings = mapPings(pings, ts);
   const statePings = await mergeStatePings(env, agentId, rawPings);
   const previousState = await env.DB.prepare('SELECT updated_at FROM agent_metrics_state WHERE agent_id = ?').bind(agentId).first().catch(() => null);
   await recordAgentAvailability(env, agentId, previousState?.updated_at, ts)
     .catch(err => console.error('recordAgentAvailability failed:', String(err?.message || err)));
   await env.DB.prepare(`
-    INSERT INTO agent_metrics_state (agent_id, agent_label, agent_version, updated_at, hostname, cpu_percent, process_count, thread_count, memory, load, disk, net, diskio, stats, uptime_sec, vps_info, pings)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO agent_metrics_state (agent_id, agent_label, agent_version, updated_at, hostname, cpu_percent, process_count, thread_count, memory, load, disk, net, diskio, stats, uptime_sec, vps_info, pings, capabilities)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(agent_id) DO UPDATE SET
       agent_label=excluded.agent_label,
       agent_version=COALESCE(excluded.agent_version, agent_version),
@@ -980,7 +1012,8 @@ async function persistAgentMetrics(env, data) {
       disk=excluded.disk, net=excluded.net, diskio=excluded.diskio,
       stats=excluded.stats, uptime_sec=excluded.uptime_sec,
       vps_info=CASE WHEN excluded.vps_info IS NOT NULL THEN excluded.vps_info ELSE vps_info END,
-      pings=excluded.pings
+      pings=excluded.pings,
+      capabilities=CASE WHEN excluded.capabilities IS NOT NULL THEN excluded.capabilities ELSE capabilities END
   `).bind(
     agentId, agentLabel, agentVersion, new Date().toISOString(),
     String(metrics.hostname || '').slice(0, 128), state.cpu_percent, state.process_count, state.thread_count,
@@ -988,7 +1021,8 @@ async function persistAgentMetrics(env, data) {
     JSON.stringify(state.net), JSON.stringify(state.diskio),
     state.stats ? JSON.stringify(state.stats) : null, state.uptime_sec,
     vpsInfo ? JSON.stringify(vpsInfo) : null,
-    JSON.stringify(statePings)
+    JSON.stringify(statePings),
+    capabilities ? JSON.stringify(capabilities) : null
   ).run();
 
   const rawPoints = mapSamples(rawSamples);

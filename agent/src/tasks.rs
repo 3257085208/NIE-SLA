@@ -1,18 +1,37 @@
 use crate::{percent_encode_query, Config, HttpClient, AGENT_VERSION};
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
-use std::io::Write;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 const TASK_POLL_SEC: u64 = 60;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 
-pub(crate) fn run_task_worker(cfg: &Config, http: &HttpClient) -> Result<()> {
+pub(crate) fn spawn_ip_unlock_fallback(cfg: Config, http: HttpClient) {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    thread::spawn(move || {
+        run_ip_unlock_fallback_loop(&cfg, &http);
+    });
+}
+
+pub(crate) fn poll_once_manager(cfg: &Config, http: &HttpClient) -> Result<()> {
+    poll_once(cfg, http, None)
+}
+
+fn run_ip_unlock_fallback_loop(cfg: &Config, http: &HttpClient) {
     loop {
-        if let Err(error) = poll_once(cfg, http) {
+        if dedicated_task_runner_is_recent(cfg) {
+            thread::sleep(Duration::from_secs(TASK_POLL_SEC));
+            continue;
+        }
+        if let Err(error) = poll_once(cfg, http, Some("ip_unlock")) {
             eprintln!(
                 "{{\"ok\":false,\"task_error\":{}}}",
                 serde_json::to_string(&error.to_string())
@@ -23,12 +42,16 @@ pub(crate) fn run_task_worker(cfg: &Config, http: &HttpClient) -> Result<()> {
     }
 }
 
-fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
-    let url = format!(
+fn poll_once(cfg: &Config, http: &HttpClient, allowed_actions: Option<&str>) -> Result<()> {
+    let mut url = format!(
         "{}/api/agent/tasks?agent_id={}",
         cfg.api.trim_end_matches('/'),
         percent_encode_query(&cfg.agent_id)
     );
+    if let Some(actions) = allowed_actions {
+        url.push_str("&actions=");
+        url.push_str(&percent_encode_query(actions));
+    }
     let response: Value = serde_json::from_str(&http.get(&url, &cfg.token)?)?;
     let Some(task) = response.get("task").filter(|value| !value.is_null()) else {
         return Ok(());
@@ -47,7 +70,7 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
         .unwrap_or(600)
         .clamp(30, 1800);
 
-    let outcome = execute_fixed_task(action, timeout_sec);
+    let outcome = execute_fixed_task(http, action, timeout_sec);
     let payload = match outcome {
         Ok(result) => json!({
             "status": "succeeded",
@@ -71,26 +94,32 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
     Ok(())
 }
 
+fn dedicated_task_runner_is_recent(cfg: &Config) -> bool {
+    crate::manager::is_active(cfg)
+}
+
 struct TaskOutput {
     result: Value,
     excerpt: String,
 }
 
-fn execute_fixed_task(action: &str, timeout_sec: u64) -> Result<TaskOutput> {
+fn execute_fixed_task(http: &HttpClient, action: &str, timeout_sec: u64) -> Result<TaskOutput> {
     if !cfg!(target_os = "linux") {
         return Err(anyhow!("Beta task actions currently require Linux"));
     }
     match action {
-        "nodequality" => run_nodequality(timeout_sec),
-        "ip_unlock" => run_ip_unlock(timeout_sec),
+        "nodequality" => run_nodequality(http, timeout_sec),
+        "ip_unlock" => run_ip_unlock(http, timeout_sec),
         _ => Err(anyhow!("unsupported fixed task action")),
     }
 }
 
-fn run_nodequality(timeout_sec: u64) -> Result<TaskOutput> {
-    let output = run_fixed_shell(
+fn run_nodequality(http: &HttpClient, timeout_sec: u64) -> Result<TaskOutput> {
+    let output = run_fixed_remote_script(
+        http,
         timeout_sec.min(1800),
-        "bash <(curl -fsSL --proto '=https' --tlsv1.2 https://run.NodeQuality.com)",
+        "https://run.NodeQuality.com",
+        &[],
         Some(b"v\ny\ny\ny\n"),
     )?;
     let clean = strip_ansi_codes(&output);
@@ -102,10 +131,12 @@ fn run_nodequality(timeout_sec: u64) -> Result<TaskOutput> {
     })
 }
 
-fn run_ip_unlock(timeout_sec: u64) -> Result<TaskOutput> {
-    let output = run_fixed_shell(
+fn run_ip_unlock(http: &HttpClient, timeout_sec: u64) -> Result<TaskOutput> {
+    let output = run_fixed_remote_script(
+        http,
         timeout_sec.min(600),
-        "bash <(curl -fsSL --proto '=https' --tlsv1.2 https://IP.Check.Place) -4 -j -y",
+        "https://IP.Check.Place",
+        &["-4", "-j", "-y"],
         None,
     )?;
     let clean = strip_ansi_codes(&output);
@@ -156,12 +187,59 @@ fn json_text(value: Option<&Value>) -> String {
     }
 }
 
-fn run_fixed_shell(timeout_sec: u64, script: &str, stdin: Option<&[u8]>) -> Result<String> {
+fn run_fixed_remote_script(
+    http: &HttpClient,
+    timeout_sec: u64,
+    url: &str,
+    args: &[&str],
+    stdin: Option<&[u8]>,
+) -> Result<String> {
+    if !matches!(
+        url,
+        "https://run.NodeQuality.com" | "https://IP.Check.Place"
+    ) {
+        return Err(anyhow!("unsupported fixed task source"));
+    }
+    let task_dir = secure_task_directory()?.join(format!(
+        "{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    fs::create_dir(&task_dir).context("create isolated fixed task directory")?;
+    set_private_directory_permissions(&task_dir)?;
+    let _cleanup = TaskDirectoryCleanup(task_dir.clone());
+    let script_path = task_dir.join("task.sh");
+    let script = http.get_public_bytes_limited(url, 2 * 1024 * 1024)?;
+    if script.is_empty() {
+        return Err(anyhow!("fixed Beta task download is empty"));
+    }
+    let mut script_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&script_path)
+        .context("create fixed Beta task file")?;
+    set_private_file_permissions(&script_path)?;
+    script_file
+        .write_all(&script)
+        .context("write fixed Beta task file")?;
+    drop(script_file);
+
     let mut child = Command::new("timeout")
         .arg(format!("{}s", timeout_sec))
         .arg("bash")
-        .arg("-lc")
-        .arg(script)
+        .arg(&script_path)
+        .args(args)
+        .current_dir(&task_dir)
+        .env_clear()
+        .env(
+            "PATH",
+            "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        )
+        .env("HOME", "/root")
+        .env("LANG", "C.UTF-8")
         .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -176,24 +254,93 @@ fn run_fixed_shell(timeout_sec: u64, script: &str, stdin: Option<&[u8]>) -> Resu
             .write_all(input)
             .context("failed to send fixed task input")?;
     }
-    let output = child
-        .wait_with_output()
-        .context("failed to wait for fixed Beta task")?;
-    let mut bytes = output.stdout;
+    let stdout = child.stdout.take().context("capture fixed task stdout")?;
+    let stderr = child.stderr.take().context("capture fixed task stderr")?;
+    let stdout_reader = thread::spawn(move || read_capped(stdout, MAX_OUTPUT_BYTES / 2));
+    let stderr_reader = thread::spawn(move || read_capped(stderr, MAX_OUTPUT_BYTES / 2));
+    let status = child.wait().context("failed to wait for fixed Beta task")?;
+    let mut bytes = stdout_reader.join().unwrap_or_default();
     bytes.push(b'\n');
-    bytes.extend_from_slice(&output.stderr);
-    if bytes.len() > MAX_OUTPUT_BYTES {
-        bytes.truncate(MAX_OUTPUT_BYTES);
-    }
+    bytes.extend(stderr_reader.join().unwrap_or_default());
     let text = String::from_utf8_lossy(&bytes).to_string();
-    if !output.status.success() {
+    if !status.success() {
         return Err(anyhow!(
             "fixed Beta task exited with {}; {}",
-            output.status,
+            status,
             output_excerpt(&strip_ansi_codes(&text))
         ));
     }
     Ok(text)
+}
+
+struct TaskDirectoryCleanup(PathBuf);
+
+impl Drop for TaskDirectoryCleanup {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(unix)]
+fn set_private_file_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_private_directory_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_private_file_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_private_directory_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn secure_task_directory() -> Result<PathBuf> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let path = PathBuf::from("/var/lib/nstatus-manager/tasks");
+    fs::create_dir_all(&path).context("create fixed task runtime directory")?;
+    let metadata = fs::symlink_metadata(&path).context("inspect fixed task runtime directory")?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != 0
+        || metadata.mode() & 0o022 != 0
+    {
+        return Err(anyhow!(
+            "fixed task runtime directory is not root-owned and private"
+        ));
+    }
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+    Ok(path)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn secure_task_directory() -> Result<PathBuf> {
+    Err(anyhow!("fixed Beta tasks currently require Linux"))
+}
+
+fn read_capped<R: Read>(mut reader: R, limit: usize) -> Vec<u8> {
+    let mut kept = Vec::with_capacity(limit.min(64 * 1024));
+    let mut buffer = [0u8; 8192];
+    while let Ok(count) = reader.read(&mut buffer) {
+        if count == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(kept.len());
+        kept.extend_from_slice(&buffer[..count.min(remaining)]);
+    }
+    kept
 }
 
 fn extract_report_url(output: &str) -> Option<String> {

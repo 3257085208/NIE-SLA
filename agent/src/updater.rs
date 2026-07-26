@@ -21,12 +21,17 @@ use std::time::Duration;
 pub(super) fn spawn_update_worker(
     cfg: Config,
     http: HttpClient,
+    role: UpdateRole,
 ) -> mpsc::Receiver<UpdateCheckResult> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         thread::sleep(Duration::from_secs(INITIAL_UPDATE_CHECK_SEC));
         loop {
-            let checked = check_for_update(&cfg, &http);
+            if role == UpdateRole::Telemetry && crate::manager::is_active(&cfg) {
+                thread::sleep(Duration::from_secs(cfg.update_check_sec));
+                continue;
+            }
+            let checked = check_for_update(&cfg, &http, role);
             let next_check_sec = checked
                 .as_ref()
                 .map(|(_, seconds)| *seconds)
@@ -50,7 +55,17 @@ pub(super) fn spawn_update_worker(
     rx
 }
 
-fn check_for_update(cfg: &Config, http: &HttpClient) -> Result<(UpdateOutcome, u64)> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum UpdateRole {
+    Telemetry,
+    PrivilegedManager,
+}
+
+fn check_for_update(
+    cfg: &Config,
+    http: &HttpClient,
+    role: UpdateRole,
+) -> Result<(UpdateOutcome, u64)> {
     let url = format!(
         "{}/api/agent/update-policy?agent_id={}",
         cfg.api.trim_end_matches('/'),
@@ -102,7 +117,7 @@ fn check_for_update(cfg: &Config, http: &HttpClient) -> Result<(UpdateOutcome, u
     #[cfg(not(target_os = "linux"))]
     let privileged_updater = false;
 
-    if policy.auto_update && privileged_updater {
+    if is_managed_by_privileged_service(policy.auto_update, privileged_updater, role) {
         return Ok((
             UpdateOutcome::Managed(policy.latest_version),
             policy.check_interval_sec,
@@ -123,6 +138,21 @@ fn check_for_update(cfg: &Config, http: &HttpClient) -> Result<(UpdateOutcome, u
         },
         policy.check_interval_sec,
     ))
+}
+
+fn is_managed_by_privileged_service(
+    auto_update: bool,
+    privileged_updater: bool,
+    role: UpdateRole,
+) -> bool {
+    auto_update && privileged_updater && role == UpdateRole::Telemetry
+}
+
+pub(super) fn spawn_manager_update_worker(
+    cfg: Config,
+    http: HttpClient,
+) -> mpsc::Receiver<UpdateCheckResult> {
+    spawn_update_worker(cfg, http, UpdateRole::PrivilegedManager)
 }
 
 fn is_newer_version(candidate: &str, current: &str) -> Result<bool> {
@@ -223,9 +253,34 @@ pub(super) fn restart_after_update(executable: &PathBuf) -> Result<()> {
     Err(anyhow!("restart updated Agent: {}", error))
 }
 
+#[cfg(target_os = "linux")]
+pub(super) fn restart_manager_after_update(
+    executable: &PathBuf,
+    expected_version: &str,
+    restart_telemetry: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    if let Err(error) = crate::manager::spawn_update_watchdog(expected_version) {
+        crate::manager::rollback_update_before_restart()
+            .context("roll back update after watchdog startup failure")?;
+        return Err(error).context("start Agent update watchdog");
+    }
+    restart_telemetry()?;
+    restart_after_update(executable)
+}
+
 #[cfg(not(target_os = "linux"))]
 pub(super) fn restart_after_update(_executable: &PathBuf) -> Result<()> {
     Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn restart_manager_after_update(
+    executable: &PathBuf,
+    _expected_version: &str,
+    restart_telemetry: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    restart_telemetry()?;
+    restart_after_update(executable)
 }
 
 #[cfg(target_os = "linux")]
@@ -290,6 +345,25 @@ mod tests {
         assert!(!is_newer_version("1.0.8", "1.0.9").unwrap());
         assert!(is_newer_version("1.10.0", "1.9.99").unwrap());
         assert!(is_newer_version("1.0", "1.0.0").is_err());
+    }
+
+    #[test]
+    fn privileged_manager_never_defers_its_own_update() {
+        assert!(is_managed_by_privileged_service(
+            true,
+            true,
+            UpdateRole::Telemetry
+        ));
+        assert!(!is_managed_by_privileged_service(
+            true,
+            true,
+            UpdateRole::PrivilegedManager
+        ));
+        assert!(!is_managed_by_privileged_service(
+            false,
+            true,
+            UpdateRole::Telemetry
+        ));
     }
 
     #[test]

@@ -9,9 +9,9 @@
 ## Linux 服务
 
 - `nstatus-metrics`：低权限遥测、Ping、GeoIP 与更新。
-- `nstatus-metrics-tasks`：root 固定动作 runner，仅用于两个 Beta 动作。
+- `nstatus-metrics-tasks`：常驻 root Manager，负责固定动作、更新与服务维护。服务名为兼容旧安装而保留。
 
-旧安装只会有主服务。要启用 Beta 动作，重新执行一次最新部署命令。
+旧安装可能只有主服务。`v1.0.21` 起主 Agent 可在 Manager 缺失时低权限回退执行 IP 解锁；已有 root 更新任务或以 root 运行的旧 Agent 会自动补齐 Manager。只有两种 root 通道都不存在的早期低权限安装需要执行一次修复，后台会单独标识。
 
 ```bash
 systemctl status nstatus-metrics
@@ -27,13 +27,13 @@ OpenRC 系统由安装器创建对应服务。
 
 ## 固定 Beta 动作
 
-runner 每 60 秒轮询任务，只接受 `nodequality` 与 `ip_unlock`。脚本 URL、参数和 NQ 输入在二进制中固定。Worker 对 NQ 报告域名和 IP 解锁结构再次校验。
+Manager 每 60 秒轮询任务，只接受 `nodequality` 与 `ip_unlock`。主 Agent 的兼容回退请求只能领取 `ip_unlock`；Manager 心跳正常时主 Agent 不会重复轮询。下载地址、参数和 NQ 输入在二进制中固定，执行时不经过可拼接的 shell 命令，且清空 Agent 环境、限制下载大小、运行时间和输出。Worker 对动作与结果再次校验。
 
 ## 更新
 
-新安装默认开启 Agent 自动更新，后台开关可随时关闭。systemd 使用 timer，OpenRC 使用 hourly job，每小时检查一次；只接受高于当前版本的语义版本、固定 manifest 哈希和匹配的二进制 SHA-256。线上版本相同或更旧时不会覆盖当前 Agent，失败时继续运行旧版本。
+新安装默认开启 Agent 自动更新，后台开关可随时关闭。Manager 定期检查更新，只接受高于当前版本的语义版本、Worker 给出的 manifest SHA-256 和 manifest 中匹配的二进制 SHA-256；下载后还会运行版本探测，再原子替换并保留上一版备份。更新后的 Manager 必须持续运行，低权限遥测服务也必须保持同一进程稳定一段时间，独立 watchdog 才会接受确认并删除备份；任一服务超时未确认都会自动回滚并重启。Manager 同时维护 systemd/OpenRC 服务定义，后续增删固定动作只需更新同一二进制。
 
-旧安装需要重新粘贴一次最新部署命令，以安装低权限主服务、root updater，以及 systemd timer 或 OpenRC hourly job。命令会先停止旧服务和残留进程，再安装当前版本；节点 ID 与 Token 保持原值。
+旧版 systemd timer / OpenRC hourly job 只作为迁移桥梁；Manager 成功启动后会停用旧更新任务，避免重复轮询。没有任何 root 通道的节点无法在不破坏 Linux 权限边界的情况下静默创建 root 服务，需要按后台提示修复一次；节点 ID 与 Token 保持原值。
 
 ## 网络
 

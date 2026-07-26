@@ -91,12 +91,14 @@ export async function ensureV6Schema(env) {
     vps_info TEXT,
     process_count INTEGER,
     thread_count INTEGER,
-    pings TEXT
+    pings TEXT,
+    capabilities TEXT
   )`).run();
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN agent_version TEXT`);
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN process_count INTEGER`);
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN thread_count INTEGER`);
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN pings TEXT`);
+  await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN capabilities TEXT`);
 
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_metrics_history (
     agent_id TEXT NOT NULL,

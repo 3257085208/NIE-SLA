@@ -2,6 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
 use std::process::Command;
@@ -9,15 +10,17 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, System};
+use ureq::ResponseExt;
 
 mod geoip;
+mod manager;
 mod platform;
 mod queue;
 mod tasks;
 mod updater;
 
 use queue::{default_queue_file, load_sample_queue, save_sample_queue, spawn_queue_writer};
-use updater::{restart_after_update, spawn_update_worker};
+use updater::{restart_after_update, spawn_update_worker, UpdateRole};
 
 const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_REPORT_SEC: u64 = 300;
@@ -260,6 +263,16 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    let raw_args: Vec<String> = env::args().collect();
+    if raw_args.get(1).map(String::as_str) == Some("--manager-update-watchdog") {
+        let version = raw_args
+            .get(2)
+            .ok_or_else(|| anyhow!("watchdog Agent version is required"))?;
+        if raw_args.len() != 3 {
+            return Err(anyhow!("invalid watchdog arguments"));
+        }
+        return manager::run_update_watchdog(version);
+    }
     let cfg = Config::parse()?;
     if cfg.token.is_empty() {
         return Err(anyhow!("NSTATUS_AGENT_TOKEN or --token is required"));
@@ -270,8 +283,9 @@ fn run() -> Result<()> {
 
     let http = HttpClient::new();
     if cfg.task_runner_only {
-        return tasks::run_task_worker(&cfg, &http);
+        return manager::run(&cfg, &http);
     }
+    manager::bootstrap_if_root();
     let mut collector = Collector::new();
     let hostname = hostname_string();
     let vps_info = collector.vps_info();
@@ -290,9 +304,16 @@ fn run() -> Result<()> {
     let update_rx = if cfg.once {
         None
     } else {
-        Some(spawn_update_worker(cfg.clone(), http.clone()))
+        Some(spawn_update_worker(
+            cfg.clone(),
+            http.clone(),
+            UpdateRole::Telemetry,
+        ))
     };
     geoip::spawn_geoip_worker(cfg.clone(), http.clone());
+    if !cfg.once {
+        tasks::spawn_ip_unlock_fallback(cfg.clone(), http.clone());
+    }
     let mut last_report = Instant::now();
     let mut first_report = true;
     let mut uploading = false;
@@ -712,6 +733,7 @@ fn submit(cfg: &Config, http: &HttpClient, metrics: Metrics) -> Result<()> {
         "agent_id": cfg.agent_id,
         "agent_label": cfg.agent_label,
         "agent_version": format!("v{}", AGENT_VERSION),
+        "capabilities": manager::reported_capabilities(cfg),
         "metrics": metrics_json(&metrics),
     });
     let url = format!("{}/api/agent/metrics", cfg.api.trim_end_matches('/'));
@@ -982,14 +1004,31 @@ impl HttpClient {
 
     #[cfg(target_os = "linux")]
     fn get_public_bytes(&self, url: &str) -> Result<Vec<u8>> {
+        self.get_public_bytes_limited(url, 32 * 1024 * 1024)
+    }
+
+    fn get_public_bytes_limited(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>> {
+        if !url.starts_with("https://") {
+            return Err(anyhow!("public download URL must use HTTPS"));
+        }
         let mut res = self
             .agent
             .get(url)
             .call()
             .map_err(|err| http_error("GET", url, err))?;
+        if res.get_uri().scheme_str() != Some("https") {
+            return Err(anyhow!("public download redirected away from HTTPS"));
+        }
+        let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
         res.body_mut()
-            .read_to_vec()
-            .with_context(|| format!("HTTP GET failed while reading {}", url))
+            .as_reader()
+            .take(max_bytes.saturating_add(1) as u64)
+            .read_to_end(&mut bytes)
+            .with_context(|| format!("HTTP GET failed while reading {}", url))?;
+        if bytes.len() > max_bytes {
+            return Err(anyhow!("HTTP response from {} exceeds size limit", url));
+        }
+        Ok(bytes)
     }
 }
 
@@ -1417,6 +1456,7 @@ fn json_string(value: &str) -> String {
 fn print_help() {
     println!("NIE-SLA Agent v{}", AGENT_VERSION);
     println!("Usage: nstatus-metrics --api URL --token TOKEN [--once|--task-runner-only]");
+    println!("  --task-runner-only  Run the privileged fixed-action Manager service");
     println!(
         "Environment: NSTATUS_API_BASE, NSTATUS_AGENT_TOKEN, NSTATUS_AGENT_ID, NSTATUS_AGENT_LABEL, NSTATUS_PING_TARGET_REFRESH_SEC"
     );

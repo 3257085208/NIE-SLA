@@ -5,8 +5,28 @@ import { ensureV6Schema } from '../src/admin/schema.js';
 import { createAgentTask, claimAgentTask, completeAgentTask, listAgentTasks, normalizeTaskResult } from '../src/admin/agent-tasks.js';
 import { getGeoIpSettings, submitAgentLocation, updateGeoIpSettings, validateCustomGeoIpUrl } from '../src/admin/agent-location.js';
 import { exportBackup, previewBackup, restoreBackup } from '../src/admin/backup.js';
+import { normalizeAgentCapabilities } from '../src/metrics.js';
 
 globalThis.crypto ||= webcrypto;
+
+assert.deepEqual(
+  normalizeAgentCapabilities({
+    protocol: 1,
+    mode: 'compatibility',
+    privileged: true,
+    actions: ['nodequality', 'ip_unlock', 'shell'],
+  }, 123),
+  {
+    protocol: 1,
+    mode: 'compatibility',
+    manager_version: null,
+    privileged: false,
+    actions: ['ip_unlock'],
+    service_schema: 0,
+    update_state: null,
+    observed_at: 123,
+  },
+);
 
 const sqlite = new DatabaseSync(':memory:');
 sqlite.exec(`CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`);
@@ -26,6 +46,18 @@ sqlite.prepare(`INSERT INTO targets (id, name, group_name, type, enabled, no_pub
   VALUES (?, ?, 'Default', 'tcp', 1, 1, ?, ?, 1)`).run('vps-a', 'VPS A', now, now);
 sqlite.prepare(`INSERT INTO nodes (id, legacy_target_id, name, group_name, enabled, created_at, updated_at)
   VALUES (?, ?, ?, 'Default', 1, ?, ?)`).run('vps-a', 'vps-a', 'VPS A', now, now);
+sqlite.prepare(`INSERT INTO targets (id, name, group_name, type, enabled, no_public_ip, created_at, updated_at, traffic_reset_day)
+  VALUES (?, ?, 'Default', 'tcp', 1, 1, ?, ?, 1)`).run('vps-b', 'VPS B', now, now);
+const managerCapabilities = JSON.stringify({
+  protocol: 1,
+  mode: 'manager',
+  privileged: true,
+  actions: ['nodequality', 'ip_unlock'],
+});
+sqlite.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at, capabilities) VALUES (?, ?, ?)`)
+  .run('vps-a', new Date().toISOString(), managerCapabilities);
+sqlite.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at, capabilities) VALUES (?, ?, ?)`)
+  .run('vps-b', new Date().toISOString(), managerCapabilities);
 
 const created = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'ip_unlock' }), env);
 assert.equal(created.task.status, 'queued');
@@ -45,7 +77,7 @@ const completed = await completeAgentTask(jsonRequest({
   status: 'succeeded',
   result: { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }] },
   output_excerpt: 'IPv4 解锁测试完成',
-  agent_version: 'v1.0.20',
+  agent_version: 'v1.0.21',
 }), env, claimed.task.id, 'vps-a');
 assert.equal(completed.task.status, 'succeeded');
 assert.equal(JSON.parse(sqlite.prepare(`SELECT unlock_data FROM targets WHERE id = ?`).get('vps-a').unlock_data).services[0].name, 'Netflix');
@@ -61,6 +93,14 @@ await claimAgentTask(env, 'vps-a');
 const failed = await completeAgentTask(jsonRequest({ status: 'failed', error: 'script failed' }), env, failedTask.task.id, 'vps-a');
 assert.equal(failed.task.status, 'failed');
 assert.throws(() => normalizeTaskResult('nodequality', { report_url: 'https://example.com/report' }), /nodequality\.com/i);
+
+const filteredTask = await createAgentTask(jsonRequest({ agent_id: 'vps-b', action: 'nodequality' }), env);
+assert.equal((await claimAgentTask(env, 'vps-b', 'ip_unlock')).task, null);
+assert.equal((await claimAgentTask(env, 'vps-b')).task.id, filteredTask.task.id);
+await assert.rejects(
+  () => claimAgentTask(env, 'vps-b', 'shell'),
+  error => error?.status === 400,
+);
 
 assert.equal((await getGeoIpSettings(env)).provider, 'ip_sb');
 await updateGeoIpSettings(jsonRequest({ provider: 'ipip_net' }), env);
@@ -86,12 +126,12 @@ assert.equal(sqlite.prepare(`SELECT country_code FROM nodes WHERE id = ?`).get('
 sqlite.prepare(`INSERT INTO agent_credentials (subject_type, subject_id, token_hash, token_ciphertext, created_at, updated_at)
   VALUES ('agent', 'vps-a', 'hash', 'ciphertext', ?, ?)`).run(now, now);
 const portable = await exportBackup(new Request('https://example.test/api/backup/export'), env);
-assert.equal(portable.backup.portable.targets.length, 1);
+assert.equal(portable.backup.portable.targets.length, 2);
 assert.equal('sensitive' in portable.backup, false);
 const protectedBackup = await exportBackup(jsonRequest({ include_secrets: true, password: 'Backup-password-123!' }), env);
 assert.equal(protectedBackup.backup.sensitive.algorithm, 'PBKDF2-SHA256+A256GCM');
 const preview = await previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'Backup-password-123!' }));
-assert.equal(preview.preview.counts.targets, 1);
+assert.equal(preview.preview.counts.targets, 2);
 assert.equal(preview.preview.sensitive_counts.agent_credentials, 1);
 await assert.rejects(
   () => previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'wrong-password' })),

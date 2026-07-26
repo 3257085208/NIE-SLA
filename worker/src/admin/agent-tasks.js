@@ -21,6 +21,18 @@ export async function createAgentTask(request, env) {
   if (!target || target.type !== 'tcp' || Number(target.enabled || 0) !== 1) {
     throw new ApiError(404, 'Agent 对应的 VPS 不存在或已停用');
   }
+  const runtime = await env.DB.prepare(`SELECT updated_at, capabilities FROM agent_metrics_state WHERE agent_id = ?`)
+    .bind(agentId).first().catch(() => null);
+  const capabilities = parseCapabilities(runtime?.capabilities);
+  const lastSeen = Math.floor(new Date(runtime?.updated_at || 0).getTime() / 1000);
+  if (!runtime || !lastSeen || nowSec() - lastSeen > 900) {
+    throw new ApiError(409, 'Agent 当前离线，暂时不能下发任务');
+  }
+  if (!capabilities?.actions?.includes(action)) {
+    throw new ApiError(409, action === 'nodequality'
+      ? '该 VPS 尚未启用 root Manager，请等待自动迁移或查看 Agent 状态'
+      : '该 Agent 版本尚不支持此任务，请等待自动更新');
+  }
   const active = await env.DB.prepare(`SELECT id, action, status FROM agent_tasks WHERE agent_id = ? AND status IN ('queued', 'running') LIMIT 1`)
     .bind(agentId).first();
   if (active) throw new ApiError(409, '该 Agent 已有任务正在排队或运行');
@@ -33,6 +45,16 @@ export async function createAgentTask(request, env) {
   return { ok: true, task: taskForAdmin({ id, agent_id: agentId, action, status: 'queued', requested_at: now, expires_at: now + policy.timeout_sec + 900 }) };
 }
 
+function parseCapabilities(value) {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!parsed || Number(parsed.protocol) !== 1 || !Array.isArray(parsed.actions)) return null;
+    return { actions: parsed.actions.filter(action => AGENT_TASK_ACTIONS[action]) };
+  } catch (_) {
+    return null;
+  }
+}
+
 export async function listAgentTasks(env, url) {
   await expireStaleTasks(env);
   const agentId = sanitizeAgentId(url?.searchParams?.get('agent_id') || '');
@@ -43,13 +65,18 @@ export async function listAgentTasks(env, url) {
   return { ok: true, beta: true, actions: publicActions(), tasks: (rows.results || []).map(taskForAdmin) };
 }
 
-export async function claimAgentTask(env, agentIdValue) {
+export async function claimAgentTask(env, agentIdValue, allowedActionsValue = '') {
   const agentId = sanitizeAgentId(agentIdValue || '');
   if (!agentId) throw new ApiError(400, '缺少 agent_id');
+  const allowedActions = normalizeAllowedActions(allowedActionsValue);
   await expireStaleTasks(env, agentId);
-  const queued = await env.DB.prepare(`SELECT id FROM agent_tasks
-    WHERE agent_id = ? AND status = 'queued' AND expires_at > ?
-    ORDER BY requested_at ASC LIMIT 1`).bind(agentId, nowSec()).first();
+  const queued = allowedActions.length === 1
+    ? await env.DB.prepare(`SELECT id FROM agent_tasks
+      WHERE agent_id = ? AND status = 'queued' AND expires_at > ? AND action = ?
+      ORDER BY requested_at ASC LIMIT 1`).bind(agentId, nowSec(), allowedActions[0]).first()
+    : await env.DB.prepare(`SELECT id FROM agent_tasks
+      WHERE agent_id = ? AND status = 'queued' AND expires_at > ?
+      ORDER BY requested_at ASC LIMIT 1`).bind(agentId, nowSec()).first();
   if (!queued) return { ok: true, beta: true, poll_after_sec: 60, task: null };
 
   const claimedAt = nowSec();
@@ -70,6 +97,15 @@ export async function claimAgentTask(env, agentIdValue) {
       stdin_profile: row.action === 'nodequality' ? 'nodequality-v1' : null,
     },
   };
+}
+
+function normalizeAllowedActions(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+  const actions = [...new Set(raw.split(',').map((item) => item.trim()).filter((item) => AGENT_TASK_ACTIONS[item]))];
+  if (!actions.length) throw new ApiError(400, '没有可用的任务类型');
+  if (actions.length !== 1) throw new ApiError(400, '每个受限任务领取器只能声明一种能力');
+  return actions;
 }
 
 export async function completeAgentTask(request, env, taskId, agentIdValue) {

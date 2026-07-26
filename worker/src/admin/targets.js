@@ -49,9 +49,20 @@ export async function listTargets(env) {
   await syncEnvTargetsMaybe(env);
   const rows = await env.DB.prepare(`SELECT * FROM targets ORDER BY ${TARGET_ORDER_SQL}`).all();
   const trafficRows = {};
+  const agentStates = {};
   try {
     const result = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all();
     for (const row of result.results || []) trafficRows[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
+  } catch (_) {}
+  try {
+    const result = await env.DB.prepare(`SELECT agent_id, agent_version, updated_at, capabilities FROM agent_metrics_state`).all();
+    for (const row of result.results || []) {
+      agentStates[sanitizeAgentId(row.agent_id)] = {
+        agent_version: row.agent_version || null,
+        last_metrics_at: row.updated_at || null,
+        capabilities: parseJsonObject(row.capabilities),
+      };
+    }
   } catch (_) {}
   const rates = await getExchangeRates(env);
   const targets = (rows.results || []).map((target) => {
@@ -67,6 +78,7 @@ export async function listTargets(env) {
       nq_url: target.nq_url || nq?.report_url || null,
       has_nq: Boolean(nq?.has_report || target.nq_url),
       unlock: Array.isArray(unlock?.services) ? unlock : null,
+      agent_runtime: agentStates[sanitizeAgentId(target.id)] || null,
     };
   });
   return { ok: true, targets, regions: REGION_LABELS };

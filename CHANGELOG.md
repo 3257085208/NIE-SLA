@@ -2,6 +2,16 @@
 
 NIE-SLA 当前处于 Beta。应用使用 `0.x.y-beta.N`，Rust Agent 使用独立 `vX.Y.Z` 版本。
 
+## 0.24.0-beta.2 - 2026-07-26
+
+- 将兼容服务升级为常驻 root Manager，统一负责固定动作、验证更新、服务维护与能力心跳；以后增删动作不再新增 VPS 服务。
+- Agent 主进程提供仅允许 `ip_unlock` 的低权限兼容模式；Manager 心跳正常时不会重复领取任务或增加请求量。
+- Worker 保存经过白名单清洗的 Agent 能力，后台按每台 VPS 的真实能力启用按钮，并拒绝向离线或不支持的 Agent 排队。
+- 固定脚本执行不再拼接 shell 命令，清空 Agent 环境并限制地址、参数、下载大小、运行时间和输出。
+- Agent 更新增加独立稳定性 watchdog；新 Manager 或低权限遥测进程未在观察期内保持稳定时，自动恢复上一版并重启服务。
+- 已有 Manager、root 更新任务或 root 主进程的旧安装会自动迁移；只有确实没有 root 通道的节点需要一次修复。
+- Rust Agent 更新至 `v1.0.21`。
+
 ## 0.24.0-beta.1 - 2026-07-26
 
 - 新部署改为单 Worker：Static Assets、API、D1、R2、Durable Objects 与每分钟 Cron 一次完成。

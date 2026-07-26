@@ -321,7 +321,7 @@ WantedBy=multi-user.target
 EOF
             cat > "/etc/systemd/system/${TASK_SERVICE_NAME}.service" <<EOF
 [Unit]
-Description=聶.NET fixed Beta task runner
+Description=NIE-SLA privileged Agent manager
 After=network-online.target ${SERVICE_NAME}.service
 Wants=network-online.target
 
@@ -336,6 +336,7 @@ RestartSec=20
 User=root
 PrivateTmp=true
 ProtectHome=true
+UMask=0027
 StandardOutput=journal
 StandardError=journal
 
@@ -395,7 +396,7 @@ EOF
             cat > "/etc/init.d/${TASK_SERVICE_NAME}" <<EOF
 #!/sbin/openrc-run
 name="${TASK_SERVICE_NAME}"
-description="聶.NET fixed Beta task runner"
+description="NIE-SLA privileged Agent manager"
 
 start() {
     ebegin "Starting ${TASK_SERVICE_NAME}"
@@ -437,6 +438,28 @@ start_service() {
             rc-service "$TASK_SERVICE_NAME" start 2>/dev/null || true
             ;;
         *)       "${WORK_DIR}/${BIN_NAME}" & ;;
+    esac
+}
+
+reconcile_service_layout() {
+    write_service_unit
+    case "$(detect_init)" in
+        systemd)
+            systemctl daemon-reload
+            systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+            systemctl enable "$TASK_SERVICE_NAME" >/dev/null 2>&1 || true
+            systemctl enable --now "${SERVICE_NAME}-update.timer" >/dev/null 2>&1 || true
+            if ! systemctl is-active --quiet "$TASK_SERVICE_NAME"; then
+                systemctl start "$TASK_SERVICE_NAME"
+            fi
+            ;;
+        openrc)
+            rc-update add "$SERVICE_NAME" default >/dev/null 2>&1 || true
+            rc-update add "$TASK_SERVICE_NAME" default >/dev/null 2>&1 || true
+            if ! rc-service "$TASK_SERVICE_NAME" status >/dev/null 2>&1; then
+                rc-service "$TASK_SERVICE_NAME" start
+            fi
+            ;;
     esac
 }
 
@@ -532,6 +555,7 @@ do_uninstall() {
     rm -f "${INSTALL_DIR}/${BIN_NAME}"
     rm -f "${INSTALL_DIR}/cftz"
     rm -rf "$WORK_DIR" "$STATE_DIR"
+    rm -rf "/var/lib/nstatus-manager"
     userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
 
     ok "已完全移除"
@@ -555,10 +579,12 @@ do_update() {
     [[ -n "$api" && -n "$tok" && -n "$aid" ]] || { err "Agent 配置不完整，无法获取可信更新策略"; exit 1; }
     tmpbin="$(download_binary "$api" "$tok" "$aid" "$automatic")"
     if [[ "$tmpbin" == "__AUTO_UPDATE_DISABLED__" ]]; then
+        reconcile_service_layout
         info "自动更新已关闭，本次不安装更新"
         return 0
     fi
     if [[ "$tmpbin" == "__ALREADY_CURRENT__" ]]; then
+        reconcile_service_layout
         info "Agent 已是最新版本"
         return 0
     fi

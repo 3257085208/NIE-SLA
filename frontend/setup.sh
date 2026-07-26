@@ -198,7 +198,7 @@ WantedBy=multi-user.target
 EOF
   cat > "/etc/systemd/system/${TASK_SERVICE_NAME}.service" <<EOF
 [Unit]
-Description=聶.NET fixed Beta task runner
+Description=NIE-SLA privileged Agent manager
 After=network-online.target ${SERVICE_NAME}.service
 Wants=network-online.target
 
@@ -213,6 +213,7 @@ RestartSec=20
 User=root
 PrivateTmp=true
 ProtectHome=true
+UMask=0027
 StandardOutput=journal
 StandardError=journal
 
@@ -303,7 +304,7 @@ EOF
   cat > "/etc/init.d/${TASK_SERVICE_NAME}" <<EOF
 #!/sbin/openrc-run
 name="${TASK_SERVICE_NAME}"
-description="聶.NET fixed Beta task runner"
+description="NIE-SLA privileged Agent manager"
 
 start() {
     ebegin "Starting ${TASK_SERVICE_NAME}"
@@ -355,6 +356,7 @@ do_uninstall() {
   esac
   rm -f "${INSTALL_DIR}/${BIN_NAME}" "$CFTZ_BIN"
   rm -rf "$WORK_DIR" "$STATE_DIR"
+  rm -rf "/var/lib/nstatus-manager"
   userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
   ok "已卸载"
 }
