@@ -765,7 +765,6 @@ function renderService(t, days, summaries) {
       <div class="service-status">${status}</div>
       <div class="service-latency${hasLatency ? '' : ' is-placeholder'}"${hasLatency ? '' : ' aria-hidden="true"'}>${latencyHtml}</div>
       <div class="service-sla${slaClass}" title="${escapeAttr(slaLabel)}" aria-label="${escapeAttr(slaLabel)}">
-        <span class="service-sla-period">30天</span>
         <strong class="service-sla-value">${slaValue}</strong>
       </div>
       <div class="service-bottom-row${trafficProgress ? ' has-traffic' : ''}">

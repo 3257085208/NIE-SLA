@@ -12,6 +12,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, System};
 use ureq::ResponseExt;
 
+mod dns_compat;
 mod geoip;
 mod manager;
 mod platform;
@@ -266,6 +267,9 @@ fn main() {
 
 fn run() -> Result<()> {
     let raw_args: Vec<String> = env::args().collect();
+    if raw_args.get(1).map(String::as_str) == Some("--dns-compat") {
+        return dns_compat::run(&raw_args[2..]);
+    }
     if raw_args.get(1).map(String::as_str) == Some("--manager-update-watchdog") {
         let version = raw_args
             .get(2)

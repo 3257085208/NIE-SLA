@@ -9,6 +9,8 @@ Linux installs:
 
 The Manager accepts only action identifiers compiled into the Agent. Future fixed actions are added or removed by updating the same binary, without installing another service. The main Agent can use an IP-unlock-only compatibility mode while an older installation migrates.
 
+Since `v1.0.30`, a constrained resolver inside the Agent supplies task-local `dig` and `nslookup` compatibility when those tools are absent. It preserves the upstream region value and distinguishes native resolution from DNS wildcard resolution without installing packages or requiring root. Existing IP-unlock reports are not rewritten automatically; run the check once after upgrading to replace an older misclassified result.
+
 New installations enable verified Agent updates by default. The Manager installs only a higher semantic version after validating the release manifest SHA-256, the selected binary SHA-256, and the downloaded binary version. It uses atomic replacement and keeps the previous binary until an independent watchdog observes both a stable Manager and an unchanged healthy telemetry process; an unconfirmed update is rolled back automatically. The Manager also maintains systemd/OpenRC definitions. Legacy root update jobs are retained only as a migration bridge and are disabled after the Manager starts. Installations with no root service and an unprivileged main process need one explicit repair because Linux cannot securely create a root service from that state; the admin panel identifies only those nodes.
 
 The Agent needs outbound HTTPS only. It does not listen on a remote-management port. GeoIP refreshes every 24 hours after success and retries after one hour on failure.

@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.14",
-  "agent_version": "v1.0.29",
-  "source_ref": "app-v0.24.0-beta.14",
-  "published_at": "2026-07-26T20:31:14Z",
-  "title": "NIE-SLA 0.24 Beta 14",
+  "version": "0.24.0-beta.15",
+  "agent_version": "v1.0.30",
+  "source_ref": "app-v0.24.0-beta.15",
+  "published_at": "2026-07-27T09:48:43Z",
+  "title": "NIE-SLA 0.24 Beta 15",
   "changelog": [
-    "IPv4 解锁状态格改为浅绿、浅红、浅黄与浅灰蓝，使用对应深色文字保持小字号可读性",
-    "VPS 标题继续统一显示商家与节点名称，并移除重复商家徽标和粗粒度探测区域",
-    "VPS 列表仅显示无名称的 Cloudflare 延迟，外部 Latency Agent 历史仍保留在详细图表",
-    "修复图表指标栏左边缘裁切，Latency 与 CPU 标签始终从完整位置开始显示",
-    "桌面与 320px 移动端保持紧凑布局，无横向溢出"
+    "后台新增 VPS 批量设置，可统一修改商家、机器类型、到期时间、流量额度与重置日",
+    "VPS 与 Web 监控统一显示最近 30 天 SLA，页面只保留更醒目的百分比",
+    "修复缺少 dig 或 nslookup 的 VPS 将原生 IPv4 解锁误判为 DNS 解锁的问题",
+    "DNS 兼容查询由 Agent 内置受限解析器完成，不安装系统软件、不需要 root",
+    "Rust Agent 更新至 v1.0.30，现有安装可通过验证自动更新，无需重新部署"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -167,6 +167,7 @@ const slaSummaries = new Map([
   ['clamped-a:2026-07-27', { total: 10, ok_count: 20 }],
   ['negative-a:2026-07-27', { total: 10, ok_count: -5 }],
   ['invalid-a:2026-07-27', { total: 'invalid', ok_count: 5 }],
+  ['web-a:2026-07-27', { total: 288, ok_count: 287 }],
 ]);
 assert.equal(targetSlaPercentage('probe-a', ['2026-07-26'], slaSummaries), 99);
 assert.equal(targetSlaPercentage('probe-a', ['2026-07-26', '2026-07-27'], slaSummaries), 100 / 110 * 100);
@@ -175,6 +176,7 @@ assert.equal(targetSlaPercentage('clamped-a', ['2026-07-27'], slaSummaries), 100
 assert.equal(targetSlaPercentage('negative-a', ['2026-07-27'], slaSummaries), 0);
 assert.equal(targetSlaPercentage('invalid-a', ['2026-07-27'], slaSummaries), null);
 assert.equal(targetSlaPercentage('missing-a', ['2026-07-27'], slaSummaries), null);
+assert.equal(targetSlaPercentage('web-a', ['2026-07-27'], slaSummaries), 287 / 288 * 100);
 console.log('SLA summary helpers ok');
 
 const previousFetch = globalThis.fetch;

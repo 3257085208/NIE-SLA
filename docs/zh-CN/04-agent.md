@@ -11,7 +11,7 @@
 - `nstatus-metrics`：低权限遥测、Ping、GeoIP 与更新。
 - `nstatus-metrics-tasks`：常驻 root Manager，负责固定动作、更新与服务维护。服务名为兼容旧安装而保留。
 
-旧安装可能只有主服务。`v1.0.28` 起主 Agent 可在 Manager 缺失时通过自身私有状态目录低权限执行 IP 解锁，不要求 root，也不会尝试安装系统依赖或上传第三方报告；缺少可选 DNS 工具时提供一次性空结果入口，缺少 `jq` 时优先从当前 NIE-SLA Worker 下载随版本发布的 jq 官方固定产物并校验 SHA-256，GitHub 官方 Release 只作备用源。两者都只存在于任务私有目录，任务结束自动删除，不修改系统环境。已有 root 更新任务或以 root 运行的旧 Agent 会自动补齐 Manager。只有两种 root 通道都不存在的早期低权限安装需要执行一次修复，后台会单独标识。
+旧安装可能只有主服务。`v1.0.28` 起主 Agent 可在 Manager 缺失时通过自身私有状态目录低权限执行 IP 解锁，不要求 root，也不会尝试安装系统依赖或上传第三方报告。`v1.0.30` 起，系统缺少 `dig` 或 `nslookup` 时由 Agent 内置受限解析器提供任务内兼容查询，真实区分原生解析与 DNS 泛解析；缺少 `jq` 时优先从当前 NIE-SLA Worker 下载随版本发布的 jq 官方固定产物并校验 SHA-256，GitHub 官方 Release 只作备用源。兼容文件只存在于任务私有目录，任务结束自动删除，不修改系统环境。已有 root 更新任务或以 root 运行的旧 Agent 会自动补齐 Manager。只有两种 root 通道都不存在的早期低权限安装需要执行一次修复，后台会单独标识。
 
 ```bash
 systemctl status nstatus-metrics
@@ -28,6 +28,8 @@ OpenRC 系统由安装器创建对应服务。
 ## 固定 Beta 动作
 
 Manager 每 60 秒轮询任务，只接受 `nodequality` 与 `ip_unlock`。主 Agent 的兼容回退请求只能领取 `ip_unlock`；Manager 心跳正常时主 Agent 不会重复轮询。下载地址、参数和 NQ 输入在二进制中固定，执行时不经过可拼接的 shell 命令，且清空 Agent 环境、限制下载大小、运行时间和输出。Worker 对动作与结果再次校验。
+
+IPv4 解锁报告中的国家/地区字段按上游原值保存；颜色根据报告的原生、DNS 或失败类型显示。Agent 升级不会自动覆盖旧报告，如旧结果曾因缺少 DNS 工具被误判，需要在后台重新运行一次 IPv4 解锁。
 
 ## 更新
 

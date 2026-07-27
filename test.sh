@@ -67,6 +67,7 @@ run_check "application update tests" node "$ROOT/worker/tests/app-update.test.mj
 run_check "independent traffic reset day tests" node "$ROOT/worker/tests/traffic-reset.test.mjs"
 run_check "per-node Agent credential tests" node "$ROOT/worker/tests/agent-credentials.test.mjs"
 run_check "Agent task, GeoIP, and backup tests" node "$ROOT/worker/tests/agent-tasks-backup.test.mjs"
+run_check "bulk VPS target update tests" node "$ROOT/worker/tests/target-bulk.test.mjs"
 run_check "email alert tests" node "$ROOT/worker/tests/alerts.test.mjs"
 run_check "admin reset tool" node --check "$ROOT/worker/scripts/reset-admin.mjs"
 run_check "external Latency agent tests" node "$ROOT/worker/tests/latency-agents.test.mjs"
@@ -150,7 +151,7 @@ run_shell "permanent Manager owns fixed actions and updates" "cd '$ROOT' && grep
 run_shell "Manager state and update rollback stay root controlled" "cd '$ROOT' && grep -q '/var/lib/nstatus-manager/manager-heartbeat' agent/src/manager.rs && grep -q 'ensure_manager_state_dir' agent/src/manager.rs && grep -q 'spawn_update_watchdog' agent/src/manager.rs && grep -q 'systemd-run' agent/src/manager.rs && grep -q 'rollback_failed_update' agent/src/manager.rs"
 run_shell "Manager capabilities are allow-listed end to end" "cd '$ROOT' && grep -q '\"capabilities\": manager::reported_capabilities' agent/src/main.rs && grep -q 'normalizeAgentCapabilities' worker/src/metrics.js && grep -q 'agent_runtime' worker/src/admin/targets.js && grep -q 'capabilities?.actions' worker/src/admin/agent-tasks.js"
 run_shell "fixed tasks do not use remote shell strings" "cd '$ROOT' && ! grep -q 'bash <(curl' agent/src/tasks.rs && ! grep -q '\.arg(\"-lc\")' agent/src/tasks.rs && grep -q '\.env_clear()' agent/src/tasks.rs"
-run_shell "IP unlock compatibility stays task-local" "cd '$ROOT' && grep -q 'OPTIONAL_DIG_STUB' agent/src/tasks.rs && grep -q 'task_dir.join(\"bin\")' agent/src/tasks.rs && grep -q 'set_private_executable_permissions' agent/src/tasks.rs && ! grep -qE 'Command::new\(\"(apt|apt-get|dnf|yum|pacman|apk)\"\)|\b(apt|apt-get|dnf|yum|pacman|apk) (install|add)\b' agent/src/tasks.rs"
+run_shell "IP unlock compatibility stays task-local" "cd '$ROOT' && grep -q 'OPTIONAL_DIG_HELPER' agent/src/tasks.rs && grep -q 'OPTIONAL_NSLOOKUP_HELPER' agent/src/tasks.rs && grep -q 'NSTATUS_DNS_COMPAT_EXECUTABLE' agent/src/tasks.rs && grep -q 'task_dir.join(\"bin\")' agent/src/tasks.rs && grep -q 'set_private_executable_permissions' agent/src/tasks.rs && ! grep -qE 'Command::new\(\"(apt|apt-get|dnf|yum|pacman|apk)\"\)|\b(apt|apt-get|dnf|yum|pacman|apk) (install|add)\b' agent/src/tasks.rs"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="

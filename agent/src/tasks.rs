@@ -2,6 +2,7 @@ use crate::{percent_encode_query, Config, HttpClient, AGENT_VERSION};
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::env;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -15,7 +16,10 @@ const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const IP_UNLOCK_ARGS: [&str; 4] = ["-4", "-j", "-n", "-p"];
 const SYSTEM_TASK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-const OPTIONAL_DIG_STUB: &[u8] = b"#!/bin/sh\nexit 0\n";
+const OPTIONAL_DIG_HELPER: &[u8] =
+    b"#!/bin/sh\nexec \"$NSTATUS_DNS_COMPAT_EXECUTABLE\" --dns-compat dig \"$@\"\n";
+const OPTIONAL_NSLOOKUP_HELPER: &[u8] =
+    b"#!/bin/sh\nexec \"$NSTATUS_DNS_COMPAT_EXECUTABLE\" --dns-compat nslookup \"$@\"\n";
 const JQ_RELEASE_BASE: &str = "https://github.com/jqlang/jq/releases/download/jq-1.8.1";
 const MAX_JQ_BYTES: usize = 4 * 1024 * 1024;
 
@@ -265,6 +269,8 @@ fn run_fixed_remote_script(
     set_private_directory_permissions(&task_dir)?;
     let _cleanup = TaskDirectoryCleanup(task_dir.clone());
     let script_path = task_dir.join("task.sh");
+    let agent_executable =
+        env::current_exe().context("locate Agent DNS compatibility executable")?;
     let script = http.get_public_bytes_limited(url, 2 * 1024 * 1024)?;
     if script.is_empty() {
         return Err(anyhow!("fixed Beta task download is empty"));
@@ -291,6 +297,7 @@ fn run_fixed_remote_script(
         .env("PATH", task_path)
         .env("HOME", &task_dir)
         .env("LANG", "C.UTF-8")
+        .env("NSTATUS_DNS_COMPAT_EXECUTABLE", agent_executable)
         .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -328,8 +335,9 @@ fn prepare_fixed_task_path(
         return Ok(OsString::from(system_path));
     }
     let needs_dig = !task_command_exists(system_path, "dig");
+    let needs_nslookup = !task_command_exists(system_path, "nslookup");
     let needs_jq = !task_command_exists(system_path, "jq");
-    if !needs_dig && !needs_jq {
+    if !needs_dig && !needs_nslookup && !needs_jq {
         return Ok(OsString::from(system_path));
     }
 
@@ -340,7 +348,14 @@ fn prepare_fixed_task_path(
         // The upstream script treats an optional DNSBL lookup as fatal after media checks.
         write_private_executable(
             &bin_dir.join("dig"),
-            OPTIONAL_DIG_STUB,
+            OPTIONAL_DIG_HELPER,
+            "optional DNS compatibility helper",
+        )?;
+    }
+    if needs_nslookup {
+        write_private_executable(
+            &bin_dir.join("nslookup"),
+            OPTIONAL_NSLOOKUP_HELPER,
             "optional DNS compatibility helper",
         )?;
     }
@@ -806,7 +821,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn ip_unlock_uses_an_ephemeral_optional_dns_helper() {
+    fn ip_unlock_uses_ephemeral_dns_helpers() {
         use std::os::unix::fs::PermissionsExt;
 
         let base = std::env::temp_dir().join(format!(
@@ -821,14 +836,21 @@ mod tests {
         let bin = base.join("bin");
         fs::create_dir(&bin).unwrap();
         let dig = bin.join("dig");
-        write_private_executable(&dig, OPTIONAL_DIG_STUB, "test dig helper").unwrap();
+        write_private_executable(&dig, OPTIONAL_DIG_HELPER, "test dig helper").unwrap();
         assert_eq!(
             fs::metadata(&dig).unwrap().permissions().mode() & 0o777,
             0o700
         );
-        let output = Command::new(&dig).output().unwrap();
+        let output = Command::new(&dig)
+            .env("NSTATUS_DNS_COMPAT_EXECUTABLE", "/bin/echo")
+            .arg("example.com")
+            .output()
+            .unwrap();
         assert!(output.status.success());
-        assert!(output.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(output.stdout).unwrap().trim(),
+            "--dns-compat dig example.com"
+        );
         fs::remove_dir_all(&base).unwrap();
     }
 

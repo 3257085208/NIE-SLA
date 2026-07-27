@@ -286,17 +286,11 @@ button { border: 0; cursor: pointer; }
   align-items: baseline;
   justify-content: flex-end;
   justify-self: end;
-  gap: 5px;
   white-space: nowrap;
 }
-.service-sla-period {
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-}
 .service-sla-value {
-  font-size: 17px;
-  font-weight: 700;
+  font-size: 20px;
+  font-weight: 750;
 }
 .service-latency.is-placeholder {
   visibility: hidden;
@@ -1124,9 +1118,8 @@ body:not(.is-loaded) .incident-log {
   .service-name { font-size: 17px; }
   .service-status { grid-column: 2; grid-row: 1; font-size: 15px; }
   .service-latency { justify-self: start; font-size: 14px; }
-  .service-sla { justify-self: end; gap: 4px; }
-  .service-sla-period { font-size: 10px; }
-  .service-sla-value { font-size: 14px; }
+  .service-sla { justify-self: end; }
+  .service-sla-value { font-size: 16px; }
   .service-bottom-row,
   .service-bottom-row.has-traffic {
     grid-template-columns: 1fr;
@@ -1602,7 +1595,7 @@ html, body { background-color: var(--appearance-bg, var(--bg)); }
   .service-name { font-size: 17px; line-height: 1.28; }
   .service-status { font-size: 15px; line-height: 1.3; }
   .service-meta { gap: 4px; margin-top: 5px; }
-  .service-sla-value { font-size: 14px; }
+  .service-sla-value { font-size: 16px; }
   .service-bottom-row { margin-top: 7px; }
   .uptime-strip { gap: 3px; }
   .daybar { height: 18px; }

@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Beta · 0.24.0-beta.14**
+**Beta · 0.24.0-beta.15**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -57,6 +57,7 @@ NIE-SLA 把 Cloudflare 公网探测、公开状态页和 VPS 系统数据放在�
 
 - NodeQuality 固定输入 `v/y/y/y`，后台只保存并展示 `nodequality.com` 报告链接。
 - IPv4 解锁使用 `IP.Check.Place` JSON 模式，只保存最终媒体解锁字段，不保存纯净度。
+- 缺少 `dig` 或 `nslookup` 时使用 Agent 内置受限解析器，不安装软件、不要求 root，并保留报告原始地区值。
 - Linux 主遥测服务继续低权限运行，常驻 root Manager 只识别编译进 Agent 的动作，并负责校验更新、维护服务和上报能力。
 
 以后增删固定动作只更新同一 Agent 二进制，不再新增 VPS 服务。已有 Manager、root 更新任务或 root 主进程的旧安装会自动迁移；后台只会标出确实缺少 root 通道的极早期节点。
