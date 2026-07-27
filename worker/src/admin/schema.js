@@ -4,7 +4,7 @@ import { dayFromSec, nowSec, parseBoolean, timezoneOffsetMin } from '../utils.js
 let schemaEnsured = false;
 let schemaPromise = null;
 // Bump this marker whenever an existing installation needs new D1 objects.
-const SCHEMA_MARKER = 'schema:worker-v17-20260726-agent-capabilities';
+const SCHEMA_MARKER = 'schema:worker-v18-20260727-chart-colors';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -184,7 +184,7 @@ export async function ensureV6Schema(env) {
     created_at INTEGER,
     updated_at INTEGER
   )`).run();
-  await env.DB.prepare(`ALTER TABLE ping_targets ADD COLUMN color TEXT NOT NULL DEFAULT '#159754'`).run().catch(() => {});
+  await runOptionalSchemaChange(env, `ALTER TABLE ping_targets ADD COLUMN color TEXT NOT NULL DEFAULT '#159754'`);
 
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ping_history (
     target_id TEXT NOT NULL,
@@ -205,7 +205,7 @@ export async function ensureV6Schema(env) {
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`).run();
-  await env.DB.prepare(`ALTER TABLE latency_agents ADD COLUMN color TEXT NOT NULL DEFAULT '#2e7dd7'`).run().catch(() => {});
+  await runOptionalSchemaChange(env, `ALTER TABLE latency_agents ADD COLUMN color TEXT NOT NULL DEFAULT '#2e7dd7'`);
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_credentials (
     subject_type TEXT NOT NULL CHECK (subject_type IN ('agent', 'latency')),
     subject_id TEXT NOT NULL,

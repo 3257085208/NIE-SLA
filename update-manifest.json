@@ -1,18 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.16",
+  "version": "0.24.0-beta.17",
   "agent_version": "v1.0.31",
-  "source_ref": "app-v0.24.0-beta.16",
-  "published_at": "2026-07-27T12:43:04Z",
-  "title": "NIE-SLA 0.24 Beta 16",
+  "source_ref": "app-v0.24.0-beta.17",
+  "published_at": "2026-07-27T15:19:04Z",
+  "title": "NIE-SLA 0.24 Beta 17",
   "changelog": [
-    "Web 成功检查稳定显示运行正常，不再因缺少 Agent 心跳误报数据延迟",
-    "外部 Latency Agent 使用 1000ms 总预算与多地址并发，超时统一记录为丢包",
-    "Ping 目标与独立 Latency Agent 支持后台配置曲线颜色",
-    "修复 LXC 容器读取宿主 DRM 元数据后误显示 GPU 的问题",
-    "设置卡片默认折叠，管理员账号更新显示明确进度与结果",
-    "修复 Cron 触发器超出 CPU 限制导致整批漏检，五分钟平滑覆盖 100 个目标",
-    "Rust Agent 更新至 v1.0.31，现有安装可通过验证自动更新，无需重新部署"
+    "修复旧 D1 跳过曲线颜色字段后第三方 Latency 接口返回 500 的问题",
+    "升级数据库迁移标记并增加旧库回归测试，历史曲线与节点配置无需重建",
+    "Rust Agent 保持 v1.0.31，无需重新部署"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
