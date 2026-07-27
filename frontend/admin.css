@@ -204,6 +204,12 @@ h3 {
 .vps-sla-summary .sla-good strong { color: #168653; }
 .vps-sla-summary .sla-warn strong, .vps-sla-summary .is-warning strong { color: #aa7310; }
 .vps-sla-summary .sla-bad strong { color: #c2413a; }
+.vps-sla-chart-block { margin-top: 12px; padding: 11px 12px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fbfdfc; }
+.vps-sla-chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 7px; }
+.vps-sla-chart-head strong { color: var(--text); font-size: 12px; }
+.vps-sla-chart-head span { color: var(--muted); font-size: 10px; }
+.vps-sla-chart-wrap { position: relative; height: 190px; min-height: 190px; }
+#vpsSlaChart { display: block; width: 100% !important; height: 190px !important; }
 .vps-sla-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); max-height: 360px; margin-top: 12px; overflow: auto; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
 .vps-sla-item { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 9px 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .vps-sla-item > strong { overflow: hidden; color: var(--text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -1438,6 +1444,10 @@ code,
   .vps-sla-summary > div:nth-child(2) { border-left: 0; }
   .vps-sla-summary > div { padding: 11px 10px; }
   .vps-sla-list { grid-template-columns: minmax(0, 1fr); max-height: 420px; }
+  .vps-sla-chart-block { padding: 10px 8px 6px; }
+  .vps-sla-chart-head { display: block; }
+  .vps-sla-chart-head span { display: block; margin-top: 2px; }
+  .vps-sla-chart-wrap, #vpsSlaChart { height: 210px !important; min-height: 210px; }
   .settings-subnav {
     margin-top: 14px;
     padding: 3px;

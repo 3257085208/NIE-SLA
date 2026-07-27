@@ -25,7 +25,7 @@ import { formatLocationLabel, normalizeCityName } from '../js/shared/format.js';
 import { buildNqModalHtml, renderNqAnsiHtml, renderNqReportHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from '../js/shared/appearance.js';
 import { unlockState } from '../js/shared/unlock.js';
-import { targetSlaPercentage } from '../js/shared/sla.js';
+import { dailyFleetSlaSeries, targetSlaPercentage } from '../js/shared/sla.js';
 import { onRequest as routeAdminPage } from '../functions/[[path]].js';
 
 const rows = normalizeChartRows([
@@ -180,6 +180,14 @@ assert.equal(targetSlaPercentage('negative-a', ['2026-07-27'], slaSummaries), 0)
 assert.equal(targetSlaPercentage('invalid-a', ['2026-07-27'], slaSummaries), null);
 assert.equal(targetSlaPercentage('missing-a', ['2026-07-27'], slaSummaries), null);
 assert.equal(targetSlaPercentage('web-a', ['2026-07-27'], slaSummaries), 287 / 288 * 100);
+assert.deepEqual(dailyFleetSlaSeries(
+  ['probe-a', 'web-a', 'missing-a'],
+  ['2026-07-26', '2026-07-27'],
+  slaSummaries,
+), [
+  { day: '2026-07-26', value: 99, target_count: 1 },
+  { day: '2026-07-27', value: ((1 / 10 * 100) + (287 / 288 * 100)) / 2, target_count: 2 },
+]);
 console.log('SLA summary helpers ok');
 
 const previousFetch = globalThis.fetch;

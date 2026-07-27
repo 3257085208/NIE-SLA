@@ -79,6 +79,7 @@ function jsonRequest(url, body) {
   assert.equal(changed.credentials_source, 'db');
   assert.equal(changed.logout_required, true);
   assert.equal(changed.session_valid, false);
+  assert.equal(changed.message, '账号密码已更新，请重新登录');
   assert.equal((await getAdminAccount(env)).username, 'new.owner');
   assert.equal((await validateAdminSession(env, oldLogin.session_id)).valid, false, 'changing credentials must revoke older sessions');
   assert.equal(changed.session_id, undefined, 'changing credentials must not issue a replacement session');

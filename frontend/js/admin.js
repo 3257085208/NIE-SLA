@@ -1,6 +1,6 @@
 import { copyText } from "./install-command.js";
 import { createAdminClient } from "./admin/api.js";
-import { targetSlaPercentage } from "./shared/sla.js";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -76,6 +76,7 @@ let targets = [],
   selectedTargetIds = new Set();
 let pendingBulkUpdate = null;
 let toastTimer = 0;
+let vpsSlaChart = null;
 function toast(m, t = "info") {
   const e = byId("toast");
   clearTimeout(toastTimer);
@@ -332,7 +333,7 @@ function renderVpsSla(data) {
     .sort((a, b) => {
       if (a.sla == null && b.sla != null) return 1;
       if (a.sla != null && b.sla == null) return -1;
-      if (a.sla !== b.sla) return Number(a.sla) - Number(b.sla);
+      if (a.sla !== b.sla) return Number(b.sla) - Number(a.sla);
       return String(a.target.name || "").localeCompare(String(b.target.name || ""), "zh-CN");
     });
 
@@ -348,12 +349,17 @@ function renderVpsSla(data) {
   const healthyCount = measured.filter((row) => row.sla >= 99).length;
   const warningCount = measured.filter((row) => row.sla < 99).length;
   const fleetClass = slaClassName(fleetSla);
+  const dailySeries = dailyFleetSlaSeries(rows.map((row) => row.target.id), days, summaries);
   byId("dVpsSla").innerHTML = `
     <div class="vps-sla-summary">
       <div class="vps-sla-total ${fleetClass}"><strong>${fleetSla == null ? "-" : `${fleetSla.toFixed(3)}%`}</strong><span>整体 SLA</span></div>
       <div><strong>${measured.length}</strong><span>已统计 / ${rows.length} 台</span></div>
       <div><strong>${healthyCount}</strong><span>达到 99%</span></div>
       <div class="${warningCount ? "is-warning" : ""}"><strong>${warningCount}</strong><span>低于 99%</span></div>
+    </div>
+    <div class="vps-sla-chart-block">
+      <div class="vps-sla-chart-head"><strong>每日整体 SLA</strong><span>虚线为 99% 参考值</span></div>
+      <div class="vps-sla-chart-wrap"><canvas id="vpsSlaChart" role="img" aria-label="最近 30 天每日整体 SLA 趋势"></canvas></div>
     </div>
     <div class="vps-sla-list">
       ${rows.map(({ target, sla }) => {
@@ -372,6 +378,76 @@ function renderVpsSla(data) {
         </div>`;
       }).join("")}
     </div>`;
+  renderVpsSlaChart(dailySeries);
+}
+
+function renderVpsSlaChart(series) {
+  vpsSlaChart?.destroy();
+  vpsSlaChart = null;
+  const canvas = byId("vpsSlaChart");
+  if (!canvas || typeof window.Chart !== "function") return;
+  const measured = series.map((point) => point.value).filter((value) => value != null);
+  const minimum = measured.length ? Math.max(0, Math.floor(Math.min(...measured) - 3)) : 0;
+  const context = canvas.getContext("2d");
+  const fill = context.createLinearGradient(0, 0, 0, 190);
+  fill.addColorStop(0, "rgba(21, 151, 84, .22)");
+  fill.addColorStop(1, "rgba(21, 151, 84, .015)");
+  vpsSlaChart = new window.Chart(context, {
+    type: "line",
+    data: {
+      labels: series.map((point) => String(point.day || "").slice(5)),
+      datasets: [
+        {
+          label: "整体 SLA",
+          data: series.map((point) => point.value),
+          borderColor: "#159754",
+          backgroundColor: fill,
+          borderWidth: 2,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          pointBackgroundColor: "#ffffff",
+          pointBorderColor: "#159754",
+          tension: .28,
+          fill: true,
+          spanGaps: false,
+        },
+        {
+          label: "99% 参考值",
+          data: series.map(() => 99),
+          borderColor: "rgba(194, 65, 58, .62)",
+          borderWidth: 1,
+          borderDash: [5, 5],
+          pointRadius: 0,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 280 },
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => items.length ? series[items[0].dataIndex]?.day || "" : "",
+            label: (item) => item.datasetIndex === 0 && item.raw != null ? `整体 SLA：${Number(item.raw).toFixed(2)}%` : "99% 参考值",
+            afterLabel: (item) => item.datasetIndex === 0 ? `统计节点：${series[item.dataIndex]?.target_count || 0} 台` : "",
+          },
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: "#728096", maxTicksLimit: 10, font: { size: 10 } } },
+        y: {
+          min: minimum,
+          max: 100,
+          grid: { color: "rgba(203, 213, 225, .55)" },
+          ticks: { color: "#728096", maxTicksLimit: 5, callback: (value) => `${value}%`, font: { size: 10 } },
+        },
+      },
+    },
+  });
 }
 
 function slaClassName(value) {
@@ -2345,7 +2421,7 @@ async function loadAccount() {
         ${formField("当前密码", '<input id="accountCurrentPassword" type="password" autocomplete="current-password">')}
         ${formField("新密码", `<input id="accountNewPassword" type="password" minlength="${escapeHtml(account.password_min_length || 9)}" maxlength="256" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{9,256}" autocomplete="new-password">`)}
         ${formField("确认新密码", `<input id="accountConfirmPassword" type="password" minlength="${escapeHtml(account.password_min_length || 9)}" maxlength="256" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{9,256}" autocomplete="new-password">`)}
-        ${loginState.totp_enabled ? formField("TOTP 验证码", '<input id="accountTotp" inputmode="numeric" maxlength="6" autocomplete="one-time-code">') : ""}
+        ${loginState.totp_enabled ? formField("TOTP 验证码", '<input id="accountTotp" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code" required><p class="hint">当前已启用 TOTP，修改账号密码时必须填写当期 6 位验证码。</p>') : ""}
       </div>
       <p class="hint">密码至少 9 位，且必须包含大写字母、小写字母、数字和特殊符号。当前来源：${escapeHtml(source)}。保存后其他设备会退出登录。</p>
       <p class="account-save-status" id="accountSaveStatus" role="status" hidden></p>
@@ -2383,16 +2459,21 @@ async function saveAccount() {
     accountSaveStatus("两次输入的新密码不一致", "err");
     return toast("两次输入的新密码不一致", "err");
   }
-  if (totp && !/^\d{6}$/.test(totp)) {
-    accountSaveStatus("TOTP 验证码必须是 6 位数字", "err");
-    return toast("TOTP 验证码必须是 6 位数字", "err");
+  const totpInput = byId("accountTotp");
+  if (totpInput && !/^\d{6}$/.test(totp)) {
+    const message = totp ? "TOTP 验证码必须是 6 位数字" : "请输入当前的 6 位 TOTP 验证码";
+    accountSaveStatus(message, "err");
+    totpInput.focus();
+    return toast(message, "err");
   }
   button.disabled = true;
   button.textContent = "更新中...";
   accountSaveStatus("正在验证并更新账号密码...", "info");
+  let failed = false;
   try {
     const result = await apiTimeout("/api/auth/account", {
       method: "PATCH",
+      cache: "no-store",
       body: JSON.stringify({
         username,
         current_password: currentPassword,
@@ -2407,12 +2488,14 @@ async function saveAccount() {
     byId("loginPassword").value = "";
     showLogin("账号密码已更新，请使用新账号密码重新登录");
   } catch (error) {
-    accountSaveStatus(error.message || "账号密码更新失败", "err");
-    toast(error.message, "err");
+    failed = true;
+    const message = String(error?.message || "账号密码更新失败，请确认当前密码和 TOTP 后重试");
+    accountSaveStatus(message, "err");
+    toast(message, "err");
   } finally {
     if (document.body.contains(button)) {
       button.disabled = false;
-      button.textContent = "更新账号密码";
+      button.textContent = failed ? "重试更新" : "更新账号密码";
     }
   }
 }

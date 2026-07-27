@@ -78,7 +78,13 @@ export async function updateAdminAccount(request, env) {
   const record = await createAdminCredentialRecord(username, password);
   await setMeta(env, ADMIN_CREDENTIALS_KEY, JSON.stringify(record));
   const stored = await resolveAdminCredentials(env);
-  if (!stored || stored.source !== 'db' || stored.username !== username || !await verifyPassword(password, stored)) {
+  if (!stored
+    || stored.source !== 'db'
+    || stored.username !== username
+    || stored.algorithm !== record.algorithm
+    || Number(stored.iterations) !== record.iterations
+    || !constantTimeEqual(stored.salt, record.salt)
+    || !constantTimeEqual(stored.password_hash, record.password_hash)) {
     throw new ApiError(500, '管理员账号写入后校验失败，请重试');
   }
   await revokeAllAdminSessions(env);
@@ -93,6 +99,7 @@ export async function updateAdminAccount(request, env) {
     session_valid: false,
     logout_required: true,
     credentials_source: 'db',
+    message: '账号密码已更新，请重新登录',
   };
 }
 

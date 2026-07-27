@@ -292,7 +292,7 @@ async function dispatchStatic(env, url, request, ctx) {
     return json(await passwordLogin(request, env), 200, env, { 'cache-control': 'no-store' });
   }
   if (path === '/api/auth/account' && m === 'GET') { await withAdmin(request, env); return json(await getAdminAccount(env), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/auth/account' && m === 'PATCH') { await withAdmin(request, env); if (!await rateLimitD1(env, 'admin-account-update', 3, 600)) return deny(); return json(await updateAdminAccount(request, env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/auth/account' && m === 'PATCH') { await withAdmin(request, env); if (!await rateLimitD1(env, 'admin-account-update', 6, 600)) return deny(); return json(await updateAdminAccount(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/auth/github/start' && m === 'GET') return startGitHubOAuth(request, env);
   if (path === '/api/auth/github/callback' && m === 'GET') return finishGitHubOAuth(request, env);
   if (path === '/api/auth/github/complete' && m === 'POST') return json(await completeGitHubOAuth(request, env), 200, env, { 'cache-control': 'no-store' });

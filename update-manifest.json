@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.18",
-  "agent_version": "v1.0.32",
-  "source_ref": "app-v0.24.0-beta.18",
-  "published_at": "2026-07-27T17:32:24Z",
-  "title": "NIE-SLA 0.24 Beta 18",
+  "version": "0.24.0-beta.19",
+  "agent_version": "v1.0.33",
+  "source_ref": "app-v0.24.0-beta.19",
+  "published_at": "2026-07-27T19:06:41Z",
+  "title": "NIE-SLA 0.24 Beta 19",
   "changelog": [
-    "后台设置改为二级分类，并以最近 30 天全体 VPS SLA 替换空白指标区",
-    "管理员账号更新后强制撤销全部会话；批量设置与 Beta 任务使用站内确认弹窗",
-    "第三方 Latency 历史迁移至 R2 分片，增加缓存、校验更新与首分钟读取修复",
-    "备份恢复使用加密快照、失败自动回滚，并补强代理下载和登录安全边界",
-    "Rust Agent 更新至 v1.0.32，继续支持校验后的自动升级"
+    "修复管理员账号密码更新受重复密码校验与限流影响而无法完成的问题，并持续显示失败原因",
+    "账号更新成功后立即撤销全部会话并返回登录页；启用 TOTP 时明确要求填写当期验证码",
+    "修复 NodeQuality 成功生成报告却因上游固定退出码与长进度输出被误判失败的问题",
+    "后台新增最近 30 天每日整体 VPS SLA 趋势，逐台节点按 SLA 从高到低排列",
+    "公开 VPS 列表增加轻量分隔并平衡 SLA 格子宽度；Rust Agent 更新至 v1.0.33"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

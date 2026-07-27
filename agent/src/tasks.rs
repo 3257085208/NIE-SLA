@@ -145,14 +145,19 @@ fn run_nodequality(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<
         &[],
         Some(b"v\ny\ny\ny\n"),
     )?;
-    ensure_script_success(&output)?;
+    nodequality_task_output(&output)
+}
+
+fn nodequality_task_output(output: &FixedScriptOutput) -> Result<TaskOutput> {
     let clean = strip_ansi_codes(&output.text);
-    let report_url = extract_report_url(&clean)
-        .ok_or_else(|| anyhow!("NodeQuality completed without a report URL"))?;
-    Ok(TaskOutput {
-        result: json!({ "report_url": report_url }),
-        excerpt: output_excerpt(&clean),
-    })
+    if let Some(report_url) = extract_report_url(&clean) {
+        return Ok(TaskOutput {
+            result: json!({ "report_url": report_url }),
+            excerpt: output_excerpt(&clean),
+        });
+    }
+    ensure_script_success(output)?;
+    Err(anyhow!("NodeQuality completed without a report URL"))
 }
 
 fn run_ip_unlock(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<TaskOutput> {
@@ -314,8 +319,10 @@ fn run_fixed_remote_script(
     }
     let stdout = child.stdout.take().context("capture fixed task stdout")?;
     let stderr = child.stderr.take().context("capture fixed task stderr")?;
-    let stdout_reader = thread::spawn(move || read_capped(stdout, MAX_OUTPUT_BYTES / 2));
-    let stderr_reader = thread::spawn(move || read_capped(stderr, MAX_OUTPUT_BYTES / 2));
+    // Reports are printed at the end; progress animations can otherwise fill a
+    // head-only buffer before the report URL is emitted.
+    let stdout_reader = thread::spawn(move || read_tail_capped(stdout, MAX_OUTPUT_BYTES / 2));
+    let stderr_reader = thread::spawn(move || read_tail_capped(stderr, MAX_OUTPUT_BYTES / 2));
     let status = child.wait().context("failed to wait for fixed Beta task")?;
     let mut bytes = stdout_reader.join().unwrap_or_default();
     bytes.push(b'\n');
@@ -559,15 +566,23 @@ fn task_runtime_directory(queue_file: &Path, uid: u32) -> PathBuf {
         .join("tasks")
 }
 
-fn read_capped<R: Read>(mut reader: R, limit: usize) -> Vec<u8> {
+fn read_tail_capped<R: Read>(mut reader: R, limit: usize) -> Vec<u8> {
     let mut kept = Vec::with_capacity(limit.min(64 * 1024));
     let mut buffer = [0u8; 8192];
     while let Ok(count) = reader.read(&mut buffer) {
         if count == 0 {
             break;
         }
-        let remaining = limit.saturating_sub(kept.len());
-        kept.extend_from_slice(&buffer[..count.min(remaining)]);
+        if count >= limit {
+            kept.clear();
+            kept.extend_from_slice(&buffer[count - limit..count]);
+            continue;
+        }
+        let overflow = kept.len().saturating_add(count).saturating_sub(limit);
+        if overflow > 0 {
+            kept.drain(..overflow);
+        }
+        kept.extend_from_slice(&buffer[..count]);
     }
     kept
 }
@@ -689,6 +704,7 @@ fn unlock_section(output: &str) -> String {
 pub(crate) fn strip_ansi_codes(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
+    let mut line_start = 0usize;
     while let Some(ch) = chars.next() {
         if ch == '\u{1b}' && chars.peek() == Some(&'[') {
             chars.next();
@@ -697,8 +713,15 @@ pub(crate) fn strip_ansi_codes(input: &str) -> String {
                     break;
                 }
             }
-        } else if ch != '\r' {
+        } else if ch == '\r' {
+            if chars.peek() != Some(&'\n') {
+                out.truncate(line_start);
+            }
+        } else {
             out.push(ch);
+            if ch == '\n' {
+                line_start = out.len();
+            }
         }
     }
     out
@@ -728,6 +751,36 @@ mod tests {
             extract_report_url("完成：https://nodequality.com/r/abc123。"),
             Some("https://nodequality.com/r/abc123".to_string())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nodequality_report_url_wins_over_upstream_cleanup_exit_code() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let output = FixedScriptOutput {
+            text: "Fio test 85%\rFio test 100%\nhttps://nodequality.com/r/abc123\n".into(),
+            status: std::process::ExitStatus::from_raw(256),
+        };
+        let result = nodequality_task_output(&output).unwrap();
+        assert_eq!(
+            result.result["report_url"],
+            "https://nodequality.com/r/abc123"
+        );
+    }
+
+    #[test]
+    fn terminal_progress_keeps_only_the_latest_frame() {
+        assert_eq!(
+            strip_ansi_codes("Fio 84%\rFio 85%\rFio 86%\nreport\n"),
+            "Fio 86%\nreport\n"
+        );
+    }
+
+    #[test]
+    fn capped_task_output_keeps_the_tail() {
+        let output = read_tail_capped(std::io::Cursor::new(b"0123456789"), 6);
+        assert_eq!(output, b"456789");
     }
 
     #[test]
