@@ -40,6 +40,7 @@ import {
 import { buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
+import { targetSlaPercentage } from './js/shared/sla.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -709,9 +710,9 @@ function renderService(t, days, summaries) {
   const statusClass = checked ? (isUp ? (stale ? 'degraded' : '') : 'down') : 'unknown';
   const selectedClass = t.id === state.selectedId ? ' selected' : '';
   const displayName = serviceDisplayName(t);
-  const uptime = t.status_source === 'agent'
-    ? (t.agent_online ? 'Agent 在线' : 'Agent 离线')
-    : (t.uptime_24h == null ? '-' : `${Number(t.uptime_24h).toFixed(2)}%`);
+  const sla = targetSlaPercentage(t.id, days, summaries);
+  const slaText = sla == null ? 'SLA -' : `SLA ${sla.toFixed(2)}%`;
+  const slaClass = sla == null ? ' sla-unknown' : sla >= 99 ? ' sla-good' : sla >= 95 ? ' sla-warn' : ' sla-bad';
   const hasLatency = targetHasPublicLatency(t);
   const latencyHtml = hasLatency ? serviceCloudflareLatencyHtml(t) : '';
   const trafficProgress = trafficProgressHtml(trafficForTarget(t), 'service-traffic-progress');
@@ -751,7 +752,7 @@ function renderService(t, days, summaries) {
   const unlockStrip = unlockCompactHtml(t.unlock);
 
   return `
-    <div class="service ${statusClass}${selectedClass}${hasLatency ? '' : ' no-latency'}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(displayName)}">
+    <div class="service ${statusClass}${selectedClass}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(displayName)}">
       <div class="service-name">
         <span class="service-title-line">
           <span class="service-title-text">${escapeHtml(displayName)}</span>
@@ -761,8 +762,8 @@ function renderService(t, days, summaries) {
         ${unlockStrip}
       </div>
       <div class="service-status">${status}</div>
-      ${hasLatency ? `<div class="service-latency">${latencyHtml}</div>` : ''}
-      <div class="service-uptime">${uptime}</div>
+      <div class="service-latency${hasLatency ? '' : ' is-placeholder'}"${hasLatency ? '' : ' aria-hidden="true"'}>${latencyHtml}</div>
+      <div class="service-sla${slaClass}">${slaText}</div>
       <div class="service-bottom-row${trafficProgress ? ' has-traffic' : ''}">
         <div class="uptime-strip" title="${Number(t.no_public_ip || 0) === 1 ? 'Agent 在线记录' : '最近 30 天可用率'}">
           ${renderBars(t.id, days, summaries)}

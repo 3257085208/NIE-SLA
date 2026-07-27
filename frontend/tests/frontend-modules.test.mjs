@@ -25,6 +25,7 @@ import { formatLocationLabel, normalizeCityName } from '../js/shared/format.js';
 import { buildNqModalHtml, renderNqAnsiHtml, renderNqReportHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from '../js/shared/appearance.js';
 import { unlockState } from '../js/shared/unlock.js';
+import { targetSlaPercentage } from '../js/shared/sla.js';
 import { onRequest as routeAdminPage } from '../functions/[[path]].js';
 
 const rows = normalizeChartRows([
@@ -158,6 +159,23 @@ assert.equal(unlockState({ status: '解锁', region: 'CA', method: 'DNS' }), 'dn
 assert.equal(unlockState({ status: 'Yes', region: 'US', method: 'Native' }), 'good');
 assert.equal(unlockState({ status: 'No', region: '', method: 'DNS' }), 'bad');
 console.log('unlock state helpers ok');
+
+const slaSummaries = new Map([
+  ['probe-a:2026-07-26', { total: 100, ok_count: 99 }],
+  ['probe-a:2026-07-27', { total: 10, ok_count: 1 }],
+  ['agent-a:2026-07-27', { total: 86400, ok_count: 86300 }],
+  ['clamped-a:2026-07-27', { total: 10, ok_count: 20 }],
+  ['negative-a:2026-07-27', { total: 10, ok_count: -5 }],
+  ['invalid-a:2026-07-27', { total: 'invalid', ok_count: 5 }],
+]);
+assert.equal(targetSlaPercentage('probe-a', ['2026-07-26'], slaSummaries), 99);
+assert.equal(targetSlaPercentage('probe-a', ['2026-07-26', '2026-07-27'], slaSummaries), 100 / 110 * 100);
+assert.equal(targetSlaPercentage('agent-a', ['2026-07-27'], slaSummaries), 86300 / 86400 * 100);
+assert.equal(targetSlaPercentage('clamped-a', ['2026-07-27'], slaSummaries), 100);
+assert.equal(targetSlaPercentage('negative-a', ['2026-07-27'], slaSummaries), 0);
+assert.equal(targetSlaPercentage('invalid-a', ['2026-07-27'], slaSummaries), null);
+assert.equal(targetSlaPercentage('missing-a', ['2026-07-27'], slaSummaries), null);
+console.log('SLA summary helpers ok');
 
 const previousFetch = globalThis.fetch;
 globalThis.fetch = async (url) => {

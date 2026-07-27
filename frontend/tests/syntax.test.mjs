@@ -86,8 +86,8 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260727-dns-unlock1/, 'frontend cache key must publish DNS unlock classification');
-assert.match(indexHtml, /style\.css\?v=20260727-mobile1/, 'frontend CSS cache key must publish the mobile status view');
+assert.match(indexHtml, /app\.js\?v=20260727-sla-align1/, 'frontend cache key must publish aligned SLA states');
+assert.match(indexHtml, /style\.css\?v=20260727-sla-align1/, 'frontend CSS cache key must publish aligned SLA states');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.doesNotMatch(indexHtml, /data-frontend-theme|themeCanvas|themeBoot|theme-pending/, 'removed themes must not leave a startup shell');
@@ -117,6 +117,14 @@ assert.doesNotMatch(appSource, /apac:\s*'APAC'/, 'probe region labels must not m
 assert.doesNotMatch(appSource, /wnam:\s*'美国西部'/, 'region labels must use the shared Chinese wording');
 assert.match(appSource, /function targetLocationLabel/, 'status page must format country + city labels');
 assert.match(appSource, /s\.source === 'agent'[\s\S]*Agent 在线率/, 'Agent availability bars must distinguish heartbeat uptime from probe counts');
+assert.match(appSource, /service-latency\$\{hasLatency \? '' : ' is-placeholder'\}/, 'targets without public latency must retain an invisible alignment slot');
+assert.match(appSource, /import \{ targetSlaPercentage \} from '\.\/js\/shared\/sla\.js'/, 'VPS rows must calculate SLA with the tested shared helper');
+assert.match(appSource, /service-sla\$\{slaClass\}[\s\S]*\$\{slaText\}/, 'VPS rows must show their calculated SLA instead of duplicating Agent state');
+assert.doesNotMatch(appSource, /<div class="service-uptime/, 'VPS rows must not retain the old Agent online label slot');
+assert.match(styleSource, /\.service-latency\.is-placeholder\s*\{[\s\S]*visibility:\s*hidden/, 'missing latency must keep its desktop and mobile grid slot');
+assert.match(styleSource, /\.service-sla\.sla-good\s*\{\s*color:\s*#16804a/, 'healthy SLA values must use a distinct green state');
+assert.match(styleSource, /\.service-sla\.sla-bad\s*\{\s*color:\s*#c2413a/, 'low SLA values must use a distinct red state');
+assert.doesNotMatch(styleSource, /\.service\.no-latency\s*\{\s*grid-template-columns:/, 'missing latency must not collapse the shared column layout');
 assert.doesNotMatch(appSource, /status_source === 'agent'[\s\S]{0,120}Cloudflare 探测记录/, 'Agent day bars must not be labelled as Cloudflare probe history');
 assert.match(appSource, /vps-info-toggle/, 'mobile VPS details must be collapsible');
 assert.match(appSource, /openNodeQualityReport/, 'frontend must open NodeQuality reports');

@@ -249,7 +249,6 @@ button { border: 0; cursor: pointer; }
   color: #1a73e8;
 }
 
-.service.no-latency { grid-template-columns: minmax(230px, 1fr) 125px 90px; }
 .region-flag {
   width: 18px;
   height: 13px;
@@ -275,13 +274,21 @@ button { border: 0; cursor: pointer; }
 .service.down .service-status { color: var(--red); }
 .service.degraded .service-status { color: var(--yellow); }
 .service.unknown .service-status { color: var(--muted); }
-.service-latency, .service-uptime {
+.service-latency, .service-sla {
   justify-self: end;
   color: #1a2430;
   font-size: 17px;
   font-weight: 600;
   white-space: nowrap;
 }
+.service-latency.is-placeholder {
+  visibility: hidden;
+  pointer-events: none;
+}
+.service-sla.sla-good { color: #16804a; }
+.service-sla.sla-warn { color: #a66b00; }
+.service-sla.sla-bad { color: #c2413a; }
+.service-sla.sla-unknown { color: var(--muted); }
 .service-bottom-row {
   grid-column: 1 / -1;
   display: grid;
@@ -750,7 +757,7 @@ body:not(.is-loaded) .footer {
 
 .service-status,
 .service-latency,
-.service-uptime {
+.service-sla {
   transition: color .22s var(--ease), opacity .22s var(--ease);
 }
 
@@ -1100,9 +1107,7 @@ body:not(.is-loaded) .incident-log {
   .service-name { font-size: 17px; }
   .service-status { grid-column: 2; grid-row: 1; font-size: 15px; }
   .service-latency { justify-self: start; font-size: 14px; }
-  .service-uptime { justify-self: end; font-size: 14px; }
-  .service.no-latency { grid-template-columns: 1fr auto; }
-  .service.no-latency .service-uptime { grid-column: 2; grid-row: 2; }
+  .service-sla { justify-self: end; font-size: 14px; }
   .service-bottom-row,
   .service-bottom-row.has-traffic {
     grid-template-columns: 1fr;
@@ -1578,7 +1583,7 @@ html, body { background-color: var(--appearance-bg, var(--bg)); }
   .service-name { font-size: 17px; line-height: 1.28; }
   .service-status { font-size: 15px; line-height: 1.3; }
   .service-meta { gap: 4px; margin-top: 5px; }
-  .service-uptime { font-size: 14px; }
+  .service-sla { font-size: 14px; }
   .service-bottom-row { margin-top: 7px; }
   .uptime-strip { gap: 3px; }
   .daybar { height: 18px; }
