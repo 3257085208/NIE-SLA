@@ -1,5 +1,5 @@
-import { ALLOWED_REGIONS, clamp, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
-import { requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
+import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
+import { requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
 import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup } from './admin.js';
@@ -176,13 +176,13 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getChecksCached(request, env, url, ctx); }
   if (path === '/api/agent/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return deny(); return getAgentMetricsCached(request, env, url, ctx); }
   if (path === '/api/agent/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return deny(); return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
-  if (path === '/api/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny(); await ensureV6Schema(env); return json(await getPublicLatency(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  if (path === '/api/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny(); await ensureV6Schema(env); return getPublicLatencyCached(env, url, ctx); }
   if ((path === '/api/v1' || path === '/api/v1/manifest') && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(getDeveloperApiManifest(request, env, VERSION), 200, env, { 'cache-control': 'public, max-age=300' }), request, env); }
   if (path === '/api/v1/status' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getStatusCached(request, env, developerApiUrl(url, '/api/status'), ctx), request, env); }
   if (path === '/api/v1/checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getChecksCached(request, env, developerApiUrl(url, '/api/checks'), ctx), request, env); }
   if (path === '/api/v1/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getAgentMetricsCached(request, env, developerApiUrl(url, '/api/agent/metrics'), ctx), request, env); }
   if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
-  if (path === '/api/v1/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(json(await getPublicLatency(env, developerApiUrl(url, '/api/latency')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
+  if (path === '/api/v1/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(await getPublicLatencyCached(env, developerApiUrl(url, '/api/latency'), ctx), request, env); }
   const nqImageMatch = path.match(/^\/api\/(?:nq|nodequality)\/([^/]+)\/image\/([^/]+)$/);
   if (nqImageMatch && m === 'GET') {
     if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny();
@@ -207,15 +207,31 @@ async function dispatchStatic(env, url, request, ctx) {
     } catch (_) {
       return new Response('Image upstream unavailable', { status: 502 });
     }
+    try {
+      const finalUrl = assertPublicHttpUrl(upstream.url || imageTab.image);
+      if (finalUrl.protocol !== 'https:') throw new Error('insecure image redirect');
+    } catch (_) {
+      await upstream.body?.cancel().catch(() => {});
+      return new Response('Image upstream unavailable', { status: 502 });
+    }
     const contentType = String(upstream.headers.get('content-type') || '').toLowerCase();
     if (!upstream.ok || !contentType.startsWith('image/')) return new Response('Image upstream unavailable', { status: 502 });
+    const maxImageBytes = 8 * 1024 * 1024;
+    const declaredSize = Number(upstream.headers.get('content-length') || 0);
+    if (declaredSize > maxImageBytes) {
+      await upstream.body?.cancel().catch(() => {});
+      return new Response('Image upstream is too large', { status: 413 });
+    }
+    const imageBytes = await readResponseBodyLimited(upstream.body, maxImageBytes).catch(() => null);
+    if (!imageBytes) return new Response('Image upstream is too large', { status: 413 });
     const headers = new Headers({
       'cache-control': 'public, max-age=3600',
       'content-type': contentType,
       'referrer-policy': 'no-referrer',
       'x-content-type-options': 'nosniff',
     });
-    return new Response(upstream.body, { status: 200, headers });
+    headers.set('content-length', String(imageBytes.byteLength));
+    return new Response(imageBytes, { status: 200, headers });
   }
   const nqMatch = path.match(/^\/api\/(?:nq|nodequality)\/([^/]+)$/);
   if (nqMatch && m === 'GET') {
@@ -241,14 +257,13 @@ async function dispatchStatic(env, url, request, ctx) {
 
   // Agent
   if (path === '/api/agent/targets' && m === 'GET') {
-    const agentId = url.searchParams.get('agent_id') || '';
-    if (agentId) await requireAgentIdentity(request, env, agentId); else await requireAnyAgent(request, env);
+    requireProbeAgent(request, env);
     if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny();
     return json(await getAgentTargets(env, url), 200, env, { 'cache-control': 'no-store' });
   }
   if (path === '/api/agent/results' && m === 'POST') {
     const body = await safeJson(request);
-    if (body.agent_id) await requireAgentIdentity(request, env, body.agent_id); else await requireAnyAgent(request, env);
+    requireProbeAgent(request, env);
     if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny();
     return json(await submitAgentResults(request, env, body), 200, env, { 'cache-control': 'no-store' });
   }
@@ -272,7 +287,10 @@ async function dispatchStatic(env, url, request, ctx) {
 
   // Login
   if (path === '/api/auth/config' && m === 'GET') return json(await adminAuthConfig(env), 200, env, { 'cache-control': 'no-store' });
-  if (path === '/api/auth/login' && m === 'POST') return json(await passwordLogin(request, env), 200, env, { 'cache-control': 'no-store' });
+  if (path === '/api/auth/login' && m === 'POST') {
+    if (!await rateLimitByIp(request, env, 10, 300, { durable: true })) return deny();
+    return json(await passwordLogin(request, env), 200, env, { 'cache-control': 'no-store' });
+  }
   if (path === '/api/auth/account' && m === 'GET') { await withAdmin(request, env); return json(await getAdminAccount(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/auth/account' && m === 'PATCH') { await withAdmin(request, env); if (!await rateLimitD1(env, 'admin-account-update', 3, 600)) return deny(); return json(await updateAdminAccount(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/auth/github/start' && m === 'GET') return startGitHubOAuth(request, env);
@@ -336,6 +354,52 @@ async function dispatchStatic(env, url, request, ctx) {
   if (adminTaskMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); return json(await cancelAgentTask(env, pathParam(adminTaskMatch[1])), 200, env, { 'cache-control': 'no-store' }); }
 
   return null;
+}
+
+async function readResponseBodyLimited(body, maxBytes) {
+  if (!body) return new Uint8Array();
+  const reader = body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error('response body too large');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const output = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
+async function getPublicLatencyCached(env, url, ctx = null) {
+  const cache = globalThis.caches?.default;
+  const cacheUrl = new URL(`${url.origin}/api/latency`);
+  cacheUrl.searchParams.set('target_id', String(url.searchParams.get('target_id') || ''));
+  cacheUrl.searchParams.set('hours', String(clamp(Number(url.searchParams.get('hours') || 24), 1, 168)));
+  const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
+  if (cache) {
+    const cached = await cache.match(cacheKey);
+    if (cached) return cached;
+  }
+  const response = json(await getPublicLatency(env, cacheUrl), 200, env, { 'cache-control': 'public, max-age=30', 'x-nstatus-cache': 'miss' });
+  if (cache && response.ok) {
+    const task = cache.put(cacheKey, response.clone()).catch(error => console.error('latency cache put failed:', String(error?.message || error)));
+    if (ctx?.waitUntil) ctx.waitUntil(task); else await task;
+  }
+  return response;
 }
 
 // ── Main handler ─────────────────────────────────────────────────────────────

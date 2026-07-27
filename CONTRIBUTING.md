@@ -49,4 +49,4 @@ The smoke test checks Worker JS, frontend JS, Rust formatting/checks, a Linux am
 1. Update Agent version in `agent/Cargo.toml` when the Agent protocol changes.
 2. Update Worker/frontend version files when the API/UI changes.
 3. Tag with `git tag v1.x.x && git push --tags`.
-4. CI builds Linux and Windows Agent binaries and attaches them to the GitHub Release.
+4. Build all Linux Agent binaries locally and attach the verified artifacts to the GitHub Release.

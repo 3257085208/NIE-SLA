@@ -8,7 +8,7 @@ cd agent
 ./build-release.sh
 ```
 
-The Agent build produces Linux amd64/arm64/armv7/armv6/386 and Windows amd64, one version file, and one checksum manifest. Update every installer default and copy the complete artifact set to the production frontend.
+The Agent build produces Linux amd64/arm64/armv7/armv6/386, one version file, and one checksum manifest. Update every installer default and copy the complete artifact set to the production frontend.
 
 Private Worker deployment runs `worker/deploy.sh`, which prepares Static Assets before Wrangler deployment. Public one-click deployment uses its root build script.
 

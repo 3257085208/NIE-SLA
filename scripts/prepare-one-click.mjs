@@ -42,7 +42,7 @@ async function prepareAgentRelease(binRoot) {
 
   const files = parseManifest(manifest);
   for (const required of [
-    'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64', 'nstatus-metrics-windows-amd64.exe',
+    'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64',
     'jq-linux-amd64', 'jq-linux-arm64', 'jq-linux-i386', 'jq-linux-armhf', 'jq-linux-armel',
   ]) {
     if (!files.has(required)) throw new Error(`Release manifest is missing ${required}`);
@@ -55,7 +55,7 @@ async function prepareAgentRelease(binRoot) {
     const bytes = await downloadBytes(requiredAsset(assets, name));
     const actualHash = createHash('sha256').update(bytes).digest('hex');
     if (actualHash !== expectedHash) throw new Error(`SHA-256 mismatch for ${name}`);
-    await writeFile(path.join(binRoot, name), bytes, { mode: name.endsWith('.exe') ? 0o644 : 0o755 });
+    await writeFile(path.join(binRoot, name), bytes, { mode: 0o755 });
   }
 }
 
@@ -66,7 +66,7 @@ async function prepareLocalAgentRelease(binRoot, releaseRoot) {
   if (!/^v\d+\.\d+\.\d+$/.test(version)) throw new Error(`Local release VERSION is invalid: ${version || '(empty)'}`);
   const files = parseManifest(manifest);
   for (const required of [
-    'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64', 'nstatus-metrics-windows-amd64.exe',
+    'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64',
     'jq-linux-amd64', 'jq-linux-arm64', 'jq-linux-i386', 'jq-linux-armhf', 'jq-linux-armel',
   ]) {
     if (!files.has(required)) throw new Error(`Local release manifest is missing ${required}`);
@@ -78,7 +78,7 @@ async function prepareLocalAgentRelease(binRoot, releaseRoot) {
     const bytes = await readFile(path.join(releaseRoot, name));
     const actualHash = createHash('sha256').update(bytes).digest('hex');
     if (actualHash !== expectedHash) throw new Error(`Local release SHA-256 mismatch for ${name}`);
-    await writeFile(path.join(binRoot, name), bytes, { mode: name.endsWith('.exe') ? 0o644 : 0o755 });
+    await writeFile(path.join(binRoot, name), bytes, { mode: 0o755 });
   }
 }
 
@@ -87,7 +87,7 @@ async function fetchLatestAgentRelease() {
   if (!Array.isArray(releases)) throw new Error('GitHub release list is invalid');
   const requiredAssets = [
     'VERSION', 'SHA256SUMS',
-    'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64', 'nstatus-metrics-windows-amd64.exe',
+    'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64',
     'jq-linux-amd64', 'jq-linux-arm64', 'jq-linux-i386', 'jq-linux-armhf', 'jq-linux-armel',
   ];
   const release = releases.find((candidate) => {

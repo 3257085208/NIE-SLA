@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { ensureV6Schema } from '../src/admin/schema.js';
-import { createLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentTargets, getLatencyAgentUpdatePolicy, submitLatencyAgentResults } from '../src/admin/latency-agents.js';
+import { createLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentTargets, getLatencyAgentUpdatePolicy, getPublicLatency, submitLatencyAgentResults } from '../src/admin/latency-agents.js';
 
 globalThis.crypto ||= webcrypto;
 
@@ -12,6 +12,7 @@ const env = {
   PUBLIC_SITE_ORIGIN: 'https://status.example.test',
   PUBLIC_AGENT_API_BASE: 'https://api.example.test',
   DB: d1(database),
+  ARCHIVE: memoryR2(),
 };
 
 await ensureV6Schema(env);
@@ -33,7 +34,8 @@ assert.deepEqual(await getLatencyAgentUpdatePolicy(env), {
   ok: true,
   auto_update: true,
   check_interval_sec: 3600,
-  script_version: 5,
+  script_version: 6,
+  script_sha256: '572822759ae0e370f6ca916bf2cd0b866b77e93abb159b5fbf368c199d9cfa88',
 });
 database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES ('agent_auto_update', 'false', ?)`).run(now);
 assert.equal((await getLatencyAgentUpdatePolicy(env)).auto_update, false);
@@ -47,19 +49,42 @@ const command = await getLatencyAgentInstallCommand(
   new Request('https://api.example.test', { headers: { origin: 'https://status.example.test' } }),
 );
 assert.match(command.linux_command, /install-latency\.sh/);
-assert.match(command.linux_command, /install-latency\.sh\?v=5/);
+assert.match(command.linux_command, /install-latency\.sh\?v=6/);
+assert.match(command.linux_command, /sha256sum -c/);
+assert.match(command.linux_command, /NSTATUS_LATENCY_SCRIPT_SHA256=/);
 assert.doesNotMatch(command.linux_command, /NSTATUS_AGENT_ID=/);
 
+const checkedAt = Math.floor(Date.now() / 1000);
 const submitted = await submitLatencyAgentResults(jsonRequest({}), env, {
   node_id: created.id,
   results: [
-    { target_id: 'public-vps', latency_ms: 32, ok: true },
+    { target_id: 'public-vps', checked_at: checkedAt, latency_ms: 32, ok: true },
     { target_id: 'private-vps', latency_ms: 1, ok: true },
   ],
 });
 assert.equal(submitted.accepted, 1);
-assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM latency_results WHERE target_id = 'public-vps'`).get().count, 1);
+assert.equal(submitted.storage, 'r2');
+assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM latency_results WHERE target_id = 'public-vps'`).get().count, 0);
 assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM latency_results WHERE target_id = 'private-vps'`).get().count, 0);
+assert.equal(env.ARCHIVE.objects.size, 1);
+let archived = JSON.parse([...env.ARCHIVE.objects.values()][0].value);
+assert.equal(archived.schema, 'nie-sla-latency-segment-v1');
+assert.equal(archived.points.length, 1);
+assert.equal(archived.points[0].latency_ms, 32);
+
+await submitLatencyAgentResults(jsonRequest({}), env, {
+  node_id: created.id,
+  results: [{ target_id: 'public-vps', checked_at: checkedAt, latency_ms: 45, ok: true }],
+});
+archived = JSON.parse([...env.ARCHIVE.objects.values()][0].value);
+assert.equal(archived.points.length, 1, 'R2 archive must replace duplicate node/target/time points');
+assert.equal(archived.points[0].latency_ms, 45);
+const latest = JSON.parse(database.prepare(`SELECT latest_results FROM latency_agents WHERE id = ?`).get(created.id).latest_results);
+assert.equal(latest[0].latency_ms, 45);
+const publicHistory = await getPublicLatency(env, new URL('https://api.example.test/api/latency?target_id=public-vps&hours=24'));
+assert.equal(publicHistory.sources.length, 1, JSON.stringify(publicHistory));
+assert.equal(publicHistory.sources[0].points.length, 1);
+assert.equal(publicHistory.sources[0].points[0].latency_ms, 45);
 
 console.log('external Latency agent tests passed');
 
@@ -82,6 +107,27 @@ function d1(db) {
       const results = [];
       for (const statement of statements) results.push(await statement.run());
       return results;
+    },
+  };
+}
+
+function memoryR2() {
+  return {
+    objects: new Map(),
+    async put(key, value, options = {}) { this.objects.set(key, { value: String(value), options }); },
+    async get(key) {
+      const object = this.objects.get(key);
+      if (!object) return null;
+      return {
+        async json() { return JSON.parse(object.value); },
+        async text() { return object.value; },
+      };
+    },
+    async list({ prefix = '' } = {}) {
+      return { objects: [...this.objects.keys()].filter(key => key.startsWith(prefix)).map(key => ({ key })), truncated: false };
+    },
+    async delete(keys) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) this.objects.delete(key);
     },
   };
 }

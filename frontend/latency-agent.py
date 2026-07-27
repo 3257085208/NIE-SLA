@@ -22,7 +22,7 @@ UPDATE_INTERVAL = max(300, min(86400, int(os.environ.get("NSTATUS_LATENCY_UPDATE
 INSTALL_BASE = os.environ["NSTATUS_LATENCY_INSTALL_BASE"].rstrip("/")
 USER_AGENT = os.environ.get("NSTATUS_LATENCY_USER_AGENT", "NIE-SLA-Latency/1.0")
 SCRIPT_PATH = os.path.realpath(__file__)
-SCRIPT_VERSION = "5"
+SCRIPT_VERSION = "6"
 PROBE_TIMEOUT_SEC = 1.0
 MAX_RESOLVED_ADDRESSES = 8
 
@@ -137,6 +137,9 @@ def update_if_needed():
     script_version = str(policy.get("script_version", SCRIPT_VERSION))
     if not script_version.isdigit():
         raise RuntimeError("invalid Latency agent update version")
+    expected_sha256 = str(policy.get("script_sha256", "")).strip().lower()
+    if len(expected_sha256) != 64 or any(char not in "0123456789abcdef" for char in expected_sha256):
+        raise RuntimeError("Latency agent update policy has no valid SHA-256")
     update_url = INSTALL_BASE + "/latency-agent.py?v=" + urllib.parse.quote(script_version)
     if urllib.parse.urlparse(update_url).scheme != "https":
         raise RuntimeError("Latency agent automatic updates require HTTPS")
@@ -146,13 +149,19 @@ def update_if_needed():
         method="GET",
     )
     with urllib.request.urlopen(request, timeout=30) as response:
+        final_url = response.geturl()
+        if urllib.parse.urlparse(final_url).scheme != "https":
+            raise RuntimeError("Latency agent update redirected away from HTTPS")
         candidate = response.read(1024 * 1024 + 1)
     if not candidate or len(candidate) > 1024 * 1024:
         raise RuntimeError("invalid Latency agent update size")
+    candidate_sha256 = hashlib.sha256(candidate).hexdigest()
+    if candidate_sha256 != expected_sha256:
+        raise RuntimeError("Latency agent update SHA-256 mismatch")
 
     with open(SCRIPT_PATH, "rb") as current_file:
         current = current_file.read()
-    if hashlib.sha256(candidate).digest() == hashlib.sha256(current).digest():
+    if candidate_sha256 == hashlib.sha256(current).hexdigest():
         return check_interval
 
     source = candidate.decode("utf-8")

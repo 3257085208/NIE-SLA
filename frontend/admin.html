@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./admin.css?v=20260727-beta16" />
+    <link rel="stylesheet" href="./admin.css?v=20260728-beta18" />
   </head>
   <body>
     <div class="login-bg" id="loginPage">
@@ -93,23 +93,15 @@
           <div class="page-intro">
             <span class="page-kicker">OVERVIEW / 01</span>
             <h2>运行概览</h2>
-            <p>快速确认服务状态、Agent 资源与近期事件。</p>
+            <p>快速确认服务状态、VPS SLA 与近期事件。</p>
           </div>
           <div class="stats" id="dStats"></div>
-          <div class="row">
-            <div class="col">
-              <div class="card">
-                <h3>系统指标</h3>
-                <div class="grid" id="dMetrics"></div>
-              </div>
+          <div class="card vps-sla-card">
+            <div class="vps-sla-heading">
+              <h3>VPS SLA 概览</h3>
+              <span>最近 30 天</span>
             </div>
-            <div class="col">
-              <div class="card">
-                <h3>VPS 信息</h3>
-                <div class="vg" id="dVps" style="display: none"></div>
-                <div id="dVpsN" class="empty">暂无数据</div>
-              </div>
-            </div>
+            <div id="dVpsSla"><div class="loading">加载中...</div></div>
           </div>
           <div class="card">
             <h3>事件日志</h3>
@@ -160,20 +152,29 @@
             <h2>系统设置</h2>
             <p>集中管理显示策略、自动更新、报警与数据维护。</p>
           </div>
+          <nav class="settings-subnav" id="settingsSubnav" aria-label="设置分类">
+            <button type="button" class="on" data-settings-tab="appearance" aria-controls="settings-appearance" aria-selected="true">外观</button>
+            <button type="button" data-settings-tab="alerts" aria-controls="settings-alerts" aria-selected="false">通知</button>
+            <button type="button" data-settings-tab="agent" aria-controls="settings-agent" aria-selected="false">Agent</button>
+            <button type="button" data-settings-tab="security" aria-controls="settings-security" aria-selected="false">安全</button>
+            <button type="button" data-settings-tab="system" aria-controls="settings-system" aria-selected="false">系统</button>
+          </nav>
           <div class="settings-layout">
-            <div class="settings-primary">
+            <section class="settings-panel on" id="settings-appearance" data-settings-panel="appearance">
               <div class="card">
                 <h3>前端外观与文案</h3>
                 <p class="hint">集中修改首页品牌、右上角徽标、状态提示、搜索框、故障区、最近检查和页脚。留空会恢复默认值。</p>
                 <div id="sAppearance">加载中...</div>
               </div>
+            </section>
+            <section class="settings-panel" id="settings-alerts" data-settings-panel="alerts" hidden>
               <div class="card">
                 <h3>报警通知</h3>
                 <div id="sAlerts">加载中...</div>
               </div>
-            </div>
-            <div class="settings-columns">
-              <div class="settings-column">
+            </section>
+            <section class="settings-panel" id="settings-agent" data-settings-panel="agent" hidden>
+              <div class="settings-panel-grid">
                 <div class="card">
                   <h3>自动地理位置</h3>
                   <div id="sGeoIp">加载中...</div>
@@ -187,7 +188,9 @@
                   <div id="sTraffic">加载中...</div>
                 </div>
               </div>
-              <div class="settings-column">
+            </section>
+            <section class="settings-panel" id="settings-security" data-settings-panel="security" hidden>
+              <div class="settings-panel-grid">
                 <div class="card">
                   <h3>TOTP</h3>
                   <div id="sTotp">检查中...</div>
@@ -196,15 +199,17 @@
                   <h3>管理员账号</h3>
                   <div id="sAccount">检查中...</div>
                 </div>
-              </div>
-              <div class="settings-column">
-                <div class="card">
-                  <h3>系统更新</h3>
-                  <div id="sAppUpdate">检查中...</div>
-                </div>
                 <div class="card">
                   <h3>后台入口</h3>
                   <div id="sAdminPath">加载中...</div>
+                </div>
+              </div>
+            </section>
+            <section class="settings-panel" id="settings-system" data-settings-panel="system" hidden>
+              <div class="settings-panel-grid">
+                <div class="card">
+                  <h3>系统更新</h3>
+                  <div id="sAppUpdate">检查中...</div>
                 </div>
                 <div class="card">
                   <h3>备份与恢复</h3>
@@ -226,7 +231,7 @@
                   <button class="btn" id="syncBtn">立即同步</button>
                 </div>
               </div>
-            </div>
+            </section>
           </div>
         </section>
       </main>
@@ -237,7 +242,7 @@
 
     <script
       type="module"
-      src="./js/admin.js?v=20260727-beta16"
+      src="./js/admin.js?v=20260728-beta18"
     ></script>
   </body>
 </html>

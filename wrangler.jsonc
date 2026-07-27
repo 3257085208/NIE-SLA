@@ -3,6 +3,7 @@
   "name": "nie-sla",
   "main": "./worker/src/index.js",
   "compatibility_date": "2026-07-24",
+  "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": true,
   "assets": {
     "directory": "./dist-one-click",

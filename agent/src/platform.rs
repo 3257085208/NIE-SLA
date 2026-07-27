@@ -359,6 +359,7 @@ fn read_sys_trim(path: &str) -> String {
         .unwrap_or_default()
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn normalize_virt_label(raw: &str) -> String {
     let v = raw.trim().to_lowercase();
     match v.as_str() {

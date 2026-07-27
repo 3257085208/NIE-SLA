@@ -59,8 +59,8 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260727-beta16/, 'admin CSS cache key must publish collapsible settings and color controls');
-assert.match(adminHtml, /js\/admin\.js\?v=20260727-beta16/, 'admin JS cache key must publish account feedback and chart colors');
+assert.match(adminHtml, /admin\.css\?v=20260728-beta18/, 'admin CSS cache key must publish settings tabs and the SLA overview');
+assert.match(adminHtml, /js\/admin\.js\?v=20260728-beta18/, 'admin JS cache key must publish settings tabs and the SLA overview');
 assert.match(adminSource, /selectedTargetIds[\s\S]*targetBulkBarHtml[\s\S]*bulkTargetModal/, 'admin must support selecting and batch-editing VPS targets');
 assert.match(adminSource, /apiAdmin\("\/api\/targets\/bulk"[\s\S]*method:\s*"PATCH"/, 'batch target editing must use one protected Worker request');
 assert.match(adminSource, /只有左侧已勾选的字段会被覆盖/, 'batch editor must explain selective field updates');
@@ -68,9 +68,10 @@ assert.match(adminCss, /@media \(max-width: 720px\)\s*\{[\s\S]*\.target-bulk-bar
 assert.match(adminSource, /target-action-main[\s\S]*targetActionsHtml\(target\)[\s\S]*betaTaskControlsHtml\(target\)/, 'standard target actions must render before Beta tasks');
 assert.match(adminCss, /\.beta-task-actions\s*\{[\s\S]*border-top:/, 'Beta tasks must form a distinct action group');
 assert.match(adminCss, /\.beta-task-meta\s*\{[\s\S]*flex-wrap:\s*wrap[\s\S]*justify-content:\s*flex-start/, 'Beta metadata must wrap without creating a detached right-aligned label');
-assert.match(adminHtml, /settings-primary[\s\S]*settings-columns[\s\S]*settings-column/, 'settings must separate wide forms from independent card columns');
-assert.match(adminCss, /\.settings-columns\s*\{[\s\S]*grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/, 'desktop settings cards must use three independent columns');
-assert.match(adminCss, /@media \(max-width: 820px\) \{[\s\S]*\.settings-columns\s*\{\s*grid-template-columns:\s*1fr/, 'mobile settings cards must collapse to one column');
+assert.match(adminHtml, /settings-subnav[\s\S]*data-settings-tab="appearance"[\s\S]*data-settings-tab="system"/, 'settings must expose a secondary category menu');
+assert.match(adminHtml, /data-settings-panel="appearance"[\s\S]*data-settings-panel="system"/, 'settings categories must own separate content panels');
+assert.match(adminCss, /\.settings-panel-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'desktop settings panels must use a restrained two-column layout');
+assert.match(adminCss, /@media \(max-width: 820px\) \{[\s\S]*\.settings-panel-grid\s*\{\s*grid-template-columns:\s*1fr/, 'mobile settings panels must collapse to one column');
 assert.match(adminHtml, /id="sAdminPath"/, 'admin settings must expose the custom entry path');
 assert.match(adminHtml, /id="sAppUpdate"/, 'admin settings must expose the application update center');
 assert.match(adminSource, /\/api\/system\/update\$\{refresh/, 'update center must check the Worker update API');
@@ -147,7 +148,9 @@ assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.unlock-grid\s*
 assert.match(styleSource, /\.metric-tabs\s*\{[\s\S]*flex-wrap:\s*nowrap[\s\S]*overflow-x:\s*auto/, 'metric tabs must remain on one horizontally scrollable row');
 assert.match(styleSource, /\.chart-toolbar\s*>\s*:first-child\s*\{[\s\S]*max-width:\s*720px[\s\S]*\.metric-tabs\s*\{[\s\S]*justify-content:\s*flex-end/, 'desktop chart metric tabs must align with the right-side range controls');
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.metric-tabs\s*\{[\s\S]*justify-content:\s*flex-start/, 'mobile chart metric tabs must keep the first label reachable');
-assert.match(adminSource, /setupSettingsCollapsibles\(\)/, 'settings cards must default to collapsible sections');
+assert.match(adminSource, /setupSettingsTabs\(\)/, 'settings must initialize the secondary category menu');
+assert.match(adminSource, /function renderVpsSla\(data\)[\s\S]*targetSlaPercentage/, 'dashboard must show fleet-wide VPS SLA instead of an unused default Agent');
+assert.doesNotMatch(adminSource, /api\("\/api\/agent\/metrics"\)/, 'dashboard must not request a hard-coded default Agent');
 assert.match(adminSource, /accountSaveStatus\("正在验证并更新账号密码/, 'account updates must show progress and errors inside the settings card');
 assert.match(adminSource, /id="pColor" type="color"/, 'Ping targets must expose a configurable chart color');
 assert.match(adminSource, /id="latencyNodeColor" type="color"/, 'Latency nodes must expose a configurable chart color');
@@ -182,7 +185,7 @@ assert.match(latencyAgentSource, /\/api\/latency-agent\/update-policy\?node_id=/
 assert.match(latencyAgentSource, /policy\.get\("script_version", SCRIPT_VERSION\)/, 'Latency updates must use the server-selected cache version');
 assert.match(latencyAgentSource, /os\.replace\(next_path, SCRIPT_PATH\)/, 'Latency agent updates must replace the script atomically');
 assert.match(latencyInstallerSource, /latency-agent\.py --once/, 'Latency installer must verify API access before reporting success');
-assert.match(latencyInstallerSource, /latency-agent\.py\?v=5/, 'Latency installer must cache-bust the current agent script');
+assert.match(latencyInstallerSource, /latency-agent\.py\?v=6/, 'Latency installer must cache-bust the current agent script');
 assert.match(latencyAgentSource, /PROBE_TIMEOUT_SEC = 1\.0/, 'external Latency probes must share a strict one-second budget');
 assert.match(latencyAgentSource, /socket\.getaddrinfo[\s\S]*threading\.Thread[\s\S]*daemon=True/, 'external Latency probes must race resolved addresses without accumulating per-address timeouts');
 assert.match(latencyInstallerSource, /stop_existing_latency_agent\(\)/, 'Latency reinstall must stop all existing agent processes');

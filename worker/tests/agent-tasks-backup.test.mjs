@@ -175,6 +175,12 @@ assert.equal(sqlite.prepare(`SELECT name FROM targets WHERE id = 'vps-a'`).get()
 assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM nodes WHERE id = 'vps-a'`).get().count, 1);
 assert.equal(restored.restore_snapshot.stored, true);
 assert.equal(env.ARCHIVE.objects.size, 1);
+const internalSnapshot = JSON.parse([...env.ARCHIVE.objects.values()][0]);
+assert.equal(internalSnapshot.schema, 'nie-sla-internal-snapshot-v2');
+assert.equal(typeof internalSnapshot.encrypted?.ciphertext, 'string');
+assert.equal(JSON.stringify(internalSnapshot).includes('test-key-that-is-long-enough-for-encryption'), false);
+assert.equal(JSON.stringify(internalSnapshot).includes('token_ciphertext'), false);
+assert.equal(JSON.stringify(internalSnapshot).includes('ciphertext\"'), true);
 
 console.log('Agent task, GeoIP, and backup tests passed');
 

@@ -1,14 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.17",
-  "agent_version": "v1.0.31",
-  "source_ref": "app-v0.24.0-beta.17",
-  "published_at": "2026-07-27T15:19:04Z",
-  "title": "NIE-SLA 0.24 Beta 17",
+  "version": "0.24.0-beta.18",
+  "agent_version": "v1.0.32",
+  "source_ref": "app-v0.24.0-beta.18",
+  "published_at": "2026-07-27T17:32:24Z",
+  "title": "NIE-SLA 0.24 Beta 18",
   "changelog": [
-    "修复旧 D1 跳过曲线颜色字段后第三方 Latency 接口返回 500 的问题",
-    "升级数据库迁移标记并增加旧库回归测试，历史曲线与节点配置无需重建",
-    "Rust Agent 保持 v1.0.31，无需重新部署"
+    "后台设置改为二级分类，并以最近 30 天全体 VPS SLA 替换空白指标区",
+    "管理员账号更新后强制撤销全部会话；批量设置与 Beta 任务使用站内确认弹窗",
+    "第三方 Latency 历史迁移至 R2 分片，增加缓存、校验更新与首分钟读取修复",
+    "备份恢复使用加密快照、失败自动回滚，并补强代理下载和登录安全边界",
+    "Rust Agent 更新至 v1.0.32，继续支持校验后的自动升级"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

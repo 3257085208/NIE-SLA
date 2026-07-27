@@ -7,6 +7,14 @@ export function requireAgent(request, env) {
   if (!configured || !token || !constantTimeEqual(token, configured)) throw new ApiError(401, '未授权');
 }
 
+export function requireProbeAgent(request, env) {
+  const configured = String(env.PROBE_AGENT_TOKEN || env.AGENT_TOKEN || '').trim();
+  const token = bearerToken(request);
+  if (!configured) throw new ApiError(503, '外部探测接口尚未配置专用 Token');
+  if (!token || !constantTimeEqual(token, configured)) throw new ApiError(401, '未授权');
+  return { type: 'probe' };
+}
+
 export async function requireAgentForId(request, env, agentId) {
   const configured = String(env.AGENT_TOKEN || '').trim();
   const id = String(agentId || '').trim();

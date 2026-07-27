@@ -83,6 +83,36 @@ if [[ ! -f "$BINARY_PATH" && -f "/usr/local/bin/nstatus-metrics" && ! -L "/usr/l
 fi
 BACKUP_PATH="${BINARY_PATH}.bak"
 
+restart_service() {
+    if command -v systemctl &>/dev/null; then
+        systemctl restart nstatus-metrics
+    elif command -v rc-service &>/dev/null; then
+        rc-service nstatus-metrics restart
+    fi
+}
+
+service_is_healthy() {
+    if command -v systemctl &>/dev/null; then
+        systemctl is-active --quiet nstatus-metrics
+    elif command -v rc-service &>/dev/null; then
+        rc-service nstatus-metrics status >/dev/null 2>&1
+    else
+        "$BINARY_PATH" --version >/dev/null 2>&1
+    fi
+}
+
+rollback_update() {
+    local reason="$1"
+    err "$reason"
+    if [[ -f "$BACKUP_PATH" ]]; then
+        mv -f "$BACKUP_PATH" "$BINARY_PATH"
+        chmod +x "$BINARY_PATH"
+        restart_service || true
+        ok "已恢复旧版本"
+    fi
+    exit 1
+}
+
 # 检查当前版本
 if [[ -f "$BINARY_PATH" ]]; then
     CURRENT_VERSION=$("$BINARY_PATH" --version 2>&1 || echo "unknown")
@@ -120,17 +150,12 @@ fi
 
 # 重启服务
 info "重启服务..."
-if command -v systemctl &>/dev/null; then
-    systemctl restart nstatus-metrics
-    ok "服务已重启"
-elif command -v rc-service &>/dev/null; then
-    rc-service nstatus-metrics restart
-    ok "服务已重启"
-fi
+restart_service || rollback_update "新版本服务重启失败"
 
 # 检查新版本
 sleep 2
-NEW_VERSION=$("$BINARY_PATH" --version 2>&1 || echo "unknown")
+service_is_healthy || rollback_update "新版本服务未能保持运行"
+NEW_VERSION=$("$BINARY_PATH" --version 2>&1) || rollback_update "新版本二进制自检失败"
 ok "新版本: $NEW_VERSION"
 
 # 清理备份

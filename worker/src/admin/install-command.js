@@ -53,21 +53,6 @@ export async function getAgentInstallCommand(env, url, request = null) {
     linuxRunner,
   ].join(' && ');
 
-  const windowsCommand = [
-    `$env:NSTATUS_API_BASE=${psQuote(apiBase)}`,
-    `$env:NSTATUS_AGENT_TOKEN=${psQuote(agentToken)}`,
-    `$env:NSTATUS_AGENT_ID=${psQuote(targetId)}`,
-    `$env:NSTATUS_AGENT_LABEL=${psQuote(label)}`,
-    `$env:NSTATUS_PING_SEC=${psQuote(pingSec)}`,
-    `$env:DOWNLOAD_BASE=${psQuote(installBase)}`,
-    `$env:NSTATUS_SHA256SUMS_SHA256=${psQuote(sha256SumsSha256)}`,
-    `$env:NSTATUS_EXPECTED_VERSION=${psQuote(expectedVersion)}`,
-    `$installer=Join-Path $env:TEMP 'nstatus-install.ps1'`,
-    `Invoke-WebRequest -UseBasicParsing ${psQuote(`${installBase}/install.ps1?v=${encodeURIComponent(sha256SumsSha256)}`)} -OutFile $installer`,
-    `powershell -ExecutionPolicy RemoteSigned -File $installer`,
-    `Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue`,
-  ].join('; ');
-
   return {
     ok: true,
     target_id: targetId,
@@ -75,7 +60,6 @@ export async function getAgentInstallCommand(env, url, request = null) {
     api_base: apiBase,
     install_base: installBase,
     linux_command: linuxCommand,
-    windows_command: windowsCommand,
   };
 }
 
@@ -133,8 +117,4 @@ function isPublicHttpOrigin(value) {
 
 export function shellQuote(value) {
   return `'${String(value ?? '').replace(/'/g, `'\\''`)}'`;
-}
-
-function psQuote(value) {
-  return `"${String(value ?? '').replace(/`/g, '``').replace(/"/g, '`"')}"`;
 }

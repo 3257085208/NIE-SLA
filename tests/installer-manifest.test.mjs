@@ -28,12 +28,7 @@ for (const area of ['agent', 'frontend']) {
     assert.ok(source.includes('-n "$sums_expected"'), `${area}/${script} supports deployment-time manifest pinning`);
   }
 
-  const powershell = await readFile(path.join(root, area, 'install.ps1'), 'utf8');
-  assert.ok(
-    powershell.includes('$parts[1] -eq $FileName -or $parts[1] -eq "bin/$FileName"'),
-    `${area}/install.ps1 accepts both manifest paths`,
-  );
-  assert.ok(powershell.includes('$expectedManifest -and'), `${area}/install.ps1 supports deployment-time manifest pinning`);
+  assert.equal(await access(path.join(root, area, 'install.ps1')).then(() => true, () => false), false, `${area} must not publish a Windows installer`);
 }
 
 const commandSource = await readFile(path.join(root, 'worker', 'src', 'admin', 'install-command.js'), 'utf8');

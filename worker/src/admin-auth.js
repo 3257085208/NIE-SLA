@@ -77,14 +77,21 @@ export async function updateAdminAccount(request, env) {
 
   const record = await createAdminCredentialRecord(username, password);
   await setMeta(env, ADMIN_CREDENTIALS_KEY, JSON.stringify(record));
+  const stored = await resolveAdminCredentials(env);
+  if (!stored || stored.source !== 'db' || stored.username !== username || !await verifyPassword(password, stored)) {
+    throw new ApiError(500, '管理员账号写入后校验失败，请重试');
+  }
   await revokeAllAdminSessions(env);
   await Promise.all([
     writePending(env, OAUTH_STATES_KEY, []),
     writePending(env, OAUTH_TICKETS_KEY, []),
   ]);
-  const session = await createAdminSession(env, { provider: 'password-reset', subject: username });
   return {
-    ...loginResult(session, totp.totp_enabled, 'password-reset', username),
+    ok: true,
+    username,
+    totp_enabled: Boolean(totp.totp_enabled),
+    session_valid: false,
+    logout_required: true,
     credentials_source: 'db',
   };
 }

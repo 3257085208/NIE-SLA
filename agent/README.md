@@ -1,6 +1,6 @@
 # NIE-SLA Agent
 
-This directory contains the Rust Agent, Linux/Windows installers, service templates, helper scripts, and release binaries used by NIE-SLA.
+This directory contains the Rust Agent, Linux installers, service templates, helper scripts, and release binaries used by NIE-SLA.
 
 - 中文完整文档：[../README.zh-CN.md](../README.zh-CN.md)
 - English documentation: [../README.en.md](../README.en.md)
@@ -35,4 +35,4 @@ Install Rust, Zig, and `cargo-zigbuild`, then run:
 ./build-release.sh
 ```
 
-The script builds Linux amd64, arm64, armv7, armv6, 386, and Windows amd64, then creates a matching `VERSION` and `SHA256SUMS` in `bin/`. Existing release artifacts are not replaced unless every target builds successfully. Pass an output directory as the first argument or set `RUST_TOOLCHAIN` to pin the Rust toolchain.
+The script builds Linux amd64, arm64, armv7, armv6, and 386, then creates a matching `VERSION` and `SHA256SUMS` in `bin/`. Existing release artifacts are not replaced unless every target builds successfully. Pass an output directory as the first argument or set `RUST_TOOLCHAIN` to pin the Rust toolchain.

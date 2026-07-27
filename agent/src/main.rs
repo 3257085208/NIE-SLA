@@ -325,7 +325,7 @@ fn run() -> Result<()> {
     let mut first_report = true;
     let mut uploading = false;
     let mut last_upload_failed = false;
-    let retry_sec = cfg.report_sec.min(60).max(10);
+    let retry_sec = cfg.report_sec.clamp(10, 60);
     let (upload_tx, upload_rx) = mpsc::channel::<UploadResult>();
     let sample_period = Duration::from_secs(cfg.sample_sec);
     let mut next_sample = Instant::now();
@@ -1004,14 +1004,8 @@ impl HttpClient {
     }
 
     fn get_public(&self, url: &str) -> Result<String> {
-        let mut res = self
-            .agent
-            .get(url)
-            .call()
-            .map_err(|err| http_error("GET", url, err))?;
-        res.body_mut()
-            .read_to_string()
-            .with_context(|| format!("HTTP GET failed while reading {}", url))
+        let bytes = self.get_public_bytes_limited(url, 1024 * 1024)?;
+        String::from_utf8(bytes).with_context(|| format!("HTTP GET from {} was not UTF-8", url))
     }
 
     #[cfg(target_os = "linux")]
@@ -1218,6 +1212,7 @@ fn advance_sample_deadline(previous_deadline: Instant, now: Instant, period: Dur
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

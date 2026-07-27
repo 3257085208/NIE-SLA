@@ -825,12 +825,13 @@ function normalizeMetricPoint(point) {
 }
 
 function normalizePingPoint(point, fallbackTs = 0) {
-  const latency = point?.latency_ms == null ? null : Math.round(Number(point.latency_ms));
+  const rawLatency = point?.latency_ms == null ? null : Math.round(Number(point.latency_ms));
+  const latency = Number.isFinite(rawLatency) && rawLatency >= 0 && rawLatency <= 1000 ? rawLatency : null;
   return {
     target_id: String(point?.target_id || '').trim().slice(0, 128),
     ts: Math.floor(Number(point?.ts || fallbackTs || 0)),
     latency_ms: Number.isFinite(latency) && latency >= 0 ? latency : null,
-    ok: normalizeOkInt(point?.ok === undefined ? (Number.isFinite(latency) && latency >= 0) : point.ok),
+    ok: normalizeOkInt(latency == null ? false : (point?.ok === undefined ? true : point.ok)),
   };
 }
 

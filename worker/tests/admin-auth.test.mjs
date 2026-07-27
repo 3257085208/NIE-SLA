@@ -77,9 +77,11 @@ function jsonRequest(url, body) {
     confirm_password: 'A-much-stronger-replacement1',
   }), env);
   assert.equal(changed.credentials_source, 'db');
+  assert.equal(changed.logout_required, true);
+  assert.equal(changed.session_valid, false);
   assert.equal((await getAdminAccount(env)).username, 'new.owner');
   assert.equal((await validateAdminSession(env, oldLogin.session_id)).valid, false, 'changing credentials must revoke older sessions');
-  assert.equal((await validateAdminSession(env, changed.session_id)).valid, true, 'the browser receives a replacement session');
+  assert.equal(changed.session_id, undefined, 'changing credentials must not issue a replacement session');
   await assert.rejects(
     passwordLogin(jsonRequest('https://status.example/api/auth/login', {
       username: 'owner',

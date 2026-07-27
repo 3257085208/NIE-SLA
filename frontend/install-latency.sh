@@ -5,6 +5,7 @@ set -eu
 : "${NSTATUS_LATENCY_API_BASE:?missing NSTATUS_LATENCY_API_BASE}"
 : "${NSTATUS_LATENCY_TOKEN:?missing NSTATUS_LATENCY_TOKEN}"
 : "${NSTATUS_LATENCY_NODE_ID:?missing NSTATUS_LATENCY_NODE_ID}"
+: "${NSTATUS_LATENCY_SCRIPT_SHA256:?missing NSTATUS_LATENCY_SCRIPT_SHA256}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Please run the Latency installer as root." >&2
@@ -42,9 +43,20 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 stop_existing_latency_agent
-install -d -m 0755 /opt/nstatus-latency
-curl -fsSL "${NSTATUS_LATENCY_INSTALL_BASE%/}/latency-agent.py?v=5" -o /opt/nstatus-latency/latency-agent.py
-chmod 0755 /opt/nstatus-latency/latency-agent.py
+if ! id nstatus-latency >/dev/null 2>&1; then
+  useradd --system --home-dir /opt/nstatus-latency --shell /usr/sbin/nologin nstatus-latency 2>/dev/null \
+    || adduser -S -H -h /opt/nstatus-latency -s /sbin/nologin nstatus-latency
+fi
+install -d -m 0750 -o nstatus-latency -g nstatus-latency /opt/nstatus-latency
+script_tmp=$(mktemp)
+trap 'rm -f "$script_tmp"' EXIT
+curl -fsSL "${NSTATUS_LATENCY_INSTALL_BASE%/}/latency-agent.py?v=6" -o "$script_tmp"
+actual_sha256=$(sha256sum "$script_tmp" | awk '{print $1}')
+if [ "$actual_sha256" != "$NSTATUS_LATENCY_SCRIPT_SHA256" ]; then
+  echo "Latency agent SHA-256 verification failed." >&2
+  exit 1
+fi
+install -m 0755 -o nstatus-latency -g nstatus-latency "$script_tmp" /opt/nstatus-latency/latency-agent.py
 
 umask 077
 cat > /etc/nstatus-latency-agent.env <<EOF
@@ -55,7 +67,8 @@ NSTATUS_LATENCY_NODE_ID=${NSTATUS_LATENCY_NODE_ID}
 NSTATUS_LATENCY_INTERVAL_SEC=${NSTATUS_LATENCY_INTERVAL_SEC:-60}
 NSTATUS_LATENCY_UPDATE_CHECK_SEC=${NSTATUS_LATENCY_UPDATE_CHECK_SEC:-3600}
 EOF
-chmod 0600 /etc/nstatus-latency-agent.env
+chown root:nstatus-latency /etc/nstatus-latency-agent.env
+chmod 0640 /etc/nstatus-latency-agent.env
 
 set -a
 . /etc/nstatus-latency-agent.env
@@ -71,6 +84,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+User=nstatus-latency
+Group=nstatus-latency
 EnvironmentFile=/etc/nstatus-latency-agent.env
 ExecStart=/usr/bin/python3 /opt/nstatus-latency/latency-agent.py
 Restart=always
@@ -80,6 +95,13 @@ ProtectSystem=strict
 ReadWritePaths=/opt/nstatus-latency
 ProtectHome=true
 PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target

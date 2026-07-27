@@ -3,6 +3,11 @@ import { ApiError, safeJson } from '../auth.js';
 const BACKUP_SCHEMA = 'nie-sla-backup-v1';
 const PORTABLE_TABLES = ['targets', 'ping_targets', 'latency_agents'];
 const SENSITIVE_TABLES = ['agent_credentials'];
+const RUNTIME_TABLES = [
+  'latest_status', 'check_buckets', 'incident_events', 'alert_state',
+  'agent_metrics_state', 'agent_metrics_history', 'agent_daily_availability',
+  'agent_traffic_monthly', 'agent_traffic_daily', 'ping_history', 'agent_tasks',
+];
 const SENSITIVE_META_KEYS = new Set([
   'admin_credentials_v1',
   'totp_secret',
@@ -62,7 +67,8 @@ export async function restoreBackup(request, env) {
   const mode = body?.mode === 'replace' ? 'replace' : 'merge';
   if (body?.confirm !== 'RESTORE') throw new ApiError(400, '恢复前必须明确确认 RESTORE');
   const sensitive = archive.sensitive ? await decryptJson(archive.sensitive, String(body?.password || '')) : null;
-  const snapshot = await createRestoreSnapshot(env);
+  const before = await captureRestoreState(env);
+  const snapshot = await createRestoreSnapshot(env, before);
   const restored = {};
   try {
     if (mode === 'replace') {
@@ -77,8 +83,19 @@ export async function restoreBackup(request, env) {
       restored.sensitive_meta = await restoreRows(env, 'app_meta', (sensitive?.app_meta || []).filter(row => SENSITIVE_META_KEYS.has(String(row.key || ''))));
     }
     await rebuildCompatibilityTables(env);
+    if (mode === 'replace') await clearRuntimeState(env);
   } catch (error) {
-    throw new ApiError(500, `恢复失败；恢复前快照已保存在 R2：${snapshot.key || '不可用'}。${String(error?.message || error)}`);
+    let rollbackError = null;
+    try {
+      await replaceRestoreState(env, before);
+      await rebuildCompatibilityTables(env);
+    } catch (rollbackFailure) {
+      rollbackError = rollbackFailure;
+    }
+    if (rollbackError) {
+      throw new ApiError(500, `恢复失败且自动回滚未完成；加密快照：${snapshot.key || '不可用'}。${String(error?.message || error)}；回滚错误：${String(rollbackError?.message || rollbackError)}`);
+    }
+    throw new ApiError(500, `恢复失败，原数据已自动回滚。${String(error?.message || error)}`);
   }
   return { ok: true, mode, restored, restore_snapshot: snapshot };
 }
@@ -111,17 +128,46 @@ async function rebuildCompatibilityTables(env) {
   FROM targets WHERE type = 'http' OR COALESCE(no_public_ip, 0) = 0`).run();
 }
 
-export async function createRestoreSnapshot(env) {
+export async function createRestoreSnapshot(env, captured = null) {
   if (!env.ARCHIVE) return { stored: false, reason: 'missing_r2' };
-  const portable = {};
-  for (const table of [...PORTABLE_TABLES, ...SENSITIVE_TABLES]) portable[table] = await tableRows(env, table);
-  portable.app_meta = await tableRows(env, 'app_meta');
+  const material = restoreSnapshotMaterial(env);
+  if (!material) return { stored: false, reason: 'missing_encryption_material' };
+  const portable = captured || await captureRestoreState(env);
   const key = `backups/pre-restore-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-  await env.ARCHIVE.put(key, JSON.stringify({ schema: 'nie-sla-internal-snapshot-v1', created_at: new Date().toISOString(), data: portable }), {
+  const encrypted = await encryptJson(portable, material);
+  await env.ARCHIVE.put(key, JSON.stringify({ schema: 'nie-sla-internal-snapshot-v2', created_at: new Date().toISOString(), encrypted }), {
     httpMetadata: { contentType: 'application/json; charset=utf-8' },
-    customMetadata: { schema: 'nie-sla-internal-snapshot-v1' },
+    customMetadata: { schema: 'nie-sla-internal-snapshot-v2', encrypted: 'true' },
   });
   return { stored: true, key };
+}
+
+async function captureRestoreState(env) {
+  const state = {};
+  for (const table of [...PORTABLE_TABLES, ...SENSITIVE_TABLES]) state[table] = await tableRows(env, table);
+  state.app_meta = await tableRows(env, 'app_meta');
+  return state;
+}
+
+async function replaceRestoreState(env, state) {
+  for (const table of [...PORTABLE_TABLES, ...SENSITIVE_TABLES].reverse()) await env.DB.prepare(`DELETE FROM ${table}`).run();
+  await env.DB.prepare(`DELETE FROM app_meta`).run();
+  for (const table of [...PORTABLE_TABLES, ...SENSITIVE_TABLES]) await restoreRows(env, table, state?.[table]);
+  await restoreRows(env, 'app_meta', state?.app_meta);
+}
+
+async function clearRuntimeState(env) {
+  for (const table of RUNTIME_TABLES) await env.DB.prepare(`DELETE FROM ${table}`).run().catch(() => {});
+  if (!env.ARCHIVE) return;
+  const keys = [
+    String(env.R2_STATE_KEY || 'state/status.json').replace(/^\/+/, ''),
+    String(env.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, ''),
+  ];
+  await env.ARCHIVE.delete(keys).catch(() => {});
+}
+
+function restoreSnapshotMaterial(env) {
+  return String(env.BACKUP_SNAPSHOT_KEY || env.TOTP_ENCRYPTION_KEY || env.ADMIN_PASSWORD || env.ADMIN_TOKEN || '').trim();
 }
 
 function normalizeArchive(value) {

@@ -43,8 +43,6 @@ for f in "$ROOT/install.sh" "$ROOT/setup.sh" "$ROOT/cftz" "$ROOT/update.sh" "$RO
   run_check "$(basename "$f")" bash -n "$f"
 done
 
-$ROOT/bin/nstatus-metrics-windows-amd64.exe --version >/dev/null 2>&1 || true
-
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ $FAIL -eq 0 ]] || exit 1

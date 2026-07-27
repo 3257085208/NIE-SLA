@@ -3,7 +3,7 @@ BIN_DIR := bin
 CARGO ?= cargo
 RELEASE := --release
 
-.PHONY: build build-all build-linux build-windows check fmt clean
+.PHONY: build build-all build-linux check fmt clean
 
 build:
 	$(CARGO) build $(RELEASE)
@@ -26,11 +26,6 @@ build-linux:
 	    $(CARGO) build $(RELEASE) --target $$1; \
 	    cp target/$$1/release/$(BIN) $(BIN_DIR)/$$2; \
 	done
-
-build-windows:
-	$(CARGO) build $(RELEASE) --target x86_64-pc-windows-gnu
-	mkdir -p $(BIN_DIR)
-	cp target/x86_64-pc-windows-gnu/release/$(BIN).exe $(BIN_DIR)/nstatus-metrics-windows-amd64.exe
 
 clean:
 	$(CARGO) clean

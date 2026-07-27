@@ -20,6 +20,13 @@ export class ProbeRegion {
   async fetch(request) {
     if (request.method !== 'POST') return json({ ok: false, error: '不支持该请求方法' }, 405);
     const url = new URL(request.url);
+    if (url.pathname === '/scheduled') {
+      const expected = internalScheduleSecret(this.env);
+      const presented = String(request.headers.get('x-nstatus-internal-secret') || '');
+      if (!expected || !constantTimeEqual(expected, presented)) return json({ ok: false, error: '未授权' }, 401, this.env);
+      const body = await request.json().catch(() => ({}));
+      return json(await runScheduledTasks(this.env, String(body.cron || '* * * * *')), 200, this.env);
+    }
     if (url.pathname === '/debug-colo') {
       const meta = await request.json().catch(() => ({}));
       const cf = await enrichCfContext(request.cf || {}, this.env);
@@ -114,6 +121,16 @@ export async function runScheduledTasks(env, cron) {
 async function dispatchScheduledTasks(env, cron) {
   const secret = internalScheduleSecret(env);
   const base = String(env.PUBLIC_WORKER_URL || env.PUBLIC_AGENT_API_BASE || '').trim().replace(/\/+$/, '');
+  if (secret && !base && env.REGION_PROXY) {
+    const id = env.REGION_PROXY.idFromName('nie-sla-scheduled-runner');
+    const response = await env.REGION_PROXY.get(id).fetch('https://nie-sla.internal/scheduled', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-nstatus-internal-secret': secret },
+      body: JSON.stringify({ cron }),
+    });
+    if (!response.ok) console.error('scheduled durable dispatch failed', response.status, await response.text());
+    return;
+  }
   if (!secret || !base) return runScheduledTasks(env, cron);
   let endpoint;
   try {

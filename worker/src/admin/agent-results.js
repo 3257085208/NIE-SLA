@@ -30,11 +30,16 @@ function normalizeAgentResultPoint(item, target, agentId, agentLabel, submittedA
   const rawCheckedAt = Number(item?.checked_at || item?.t || submittedAt || nowSec());
   const checkedAt = Math.floor(rawCheckedAt / BUCKET_SEC) * BUCKET_SEC;
   if (!isAgentTimestampAllowed(checkedAt)) return null;
-  const latency = item?.latency_ms == null ? null : Math.round(Number(item.latency_ms));
+  const rawLatency = item?.latency_ms == null ? null : Math.round(Number(item.latency_ms));
+  const timeoutMs = String(target?.type || '').toLowerCase() === 'tcp'
+    ? clamp(Number(target?.timeout_ms || 1000), 500, 1000)
+    : clamp(Number(target?.timeout_ms || 5000), 500, 30_000);
+  const timedOut = Number.isFinite(rawLatency) && rawLatency > timeoutMs;
+  const latency = Number.isFinite(rawLatency) && rawLatency >= 0 && !timedOut ? rawLatency : null;
   const statusCode = item?.status_code == null ? null : Number(item.status_code);
-  const ok = item?.ok === undefined ? inferAgentResultOk(target, latency, statusCode) : normalizeOkInt(item.ok);
-  const error = ok ? null : String(item?.error || '检查失败').slice(0, 500);
-  return publicCheckPoint({ checked_at: checkedAt, ok: ok ? 1 : 0, latency_ms: Number.isFinite(latency) && latency >= 0 ? latency : null, status_code: Number.isFinite(statusCode) ? statusCode : null, error, probe_region: agentId, cf_colo: null, total: 1, ok_count: ok ? 1 : 0, bucket: true, agent_id: agentId, agent_label: agentLabel });
+  const ok = timedOut ? 0 : (item?.ok === undefined ? inferAgentResultOk(target, latency, statusCode) : normalizeOkInt(item.ok));
+  const error = ok ? null : String(timedOut ? `连接超时（>${timeoutMs}ms）` : (item?.error || '检查失败')).slice(0, 500);
+  return publicCheckPoint({ checked_at: checkedAt, ok: ok ? 1 : 0, latency_ms: latency, status_code: Number.isFinite(statusCode) ? statusCode : null, error, probe_region: agentId, cf_colo: null, total: 1, ok_count: ok ? 1 : 0, bucket: true, agent_id: agentId, agent_label: agentLabel });
 }
 
 function inferAgentResultOk(target, latency, statusCode) {

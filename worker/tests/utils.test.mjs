@@ -193,7 +193,7 @@ assert.equal(installCommand.ok, true);
 assert.equal(installCommand.install_base, 'https://status.example.test');
 assert.match(installCommand.linux_command, /NSTATUS_AGENT_TOKEN='nst_[a-f0-9]{48}'/);
 assert.match(installCommand.linux_command, /NSTATUS_AGENT_LABEL='VPS A'/);
-assert.match(installCommand.windows_command, /nstatus-install\.ps1/);
+assert.equal('windows_command' in installCommand, false);
 assert.match(installCommand.linux_command, /NSTATUS_EXPECTED_VERSION='v9\.8\.7'/);
 
 const installCommandWithoutSourceHeaders = await getAgentInstallCommand(
@@ -233,7 +233,7 @@ const latencyInstallCommand = await getLatencyAgentInstallCommand(
 );
 assert.equal(latencyInstallCommand.ok, true);
 assert.match(latencyInstallCommand.linux_command, /install-latency\.sh/);
-assert.match(latencyInstallCommand.linux_command, /install-latency\.sh\?v=5/);
+assert.match(latencyInstallCommand.linux_command, /install-latency\.sh\?v=6/);
 assert.doesNotMatch(latencyInstallCommand.linux_command, /NSTATUS_AGENT_ID=/);
 globalThis.fetch = originalFetch;
 assert.equal(isAgentApiPath('/api/login'), false);

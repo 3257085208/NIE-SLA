@@ -1,6 +1,6 @@
 import { copyText } from "./install-command.js";
 import { createAdminClient } from "./admin/api.js";
-import { canShowTemperature } from "./shared/hardware.js";
+import { targetSlaPercentage } from "./shared/sla.js";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -74,6 +74,7 @@ let targets = [],
   pingAdminFailed = false,
   targetOrderSaving = false,
   selectedTargetIds = new Set();
+let pendingBulkUpdate = null;
 let toastTimer = 0;
 function toast(m, t = "info") {
   const e = byId("toast");
@@ -225,15 +226,15 @@ function nav(p) {
 }
 async function loadDash() {
   loading("dStats");
-  loading("dMetrics");
+  loading("dVpsSla");
   try {
     const d = await api("/api/status?days=30");
     renderStats(d);
     renderIncidents(d.incidents || []);
-    renderMetrics();
+    renderVpsSla(d);
   } catch (e) {
     errBox("dStats", e);
-    errBox("dMetrics", e);
+    errBox("dVpsSla", e);
   }
 }
 function renderStats(d) {
@@ -317,70 +318,67 @@ function incidentRowHtml(incident) {
       <td>${state}</td>
     </tr>`;
 }
-async function renderMetrics() {
-  try {
-    const d = await api("/api/agent/metrics"),
-      m = d.latest;
-    if (!m) {
-      byId("dMetrics").innerHTML = '<div class="empty">暂无 Agent</div>';
-      return;
-    }
-    const cpu = Number(m.cpu_percent || 0),
-      mem = Number(m.memory?.percent || 0),
-      disk = Number(m.disk?.percent || 0);
-    byId("dMetrics").innerHTML =
-      metricCard("CPU", cpu.toFixed(1) + "%", cpu) +
-      metricCard("内存", mem.toFixed(1) + "%", mem) +
-      metricCard("磁盘", disk.toFixed(1) + "%", disk) +
-      simple("负载", Number(m.load?.load1 || 0).toFixed(2)) +
-      simple("下载", formatBytesPerSecond(Number(m.net?.rx_bytes_sec || 0))) +
-      simple("上传", formatBytesPerSecond(Number(m.net?.tx_bytes_sec || 0))) +
-      simple("线程", Number(m.thread_count || m.process_count || 0).toFixed(0));
-    const v = m.vps_info || {},
-      rows = [];
-    if (m.uptime_sec) rows.push(["在线时长", formatDuration(m.uptime_sec)]);
-    if (v.cpu_model)
-      rows.push(["CPU", v.cpu_model + (v.cpu_cores ? " ×" + v.cpu_cores : "")]);
-    if (v.os) rows.push(["系统", v.os]);
-    if (v.kernel) rows.push(["内核", v.kernel]);
-    if (v.virtualization) rows.push(["虚拟化", v.virtualization]);
-    if (v.gpu_name) rows.push(["GPU", v.gpu_name + (v.gpu_count > 1 ? ` x${v.gpu_count}` : "")]);
-    if (canShowTemperature(v) && v.cpu_temp_c != null) rows.push(["CPU 温度", Number(v.cpu_temp_c).toFixed(1) + "°C"]);
-    if (canShowTemperature(v) && v.gpu_temp_c != null) rows.push(["GPU 温度", Number(v.gpu_temp_c).toFixed(1) + "°C"]);
-    if (v.gpu_util != null) rows.push(["GPU 占用", Number(v.gpu_util).toFixed(1) + "%"]);
-    if (m.agent_version) rows.push(["版本", m.agent_version]);
-    if (m.updated_at)
-      rows.push([
-        "更新",
-        new Date(m.updated_at).toLocaleString("zh-CN", { hour12: false }),
-      ]);
-    if (rows.length) {
-      byId("dVps").innerHTML = rows
-        .map(
-          (r) =>
-            `<div class="vi"><div class="vl">${escapeHtml(r[0])}</div><div class="vv">${escapeHtml(r[1])}</div></div>`,
-        )
-        .join("");
-      byId("dVps").style.display = "grid";
-      byId("dVpsN").style.display = "none";
-    }
-  } catch {
-    byId("dMetrics").innerHTML = '<div class="empty">暂无 Agent</div>';
+function renderVpsSla(data) {
+  const days = data.days || [];
+  const summaries = new Map(
+    (data.summaries || []).map((summary) => [`${summary.target_id}:${summary.day}`, summary]),
+  );
+  const rows = (data.targets || [])
+    .filter((target) => target.type === "tcp")
+    .map((target) => ({
+      target,
+      sla: targetSlaPercentage(target.id, days, summaries),
+    }))
+    .sort((a, b) => {
+      if (a.sla == null && b.sla != null) return 1;
+      if (a.sla != null && b.sla == null) return -1;
+      if (a.sla !== b.sla) return Number(a.sla) - Number(b.sla);
+      return String(a.target.name || "").localeCompare(String(b.target.name || ""), "zh-CN");
+    });
+
+  if (!rows.length) {
+    byId("dVpsSla").innerHTML = '<div class="empty">暂无 VPS</div>';
+    return;
   }
+
+  const measured = rows.filter((row) => row.sla != null);
+  const fleetSla = measured.length
+    ? measured.reduce((sum, row) => sum + row.sla, 0) / measured.length
+    : null;
+  const healthyCount = measured.filter((row) => row.sla >= 99).length;
+  const warningCount = measured.filter((row) => row.sla < 99).length;
+  const fleetClass = slaClassName(fleetSla);
+  byId("dVpsSla").innerHTML = `
+    <div class="vps-sla-summary">
+      <div class="vps-sla-total ${fleetClass}"><strong>${fleetSla == null ? "-" : `${fleetSla.toFixed(3)}%`}</strong><span>整体 SLA</span></div>
+      <div><strong>${measured.length}</strong><span>已统计 / ${rows.length} 台</span></div>
+      <div><strong>${healthyCount}</strong><span>达到 99%</span></div>
+      <div class="${warningCount ? "is-warning" : ""}"><strong>${warningCount}</strong><span>低于 99%</span></div>
+    </div>
+    <div class="vps-sla-list">
+      ${rows.map(({ target, sla }) => {
+        const currentOnline = target.status_source === "agent"
+          ? target.agent_online === true
+          : Number(target.ok) === 1;
+        const currentKnown = target.status_source === "agent"
+          ? target.agent_online != null
+          : target.checked_at != null;
+        const currentClass = !currentKnown ? "unknown" : currentOnline ? "online" : "offline";
+        const currentLabel = !currentKnown ? "待检查" : currentOnline ? "当前在线" : "当前离线";
+        return `<div class="vps-sla-item">
+          <span class="vps-sla-state ${currentClass}" title="${currentLabel}"></span>
+          <strong title="${escapeHtml(target.name)}">${escapeHtml(target.name)}</strong>
+          <span class="vps-sla-value ${slaClassName(sla)}">${sla == null ? "暂无数据" : `${sla.toFixed(2)}%`}</span>
+        </div>`;
+      }).join("")}
+    </div>`;
 }
-function metricCard(l, t, v) {
-  const c = v > 90 ? "down" : v > 70 ? "warn" : "ok";
-  return `<div class="mi"><div class="ml">${l}</div><div class="mv">${t}</div><div class="mb"><div class="mf ${c}" style="width:${Math.max(0, Math.min(100, v))}%"></div></div></div>`;
-}
-function simple(l, t) {
-  return `<div class="mi"><div class="ml">${l}</div><div class="mv">${t}</div></div>`;
-}
-function formatBytesPerSecond(b) {
-  return b >= 1e6
-    ? (b / 1e6).toFixed(1) + " MB/s"
-    : b >= 1e3
-      ? (b / 1e3).toFixed(1) + " KB/s"
-      : b.toFixed(0) + " B/s";
+
+function slaClassName(value) {
+  if (value == null) return "sla-unknown";
+  if (value >= 99) return "sla-good";
+  if (value >= 95) return "sla-warn";
+  return "sla-bad";
 }
 function formatBytes(b) {
   b = Number(b || 0);
@@ -543,8 +541,27 @@ function betaTaskControlsHtml(target) {
       <button type="button" class="btn btn-xs" data-a="task-unlock"${active || !unlockAvailable ? " disabled" : ""} title="${escapeHtml(unlockAvailable ? "运行固定 IP 解锁任务" : "此 Agent 尚未上报 IP 解锁能力")}">IP 解锁</button>
       ${reportUrl ? `<a class="btn btn-xs btn-blue" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">NQ 报告</a>` : ""}
     </div>
-    ${state ? `<small class="task-state task-${escapeHtml(task.status)}" title="${escapeHtml(task.error || "")}">${escapeHtml(task.action_label || "任务")} · ${escapeHtml(state)}</small>` : ""}
+    ${state ? `<button type="button" class="task-state task-${escapeHtml(task.status)}" data-a="task-details" title="查看任务详情">${escapeHtml(task.action_label || "任务")} · ${escapeHtml(state)}</button>` : ""}
   </div>`;
+}
+
+function showAgentTaskDetails(target) {
+  const task = agentTasks.get(target.id);
+  if (!task) return toast("暂无任务详情", "err");
+  const resultText = task.result ? JSON.stringify(task.result, null, 2) : "";
+  byId("modal").className = "modal task-details-modal";
+  byId("modal").innerHTML = `
+    <h3>${escapeHtml(task.action_label || "Agent 任务")}</h3>
+    <div class="task-detail-grid">
+      <span>VPS</span><strong>${escapeHtml(target.name)}</strong>
+      <span>状态</span><strong>${escapeHtml(task.status || "未知")}</strong>
+      <span>Agent</span><strong>${escapeHtml(task.agent_version || "-")}</strong>
+    </div>
+    ${task.error ? `<div class="task-detail-error">${escapeHtml(task.error)}</div>` : ""}
+    ${task.output_excerpt ? `<h4>输出摘要</h4><pre class="task-detail-output">${escapeHtml(task.output_excerpt)}</pre>` : ""}
+    ${resultText ? `<h4>任务结果</h4><pre class="task-detail-output">${escapeHtml(resultText)}</pre>` : ""}
+    <div class="ma"><button type="button" class="btn" data-close>关闭</button></div>`;
+  openModal();
 }
 
 async function loadAgentTasks(render = true) {
@@ -558,21 +575,42 @@ async function loadAgentTasks(render = true) {
   } catch (_) {}
 }
 
-async function runAgentTask(target, action) {
+function runAgentTask(target, action) {
   const label = action === "nodequality" ? "NodeQuality" : "IP 解锁";
   const detail = action === "nodequality"
     ? "Agent 将运行固定的 NodeQuality 官方脚本，通常需要数分钟，可能需要较高系统权限。"
     : "Agent 将运行固定的 IP.Check.Place 脚本，只保存 IPv4 解锁结果，不保存纯净度。";
-  if (!confirm(`${label} 是 Beta 功能。\n\n${detail}\n\n确认在 ${target.name} 上运行？`)) return;
+  byId("modal").className = "modal task-confirm-modal";
+  byId("modal").innerHTML = `
+    <h3>运行 ${escapeHtml(label)}</h3>
+    <p class="task-confirm-target">${escapeHtml(target.name)}</p>
+    <p class="hint">${escapeHtml(detail)}</p>
+    <div class="bulk-target-warning">Beta 功能只会运行内置固定脚本，提交后可在当前列表查看执行状态。</div>
+    <div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="confirmAgentTask">确认运行</button></div>`;
+  byId("confirmAgentTask").onclick = () => queueAgentTask(target, action, label);
+  openModal();
+}
+
+async function queueAgentTask(target, action, label) {
+  const button = byId("confirmAgentTask");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "提交中...";
+  }
   try {
     await api("/api/agent-tasks", {
       method: "POST",
       body: JSON.stringify({ agent_id: target.id, action }),
     });
+    closeModal();
     toast(`${label} 已排队，Agent 最多约 5 分钟内领取`, "ok");
     await loadAgentTasks();
   } catch (error) {
     toast(error.message, "err");
+    if (button && document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = "确认运行";
+    }
   }
 }
 
@@ -595,10 +633,6 @@ function targetRowHtml(target, index) {
   const enabledTag = target.enabled
     ? statusTag("已启用", "tag-on")
     : statusTag("已禁用", "tag-off");
-  const selectControl = targetAdminLoaded && target.type === "tcp"
-    ? `<label class="target-select-control" title="选择 ${escapeHtml(target.name)}"><input type="checkbox" class="target-select" data-target-id="${escapeHtml(target.id)}" aria-label="选择 ${escapeHtml(target.name)}"${checkedAttr(selectedTargetIds.has(target.id))}></label>`
-    : "";
-
   const probeUptime = status.status_source === "agent"
     ? (status.agent_online === true ? "Agent 在线" : "Agent 离线")
     : status.uptime_24h == null
@@ -612,7 +646,7 @@ function targetRowHtml(target, index) {
     : `<div class="monitoring-item"><span class="monitoring-label">CF</span><div class="status-stack"><div>${statusTag(state.text, state.className)}<strong>${status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`}</strong></div><small>${escapeHtml(probeUptime)}</small></div></div>`;
   const monitorDetails = `<div class="monitoring-stack">${cfDetails}<div class="monitoring-item"><span class="monitoring-label">Agent</span>${agentDetails}</div></div>`;
   const cells = [
-    `<div class="sort-cell">${selectControl}<button type="button" class="drag-handle" data-sort-handle title="拖动排序" aria-label="拖动 ${escapeHtml(target.name)} 排序">⠿</button><span class="sort-index">${index + 1}</span><span class="mobile-order"><button type="button" data-a="move-up" title="上移" aria-label="上移">↑</button><button type="button" data-a="move-down" title="下移" aria-label="下移">↓</button></span></div>`,
+    `<div class="sort-cell"><button type="button" class="drag-handle" data-sort-handle title="拖动排序" aria-label="拖动 ${escapeHtml(target.name)} 排序">⠿</button><span class="sort-index">${index + 1}</span><span class="mobile-order"><button type="button" data-a="move-up" title="上移" aria-label="上移">↑</button><button type="button" data-a="move-down" title="下移" aria-label="下移">↓</button></span></div>`,
     `<div class="target-summary"><div><b>${escapeHtml(target.name)}</b>${typeTag}${enabledTag}</div><code>${escapeHtml(target.id)}</code><span title="${escapeHtml(host)}">${escapeHtml(host || "-")}</span><span class="group-cell" title="${escapeHtml(targetGroupCell(target))}">${escapeHtml(targetGroupCell(target))}</span></div>`,
     monitorDetails,
     trafficCell(target, status),
@@ -636,7 +670,6 @@ function renderTargets() {
   }
 
   const currentVpsIds = new Set(targets.filter(target => target.type === "tcp").map(target => target.id));
-  selectedTargetIds = new Set([...selectedTargetIds].filter(id => currentVpsIds.has(id)));
   let rowIndex = 0;
   let rows = "";
   if (adminGroupBy !== "group") {
@@ -679,52 +712,63 @@ function renderTargets() {
 
 function targetBulkBarHtml(vpsCount) {
   if (!targetAdminLoaded || !vpsCount) return "";
-  const selectedCount = selectedTargetIds.size;
   return `<div class="target-bulk-bar">
-    <label class="target-select-all"><input type="checkbox" id="bulkSelectAll"><span>全选 VPS</span></label>
-    <span class="target-bulk-count" id="bulkTargetCount">已选 ${selectedCount} / ${vpsCount}</span>
-    <div class="target-bulk-actions"><button type="button" class="btn btn-sm" id="clearBulkTargets"${selectedCount ? "" : " disabled"}>清除</button><button type="button" class="btn btn-sm btn-primary" id="editBulkTargets"${selectedCount ? "" : " disabled"}>批量设置</button></div>
+    <div><strong>批量管理</strong><span class="target-bulk-count">可一次修改多台 VPS 的商家、到期时间、费用、流量与报警设置</span></div>
+    <div class="target-bulk-actions"><button type="button" class="btn btn-sm btn-primary" id="editBulkTargets">批量设置</button></div>
   </div>`;
 }
 
 function bindTargetBulkControls() {
-  const selectAll = byId("bulkSelectAll");
-  if (!selectAll) return;
-  const boxes = [...byId("tTable").querySelectorAll(".target-select")];
-  selectAll.onchange = () => {
-    selectedTargetIds = selectAll.checked
-      ? new Set(targets.filter(target => target.type === "tcp").map(target => target.id))
-      : new Set();
-    for (const box of boxes) box.checked = selectedTargetIds.has(box.dataset.targetId);
-    refreshTargetBulkControls();
-  };
-  for (const box of boxes) {
-    box.onchange = () => {
-      if (box.checked) selectedTargetIds.add(box.dataset.targetId);
-      else selectedTargetIds.delete(box.dataset.targetId);
-      refreshTargetBulkControls();
-    };
-  }
-  byId("clearBulkTargets").onclick = () => {
-    selectedTargetIds.clear();
-    for (const box of boxes) box.checked = false;
-    refreshTargetBulkControls();
-  };
-  byId("editBulkTargets").onclick = bulkTargetModal;
-  refreshTargetBulkControls();
+  if (byId("editBulkTargets")) byId("editBulkTargets").onclick = () => openBulkTargetPicker();
 }
 
-function refreshTargetBulkControls() {
-  const vpsCount = targets.filter(target => target.type === "tcp").length;
+function refreshBulkTargetPicker() {
+  const boxes = [...byId("modal").querySelectorAll("[data-bulk-target]")];
   const selectedCount = selectedTargetIds.size;
-  const selectAll = byId("bulkSelectAll");
+  const visible = boxes.filter(box => !box.closest(".bulk-target-option")?.hidden);
+  const selectAll = byId("bulkPickerSelectAll");
   if (selectAll) {
-    selectAll.checked = vpsCount > 0 && selectedCount === vpsCount;
-    selectAll.indeterminate = selectedCount > 0 && selectedCount < vpsCount;
+    const selectedVisible = visible.filter(box => box.checked).length;
+    selectAll.checked = visible.length > 0 && selectedVisible === visible.length;
+    selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
   }
-  if (byId("bulkTargetCount")) byId("bulkTargetCount").textContent = `已选 ${selectedCount} / ${vpsCount}`;
-  if (byId("clearBulkTargets")) byId("clearBulkTargets").disabled = selectedCount === 0;
-  if (byId("editBulkTargets")) byId("editBulkTargets").disabled = selectedCount === 0;
+  if (byId("bulkPickerCount")) byId("bulkPickerCount").textContent = `已选 ${selectedCount} 台`;
+  if (byId("nextBulkTargets")) byId("nextBulkTargets").disabled = selectedCount === 0;
+}
+
+function openBulkTargetPicker(preserveSelection = false) {
+  const vpsTargets = targets.filter(target => target.type === "tcp");
+  if (!preserveSelection) selectedTargetIds = new Set();
+  pendingBulkUpdate = null;
+  byId("modal").className = "modal bulk-target-picker-modal";
+  byId("modal").innerHTML = `
+    <h3>选择 VPS</h3>
+    <div class="bulk-picker-tools"><input id="bulkTargetSearch" type="search" placeholder="搜索名称、ID、商家或地区" autocomplete="off"><label class="target-select-all"><input type="checkbox" id="bulkPickerSelectAll"><span>选择当前结果</span></label></div>
+    <div class="bulk-target-picker-list">${vpsTargets.map(target => `<label class="bulk-target-option" data-search="${escapeHtml([target.name, target.id, target.provider, target.location, target.city].filter(Boolean).join(" ").toLowerCase())}"><input type="checkbox" data-bulk-target="${escapeHtml(target.id)}"${checkedAttr(selectedTargetIds.has(target.id))}><span><strong>${escapeHtml(target.name)}</strong><small>${escapeHtml([target.provider, target.location, target.city].filter(Boolean).join(" · ") || target.id)}</small></span></label>`).join("")}</div>
+    <div class="ma"><span class="bulk-picker-count" id="bulkPickerCount">已选 0 台</span><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="nextBulkTargets" disabled>下一步</button></div>`;
+  const boxes = [...byId("modal").querySelectorAll("[data-bulk-target]")];
+  for (const box of boxes) box.onchange = () => {
+    if (box.checked) selectedTargetIds.add(box.dataset.bulkTarget);
+    else selectedTargetIds.delete(box.dataset.bulkTarget);
+    refreshBulkTargetPicker();
+  };
+  byId("bulkTargetSearch").oninput = event => {
+    const query = event.target.value.trim().toLowerCase();
+    for (const option of byId("modal").querySelectorAll(".bulk-target-option")) option.hidden = Boolean(query && !option.dataset.search.includes(query));
+    refreshBulkTargetPicker();
+  };
+  byId("bulkPickerSelectAll").onchange = event => {
+    for (const box of boxes) {
+      if (box.closest(".bulk-target-option")?.hidden) continue;
+      box.checked = event.target.checked;
+      if (box.checked) selectedTargetIds.add(box.dataset.bulkTarget);
+      else selectedTargetIds.delete(box.dataset.bulkTarget);
+    }
+    refreshBulkTargetPicker();
+  };
+  byId("nextBulkTargets").onclick = bulkTargetModal;
+  refreshBulkTargetPicker();
+  openModal();
 }
 
 function bindAdminGroupBy() {
@@ -945,14 +989,14 @@ function bulkTargetModal() {
         ${bulkField("alert_traffic_remaining_gb", "流量剩余 GB", '<input id="bulkAlertTrafficGb" type="number" min="0" max="1048576" step="0.1" placeholder="留空使用全局" disabled>')}
       </div></fieldset>
     </div>
-    <div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="saveBulkTargets">应用到 ${selected.length} 台</button></div>`;
+    <div class="ma"><button type="button" class="btn" id="backBulkTargets">上一步</button><button type="button" class="btn btn-primary" id="saveBulkTargets">下一步</button></div>`;
 
   for (const toggle of byId("modal").querySelectorAll("[data-bulk-enable]")) {
     toggle.onchange = () => toggleBulkField(toggle);
   }
   byId("bulkProvider").onchange = toggleBulkCustomProvider;
+  byId("backBulkTargets").onclick = () => openBulkTargetPicker(true);
   byId("saveBulkTargets").onclick = saveBulkTargets;
-  openModal();
 }
 
 function toggleBulkField(toggle) {
@@ -981,7 +1025,7 @@ function bulkNullableNumber(id, label, max) {
   return value;
 }
 
-async function saveBulkTargets() {
+function saveBulkTargets() {
   const ids = targets.filter(target => target.type === "tcp" && selectedTargetIds.has(target.id)).map(target => target.id);
   if (!ids.length) return toast("选择已失效，请刷新后重试", "err");
   const enabled = new Set([...byId("modal").querySelectorAll("[data-bulk-enable]:checked")].map(input => input.dataset.bulkEnable));
@@ -1010,14 +1054,29 @@ async function saveBulkTargets() {
     return toast(error.message, "err");
   }
   const labels = [...byId("modal").querySelectorAll("[data-bulk-enable]:checked")].map(input => input.closest(".bulk-field")?.querySelector(".bulk-field-toggle span")?.textContent).filter(Boolean);
-  const resetWarning = enabled.has("traffic_reset_day") ? "\n流量会按已有每日记录重新汇总。" : "";
-  if (!confirm(`确定把“${labels.join("、")}”应用到 ${ids.length} 台 VPS？${resetWarning}`)) return;
-  const button = byId("saveBulkTargets");
+  pendingBulkUpdate = { ids, changes, labels };
+  const selected = targets.filter(target => ids.includes(target.id));
+  byId("modal").className = "modal bulk-confirm-modal";
+  byId("modal").innerHTML = `
+    <h3>确认批量设置</h3>
+    <p>将修改 <strong>${ids.length}</strong> 台 VPS 的：${escapeHtml(labels.join("、"))}</p>
+    <div class="bulk-confirm-targets">${selected.slice(0, 12).map(target => `<span>${escapeHtml(target.name)}</span>`).join("")}${selected.length > 12 ? `<span>另 ${selected.length - 12} 台</span>` : ""}</div>
+    ${enabled.has("traffic_reset_day") ? '<div class="bulk-target-warning">流量会按已有每日记录重新汇总。</div>' : ""}
+    <div class="ma"><button type="button" class="btn" id="backBulkFields">返回修改</button><button type="button" class="btn btn-primary" id="confirmBulkTargets">确认应用</button></div>`;
+  byId("backBulkFields").onclick = bulkTargetModal;
+  byId("confirmBulkTargets").onclick = applyBulkTargets;
+}
+
+async function applyBulkTargets() {
+  const { ids, changes } = pendingBulkUpdate || {};
+  if (!ids?.length || !changes) return toast("批量设置已失效，请重新操作", "err");
+  const button = byId("confirmBulkTargets");
   button.disabled = true;
   button.textContent = "批量保存中...";
   try {
     const result = await apiAdmin("/api/targets/bulk", { method: "PATCH", body: JSON.stringify({ ids, changes }) }, 60000);
     selectedTargetIds.clear();
+    pendingBulkUpdate = null;
     closeModal();
     toast(`已更新 ${result.count || ids.length} 台 VPS`, "ok");
     await loadTargets();
@@ -1025,7 +1084,7 @@ async function saveBulkTargets() {
     toast(error.message, "err");
     if (document.body.contains(button)) {
       button.disabled = false;
-      button.textContent = `应用到 ${ids.length} 台`;
+      button.textContent = "确认应用";
     }
   }
 }
@@ -1361,21 +1420,19 @@ async function deleteTarget(t) {
 }
 function showInstallCommands(t, data) {
   const linuxCommand = data.linux_command || data.command || "";
-  const windowsCommand = data.windows_command || "";
   byId("modal").innerHTML = `
     <h3>部署 Agent · ${escapeHtml(t.name || t.id)}</h3>
     <div class="install-command-block">
       <div class="install-command-head"><strong>Linux</strong><button class="btn btn-sm btn-blue" type="button" data-copy-install="linux">复制 Linux 命令</button></div>
       <pre class="code">${escapeHtml(linuxCommand)}</pre>
     </div>
-    ${windowsCommand ? `<div class="install-command-block"><div class="install-command-head"><strong>Windows PowerShell</strong><button class="btn btn-sm btn-blue" type="button" data-copy-install="windows">复制 Windows 命令</button></div><pre class="code">${escapeHtml(windowsCommand)}</pre></div>` : ""}
     <div class="ma"><button class="btn" type="button" data-close>关闭</button></div>`;
   byId("modal").querySelectorAll("[data-copy-install]").forEach((button) => {
     button.onclick = async () => {
-      const command = button.dataset.copyInstall === "windows" ? windowsCommand : linuxCommand;
+      const command = linuxCommand;
       try {
         await copyText(command);
-        toast(`已复制 ${button.dataset.copyInstall === "windows" ? "Windows" : "Linux"} 安装命令`, "ok");
+        toast("已复制 Linux 安装命令", "ok");
       } catch (error) {
         toast(error?.message || "复制失败，请手动选择命令", "err");
       }
@@ -2344,12 +2401,11 @@ async function saveAccount() {
         totp,
       }),
     }, 30000);
-    if (!result.session_id || !result.session_expires_at) throw new Error("未收到新的管理会话");
-    saveSession(result.session_id, result.session_expires_at);
+    if (!result.logout_required) throw new Error("账号已更新，但服务端未确认会话撤销");
+    clearAuth();
     byId("loginUsername").value = username;
-    toast("账号密码已更新，其他设备已退出", "ok");
-    await loadAccount();
-    accountSaveStatus("账号密码已更新，新账号已立即生效；其他设备已退出登录。", "ok");
+    byId("loginPassword").value = "";
+    showLogin("账号密码已更新，请使用新账号密码重新登录");
   } catch (error) {
     accountSaveStatus(error.message || "账号密码更新失败", "err");
     toast(error.message, "err");
@@ -2361,28 +2417,29 @@ async function saveAccount() {
   }
 }
 
-function setupSettingsCollapsibles() {
-  document.querySelectorAll('#pg-settings .card').forEach((card) => {
-    const heading = card.querySelector(':scope > h3');
-    if (!heading || card.classList.contains('settings-collapsible')) return;
-    card.classList.add('settings-collapsible', 'is-collapsed');
-    heading.setAttribute('role', 'button');
-    heading.setAttribute('tabindex', '0');
-    heading.setAttribute('aria-expanded', 'false');
-    heading.insertAdjacentHTML('beforeend', '<span class="settings-collapse-mark" aria-hidden="true">+</span>');
-    const toggle = () => {
-      const collapsed = card.classList.toggle('is-collapsed');
-      heading.setAttribute('aria-expanded', String(!collapsed));
-      const mark = heading.querySelector('.settings-collapse-mark');
-      if (mark) mark.textContent = collapsed ? '+' : '−';
-    };
-    heading.addEventListener('click', toggle);
-    heading.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault();
-      toggle();
-    });
-  });
+function setupSettingsTabs() {
+  const buttons = [...document.querySelectorAll("[data-settings-tab]")];
+  const panels = [...document.querySelectorAll("[data-settings-panel]")];
+  const validTabs = new Set(buttons.map((button) => button.dataset.settingsTab));
+  const initial = validTabs.has(localStorage.getItem("nstatus.settingsTab"))
+    ? localStorage.getItem("nstatus.settingsTab")
+    : "appearance";
+  const activate = (tab) => {
+    if (!validTabs.has(tab)) return;
+    for (const button of buttons) {
+      const active = button.dataset.settingsTab === tab;
+      button.classList.toggle("on", active);
+      button.setAttribute("aria-selected", String(active));
+    }
+    for (const panel of panels) {
+      const active = panel.dataset.settingsPanel === tab;
+      panel.classList.toggle("on", active);
+      panel.hidden = !active;
+    }
+    localStorage.setItem("nstatus.settingsTab", tab);
+  };
+  for (const button of buttons) button.onclick = () => activate(button.dataset.settingsTab);
+  activate(initial);
 }
 async function initTotp() {
   try {
@@ -2493,6 +2550,7 @@ byId("tTable").onclick = (e) => {
   if (b.dataset.a === "deploy") deploy(t, b);
   if (b.dataset.a === "task-nq") runAgentTask(t, "nodequality");
   if (b.dataset.a === "task-unlock") runAgentTask(t, "ip_unlock");
+  if (b.dataset.a === "task-details") showAgentTaskDetails(t);
   if (b.dataset.a === "move-up") moveTarget(t, -1);
   if (b.dataset.a === "move-down") moveTarget(t, 1);
   if (b.dataset.a === "reload") loadTargets();
@@ -2519,7 +2577,7 @@ byId("latencyTable").onclick = (e) => {
 setInterval(() => {
   if (byId("pg-targets")?.classList.contains("on")) loadAgentTasks();
 }, 15_000);
-setupSettingsCollapsibles();
+setupSettingsTabs();
 loadAuthConfig();
 if (await completeGitHubRedirect()) {
   // OAuth completion owns the initial login state.

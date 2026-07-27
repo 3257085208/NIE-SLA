@@ -527,8 +527,8 @@ fn secure_task_directory(cfg: &Config) -> Result<PathBuf> {
 fn prepare_secure_task_directory(path: &Path, uid: u32) -> Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-    fs::create_dir_all(&path).context("create fixed task runtime directory")?;
-    let metadata = fs::symlink_metadata(&path).context("inspect fixed task runtime directory")?;
+    fs::create_dir_all(path).context("create fixed task runtime directory")?;
+    let metadata = fs::symlink_metadata(path).context("inspect fixed task runtime directory")?;
     if !metadata.is_dir()
         || metadata.file_type().is_symlink()
         || metadata.uid() != uid
@@ -538,7 +538,7 @@ fn prepare_secure_task_directory(path: &Path, uid: u32) -> Result<()> {
             "fixed task runtime directory is not owned by the Agent process and private"
         ));
     }
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
     Ok(())
 }
 

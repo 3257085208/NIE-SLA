@@ -13,7 +13,7 @@
 | `js/shared/` | 共享纯函数 |
 | `functions/` | 旧 Pages 路由兼容 |
 | `bin/` | Agent VERSION、SHA256SUMS 和六架构二进制 |
-| `install.sh` / `install.ps1` | Rust Agent 安装入口 |
+| `install.sh` | Rust Agent 安装入口 |
 | `install-latency.sh` / `latency-agent.py` | External Latency Agent |
 
 ## 单 Worker 构建
@@ -40,7 +40,6 @@ nstatus-metrics-linux-arm64
 nstatus-metrics-linux-arm
 nstatus-metrics-linux-armv6
 nstatus-metrics-linux-386
-nstatus-metrics-windows-amd64.exe
 ```
 
 更新步骤：
@@ -48,7 +47,7 @@ nstatus-metrics-windows-amd64.exe
 1. 在私有 Agent 源执行 `./build-release.sh`；
 2. 校验六个目标；
 3. 复制整批产物；
-4. 更新 Linux/Windows 安装器的版本与 manifest 哈希；
+4. 更新 Linux 安装器的版本与 manifest 哈希；
 5. 跑完整测试；
 6. 再发布 Worker Static Assets。
 

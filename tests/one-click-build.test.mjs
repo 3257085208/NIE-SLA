@@ -9,7 +9,7 @@ const deploymentValidation = process.env.NIE_SLA_DEPLOYMENT_VALIDATION === '1';
 
 for (const relative of [
   'index.html', 'admin.html', 'config.js', 'bin/VERSION', 'bin/SHA256SUMS',
-  'bin/nstatus-metrics-linux-amd64', 'bin/nstatus-metrics-linux-arm64', 'bin/nstatus-metrics-windows-amd64.exe',
+  'bin/nstatus-metrics-linux-amd64', 'bin/nstatus-metrics-linux-arm64',
   'bin/jq-linux-amd64', 'bin/jq-linux-arm64', 'bin/jq-linux-i386', 'bin/jq-linux-armhf', 'bin/jq-linux-armel',
 ]) {
   const info = await stat(path.join(output, relative));
@@ -48,6 +48,7 @@ const wrangler = JSON.parse(await readFile(path.join(root, 'wrangler.jsonc'), 'u
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 assert.equal(wrangler.assets?.directory, './dist-one-click');
 assert.equal(wrangler.assets?.run_worker_first, true);
+assert.deepEqual(wrangler.compatibility_flags, ['global_fetch_strictly_public']);
 const databaseId = wrangler.d1_databases?.[0]?.database_id || '';
 assert.match(databaseId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 if (!deploymentValidation) assert.equal(databaseId, '00000000-0000-0000-0000-000000000000');

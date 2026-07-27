@@ -4,7 +4,7 @@ import { dayFromSec, nowSec, parseBoolean, timezoneOffsetMin } from '../utils.js
 let schemaEnsured = false;
 let schemaPromise = null;
 // Bump this marker whenever an existing installation needs new D1 objects.
-const SCHEMA_MARKER = 'schema:worker-v18-20260727-chart-colors';
+const SCHEMA_MARKER = 'schema:worker-v19-20260728-latency-r2';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -202,10 +202,12 @@ export async function ensureV6Schema(env) {
     color TEXT NOT NULL DEFAULT '#2e7dd7',
     enabled INTEGER NOT NULL DEFAULT 1,
     last_seen_at INTEGER,
+    latest_results TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`).run();
   await runOptionalSchemaChange(env, `ALTER TABLE latency_agents ADD COLUMN color TEXT NOT NULL DEFAULT '#2e7dd7'`);
+  await runOptionalSchemaChange(env, `ALTER TABLE latency_agents ADD COLUMN latest_results TEXT`);
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_credentials (
     subject_type TEXT NOT NULL CHECK (subject_type IN ('agent', 'latency')),
     subject_id TEXT NOT NULL,

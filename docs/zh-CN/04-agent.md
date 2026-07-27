@@ -4,7 +4,7 @@
 
 在后台新增 VPS 后，点击“部署 Agent”并在目标机器执行该节点专属命令。安装器会识别架构、校验 manifest 与二进制哈希、验证版本并创建服务。
 
-支持 Linux amd64、arm64、armv7、armv6、386 与 Windows amd64。
+支持 Linux amd64、arm64、armv7、armv6 与 386。
 
 ## Linux 服务
 

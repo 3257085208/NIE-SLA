@@ -26,7 +26,7 @@ cd agent
 脚本构建六个目标并生成同一批 `VERSION` 与 `SHA256SUMS`。然后：
 
 1. 计算 `SHA256SUMS` 自身 SHA-256；
-2. 更新 Linux/Windows 安装器默认哈希与版本；
+2. 更新 Linux 安装器默认哈希与版本；
 3. 同步整批产物到生产前端 `bin/`；
 4. 跑完整测试；
 5. 验证每个二进制 `--version`；

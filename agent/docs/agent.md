@@ -21,20 +21,8 @@ The interactive installer asks for API URL, Agent token, target name, and ping t
 | `nstatus-metrics-linux-arm` | Linux ARMv7 hard-float |
 | `nstatus-metrics-linux-armv6` | Older ARM routers / embedded Linux |
 | `nstatus-metrics-linux-386` | 32-bit x86 Linux |
-| `nstatus-metrics-windows-amd64.exe` | Windows x86_64 |
 
 OpenWrt/routers are supported when their CPU/ABI matches one of the Linux binaries. The installer needs `curl` or `wget`; the Agent runtime uses native Rust HTTPS and does not shell out to either tool.
-
-### Windows Install
-
-Run PowerShell as Administrator:
-
-```powershell
-iwr https://your-pages-domain.example/install.ps1 -OutFile $env:TEMP\nstatus-install.ps1
-& $env:TEMP\nstatus-install.ps1 -Api "https://your-worker.example.com" -Token "AGENT_TOKEN"
-```
-
-The installer stores files in `C:\ProgramData\NIE-SLA` and registers a startup Scheduled Task named `NStatusMetrics`.
 
 ### What It Collects
 
@@ -72,7 +60,7 @@ cargo check
 ./build-release.sh
 ```
 
-`build-release.sh` uses Zig to build five statically linked Linux targets plus Windows amd64 locally, then writes a matching `VERSION` and `SHA256SUMS`. GitHub Actions is not required to produce release artifacts.
+`build-release.sh` uses Zig to build five statically linked Linux targets locally, then writes a matching `VERSION` and `SHA256SUMS`. GitHub Actions is not required to produce release artifacts.
 
 ## External Probe Agent (Python)
 

@@ -18,7 +18,6 @@ targets=(
   armv7-unknown-linux-musleabihf
   arm-unknown-linux-musleabi
   i686-unknown-linux-musl
-  x86_64-pc-windows-gnu
 )
 outputs=(
   nstatus-metrics-linux-amd64
@@ -26,7 +25,6 @@ outputs=(
   nstatus-metrics-linux-arm
   nstatus-metrics-linux-armv6
   nstatus-metrics-linux-386
-  nstatus-metrics-windows-amd64.exe
 )
 jq_assets=(
   jq-linux-amd64
@@ -62,7 +60,6 @@ for index in "${!targets[@]}"; do
     cargo "+$TOOLCHAIN" zigbuild --locked --release --target "$target" --target-dir "$TARGET_DIR"
   fi
   source="$TARGET_DIR/$target/release/nstatus-metrics"
-  [[ "$target" == *windows* ]] && source="$source.exe"
   [[ -s "$source" ]] || { echo "missing build output: $source" >&2; exit 1; }
   cp "$source" "$staging/$output"
 done

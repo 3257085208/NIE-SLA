@@ -313,7 +313,10 @@ function render(data) {
 
   if (els.globalBanner) {
     els.globalBanner.className = bannerClass;
-    els.globalBanner.innerHTML = `<strong>${bannerText}</strong>`;
+    els.globalBanner.replaceChildren();
+    const strong = document.createElement('strong');
+    strong.textContent = bannerText;
+    els.globalBanner.append(strong);
   }
 
   if (els.subline) {

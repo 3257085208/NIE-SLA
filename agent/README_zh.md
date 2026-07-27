@@ -29,7 +29,6 @@ NIE-SLA Agent 是 NIE-SLA 的 VPS 侧 Rust 采集器。它只主动向 Worker �
 | `nstatus-metrics-linux-arm64` | ARM64/aarch64 Linux |
 | `nstatus-metrics-linux-arm` | ARMv7 hard-float |
 | `nstatus-metrics-linux-armv6` | ARMv6 |
-| `nstatus-metrics-windows-amd64.exe` | Windows x86_64 |
 
 ## 推荐安装
 
@@ -136,7 +135,7 @@ cargo build --release
 ./build-release.sh
 ```
 
-脚本会一次生成 Linux amd64、arm64、armv7、armv6、386 和 Windows amd64 六个二进制，并在 `bin/` 生成同一批次的 `VERSION` 与 `SHA256SUMS`。全部目标成功前不会覆盖现有发布目录。可通过第一个参数指定其他输出目录；通过 `RUST_TOOLCHAIN` 固定 Rust 工具链版本。
+脚本会一次生成 Linux amd64、arm64、armv7、armv6 和 386 五个二进制，并在 `bin/` 生成同一批次的 `VERSION` 与 `SHA256SUMS`。全部目标成功前不会覆盖现有发布目录。可通过第一个参数指定其他输出目录；通过 `RUST_TOOLCHAIN` 固定 Rust 工具链版本。
 
 ## License
 

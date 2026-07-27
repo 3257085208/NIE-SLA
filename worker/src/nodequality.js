@@ -40,7 +40,7 @@ export function normalizeNodeQualityReport(raw, { now = Math.floor(Date.now() / 
   }
   const parsed = parseNodeQualityMarkdown(text);
   const reportTime = parsed.report_time || extractReportTime(text) || null;
-  const link = parsed.link || extractNodeQualityLink(text) || null;
+  const link = safeReportLink(parsed.link || extractNodeQualityLink(text)) || null;
   const report = {
     version: 1,
     source: 'paste',
@@ -58,7 +58,7 @@ export function normalizeNodeQualityReport(raw, { now = Math.floor(Date.now() / 
 
 function normalizeStructuredReport(input, now) {
   const reportTime = String(input?.report_time || input?.time || extractReportTime(input?.raw || '') || '').trim() || null;
-  const link = String(input?.link || input?.url || extractNodeQualityLink(input?.raw || '') || '').trim() || null;
+  const link = safeReportLink(input?.link || input?.url || extractNodeQualityLink(input?.raw || '')) || null;
   let tabs = Array.isArray(input?.tabs) ? input.tabs.map(normalizeTab).filter(Boolean) : [];
   if (!tabs.length && input?.raw) tabs = parseNodeQualityMarkdown(String(input.raw)).tabs;
   if (!tabs.length) {
@@ -236,6 +236,15 @@ function isSafeHttpUrl(value) {
   }
 }
 
+function safeReportLink(value) {
+  try {
+    const url = assertPublicHttpUrl(String(value || '').trim());
+    return url.protocol === 'https:' && !/[<>"']/.test(String(value)) ? url.toString().slice(0, 2048) : '';
+  } catch (_) {
+    return '';
+  }
+}
+
 function isSafeImageUrl(value) {
   if (!isSafeHttpUrl(value)) return false;
   let u;
@@ -289,7 +298,7 @@ export function publicNodeQualitySummary(target = {}) {
     report_time: report.report_time || extractReportTime(report.raw || '') || null,
     updated_at: target?.nq_updated_at ? Number(target.nq_updated_at) : null,
     tabs,
-    link: report.link || extractNodeQualityLink(report.raw || '') || null,
+    link: safeReportLink(report.link || extractNodeQualityLink(report.raw || '')) || null,
   };
 }
 
@@ -305,7 +314,7 @@ export function publicNodeQualityReport(target = {}) {
       name: String(target.name || ''),
       report_time: report.report_time || extractReportTime(report.raw || '') || null,
       updated_at: target?.nq_updated_at ? Number(target.nq_updated_at) : null,
-      link: report.link || extractNodeQualityLink(report.raw || '') || null,
+      link: safeReportLink(report.link || extractNodeQualityLink(report.raw || '')) || null,
       image_proxy_base: target.id ? `/api/nq/${encodeURIComponent(String(target.id))}/image` : null,
       tabs: Array.isArray(report.tabs) ? report.tabs.map((tab) => ({
         id: String(tab.id || ''),
