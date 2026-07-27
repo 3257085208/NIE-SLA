@@ -8,6 +8,8 @@ import { getDeveloperApiManifest, resolveDeveloperApiOrigin, withDeveloperApiHea
 const routesSource = await readFile(new URL('../src/routes.js', import.meta.url), 'utf8');
 const statusSource = await readFile(new URL('../src/status.js', import.meta.url), 'utf8');
 const probeSource = await readFile(new URL('../src/probe.js', import.meta.url), 'utf8');
+const indexSource = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
+const wranglerSource = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
 assert.match(
   routesSource,
   /\/api\/settings\/geoip[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}'cache-control': 'no-store'/,
@@ -21,6 +23,11 @@ const dueTargetsSource = probeSource.slice(probeSource.indexOf('export async fun
 assert.match(dueTargetsSource, /lastPersistedCheckAt\(target, d1Latest\.get\(String\(target\.id\)\)\)/, 'history scheduling must use persisted five-minute checks');
 assert.match(dueTargetsSource, /buildHistoryPreviousStateMap\(allTargets, state, d1Latest\)/, 'missed-history backfill must use persisted five-minute checks');
 assert.doesNotMatch(dueTargetsSource, /previousById\.get\(target\.id\)\?\.checked_at/, 'one-minute R2 status must not postpone five-minute history checks');
+assert.match(indexSource, /scheduled\(controller, env, ctx\)[\s\S]{0,160}dispatchScheduledTasks/, 'cron triggers must delegate work outside the 10ms scheduled CPU budget');
+assert.match(indexSource, /signInternalSchedule[\s\S]{0,500}HMAC[\s\S]{0,100}SHA-256/, 'delegated cron requests must be HMAC authenticated');
+assert.match(indexSource, /historyProbeCount > 0[\s\S]{0,180}history_probe_completed/, 'a full history probe must suppress the duplicate fast probe');
+assert.match(wranglerSource, /MAX_TARGETS_PER_RUN = "20"/, 'cron work must be spread across minute slots while retaining 100 targets per five minutes');
+assert.match(wranglerSource, /global_fetch_strictly_public/, 'signed cron dispatch must loop through the public Worker endpoint instead of bypassing the Worker route');
 
 function urlWith(qs) {
   return new URL('https://example.test/api/agent/metrics?' + qs);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, lastPersistedCheckAt, normalizeTarget, parseBoolean, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
+import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, lastPersistedCheckAt, normalizeTarget, parseBoolean, publicCheckPoint, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
 import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, requireLatencyAgentForId, safeJson } from '../src/auth.js';
 import { rateLimitD1 } from '../src/ratelimit.js';
 import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
@@ -82,6 +82,12 @@ assert.equal(
 const missedWhileDown = buildMissedPoints(env, { checked_at: 1783330800, ok: 0 }, 1783330800 + 4 * 300, 0, 'auto', 6);
 assert.equal(missedWhileDown.length, 3);
 assert.ok(missedWhileDown.every(point => point.missed && point.latency_ms === null));
+assert.deepEqual(publicCheckPoint(missedWhileDown[0]), {
+  ...Object.fromEntries(Object.entries(missedWhileDown[0]).filter(([key]) => key !== 'cf_colo')),
+  missed: true,
+  region_label: '自动',
+  error: null,
+});
 assert.equal(buildOpenMissedPoints(env, { checked_at: 1783330800, ok: 0 }, 1783330800 + 4 * 300, 'auto').length, 3);
 assert.deepEqual(dailySummaryFromPoints([
   { checked_at: 1783330800, ok: 0, total: 1, ok_count: 0, latency_ms: null },
@@ -227,7 +233,7 @@ const latencyInstallCommand = await getLatencyAgentInstallCommand(
 );
 assert.equal(latencyInstallCommand.ok, true);
 assert.match(latencyInstallCommand.linux_command, /install-latency\.sh/);
-assert.match(latencyInstallCommand.linux_command, /install-latency\.sh\?v=4/);
+assert.match(latencyInstallCommand.linux_command, /install-latency\.sh\?v=5/);
 assert.doesNotMatch(latencyInstallCommand.linux_command, /NSTATUS_AGENT_ID=/);
 globalThis.fetch = originalFetch;
 assert.equal(isAgentApiPath('/api/login'), false);

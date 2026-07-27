@@ -179,10 +179,12 @@ export async function ensureV6Schema(env) {
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     target TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#159754',
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER,
     updated_at INTEGER
   )`).run();
+  await env.DB.prepare(`ALTER TABLE ping_targets ADD COLUMN color TEXT NOT NULL DEFAULT '#159754'`).run().catch(() => {});
 
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ping_history (
     target_id TEXT NOT NULL,
@@ -197,11 +199,13 @@ export async function ensureV6Schema(env) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS latency_agents (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#2e7dd7',
     enabled INTEGER NOT NULL DEFAULT 1,
     last_seen_at INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`).run();
+  await env.DB.prepare(`ALTER TABLE latency_agents ADD COLUMN color TEXT NOT NULL DEFAULT '#2e7dd7'`).run().catch(() => {});
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_credentials (
     subject_type TEXT NOT NULL CHECK (subject_type IN ('agent', 'latency')),
     subject_id TEXT NOT NULL,

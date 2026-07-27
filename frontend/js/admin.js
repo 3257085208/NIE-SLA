@@ -123,9 +123,13 @@ function errBox(id, e) {
 function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
-function isStatusStale(x) {
-  const c = Number(x?.checked_at || 0);
-  return c && c < nowSec() - Math.max(300, Number(x?.interval_sec || 300)) * 3;
+function isStatusStale() {
+  return false;
+}
+
+function configuredChartColor(value, fallback) {
+  const color = String(value || '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : fallback;
 }
 function formatDateTime(s) {
   return s
@@ -1454,7 +1458,7 @@ function renderLatencyNodes() {
   const builtin = `
     <tr class="latency-builtin-row">
       <td><code>cloudflare</code></td>
-      <td><strong>Cloudflare</strong><small class="table-note">系统默认来源</small></td>
+      <td><span class="chart-color-swatch" style="--chart-color:#159754"></span><strong>Cloudflare</strong><small class="table-note">系统默认来源</small></td>
       <td><span class="tag tag-on">内置 · 启用</span></td>
       <td>全球边缘网络</td>
       <td><span class="muted">固定保留，不可删除</span></td>
@@ -1462,7 +1466,7 @@ function renderLatencyNodes() {
   const external = latencyNodes.map((node, index) => `
     <tr data-i="${index}">
       <td><code>${escapeHtml(node.id)}</code></td>
-      <td>${escapeHtml(node.name)}</td>
+      <td><span class="chart-color-swatch" style="--chart-color:${configuredChartColor(node.color, '#2e7dd7')}"></span>${escapeHtml(node.name)}</td>
       <td><span class="tag ${Number(node.enabled) ? "tag-on" : "tag-off"}">${Number(node.enabled) ? "启用" : "停用"}</span></td>
       <td>${node.last_seen_at ? escapeHtml(new Date(Number(node.last_seen_at) * 1000).toLocaleString("zh-CN")) : "尚未上报"}</td>
       <td><div class="actions">
@@ -1487,6 +1491,7 @@ function latencyNodeModal(node = null) {
     <h3>${edit ? "编辑" : "新增"} Latency 节点</h3>
     ${edit ? inputField("ID", "latencyNodeId", node.id, "readonly") : ""}
     ${inputField("显示名称", "latencyNodeName", node?.name || "", 'placeholder="例如：东京 IIJ、洛杉矶 CN2"')}
+    ${formField("曲线颜色", `<input id="latencyNodeColor" type="color" value="${configuredChartColor(node?.color, '#2e7dd7')}">`)}
     <p class="hint">名称用于后台识别及详细延迟图表；VPS 列表不显示节点名称与延迟。此节点与 VPS Agent、Ping 功能完全独立。</p>
     <div class="ma"><button class="btn" data-close>取消</button><button class="btn btn-primary" id="saveLatencyNode">保存</button></div>`;
   byId("saveLatencyNode").onclick = () => saveLatencyNode(node);
@@ -1495,13 +1500,14 @@ function latencyNodeModal(node = null) {
 
 async function saveLatencyNode(node = null) {
   const name = byId("latencyNodeName").value.trim();
+  const color = configuredChartColor(byId("latencyNodeColor")?.value, '#2e7dd7');
   if (!name) return toast("请填写 Latency 节点名称", "err");
   const button = byId("saveLatencyNode");
   button.disabled = true;
   try {
     await apiAdmin(node ? `/api/latency-agents/${encodeURIComponent(node.id)}` : "/api/latency-agents", {
       method: node ? "PATCH" : "POST",
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, color }),
     }, 30000);
     closeModal();
     toast("Latency 节点已保存", "ok");
@@ -1611,6 +1617,7 @@ function renderPings() {
             <th>#</th>
             <th>ID</th>
             <th>名称</th>
+            <th>颜色</th>
             <th>目标</th>
             <th>状态</th>
             <th>操作</th>
@@ -1645,6 +1652,7 @@ function pingRowHtml(ping, index) {
       <td>${index + 1}</td>
       <td><code>${escapeHtml(ping.id)}</code></td>
       <td>${escapeHtml(ping.name)}</td>
+      <td><span class="chart-color-swatch" style="--chart-color:${configuredChartColor(ping.color, '#159754')}"></span><code>${escapeHtml(configuredChartColor(ping.color, '#159754'))}</code></td>
       <td><code>${escapeHtml(ping.target || "-")}</code></td>
       <td>${enabled}</td>
       <td><div class="actions">${pingActionsHtml(ping)}</div></td>
@@ -1657,6 +1665,7 @@ function pingModal(p = null) {
     <h3>${isEdit ? "编辑" : "新增"} Ping</h3>
     ${inputField("ID", "pId", ping.id || "", isEdit ? "readonly" : "")}
     ${inputField("名称", "pName", ping.name || "")}
+    ${formField("曲线颜色", `<input id="pColor" type="color" value="${configuredChartColor(ping.color, '#159754')}">`)}
     ${inputField("目标", "pTarget", ping.target || "", 'placeholder="host:port"')}
     <div class="ma">
       <button class="btn" data-close>取消</button>
@@ -1668,6 +1677,7 @@ function pingModal(p = null) {
 async function savePing(edit) {
   const id = byId("pId").value.trim(),
     name = byId("pName").value.trim(),
+    color = configuredChartColor(byId("pColor")?.value, '#159754'),
     target = byId("pTarget").value.trim();
   if (!name || !target) return toast("名称和目标必填", "err");
   try {
@@ -1677,7 +1687,7 @@ async function savePing(edit) {
         : "/api/ping-targets",
       {
         method: edit ? "PATCH" : "POST",
-        body: JSON.stringify({ id: id || undefined, name, target }),
+        body: JSON.stringify({ id: id || undefined, name, target, color }),
       },
     );
     toast("已保存", "ok");
@@ -2281,11 +2291,20 @@ async function loadAccount() {
         ${loginState.totp_enabled ? formField("TOTP 验证码", '<input id="accountTotp" inputmode="numeric" maxlength="6" autocomplete="one-time-code">') : ""}
       </div>
       <p class="hint">密码至少 9 位，且必须包含大写字母、小写字母、数字和特殊符号。当前来源：${escapeHtml(source)}。保存后其他设备会退出登录。</p>
-      <button class="btn btn-primary btn-sm" id="saveAccount">更新账号密码</button>`;
+      <p class="account-save-status" id="accountSaveStatus" role="status" hidden></p>
+      <button type="button" class="btn btn-primary btn-sm" id="saveAccount">更新账号密码</button>`;
     byId("saveAccount").onclick = saveAccount;
   } catch (error) {
     errBox("sAccount", error);
   }
+}
+
+function accountSaveStatus(message, type = 'info') {
+  const status = byId('accountSaveStatus');
+  if (!status) return;
+  status.hidden = false;
+  status.className = `account-save-status ${type}`;
+  status.textContent = message;
 }
 
 async function saveAccount() {
@@ -2295,16 +2314,27 @@ async function saveAccount() {
   const newPassword = byId("accountNewPassword")?.value || "";
   const confirmPassword = byId("accountConfirmPassword")?.value || "";
   const totp = byId("accountTotp")?.value.trim() || "";
-  if (!currentPassword || !newPassword || !confirmPassword) return toast("请完整填写当前密码和新密码", "err");
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    accountSaveStatus("请完整填写当前密码和新密码", "err");
+    return toast("请完整填写当前密码和新密码", "err");
+  }
   if (newPassword.length < 9 || newPassword.length > 256 || !/[a-z]/.test(newPassword) || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword) || !/[^A-Za-z0-9]/.test(newPassword)) {
+    accountSaveStatus("密码至少 9 位，且必须包含大写字母、小写字母、数字和特殊符号", "err");
     return toast("密码至少 9 位，且必须包含大写字母、小写字母、数字和特殊符号", "err");
   }
-  if (newPassword !== confirmPassword) return toast("两次输入的新密码不一致", "err");
-  if (totp && !/^\d{6}$/.test(totp)) return toast("TOTP 验证码必须是 6 位数字", "err");
+  if (newPassword !== confirmPassword) {
+    accountSaveStatus("两次输入的新密码不一致", "err");
+    return toast("两次输入的新密码不一致", "err");
+  }
+  if (totp && !/^\d{6}$/.test(totp)) {
+    accountSaveStatus("TOTP 验证码必须是 6 位数字", "err");
+    return toast("TOTP 验证码必须是 6 位数字", "err");
+  }
   button.disabled = true;
   button.textContent = "更新中...";
+  accountSaveStatus("正在验证并更新账号密码...", "info");
   try {
-    const result = await api("/api/auth/account", {
+    const result = await apiTimeout("/api/auth/account", {
       method: "PATCH",
       body: JSON.stringify({
         username,
@@ -2313,14 +2343,15 @@ async function saveAccount() {
         confirm_password: confirmPassword,
         totp,
       }),
-      noAuthReset: true,
-    });
+    }, 30000);
     if (!result.session_id || !result.session_expires_at) throw new Error("未收到新的管理会话");
     saveSession(result.session_id, result.session_expires_at);
     byId("loginUsername").value = username;
     toast("账号密码已更新，其他设备已退出", "ok");
-    loadAccount();
+    await loadAccount();
+    accountSaveStatus("账号密码已更新，新账号已立即生效；其他设备已退出登录。", "ok");
   } catch (error) {
+    accountSaveStatus(error.message || "账号密码更新失败", "err");
     toast(error.message, "err");
   } finally {
     if (document.body.contains(button)) {
@@ -2328,6 +2359,30 @@ async function saveAccount() {
       button.textContent = "更新账号密码";
     }
   }
+}
+
+function setupSettingsCollapsibles() {
+  document.querySelectorAll('#pg-settings .card').forEach((card) => {
+    const heading = card.querySelector(':scope > h3');
+    if (!heading || card.classList.contains('settings-collapsible')) return;
+    card.classList.add('settings-collapsible', 'is-collapsed');
+    heading.setAttribute('role', 'button');
+    heading.setAttribute('tabindex', '0');
+    heading.setAttribute('aria-expanded', 'false');
+    heading.insertAdjacentHTML('beforeend', '<span class="settings-collapse-mark" aria-hidden="true">+</span>');
+    const toggle = () => {
+      const collapsed = card.classList.toggle('is-collapsed');
+      heading.setAttribute('aria-expanded', String(!collapsed));
+      const mark = heading.querySelector('.settings-collapse-mark');
+      if (mark) mark.textContent = collapsed ? '+' : '−';
+    };
+    heading.addEventListener('click', toggle);
+    heading.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      toggle();
+    });
+  });
 }
 async function initTotp() {
   try {
@@ -2464,6 +2519,7 @@ byId("latencyTable").onclick = (e) => {
 setInterval(() => {
   if (byId("pg-targets")?.classList.contains("on")) loadAgentTasks();
 }, 15_000);
+setupSettingsCollapsibles();
 loadAuthConfig();
 if (await completeGitHubRedirect()) {
   // OAuth completion owns the initial login state.

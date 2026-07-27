@@ -5,8 +5,10 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import queue
 import socket
 import sys
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -20,7 +22,9 @@ UPDATE_INTERVAL = max(300, min(86400, int(os.environ.get("NSTATUS_LATENCY_UPDATE
 INSTALL_BASE = os.environ["NSTATUS_LATENCY_INSTALL_BASE"].rstrip("/")
 USER_AGENT = os.environ.get("NSTATUS_LATENCY_USER_AGENT", "NIE-SLA-Latency/1.0")
 SCRIPT_PATH = os.path.realpath(__file__)
-SCRIPT_VERSION = "4"
+SCRIPT_VERSION = "5"
+PROBE_TIMEOUT_SEC = 1.0
+MAX_RESOLVED_ADDRESSES = 8
 
 
 def api(path, payload=None):
@@ -40,15 +44,73 @@ def api(path, payload=None):
         return json.load(response)
 
 
+def resolve_target(host, port, result_queue):
+    try:
+        addresses = []
+        seen = set()
+        for family, socktype, proto, _, sockaddr in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+            key = (family, socktype, proto, sockaddr)
+            if key in seen:
+                continue
+            seen.add(key)
+            addresses.append(key)
+            if len(addresses) >= MAX_RESOLVED_ADDRESSES:
+                break
+        result_queue.put((addresses, None))
+    except (OSError, ValueError) as error:
+        result_queue.put(([], error))
+
+
+def connect_address(address, started, deadline, result_queue):
+    family, socktype, proto, sockaddr = address
+    connection = None
+    try:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("connection timed out")
+        connection = socket.socket(family, socktype, proto)
+        connection.settimeout(remaining)
+        connection.connect(sockaddr)
+        result_queue.put((round((time.monotonic() - started) * 1000), None))
+    except (OSError, ValueError) as error:
+        result_queue.put((None, error))
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 def probe(target):
     started = time.monotonic()
-    timeout = max(0.5, min(30, int(target.get("timeout_ms", 5000)) / 1000))
+    configured_timeout = max(0.5, min(PROBE_TIMEOUT_SEC, int(target.get("timeout_ms", 1000)) / 1000))
+    deadline = started + configured_timeout
+    checked_at = int(time.time())
     try:
-        with socket.create_connection((target["target_host"], int(target["target_port"])), timeout=timeout):
-            latency = round((time.monotonic() - started) * 1000)
-        return {"target_id": target["id"], "checked_at": int(time.time()), "latency_ms": latency, "ok": True}
-    except (OSError, ValueError) as error:
-        return {"target_id": target.get("id", ""), "checked_at": int(time.time()), "latency_ms": None, "ok": False, "error": str(error)[:160]}
+        host = str(target["target_host"])
+        port = int(target["target_port"])
+        resolved = queue.Queue()
+        threading.Thread(target=resolve_target, args=(host, port, resolved), daemon=True).start()
+        addresses, resolve_error = resolved.get(timeout=max(0.001, deadline - time.monotonic()))
+        if resolve_error is not None:
+            raise resolve_error
+        if not addresses:
+            raise OSError("no TCP address resolved")
+
+        connected = queue.Queue()
+        for address in addresses:
+            threading.Thread(target=connect_address, args=(address, started, deadline, connected), daemon=True).start()
+        last_error = TimeoutError("connection timed out")
+        for _ in addresses:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            latency, error = connected.get(timeout=remaining)
+            if latency is not None and latency <= round(PROBE_TIMEOUT_SEC * 1000):
+                return {"target_id": target["id"], "checked_at": checked_at, "latency_ms": latency, "ok": True}
+            if error is not None:
+                last_error = error
+        raise last_error
+    except (OSError, ValueError, TimeoutError, queue.Empty) as error:
+        return {"target_id": target.get("id", ""), "checked_at": checked_at, "latency_ms": None, "ok": False, "error": str(error or "connection timed out")[:160]}
 
 
 def run_once():

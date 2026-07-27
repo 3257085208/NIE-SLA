@@ -143,6 +143,7 @@ struct VpsInfo {
     virtualization: String,
     gpu_name: String,
     gpu_count: usize,
+    gpu_accessible: bool,
     cpu_temp_c: Option<f64>,
     gpu_temp_c: Option<f64>,
     gpu_util: Option<f64>,
@@ -619,6 +620,7 @@ impl Collector {
             info.gpu_util = thermal.gpu_util;
             info.gpu_name = thermal.gpu_name;
             info.gpu_count = thermal.gpu_count;
+            info.gpu_accessible = thermal.gpu_accessible;
             info.motherboard_temp_c = thermal.motherboard_temp_c;
             info.disk_temp_c = thermal.disk_temp_c;
             info.chipset_temp_c = thermal.chipset_temp_c;
@@ -723,6 +725,7 @@ impl Collector {
             virtualization: platform::virtualization(),
             gpu_name: thermal.gpu_name,
             gpu_count: thermal.gpu_count,
+            gpu_accessible: thermal.gpu_accessible,
             cpu_temp_c: thermal.cpu_temp_c,
             gpu_temp_c: thermal.gpu_temp_c,
             gpu_util: thermal.gpu_util,
@@ -914,6 +917,9 @@ fn vps_info_json(v: &VpsInfo) -> serde_json::Value {
     }
     if v.gpu_count > 0 {
         obj.insert("gpu_count".to_string(), serde_json::json!(v.gpu_count));
+    }
+    if v.gpu_accessible {
+        obj.insert("gpu_accessible".to_string(), serde_json::json!(true));
     }
     if let Some(t) = v.cpu_temp_c {
         obj.insert("cpu_temp_c".to_string(), serde_json::json!(t));

@@ -77,7 +77,7 @@ async function buildStatusPayload(env, url = null) {
   const metricsPromise = env.DB.prepare(`SELECT * FROM agent_metrics_state`).all().catch(() => ({ results: [] }));
   const agentAvailabilityPromise = env.DB.prepare(`SELECT agent_id, day, total_sec, online_sec FROM agent_daily_availability WHERE day >= ?`).bind(startDay).all().catch(() => ({ results: [] }));
   const latestPromise = env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo, uptime_24h, uptime_7d, avg_latency_24h, last_fail_at, current_outage_started_at, last_recover_at, status_changed_at FROM latest_status`).all().catch(() => ({ results: [] }));
-  const pingTargetsPromise = env.DB.prepare(`SELECT id, name FROM ping_targets WHERE enabled = 1 ORDER BY name`).all().catch(() => ({ results: [] }));
+  const pingTargetsPromise = env.DB.prepare(`SELECT id, name, color FROM ping_targets WHERE enabled = 1 ORDER BY name`).all().catch(() => ({ results: [] }));
   const [targets, metricsResult, agentAvailabilityResult, latestResult, pingTargetsResult] = await Promise.all([targetsPromise, metricsPromise, agentAvailabilityPromise, latestPromise, pingTargetsPromise]);
   const r2State = await readR2State(env);
   const r2SummaryRows = getSummaryRowsFromState(r2State, startDay);

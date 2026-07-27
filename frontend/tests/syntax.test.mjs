@@ -45,6 +45,7 @@ assert.match(adminSource, /const cfDetails = noPublicIp[\s\S]*\? ""/, 'no-public
 assert.match(adminSource, /\/api\/latency-agents/, 'admin must manage independent Latency nodes');
 assert.match(adminSource, /install-command\?node_id=/, 'Latency nodes must have an independent installer command');
 assert.doesNotMatch(appSource, /pingRows \|\| cardLatencyRow/, 'Latency rendering must not fall back to Ping rows');
+assert.match(appSource, /!c\?\.missed && c\?\.error/, 'missed checks must not also render a misleading failure message');
 assert.doesNotMatch(adminCss, /min-width:\s*(?:1080|1280)px/, 'probe table must not regress to the old extra-wide layout');
 assert.match(adminCss, /width:\s*min\(980px,\s*calc\(100vw - 44px\)\)/, 'admin content width should match the frontend rhythm');
 assert.doesNotMatch(adminCss, /\.stat(?:\.\w+)?::before/, 'dashboard stats must not render decorative edge stripes');
@@ -58,8 +59,8 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260727-bulk-editor1/, 'admin CSS cache key must publish the mobile and bulk editor fixes');
-assert.match(adminHtml, /js\/admin\.js\?v=20260727-bulk-editor1/, 'admin JS cache key must publish batch target editing');
+assert.match(adminHtml, /admin\.css\?v=20260727-beta16/, 'admin CSS cache key must publish collapsible settings and color controls');
+assert.match(adminHtml, /js\/admin\.js\?v=20260727-beta16/, 'admin JS cache key must publish account feedback and chart colors');
 assert.match(adminSource, /selectedTargetIds[\s\S]*targetBulkBarHtml[\s\S]*bulkTargetModal/, 'admin must support selecting and batch-editing VPS targets');
 assert.match(adminSource, /apiAdmin\("\/api\/targets\/bulk"[\s\S]*method:\s*"PATCH"/, 'batch target editing must use one protected Worker request');
 assert.match(adminSource, /只有左侧已勾选的字段会被覆盖/, 'batch editor must explain selective field updates');
@@ -86,8 +87,8 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260727-sla-value1/, 'frontend cache key must publish the enlarged SLA value');
-assert.match(indexHtml, /style\.css\?v=20260727-sla-value1/, 'frontend CSS cache key must publish the enlarged SLA value');
+assert.match(indexHtml, /app\.js\?v=20260727-beta16/, 'frontend cache key must publish Web status and chart color fixes');
+assert.match(indexHtml, /style\.css\?v=20260727-beta16/, 'frontend CSS cache key must publish the right-aligned metric toolbar');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.doesNotMatch(indexHtml, /data-frontend-theme|themeCanvas|themeBoot|theme-pending/, 'removed themes must not leave a startup shell');
@@ -109,6 +110,8 @@ assert.doesNotMatch(appSource, /serviceMetaHtml|class="service-target"/, 'coarse
 assert.doesNotMatch(appSource, /serviceLatencySourcesHtml|service-latency-source/, 'VPS rows must not display external Latency Agent names or values');
 assert.match(appSource, /\/api\/latency\?[\s\S]*externalLatencyChartSeries/, 'detailed latency charts must retain external Latency Agent history');
 assert.match(appSource, /function serviceCloudflareLatencyHtml[\s\S]*Cloudflare 延迟/, 'VPS rows must retain the unnamed Cloudflare latency value');
+assert.match(appSource, /function isTargetStale\(\)\s*\{[\s\S]*return false;/, 'successful Web checks must not be relabelled as delayed by a second heartbeat rule');
+assert.match(adminSource, /function isStatusStale\(\)\s*\{\s*return false;/, 'admin Web status must use the latest check result without a second stale state');
 assert.doesNotMatch(appSource, /meta-line">🔀/, 'line type metadata must use typography instead of decorative emoji');
 assert.doesNotMatch(appSource, /`📍 \$\{t\.location\}`/, 'fallback location metadata must not add decorative emoji');
 assert.match(appSource, /apac:\s*'亚太'/, 'probe region labels must be fully Chinese');
@@ -142,7 +145,14 @@ assert.match(styleSource, /\.unlock-country\.dns\s*\{\s*color:\s*#765708;\s*back
 assert.match(styleSource, /\.unlock-country\.bad\s*\{\s*color:\s*#8e3035;\s*background:\s*#f2cccc/, 'failed unlock checks must use a readable light-red state');
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.unlock-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)/, 'mobile unlock checks must fit all six columns into the VPS metadata width');
 assert.match(styleSource, /\.metric-tabs\s*\{[\s\S]*flex-wrap:\s*nowrap[\s\S]*overflow-x:\s*auto/, 'metric tabs must remain on one horizontally scrollable row');
-assert.match(styleSource, /\.chart-toolbar\s*>\s*:first-child\s*\{[\s\S]*max-width:\s*720px[\s\S]*\.metric-tabs\s*\{[\s\S]*justify-content:\s*flex-start/, 'chart metric tabs must keep their first label visible instead of clipping the left edge');
+assert.match(styleSource, /\.chart-toolbar\s*>\s*:first-child\s*\{[\s\S]*max-width:\s*720px[\s\S]*\.metric-tabs\s*\{[\s\S]*justify-content:\s*flex-end/, 'desktop chart metric tabs must align with the right-side range controls');
+assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.metric-tabs\s*\{[\s\S]*justify-content:\s*flex-start/, 'mobile chart metric tabs must keep the first label reachable');
+assert.match(adminSource, /setupSettingsCollapsibles\(\)/, 'settings cards must default to collapsible sections');
+assert.match(adminSource, /accountSaveStatus\("正在验证并更新账号密码/, 'account updates must show progress and errors inside the settings card');
+assert.match(adminSource, /id="pColor" type="color"/, 'Ping targets must expose a configurable chart color');
+assert.match(adminSource, /id="latencyNodeColor" type="color"/, 'Latency nodes must expose a configurable chart color');
+assert.match(appSource, /configuredChartColor\(tgt\.color/, 'TCP Ping charts must use the configured target color');
+assert.match(appSource, /configuredChartColor\(source\.color/, 'external Latency charts must use the configured node color');
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.service-list\s*\{\s*padding:\s*0 14px 14px 18px/, 'mobile VPS rows must reclaim horizontal space');
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.chart-canvas-wrap\s*\{\s*height:\s*232px/, 'mobile charts must retain a readable height');
 assert.match(appSource, /const mobileChart = isMobileChartViewport\(\)/, 'Chart.js must apply its mobile label profile');
@@ -172,7 +182,9 @@ assert.match(latencyAgentSource, /\/api\/latency-agent\/update-policy\?node_id=/
 assert.match(latencyAgentSource, /policy\.get\("script_version", SCRIPT_VERSION\)/, 'Latency updates must use the server-selected cache version');
 assert.match(latencyAgentSource, /os\.replace\(next_path, SCRIPT_PATH\)/, 'Latency agent updates must replace the script atomically');
 assert.match(latencyInstallerSource, /latency-agent\.py --once/, 'Latency installer must verify API access before reporting success');
-assert.match(latencyInstallerSource, /latency-agent\.py\?v=4/, 'Latency installer must cache-bust the current agent script');
+assert.match(latencyInstallerSource, /latency-agent\.py\?v=5/, 'Latency installer must cache-bust the current agent script');
+assert.match(latencyAgentSource, /PROBE_TIMEOUT_SEC = 1\.0/, 'external Latency probes must share a strict one-second budget');
+assert.match(latencyAgentSource, /socket\.getaddrinfo[\s\S]*threading\.Thread[\s\S]*daemon=True/, 'external Latency probes must race resolved addresses without accumulating per-address timeouts');
 assert.match(latencyInstallerSource, /stop_existing_latency_agent\(\)/, 'Latency reinstall must stop all existing agent processes');
 assert.match(latencyInstallerSource, /systemctl disable --now nstatus-latency-agent\.service/, 'Latency reinstall must stop and disable the old service');
 assert.match(latencyInstallerSource, /pgrep -f '\/opt\/nstatus-latency\/latency-agent\.py'/, 'Latency reinstall must find residual agent processes');

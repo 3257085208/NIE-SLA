@@ -852,16 +852,16 @@ function pingTargetColor(seed) {
   return palette[hash % palette.length];
 }
 
-function isTargetStale(t) {
-  if (t?.status_source === 'agent') return false;
-  const checkedAt = Number(t.checked_at || 0);
-  const metricsAt = t.last_metrics_at ? Math.floor(new Date(t.last_metrics_at).getTime() / 1000) : 0;
-  const latest = Math.max(checkedAt, metricsAt);
-  if (!latest) return false;
+function configuredChartColor(value, fallback) {
+  const color = String(value || '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : fallback;
+}
 
-  const interval = Math.max(300, Number(t.interval_sec || 300));
-  const staleAfter = Math.max(15 * 60, interval * 3);
-  return latest < Math.floor(Date.now() / 1000) - staleAfter;
+function isTargetStale() {
+  // Web checks have one source of truth: the latest check result. A successful
+  // result remains healthy until a later check fails. Agent freshness is
+  // already represented by agent_online from the Worker.
+  return false;
 }
 
 function daybarClassFromPct(pct) {
@@ -1337,12 +1337,13 @@ async function updatePingChart() {
   for (const tid of targetIds) {
     const points = byTarget.get(tid) || [];
     const tgt = targetById.get(String(tid)) || {};
+    const color = configuredChartColor(tgt.color, PING_COLORS[idx % PING_COLORS.length]);
     datasets.push({
       label: tgt.name || tid,
       data: points.sort((a, b) => a.x - b.x),
-      borderColor: PING_COLORS[idx % PING_COLORS.length],
+      borderColor: color,
       borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 6,
-      pointBackgroundColor: PING_COLORS[idx % PING_COLORS.length],
+      pointBackgroundColor: color,
       tension: 0.3, fill: false, spanGaps: true,
     });
     idx++;
@@ -1405,7 +1406,8 @@ function renderPingLossStats(stats, targetById = new Map(), targetIds = []) {
     const loss = Number.isFinite(Number(item.loss_rate)) ? Number(item.loss_rate) : (total ? ((total - ok) / total) * 100 : null);
     const name = targetById.get(String(id))?.name || id;
     const level = loss == null ? 'unknown' : loss === 0 ? 'good' : loss < 5 ? 'warn' : 'bad';
-    return `<span class="ping-loss-item ${level}" title="${escapeAttr(`${name} · ${total} 次 Ping · 丢失 ${Math.max(0, total - ok)} 次`)}"><i style="--ping-color:${PING_COLORS[index % PING_COLORS.length]}"></i><b>${escapeHtml(name)}</b><strong>${loss == null ? '-' : `${loss.toFixed(loss > 0 && loss < 1 ? 2 : 1)}%`}</strong></span>`;
+    const color = configuredChartColor(targetById.get(String(id))?.color, PING_COLORS[index % PING_COLORS.length]);
+    return `<span class="ping-loss-item ${level}" title="${escapeAttr(`${name} · ${total} 次 Ping · 丢失 ${Math.max(0, total - ok)} 次`)}"><i style="--ping-color:${color}"></i><b>${escapeHtml(name)}</b><strong>${loss == null ? '-' : `${loss.toFixed(loss > 0 && loss < 1 ? 2 : 1)}%`}</strong></span>`;
   }).join('');
 }
 
@@ -1971,7 +1973,7 @@ function buildChartDatasets(cfPoints, externalSeries = []) {
     datasets.push(lineDataset({
       label: source.name,
       data: source.points,
-      color: pingTargetColor(source.id || source.name),
+      color: configuredChartColor(source.color, pingTargetColor(source.id || source.name)),
       fill: false,
       order: 2,
     }));
@@ -1988,7 +1990,7 @@ function externalLatencyChartSeries() {
       ok: point.ok ? 1 : 0,
     })), state.selectedRange);
     const points = trimEmptyPointEdges(buildLinePoints(normalizeChartRows(checks)));
-    return { id: String(source.id || ''), name: String(source.name || source.id || 'Latency'), points };
+    return { id: String(source.id || ''), name: String(source.name || source.id || 'Latency'), color: source.color, points };
   }).filter(source => source.points.length);
 }
 
@@ -2467,7 +2469,7 @@ function formatCheckExtraHtml(c) {
     parts.push(`<span>区域 <strong>${escapeHtml(regionShort(c) || c.probe_region)}</strong></span>`);
   }
 
-  if (c?.error) {
+  if (!c?.missed && c?.error) {
     parts.push(`<span class="fail-text">${escapeHtml(String(c.error))}</span>`);
   }
 

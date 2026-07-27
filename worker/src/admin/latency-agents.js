@@ -1,4 +1,4 @@
-import { safeJson } from '../auth.js';
+import { ApiError, safeJson } from '../auth.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { clamp, nowSec, parseBoolean, sanitizeAgentId } from '../utils.js';
 import { agentApiBase, agentInstallBase, shellQuote } from './install-command.js';
@@ -7,8 +7,8 @@ import { getPublicSettings } from './settings.js';
 const RESULT_BUCKET_SEC = 60;
 
 export async function listLatencyAgents(env) {
-  const rows = await env.DB.prepare(`SELECT id, name, enabled, last_seen_at, created_at, updated_at FROM latency_agents ORDER BY name COLLATE NOCASE`).all();
-  return { ok: true, builtin: { id: 'cloudflare', name: 'Cloudflare', builtin: true, enabled: true }, nodes: rows.results || [] };
+  const rows = await env.DB.prepare(`SELECT id, name, color, enabled, last_seen_at, created_at, updated_at FROM latency_agents ORDER BY name COLLATE NOCASE`).all();
+  return { ok: true, builtin: { id: 'cloudflare', name: 'Cloudflare', color: '#159754', builtin: true, enabled: true }, nodes: rows.results || [] };
 }
 
 export async function createLatencyAgent(request, env) {
@@ -16,8 +16,10 @@ export async function createLatencyAgent(request, env) {
   const name = normalizeNodeName(body?.name);
   const requestedId = sanitizeAgentId(body?.id || '');
   const id = requestedId || `latency-${crypto.randomUUID().slice(0, 8)}`;
+  const color = normalizeChartColor(body?.color, '#2e7dd7');
+  if (body?.color !== undefined && !/^#[0-9a-f]{6}$/i.test(String(body.color).trim())) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
   const now = nowSec();
-  await env.DB.prepare(`INSERT INTO latency_agents (id, name, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`).bind(id, name, now, now).run();
+  await env.DB.prepare(`INSERT INTO latency_agents (id, name, color, enabled, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)`).bind(id, name, color, now, now).run();
   return { ok: true, id, name };
 }
 
@@ -27,8 +29,10 @@ export async function updateLatencyAgent(id, request, env) {
   if (!existing) return { ok: false, error: 'Latency 节点不存在' };
   const body = await safeJson(request);
   const name = body?.name === undefined ? existing.name : normalizeNodeName(body.name);
+  const color = body?.color === undefined ? normalizeChartColor(existing.color, '#2e7dd7') : normalizeChartColor(body.color, '');
+  if (!color) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
   const enabled = body?.enabled === undefined ? Number(existing.enabled) : (parseBoolean(body.enabled, true) ? 1 : 0);
-  await env.DB.prepare(`UPDATE latency_agents SET name = ?, enabled = ?, updated_at = ? WHERE id = ?`).bind(name, enabled, nowSec(), cleanId).run();
+  await env.DB.prepare(`UPDATE latency_agents SET name = ?, color = ?, enabled = ?, updated_at = ? WHERE id = ?`).bind(name, color, enabled, nowSec(), cleanId).run();
   return { ok: true, id: cleanId };
 }
 
@@ -66,7 +70,7 @@ export async function getLatencyAgentInstallCommand(env, url, request = null) {
     `${prefix}; export ${envNames.join(' ')}`,
     'tmp=$(mktemp)',
     `trap 'rm -f "$tmp"' EXIT`,
-    `curl -fsSL ${shellQuote(`${installBase}/install-latency.sh?v=4`)} -o "$tmp"`,
+    `curl -fsSL ${shellQuote(`${installBase}/install-latency.sh?v=5`)} -o "$tmp"`,
     `(if [ "$(id -u)" -eq 0 ]; then sh "$tmp"; else sudo --preserve-env=${envNames.join(',')} sh "$tmp"; fi)`,
   ].join(' && ');
   return { ok: true, node_id: nodeId, node_name: node.name, api_base: apiBase, install_base: installBase, linux_command: command };
@@ -78,7 +82,7 @@ export async function getLatencyAgentUpdatePolicy(env) {
     ok: true,
     auto_update: settings.agent_auto_update,
     check_interval_sec: clamp(Number(env.LATENCY_AGENT_UPDATE_CHECK_SEC || 3600), 300, 86400),
-    script_version: 4,
+    script_version: 5,
   };
 }
 
@@ -87,7 +91,7 @@ export async function getLatencyAgentTargets(env) {
   return {
     ok: true,
     interval_sec: clamp(Number(env.LATENCY_AGENT_INTERVAL_SEC || 60), 30, 600),
-    targets: (rows.results || []).map(row => ({ ...row, target_port: Number(row.target_port), timeout_ms: clamp(Number(row.timeout_ms || 5000), 500, 30000) })),
+    targets: (rows.results || []).map(row => ({ ...row, target_port: Number(row.target_port), timeout_ms: clamp(Number(row.timeout_ms || 1000), 500, 1000) })),
   };
 }
 
@@ -128,7 +132,7 @@ export async function getPublicLatency(env, url) {
   if (!targetId) return { ok: false, error: '必须提供 target_id' };
   const hours = clamp(Number(url.searchParams.get('hours') || 24), 1, 168);
   const since = nowSec() - hours * 3600;
-  const rows = await env.DB.prepare(`SELECT r.node_id, a.name AS node_name, r.checked_at, r.latency_ms, r.ok FROM latency_results r JOIN latency_agents a ON a.id = r.node_id AND a.enabled = 1 WHERE r.target_id = ? AND r.checked_at >= ? ORDER BY r.checked_at ASC`).bind(targetId, since).all();
+  const rows = await env.DB.prepare(`SELECT r.node_id, a.name AS node_name, a.color AS node_color, r.checked_at, r.latency_ms, r.ok FROM latency_results r JOIN latency_agents a ON a.id = r.node_id AND a.enabled = 1 WHERE r.target_id = ? AND r.checked_at >= ? ORDER BY r.checked_at ASC`).bind(targetId, since).all();
   return { ok: true, target_id: targetId, sources: groupLatencySeries(rows.results || []) };
 }
 
@@ -140,14 +144,14 @@ export async function getLatestExternalLatencyByTarget(env, targetIds) {
   for (let offset = 0; offset < ids.length; offset += 80) {
     const chunk = ids.slice(offset, offset + 80);
     const marks = chunk.map(() => '?').join(',');
-    const rows = await env.DB.prepare(`SELECT r.node_id, r.target_id, a.name AS node_name, r.checked_at, r.latency_ms, r.ok FROM latency_results r JOIN latency_agents a ON a.id = r.node_id AND a.enabled = 1 WHERE r.target_id IN (${marks}) AND r.checked_at >= ? ORDER BY r.checked_at DESC`).bind(...chunk, since).all();
+    const rows = await env.DB.prepare(`SELECT r.node_id, r.target_id, a.name AS node_name, a.color AS node_color, r.checked_at, r.latency_ms, r.ok FROM latency_results r JOIN latency_agents a ON a.id = r.node_id AND a.enabled = 1 WHERE r.target_id IN (${marks}) AND r.checked_at >= ? ORDER BY r.checked_at DESC`).bind(...chunk, since).all();
     const seen = new Set();
     for (const row of rows.results || []) {
       const key = `${row.target_id}|${row.node_id}`;
       if (seen.has(key)) continue;
       seen.add(key);
       const list = byTarget.get(String(row.target_id)) || [];
-      list.push({ id: row.node_id, name: row.node_name, kind: 'external', checked_at: Number(row.checked_at), latency_ms: row.latency_ms == null ? null : Number(row.latency_ms), ok: Number(row.ok) === 1 });
+      list.push({ id: row.node_id, name: row.node_name, color: normalizeChartColor(row.node_color, '#2e7dd7'), kind: 'external', checked_at: Number(row.checked_at), latency_ms: row.latency_ms == null ? null : Number(row.latency_ms), ok: Number(row.ok) === 1 });
       byTarget.set(String(row.target_id), list);
     }
   }
@@ -160,11 +164,16 @@ function normalizeNodeName(value) {
   return name;
 }
 
+function normalizeChartColor(value, fallback) {
+  const color = String(value ?? '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : fallback;
+}
+
 function groupLatencySeries(rows) {
   const sources = new Map();
   for (const row of rows) {
     const id = String(row.node_id);
-    const source = sources.get(id) || { id, name: row.node_name, kind: 'external', points: [] };
+    const source = sources.get(id) || { id, name: row.node_name, color: normalizeChartColor(row.node_color, '#2e7dd7'), kind: 'external', points: [] };
     source.points.push({ checked_at: Number(row.checked_at), latency_ms: row.latency_ms == null ? null : Number(row.latency_ms), ok: Number(row.ok) === 1 });
     sources.set(id, source);
   }

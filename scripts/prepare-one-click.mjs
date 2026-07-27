@@ -26,6 +26,8 @@ await prepareAgentRelease(path.join(outputRoot, 'bin'));
 console.log(`One-click assets prepared in ${path.relative(root, outputRoot)}`);
 
 async function prepareAgentRelease(binRoot) {
+  const localReleaseDir = String(process.env.NSTATUS_AGENT_RELEASE_DIR || '').trim();
+  if (localReleaseDir) return prepareLocalAgentRelease(binRoot, path.resolve(localReleaseDir));
   const requestedTag = String(process.env.NSTATUS_AGENT_RELEASE_TAG || '').trim();
   const release = requestedTag
     ? await fetchJson(`https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(requestedTag)}`)
@@ -53,6 +55,29 @@ async function prepareAgentRelease(binRoot) {
     const bytes = await downloadBytes(requiredAsset(assets, name));
     const actualHash = createHash('sha256').update(bytes).digest('hex');
     if (actualHash !== expectedHash) throw new Error(`SHA-256 mismatch for ${name}`);
+    await writeFile(path.join(binRoot, name), bytes, { mode: name.endsWith('.exe') ? 0o644 : 0o755 });
+  }
+}
+
+async function prepareLocalAgentRelease(binRoot, releaseRoot) {
+  await assertDirectory(releaseRoot);
+  const version = (await readFile(path.join(releaseRoot, 'VERSION'), 'utf8')).trim();
+  const manifest = await readFile(path.join(releaseRoot, 'SHA256SUMS'), 'utf8');
+  if (!/^v\d+\.\d+\.\d+$/.test(version)) throw new Error(`Local release VERSION is invalid: ${version || '(empty)'}`);
+  const files = parseManifest(manifest);
+  for (const required of [
+    'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64', 'nstatus-metrics-windows-amd64.exe',
+    'jq-linux-amd64', 'jq-linux-arm64', 'jq-linux-i386', 'jq-linux-armhf', 'jq-linux-armel',
+  ]) {
+    if (!files.has(required)) throw new Error(`Local release manifest is missing ${required}`);
+  }
+  await mkdir(binRoot, { recursive: true });
+  await writeFile(path.join(binRoot, 'VERSION'), `${version}\n`);
+  await writeFile(path.join(binRoot, 'SHA256SUMS'), manifest);
+  for (const [name, expectedHash] of files) {
+    const bytes = await readFile(path.join(releaseRoot, name));
+    const actualHash = createHash('sha256').update(bytes).digest('hex');
+    if (actualHash !== expectedHash) throw new Error(`Local release SHA-256 mismatch for ${name}`);
     await writeFile(path.join(binRoot, name), bytes, { mode: name.endsWith('.exe') ? 0o644 : 0o755 });
   }
 }

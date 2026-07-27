@@ -33,19 +33,21 @@ assert.deepEqual(await getLatencyAgentUpdatePolicy(env), {
   ok: true,
   auto_update: true,
   check_interval_sec: 3600,
-  script_version: 4,
+  script_version: 5,
 });
 database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES ('agent_auto_update', 'false', ?)`).run(now);
 assert.equal((await getLatencyAgentUpdatePolicy(env)).auto_update, false);
 
-const created = await createLatencyAgent(jsonRequest({ name: '东京 IIJ' }), env);
+const created = await createLatencyAgent(jsonRequest({ name: '东京 IIJ', color: '#3366CC' }), env);
 assert.equal(created.ok, true);
+assert.equal(database.prepare(`SELECT color FROM latency_agents WHERE id = ?`).get(created.id).color, '#3366cc');
 const command = await getLatencyAgentInstallCommand(
   env,
   new URL(`https://api.example.test/api/latency-agent/install-command?node_id=${created.id}`),
   new Request('https://api.example.test', { headers: { origin: 'https://status.example.test' } }),
 );
 assert.match(command.linux_command, /install-latency\.sh/);
+assert.match(command.linux_command, /install-latency\.sh\?v=5/);
 assert.doesNotMatch(command.linux_command, /NSTATUS_AGENT_ID=/);
 
 const submitted = await submitLatencyAgentResults(jsonRequest({}), env, {

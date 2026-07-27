@@ -181,7 +181,7 @@ function buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous) 
 // ── Batch runner ─────────────────────────────────────────────────────────────
 
 export async function runDueTargets(env) {
-  const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 60), 1, 200);
+  const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 20), 1, 200);
   const now = nowSec();
   const rows = await env.DB.prepare(
      `SELECT * FROM targets
@@ -308,7 +308,7 @@ async function releaseProbeRunLease(env, lease) {
 }
 
 export async function runTargetBatch(env, targets, previousById = null) {
-  const concurrency = clamp(Number(env.CONCURRENCY || 40), 1, 40);
+  const concurrency = clamp(Number(env.CONCURRENCY || 20), 1, 40);
   if (!previousById) {
     const state = await readR2State(env);
     previousById = buildPreviousStateMap(targets, state, await readLatestStatusMap(env, targets.map(target => target.id)));

@@ -25,8 +25,10 @@ export async function createPingTarget(request, env) {
   const target = String(body?.target || '').trim();
   if (!name || !target) return { ok: false, error: '名称和目标（主机:端口）不能为空' };
   const id = sanitizeAgentId(body?.id || name);
+  const color = normalizeChartColor(body?.color, '#159754');
+  if (body?.color !== undefined && !/^#[0-9a-f]{6}$/i.test(String(body.color).trim())) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
   const now = nowSec();
-  await env.DB.prepare(`INSERT INTO ping_targets (id, name, target, enabled, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, target=excluded.target, updated_at=excluded.updated_at`).bind(id, name, target, now, now).run();
+  await env.DB.prepare(`INSERT INTO ping_targets (id, name, target, color, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, target=excluded.target, color=excluded.color, updated_at=excluded.updated_at`).bind(id, name, target, color, now, now).run();
   return { ok: true, id };
 }
 
@@ -36,8 +38,10 @@ export async function updatePingTarget(id, request, env) {
   const body = await safeJson(request);
   const name = body?.name !== undefined ? String(body.name || '').trim() : existing.name;
   const target = body?.target !== undefined ? String(body.target || '').trim() : existing.target;
+  const color = body?.color !== undefined ? normalizeChartColor(body.color, '') : normalizeChartColor(existing.color, '#159754');
+  if (!color) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
   const enabled = body?.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled;
-  await env.DB.prepare(`UPDATE ping_targets SET name = ?, target = ?, enabled = ?, updated_at = ? WHERE id = ?`).bind(name, target, enabled, nowSec(), id).run();
+  await env.DB.prepare(`UPDATE ping_targets SET name = ?, target = ?, color = ?, enabled = ?, updated_at = ? WHERE id = ?`).bind(name, target, color, enabled, nowSec(), id).run();
   return { ok: true, id };
 }
 
@@ -114,7 +118,7 @@ export async function getAgentPings(env, url, ctx = null) {
     if (latestTs > 0) until = Math.min(requestedUntil, latestTs + 600);
   } catch (_) {}
   const byKey = new Map();
-  const targets = await env.DB.prepare(`SELECT id, name FROM ping_targets WHERE enabled = 1`).all();
+  const targets = await env.DB.prepare(`SELECT id, name, color FROM ping_targets WHERE enabled = 1`).all();
   const enabledTargetIds = new Set((targets.results || []).map(t => String(t.id)));
   const r2 = await loadAgentPingsR2History(env, agentId, since, until, [], ctx);
   for (const p of r2.pings || []) if (enabledTargetIds.has(String(p.target_id))) byKey.set(`${p.target_id}:${p.ts}`, p);
@@ -142,4 +146,9 @@ export async function getAgentPings(env, url, ctx = null) {
   };
   if (responseFormat === 'series') payload.series = pingPointsToSeries(pings);
   return payload;
+}
+
+function normalizeChartColor(value, fallback) {
+  const color = String(value ?? '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(color) ? color : fallback;
 }

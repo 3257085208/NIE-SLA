@@ -106,6 +106,9 @@ assert.equal(hasTemperatureData({ virtualization: '', temperature_sensors: [{ te
 assert.equal(hasGpuData({ gpu_util: 0 }), false);
 assert.equal(hasGpuData({ gpu_count: 1 }), true);
 assert.equal(hasGpuData({ gpu_name: 'NVIDIA RTX A4000' }), true);
+assert.equal(hasGpuData({ virtualization: 'lxc', gpu_count: 1, gpu_name: 'Onboard IGD' }), false);
+assert.equal(hasGpuData({ virtualization: 'lxc', gpu_count: 1, gpu_name: 'NVIDIA RTX A4000', gpu_accessible: true }), true);
+assert.equal(hasGpuData({ virtualization: 'kvm', gpu_count: 1, gpu_name: 'NVIDIA RTX A4000', gpu_util: 0 }), true);
 assert.equal(COUNTRIES.length, 249);
 for (const country of COUNTRIES) {
   assert.equal(existsSync(new URL(`../assets/flags/4x3/${country.code.toLowerCase()}.svg`, import.meta.url)), true);

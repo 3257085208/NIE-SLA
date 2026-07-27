@@ -1,7 +1,7 @@
 {
   "type": "module",
   "scripts": {
-    "test": "node tests/syntax.test.mjs && node tests/frontend-modules.test.mjs && node tests/app-import-smoke.mjs",
+    "test": "node tests/syntax.test.mjs && node tests/frontend-modules.test.mjs && node tests/app-import-smoke.mjs && python3 tests/latency-agent.test.py",
     "lint": "npx --yes eslint@10.6.0 -c tests/eslint.config.mjs app.js config.js functions js --no-error-on-unmatched-pattern",
     "verify": "npm test && npm run lint"
   }

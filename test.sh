@@ -71,6 +71,7 @@ run_check "bulk VPS target update tests" node "$ROOT/worker/tests/target-bulk.te
 run_check "email alert tests" node "$ROOT/worker/tests/alerts.test.mjs"
 run_check "admin reset tool" node --check "$ROOT/worker/scripts/reset-admin.mjs"
 run_check "external Latency agent tests" node "$ROOT/worker/tests/latency-agents.test.mjs"
+run_check "Ping target color tests" node "$ROOT/worker/tests/ping-target-colors.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
   run_check "public export tool" node --check "$ROOT/scripts/export-public.mjs"
 fi
@@ -140,9 +141,9 @@ run_shell "cftz hides auth header args" "cd '$ROOT' && ! grep -R \"Authorization
 run_shell "admin reset never accepts password args" "cd '$ROOT' && ! grep -E \"argumentValue\\(['\\\"]--password|--password[= ]\" worker/scripts/reset-admin.mjs"
 run_shell "no stale pages install host" "cd '$ROOT' && ! git grep -n \"nstatus-5fi.pages.dev\" -- agent frontend cftz docs README.md"
 run_shell "missed write backfill enabled" "cd '$ROOT' && grep -q 'MISSED_WRITE_BACKFILL_MAX_BUCKETS = \"6\"' worker/wrangler.toml && ! grep -q 'MISSED_WRITE_BACKFILL_MAX_BUCKETS = \"0\"' worker/wrangler.toml"
-run_shell "probe cron uses full target concurrency" "cd '$ROOT' && grep -q 'CONCURRENCY = \"40\"' worker/wrangler.toml && grep -q \"scheduled:probe:last\" worker/src/index.js"
+run_shell "probe cron uses bounded target concurrency" "cd '$ROOT' && grep -q 'CONCURRENCY = \"20\"' worker/wrangler.toml && grep -q \"scheduled:probe:last\" worker/src/index.js"
 run_shell "probe cron has one-minute retry windows" "cd '$ROOT' && grep -q 'crons = \[\"\* \* \* \* \*\"\]' worker/wrangler.toml && grep -q 'no_targets_due' worker/src/index.js"
-run_shell "deployment keeps full target concurrency" "cd '$ROOT' && grep -q 'CONCURRENCY = \"40\"' worker/wrangler.toml && grep -q 'MAX_TARGETS_PER_RUN = \"60\"' worker/wrangler.toml"
+run_shell "deployment covers 100 targets in five minute slots" "cd '$ROOT' && grep -q 'CONCURRENCY = \"20\"' worker/wrangler.toml && grep -q 'MAX_TARGETS_PER_RUN = \"20\"' worker/wrangler.toml"
 run_shell "fixed Beta tasks only" "cd '$ROOT' && grep -q 'https://run.NodeQuality.com' agent/src/tasks.rs && grep -q 'https://IP.Check.Place' agent/src/tasks.rs && grep -q 'v\\\\ny\\\\ny\\\\ny' agent/src/tasks.rs && grep -q 'IP_UNLOCK_ARGS.*\[\"-4\", \"-j\", \"-n\", \"-p\"\]' agent/src/tasks.rs && ! grep -R -E 'NSTATUS_UNLOCK_CHECK|install_unlock_deps' cftz agent/cftz frontend/cftz && ! grep -R -E 'body\?\.(command|script|args|stdin)|body\[(.command.|.script.|.args.|.stdin.)\]' worker/src/admin/agent-tasks.js"
 run_shell "legacy task fallback stays IP-only and heartbeat-aware" "cd '$ROOT' && grep -q 'Some(\"ip_unlock\")' agent/src/tasks.rs && grep -q 'manager::is_active' agent/src/tasks.rs && grep -q 'manager-heartbeat' agent/src/manager.rs && grep -q 'actions=' agent/src/tasks.rs && grep -q 'allowedActionsValue' worker/src/admin/agent-tasks.js"
 run_shell "compatibility IP unlock uses the unprivileged state directory" "cd '$ROOT' && grep -q 'task_runtime_directory(&cfg.queue_file' agent/src/tasks.rs && grep -q 'metadata.uid() != uid' agent/src/tasks.rs && grep -q '\\.env(\"HOME\", &task_dir)' agent/src/tasks.rs"

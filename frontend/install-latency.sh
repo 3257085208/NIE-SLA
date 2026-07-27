@@ -43,7 +43,7 @@ fi
 
 stop_existing_latency_agent
 install -d -m 0755 /opt/nstatus-latency
-curl -fsSL "${NSTATUS_LATENCY_INSTALL_BASE%/}/latency-agent.py?v=4" -o /opt/nstatus-latency/latency-agent.py
+curl -fsSL "${NSTATUS_LATENCY_INSTALL_BASE%/}/latency-agent.py?v=5" -o /opt/nstatus-latency/latency-agent.py
 chmod 0755 /opt/nstatus-latency/latency-agent.py
 
 umask 077

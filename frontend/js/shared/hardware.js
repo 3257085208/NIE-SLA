@@ -25,5 +25,15 @@ export function hasTemperatureData(info = {}) {
 export function hasGpuData(info = {}) {
   const name = String(info?.gpu_name || '').trim();
   const count = Number(info?.gpu_count || 0);
-  return Boolean(name) || (Number.isFinite(count) && count > 0);
+  const hasHardware = Boolean(name) || (Number.isFinite(count) && count > 0);
+  if (!hasHardware) return false;
+  if (info?.gpu_accessible === true) return true;
+  if (info?.gpu_accessible === false) return false;
+
+  // Older agents could see host DRM metadata from inside a container even
+  // though no GPU device was passed through. Require a live GPU metric there.
+  if (isVirtualized(info)) {
+    return ['gpu_util', 'gpu_temp_c'].some(key => info?.[key] != null && Number.isFinite(Number(info[key])));
+  }
+  return true;
 }

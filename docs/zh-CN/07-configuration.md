@@ -10,10 +10,10 @@
 | `PUBLIC_WORKER_URL` | Worker HTTPS URL | 区域/安装地址回退 |
 | `TIMEZONE_OFFSET_MINUTES` | `480` | UTC+8，影响每日桶和归档 |
 | `CONCURRENCY` | `40` | 单轮并发目标数 |
-| `MAX_TARGETS_PER_RUN` | `60` | 单轮最大目标数 |
+| `MAX_TARGETS_PER_RUN` | `20` | 每分钟持久检查目标上限；默认五分钟覆盖 100 个目标 |
 | `FAST_STATUS_ENABLED` | `true` | 启用 R2 轻量当前状态探测 |
 | `FAST_STATUS_INTERVAL_SEC` | `60` | 当前状态探测间隔，限制 60–300 秒 |
-| `FAST_STATUS_MAX_TARGETS` | `50` | 每分钟最多快速探测目标数，限制 1–50 |
+| `FAST_STATUS_MAX_TARGETS` | `50` | 没有持久检查时每分钟最多快速探测目标数，限制 1–50 |
 | `CHECKS_DEFAULT_LIMIT` | `864` | 明细默认上限 |
 | `CHECKS_WINDOW_HOURS` | `72` | 明细默认窗口 |
 | `PUBLIC_MASK_IPS` | `true` | 公开接口掩码 IP |

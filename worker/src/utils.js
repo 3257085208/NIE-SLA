@@ -360,7 +360,8 @@ export function publicError(error, statusCode = null) {
 
 export function publicCheckPoint(point) {
   const { cf_colo, ...safePoint } = point || {};
-  return { ...safePoint, region_label: REGION_LABELS[safePoint.probe_region || 'auto'] || safePoint.probe_region || '自动', error: publicError(safePoint.error, safePoint.status_code) };
+  const missed = isMissedMonitorPoint(safePoint);
+  return { ...safePoint, missed, region_label: REGION_LABELS[safePoint.probe_region || 'auto'] || safePoint.probe_region || '自动', error: missed ? null : publicError(safePoint.error, safePoint.status_code) };
 }
 
 export function sanitizePublicStatusPayload(payload, env) {

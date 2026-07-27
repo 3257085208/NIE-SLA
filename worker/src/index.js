@@ -6,9 +6,11 @@ import { cleanupAgentMetricsR2 } from './metrics.js';
 import { runAlertChecks } from './alerts.js';
 import { VERSION } from './version.js';
 import { handleRequest } from './routes.js';
-import { json } from './auth.js';
+import { constantTimeEqual, json } from './auth.js';
 import { parseBoolean, shouldRunScheduledFollowups } from './utils.js';
 import { routeStaticAssets } from './static-assets.js';
+
+const INTERNAL_SCHEDULE_PATH = '/api/internal/scheduled';
 
 // Durable Object for region probing.
 
@@ -41,6 +43,7 @@ export default {
   async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
+      if (url.pathname === INTERNAL_SCHEDULE_PATH) return handleInternalScheduledRequest(request, env);
       if (!url.pathname.startsWith('/api/') && url.pathname !== '/api') {
         const assetResponse = await routeStaticAssets(request, env);
         if (assetResponse) return assetResponse;
@@ -55,11 +58,11 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(runScheduledTasks(env, controller.cron));
+    ctx.waitUntil(dispatchScheduledTasks(env, controller.cron));
   },
 };
 
-async function runScheduledTasks(env, cron) {
+export async function runScheduledTasks(env, cron) {
   const results = {};
   const timings = {};
   const measure = async (name, task) => {
@@ -71,11 +74,16 @@ async function runScheduledTasks(env, cron) {
   // Availability checks are the time-sensitive task; maintenance must never
   // consume the cron execution window before probes have run.
   try { results.probe = await measure('probe', () => runDueTargets(env)); } catch (err) { results.probe_error = String(err?.message || err); }
-  try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env)); } catch (err) { results.fast_status_error = String(err?.message || err); }
   if (results.probe_error || shouldRunScheduledFollowups(results.probe)) {
     try { await recordProbeResult(env, cron, results.probe, results.probe_error, timings.probe); } catch (_) {}
   }
-  const hasCurrentStatus = Number(results.fast_status?.count || 0) > 0;
+  const historyProbeCount = Number(results.probe?.count || 0);
+  if (historyProbeCount > 0) {
+    results.fast_status = { ok: true, skipped: true, reason: 'history_probe_completed', count: 0 };
+  } else {
+    try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env)); } catch (err) { results.fast_status_error = String(err?.message || err); }
+  }
+  const hasCurrentStatus = historyProbeCount > 0 || Number(results.fast_status?.count || 0) > 0;
   if (!shouldRunScheduledFollowups(results.probe) && !hasCurrentStatus) {
     results.followups = { ok: true, skipped: true, reason: results.probe_error ? 'probe_failed' : 'no_targets_due' };
     results.timings_ms = timings;
@@ -101,6 +109,58 @@ async function runScheduledTasks(env, cron) {
   results.timings_ms = timings;
   try { await recordScheduledResult(env, cron, results); } catch (_) {}
   return results;
+}
+
+async function dispatchScheduledTasks(env, cron) {
+  const secret = internalScheduleSecret(env);
+  const base = String(env.PUBLIC_WORKER_URL || env.PUBLIC_AGENT_API_BASE || '').trim().replace(/\/+$/, '');
+  if (!secret || !base) return runScheduledTasks(env, cron);
+  let endpoint;
+  try {
+    endpoint = new URL(`${base}${INTERNAL_SCHEDULE_PATH}`);
+    if (endpoint.protocol !== 'https:' && endpoint.hostname !== 'localhost' && endpoint.hostname !== '127.0.0.1') throw new Error('internal schedule endpoint must use HTTPS');
+  } catch (err) {
+    console.error('scheduled dispatch URL invalid', String(err?.message || err));
+    return;
+  }
+  const timestamp = Math.floor(Date.now() / 1000);
+  const cronValue = String(cron || '').slice(0, 64);
+  const signature = await signInternalSchedule(secret, timestamp, cronValue);
+  const response = await fetch(endpoint.toString(), {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${timestamp}.${signature}`,
+      'x-nie-sla-cron': cronValue,
+    },
+  });
+  if (!response.ok) console.error('scheduled dispatch failed', response.status);
+}
+
+async function handleInternalScheduledRequest(request, env) {
+  if (request.method !== 'POST') return new Response(null, { status: 404 });
+  const secret = internalScheduleSecret(env);
+  const authorization = String(request.headers.get('authorization') || '');
+  const presented = authorization.toLowerCase().startsWith('bearer ') ? authorization.slice(7) : '';
+  const separator = presented.indexOf('.');
+  const timestamp = Number(separator > 0 ? presented.slice(0, separator) : 0);
+  const signature = separator > 0 ? presented.slice(separator + 1) : '';
+  const cron = String(request.headers.get('x-nie-sla-cron') || '').slice(0, 64);
+  if (!secret || !Number.isInteger(timestamp) || Math.abs(Math.floor(Date.now() / 1000) - timestamp) > 120) return new Response(null, { status: 404 });
+  const expected = await signInternalSchedule(secret, timestamp, cron);
+  if (!constantTimeEqual(signature, expected)) return new Response(null, { status: 404 });
+  await runScheduledTasks(env, cron);
+  return new Response(null, { status: 204 });
+}
+
+function internalScheduleSecret(env) {
+  return String(env.INTERNAL_CRON_SECRET || env.ADMIN_PASSWORD || env.ADMIN_TOKEN || env.AGENT_TOKEN || '').trim();
+}
+
+async function signInternalSchedule(secret, timestamp, cron) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const digest = await crypto.subtle.sign('HMAC', key, encoder.encode(`${timestamp}:${cron}`));
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 async function recordProbeResult(env, cron, probe, error, durationMs) {

@@ -14,10 +14,10 @@
 | `DEVELOPER_API_ORIGINS` | empty | Exact comma-separated browser origins for read-only `/api/v1`; no wildcard |
 | `TIMEZONE_OFFSET_MINUTES` | `480` | Timezone offset |
 | `CONCURRENCY` | `40` | Probe concurrency |
-| `MAX_TARGETS_PER_RUN` | `60` | Cron probe cap |
+| `MAX_TARGETS_PER_RUN` | `20` | Persistent probes per minute; the default covers 100 targets in five minutes |
 | `FAST_STATUS_ENABLED` | `true` | Enable lightweight R2 current-status probes |
 | `FAST_STATUS_INTERVAL_SEC` | `60` | Current-status interval, bounded to 60-300 seconds |
-| `FAST_STATUS_MAX_TARGETS` | `50` | Maximum fast targets per cron invocation |
+| `FAST_STATUS_MAX_TARGETS` | `50` | Maximum fast targets when no persistent probes are due |
 | `AGENT_AUTO_UPDATE_DEFAULT` | `true` | Default verified Agent update policy until an administrator explicitly changes it in D1 |
 | `STATUS_CACHE_TTL` | `20` | Status cache seconds |
 | `AGENT_OFFLINE_AFTER_SEC` | `900` | Heartbeat gap before an Agent is considered offline |

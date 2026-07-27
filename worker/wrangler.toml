@@ -1,6 +1,7 @@
 name = "nstatus"
 main = "src/index.js"
 compatibility_date = "2026-07-24"
+compatibility_flags = ["global_fetch_strictly_public"]
 workers_dev = true
 [assets]
 directory = "./dist-one-click"
@@ -18,8 +19,8 @@ PUBLIC_SITE_ORIGIN = "https://status.example.com"
 PUBLIC_WORKER_URL = "https://api.example.com"
 PUBLIC_AGENT_API_BASE = "https://api.example.com"
 TIMEZONE_OFFSET_MINUTES = "480"
-CONCURRENCY = "40"
-MAX_TARGETS_PER_RUN = "60"
+CONCURRENCY = "20"
+MAX_TARGETS_PER_RUN = "20"
 CHECKS_DEFAULT_LIMIT = "864"
 CHECKS_WINDOW_HOURS = "72"
 INCIDENTS_TO_D1 = "true"

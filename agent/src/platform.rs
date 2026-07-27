@@ -11,6 +11,7 @@ pub(super) struct ThermalSnapshot {
     pub gpu_util: Option<f64>,
     pub gpu_name: String,
     pub gpu_count: usize,
+    pub gpu_accessible: bool,
     pub motherboard_temp_c: Option<f64>,
     pub disk_temp_c: Option<f64>,
     pub chipset_temp_c: Option<f64>,
@@ -31,6 +32,7 @@ struct GpuCache {
     util: Option<f64>,
     name: String,
     count: usize,
+    accessible: bool,
 }
 
 static GPU_CACHE: Mutex<Option<GpuCache>> = Mutex::new(None);
@@ -154,7 +156,7 @@ pub(super) fn virtualization() -> String {
 
 pub(super) fn thermal_snapshot() -> ThermalSnapshot {
     let cpu_temp_c = cpu_temperature_c();
-    let (gpu_temp_c, gpu_util, gpu_name, gpu_count) = gpu_snapshot();
+    let (gpu_temp_c, gpu_util, gpu_name, gpu_count, gpu_accessible) = gpu_snapshot();
     let sensors = temperature_sensors();
     ThermalSnapshot {
         cpu_temp_c,
@@ -162,6 +164,7 @@ pub(super) fn thermal_snapshot() -> ThermalSnapshot {
         gpu_util,
         gpu_name,
         gpu_count,
+        gpu_accessible,
         motherboard_temp_c: hottest_sensor(&sensors, "motherboard"),
         disk_temp_c: hottest_sensor(&sensors, "disk"),
         chipset_temp_c: hottest_sensor(&sensors, "chipset"),
@@ -665,16 +668,23 @@ fn temperature_sensors() -> Vec<TemperatureSensor> {
     Vec::new()
 }
 
-fn gpu_snapshot() -> (Option<f64>, Option<f64>, String, usize) {
+fn gpu_snapshot() -> (Option<f64>, Option<f64>, String, usize, bool) {
     if let Ok(guard) = GPU_CACHE.lock() {
         if let Some(cache) = guard.as_ref() {
             if cache.at.elapsed() < GPU_CACHE_TTL {
-                return (cache.temp_c, cache.util, cache.name.clone(), cache.count);
+                return (
+                    cache.temp_c,
+                    cache.util,
+                    cache.name.clone(),
+                    cache.count,
+                    cache.accessible,
+                );
             }
         }
     }
 
     let (temp_c, util, name, count) = probe_gpu();
+    let accessible = count > 0;
     if let Ok(mut guard) = GPU_CACHE.lock() {
         *guard = Some(GpuCache {
             at: Instant::now(),
@@ -682,9 +692,10 @@ fn gpu_snapshot() -> (Option<f64>, Option<f64>, String, usize) {
             util,
             name: name.clone(),
             count,
+            accessible,
         });
     }
-    (temp_c, util, name, count)
+    (temp_c, util, name, count, accessible)
 }
 
 fn probe_gpu() -> (Option<f64>, Option<f64>, String, usize) {
@@ -771,6 +782,15 @@ fn probe_drm_sysfs() -> Option<(Option<f64>, Option<f64>, String, usize)> {
     for entry in entries.flatten() {
         let fname = entry.file_name().to_string_lossy().to_string();
         if !fname.starts_with("card") || fname.contains('-') {
+            continue;
+        }
+        // Containers can see host DRM sysfs without receiving the device.
+        // Only report hardware that this Agent can actually open.
+        if std::fs::OpenOptions::new()
+            .read(true)
+            .open(Path::new("/dev/dri").join(&fname))
+            .is_err()
+        {
             continue;
         }
         let device = entry.path().join("device");
