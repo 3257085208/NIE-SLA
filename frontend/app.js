@@ -711,7 +711,8 @@ function renderService(t, days, summaries) {
   const selectedClass = t.id === state.selectedId ? ' selected' : '';
   const displayName = serviceDisplayName(t);
   const sla = targetSlaPercentage(t.id, days, summaries);
-  const slaText = sla == null ? 'SLA -' : `SLA ${sla.toFixed(2)}%`;
+  const slaValue = sla == null ? '-' : `${sla.toFixed(2)}%`;
+  const slaLabel = sla == null ? '最近 30 天 SLA：暂无数据' : `最近 30 天 SLA：${slaValue}`;
   const slaClass = sla == null ? ' sla-unknown' : sla >= 99 ? ' sla-good' : sla >= 95 ? ' sla-warn' : ' sla-bad';
   const hasLatency = targetHasPublicLatency(t);
   const latencyHtml = hasLatency ? serviceCloudflareLatencyHtml(t) : '';
@@ -763,7 +764,10 @@ function renderService(t, days, summaries) {
       </div>
       <div class="service-status">${status}</div>
       <div class="service-latency${hasLatency ? '' : ' is-placeholder'}"${hasLatency ? '' : ' aria-hidden="true"'}>${latencyHtml}</div>
-      <div class="service-sla${slaClass}">${slaText}</div>
+      <div class="service-sla${slaClass}" title="${escapeAttr(slaLabel)}" aria-label="${escapeAttr(slaLabel)}">
+        <span class="service-sla-period">30天</span>
+        <strong class="service-sla-value">${slaValue}</strong>
+      </div>
       <div class="service-bottom-row${trafficProgress ? ' has-traffic' : ''}">
         <div class="uptime-strip" title="${Number(t.no_public_ip || 0) === 1 ? 'Agent 在线记录' : '最近 30 天可用率'}">
           ${renderBars(t.id, days, summaries)}
