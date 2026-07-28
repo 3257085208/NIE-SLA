@@ -26,6 +26,7 @@ import { buildNqModalHtml, renderNqAnsiHtml, renderNqReportHtml, targetHasNodeQu
 import { DEFAULT_APPEARANCE, normalizeAppearance } from '../js/shared/appearance.js';
 import { unlockState } from '../js/shared/unlock.js';
 import { dailyFleetSlaSeries, targetSlaPercentage } from '../js/shared/sla.js';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from '../js/shared/ping.js';
 import { onRequest as routeAdminPage } from '../functions/[[path]].js';
 
 const rows = normalizeChartRows([
@@ -188,6 +189,28 @@ assert.deepEqual(dailyFleetSlaSeries(
   { day: '2026-07-26', value: 99, target_count: 1 },
   { day: '2026-07-27', value: ((1 / 10 * 100) + (287 / 288 * 100)) / 2, target_count: 2 },
 ]);
+const pingSamples = [
+  { target_id: 'a', ts: 100, latency_ms: 30, ok: 1 },
+  { target_id: 'a', ts: 130, latency_ms: null, ok: 0 },
+  { target_id: 'b', ts: 100, latency_ms: 45, ok: 1 },
+  { target_id: 'b', ts: 130, latency_ms: 50, ok: 1 },
+];
+assert.equal(latestPingByTarget(pingSamples).get('a').ok, false);
+assert.equal(pingSampleWindowSec(pingSamples), 19.5);
+assert.deepEqual(failedPingTargetsNear(pingSamples, 132), ['a']);
+assert.deepEqual(failedPingTargetsNear(pingSamples, 170), []);
+assert.deepEqual(pingLossSeries(pingSamples, ['a', 'b']), [{ x: 100, y: 0 }, { x: 130, y: 0.5 }]);
+assert.deepEqual(pingLossSeries(pingSamples, ['b']), [{ x: 100, y: 0 }, { x: 130, y: 0 }]);
+assert.deepEqual([...nextPingTargetSelection(null, 'a', ['a', 'b', 'c'])], ['a']);
+assert.deepEqual([...nextPingTargetSelection(new Set(['a']), 'b', ['a', 'b', 'c'])], ['a', 'b']);
+assert.equal(nextPingTargetSelection(new Set(['a', 'b']), 'c', ['a', 'b', 'c']), null);
+assert.equal(nextPingTargetSelection(new Set(['a']), 'a', ['a', 'b', 'c']), null);
+assert.deepEqual(normalizeLatencySample('external-a', { checked_at: 200, latency_ms: 999, ok: true }), {
+  target_id: 'external-a', ts: 200, latency_ms: 999, ok: true,
+});
+assert.deepEqual(normalizeLatencySample('external-a', { checked_at: 230, latency_ms: 1001, ok: true }), {
+  target_id: 'external-a', ts: 230, latency_ms: null, ok: false,
+});
 console.log('SLA summary helpers ok');
 
 const previousFetch = globalThis.fetch;

@@ -10,7 +10,7 @@ import { setMeta } from './settings.js';
 import { syncEnvTargetsMaybe, syncEnvTargets } from './sync.js';
 import { normalizeTargetOrder } from './target-order.js';
 import { convertPriceToCny, getExchangeRates, normalizeCurrency } from './settings.js';
-import { normalizeNodeQualityReport, publicNodeQualitySummary } from '../nodequality.js';
+import { normalizeNodeQualityReport, normalizeNodeQualityReportUrl, publicNodeQualitySummary } from '../nodequality.js';
 import { applyBulkTargetColumns, normalizeBulkTargetUpdate } from './target-bulk.js';
 
 const TARGET_ORDER_SQL = `CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END, sort_order, group_name COLLATE NOCASE, name COLLATE NOCASE`;
@@ -76,14 +76,15 @@ export async function listTargets(env) {
     const settings = trafficSettingsFromTarget(target, env);
     const priceCny = convertPriceToCny(target.price, target.currency, rates);
     const nq = publicNodeQualitySummary(target);
+    const nqUrl = normalizeNodeQualityReportUrl(target.nq_url) || normalizeNodeQualityReportUrl(nq?.link);
     const unlock = parseJsonObject(target.unlock_data);
     return {
       ...target,
       ...(priceCny == null ? {} : { price_cny: priceCny }),
       traffic: summarizeTraffic(trafficRows[`${sanitizeAgentId(target.id)}|${settings.month}`], settings),
       nq,
-      nq_url: target.nq_url || nq?.report_url || null,
-      has_nq: Boolean(nq?.has_report || target.nq_url),
+      nq_url: nqUrl || null,
+      has_nq: Boolean(nq?.has_report || nqUrl),
       unlock: Array.isArray(unlock?.services) ? unlock : null,
       agent_runtime: agentStates[sanitizeAgentId(target.id)] || null,
     };

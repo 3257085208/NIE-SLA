@@ -57,7 +57,7 @@ export function normalizeNodeQualityReport(raw, { now = Math.floor(Date.now() / 
 }
 
 function normalizeStructuredReport(input, now) {
-  const reportTime = String(input?.report_time || input?.time || extractReportTime(input?.raw || '') || '').trim() || null;
+  let reportTime = String(input?.report_time || input?.time || extractReportTime(input?.raw || '') || '').trim() || null;
   const link = safeReportLink(input?.link || input?.url || extractNodeQualityLink(input?.raw || '')) || null;
   let tabs = Array.isArray(input?.tabs) ? input.tabs.map(normalizeTab).filter(Boolean) : [];
   if (!tabs.length && input?.raw) tabs = parseNodeQualityMarkdown(String(input.raw)).tabs;
@@ -74,6 +74,11 @@ function normalizeStructuredReport(input, now) {
     tabs = [{ id: 'basic', title: '基本信息', kind: 'ansi', content: sanitizeAnsiContent(input.content) }];
   }
   if (!tabs.length) throw new Error('无法解析 NodeQuality 报告内容');
+  if (!reportTime) {
+    reportTime = tabs
+      .map((tab) => tab.kind === 'ansi' ? extractReportTime(tab.content || '') : '')
+      .find(Boolean) || null;
+  }
   const report = {
     version: 1,
     source: String(input?.source || 'json'),
@@ -237,9 +242,17 @@ function isSafeHttpUrl(value) {
 }
 
 function safeReportLink(value) {
+  return normalizeNodeQualityReportUrl(value);
+}
+
+export function normalizeNodeQualityReportUrl(value) {
   try {
     const url = assertPublicHttpUrl(String(value || '').trim());
-    return url.protocol === 'https:' && !/[<>"']/.test(String(value)) ? url.toString().slice(0, 2048) : '';
+    if (url.protocol !== 'https:' || url.username || url.password || url.port) return '';
+    if (!['nodequality.com', 'www.nodequality.com'].includes(url.hostname.toLowerCase())) return '';
+    const match = url.pathname.match(/^\/r\/([A-Za-z0-9_-]{8,128})\/?$/);
+    if (!match || url.search || url.hash) return '';
+    return `https://nodequality.com/r/${match[1]}`;
   } catch (_) {
     return '';
   }

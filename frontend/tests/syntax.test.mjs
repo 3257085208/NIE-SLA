@@ -138,6 +138,15 @@ assert.match(unlockSource, /if \(\/dns\/\.test\(status\) \|\| \/dns\/\.test\(met
 assert.match(appSource, /\$\{metaBadges[\s\S]*\$\{unlockStrip\}\s*<\/div>\s*<div class="service-status">/, 'unlock summary must stay with the VPS metadata above the uptime bars');
 assert.doesNotMatch(appSource, /unlockDetailSection|vps-unlock-section/, 'unlock checks must not be duplicated in the lower VPS details panel');
 assert.match(appSource, /ping_stats[\s\S]*renderPingLossStats/, 'TCP Ping must render per-target packet-loss statistics');
+assert.match(appSource, /spanGaps:\s*true[\s\S]*packetLoss:\s*true[\s\S]*backgroundColor:\s*['"]rgba\(250, 204, 21, 0\.10\)['"][\s\S]*fill:\s*['"]origin['"][\s\S]*packetLoss\s*=\s*\{[\s\S]*max:\s*4/, 'TCP Ping must keep latency lines continuous and mark loss with restrained translucent yellow spikes');
+assert.match(appSource, /ping-current-value[\s\S]*<small>丢包<\/small>/, 'TCP Ping summaries must show current latency and packet loss together');
+assert.match(appSource, /options\.scales\.y\.min\s*=\s*0/, 'TCP Ping latency axes must never show negative milliseconds');
+assert.match(appSource, /legend\.display\s*=\s*!\[['"]latency['"],\s*['"]ping['"]\]\.includes\(state\.selectedMetric\)/, 'Latency and TCP Ping summaries must replace the duplicate chart legend');
+assert.match(appSource, /function buildLatencyChartDatasets[\s\S]*sourceId:\s*source\.id[\s\S]*packetLoss:\s*true[\s\S]*rgba\(250, 204, 21, 0\.10\)/, 'Latency must use independently selectable source lines and restrained packet-loss spikes');
+assert.match(appSource, /function lineDataset[\s\S]*latencySourceId:/, 'Latency line datasets must retain their selectable source identity');
+assert.match(appSource, /function cloudflareLatencyChartSeries[\s\S]*function externalLatencyChartSeries[\s\S]*function latencySamples/, 'Latency summaries must normalize Cloudflare and external agents as independent sources');
+assert.match(appSource, /normalizeLatencySample\(sourceId, check\)/, 'Latency charts must treat readings beyond the shared one-second probe budget as packet loss');
+assert.match(appSource, /state\.latencyVisibleSources\s*=\s*nextPingTargetSelection[\s\S]*applyLatencySourceSelection/, 'Latency source summaries must support the same additive filtering interaction as TCP Ping');
 assert.match(appSource, /unlock-service-label[\s\S]*unlock-country/, 'unlock checks must render service labels above country boxes');
 assert.match(appSource, /function unlockCountryCode[\s\S]*ALISG|normalized\.endsWith\(code\)/, 'unlock regions must normalize provider values to two-letter country codes');
 assert.match(styleSource, /\.unlock-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(6, 40px\)[\s\S]*grid-template-rows:\s*10px 17px/, 'unlock checks must use a compact two-row six-column grid');

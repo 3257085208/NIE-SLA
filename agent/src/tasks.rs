@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime};
 pub(crate) const TASK_POLL_SEC: u64 = 300;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
+const MAX_NODEQUALITY_ARTIFACT_BYTES: usize = 24 * 1024;
 const IP_UNLOCK_ARGS: [&str; 4] = ["-4", "-j", "-n", "-p"];
 const SYSTEM_TASK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const OPTIONAL_DIG_HELPER: &[u8] =
@@ -120,6 +121,15 @@ struct TaskOutput {
     excerpt: String,
 }
 
+#[derive(Default)]
+struct NodeQualityArtifacts {
+    header: String,
+    hardware: String,
+    ip: String,
+    network: String,
+    route: String,
+}
+
 fn execute_fixed_task(
     cfg: &Config,
     http: &HttpClient,
@@ -151,9 +161,10 @@ fn run_nodequality(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<
 fn nodequality_task_output(output: &FixedScriptOutput) -> Result<TaskOutput> {
     let clean = strip_ansi_codes(&output.text);
     if let Some(report_url) = extract_report_url(&clean) {
+        let report = nodequality_report(&report_url, output.nodequality.as_ref());
         return Ok(TaskOutput {
-            result: json!({ "report_url": report_url }),
-            excerpt: output_excerpt(&clean),
+            result: json!({ "report_url": report_url, "report": report }),
+            excerpt: format!("NodeQuality 测试完成：{}", report_url),
         });
     }
     ensure_script_success(output)?;
@@ -191,6 +202,7 @@ fn parse_ip_unlock_task_output(output: &str) -> Option<TaskOutput> {
 struct FixedScriptOutput {
     text: String,
     status: std::process::ExitStatus,
+    nodequality: Option<NodeQualityArtifacts>,
 }
 
 fn ensure_script_success(output: &FixedScriptOutput) -> Result<()> {
@@ -276,10 +288,19 @@ fn run_fixed_remote_script(
     let script_path = task_dir.join("task.sh");
     let agent_executable =
         env::current_exe().context("locate Agent DNS compatibility executable")?;
-    let script = http.get_public_bytes_limited(url, 2 * 1024 * 1024)?;
+    let mut script = http.get_public_bytes_limited(url, 2 * 1024 * 1024)?;
     if script.is_empty() {
         return Err(anyhow!("fixed Beta task download is empty"));
     }
+    let nodequality_result_dir = if url == "https://run.NodeQuality.com" {
+        let path = task_dir.join("nodequality-result");
+        fs::create_dir(&path).context("create NodeQuality result directory")?;
+        set_private_directory_permissions(&path)?;
+        script = inject_nodequality_capture(&script)?;
+        Some(path)
+    } else {
+        None
+    };
     let mut script_file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -292,7 +313,8 @@ fn run_fixed_remote_script(
     drop(script_file);
     let task_path = prepare_fixed_task_path(&task_dir, url, SYSTEM_TASK_PATH, http, &cfg.api)?;
 
-    let mut child = Command::new("timeout")
+    let mut command = Command::new("timeout");
+    command
         .arg(format!("{}s", timeout_sec))
         .arg("bash")
         .arg(&script_path)
@@ -309,9 +331,11 @@ fn run_fixed_remote_script(
             Stdio::null()
         })
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("failed to start fixed Beta task")?;
+        .stderr(Stdio::piped());
+    if let Some(path) = &nodequality_result_dir {
+        command.env("NSTATUS_NQ_RESULTS_DIR", path);
+    }
+    let mut child = command.spawn().context("failed to start fixed Beta task")?;
     if let (Some(input), Some(mut handle)) = (stdin, child.stdin.take()) {
         handle
             .write_all(input)
@@ -328,7 +352,86 @@ fn run_fixed_remote_script(
     bytes.push(b'\n');
     bytes.extend(stderr_reader.join().unwrap_or_default());
     let text = String::from_utf8_lossy(&bytes).to_string();
-    Ok(FixedScriptOutput { text, status })
+    let nodequality = nodequality_result_dir
+        .as_deref()
+        .map(read_nodequality_artifacts)
+        .transpose()?;
+    Ok(FixedScriptOutput {
+        text,
+        status,
+        nodequality,
+    })
+}
+
+fn inject_nodequality_capture(script: &[u8]) -> Result<Vec<u8>> {
+    let source = String::from_utf8(script.to_vec()).context("NodeQuality script is not UTF-8")?;
+    let marker = "    upload_result\n";
+    let capture = concat!(
+        "    upload_result\n",
+        "    if [[ -n \"${NSTATUS_NQ_RESULTS_DIR:-}\" ]]; then\n",
+        "        cp \"$result_directory\"/header_info.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "        cp \"$result_directory\"/hardware_quality.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "        cp \"$result_directory\"/ip_quality.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "        cp \"$result_directory\"/net_quality.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "        cp \"$result_directory\"/backroute_trace.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "    fi\n",
+    );
+    if !source.contains(marker) {
+        return Err(anyhow!(
+            "NodeQuality script no longer exposes the expected upload step"
+        ));
+    }
+    Ok(source.replacen(marker, capture, 1).into_bytes())
+}
+
+fn read_nodequality_artifacts(path: &Path) -> Result<NodeQualityArtifacts> {
+    Ok(NodeQualityArtifacts {
+        header: read_text_file_capped(&path.join("header_info.log"))?,
+        hardware: read_text_file_capped(&path.join("hardware_quality.log"))?,
+        ip: read_text_file_capped(&path.join("ip_quality.log"))?,
+        network: read_text_file_capped(&path.join("net_quality.log"))?,
+        route: read_text_file_capped(&path.join("backroute_trace.log"))?,
+    })
+}
+
+fn read_text_file_capped(path: &Path) -> Result<String> {
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    let file = fs::File::open(path)
+        .with_context(|| format!("open NodeQuality artifact {}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(MAX_NODEQUALITY_ARTIFACT_BYTES as u64)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read NodeQuality artifact {}", path.display()))?;
+    Ok(String::from_utf8_lossy(&bytes).trim().to_string())
+}
+
+fn nodequality_report(report_url: &str, artifacts: Option<&NodeQualityArtifacts>) -> Value {
+    let Some(artifacts) = artifacts else {
+        return Value::Null;
+    };
+    let basic = [artifacts.header.trim(), artifacts.hardware.trim()]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let mut tabs = Vec::new();
+    for (id, title, content) in [
+        ("basic", "基本信息", basic.as_str()),
+        ("ip", "IP质量", artifacts.ip.as_str()),
+        ("network", "网络质量", artifacts.network.as_str()),
+        ("route", "回程路由", artifacts.route.as_str()),
+    ] {
+        if !content.trim().is_empty() {
+            tabs.push(json!({ "id": id, "title": title, "kind": "ansi", "content": content }));
+        }
+    }
+    if tabs.is_empty() {
+        Value::Null
+    } else {
+        json!({ "version": 1, "source": "agent", "link": report_url, "tabs": tabs })
+    }
 }
 
 fn prepare_fixed_task_path(
@@ -588,16 +691,57 @@ fn read_tail_capped<R: Read>(mut reader: R, limit: usize) -> Vec<u8> {
 }
 
 fn extract_report_url(output: &str) -> Option<String> {
-    output
+    let direct = output
         .split_whitespace()
         .filter_map(|part| part.find("https://").map(|index| &part[index..]))
-        .map(|part| part.trim_matches(|ch: char| "[]()<>\"'，。；;：:".contains(ch)))
-        .find(|part| {
-            part.starts_with("https://")
-                && (part.to_ascii_lowercase().contains("nodequality")
-                    || part.to_ascii_lowercase().contains("report"))
+        .map(|part| part.trim_matches(|ch: char| "[](){}<>\"',，。；;：:".contains(ch)))
+        .filter_map(normalize_nodequality_report_url)
+        .last();
+    direct.or_else(|| {
+        extract_nodequality_token(output).map(|token| format!("https://nodequality.com/r/{token}"))
+    })
+}
+
+fn normalize_nodequality_report_url(value: &str) -> Option<String> {
+    let raw = value.split(['?', '#']).next()?.trim_end_matches('/');
+    let lower = raw.to_ascii_lowercase();
+    let prefix_len = if lower.starts_with("https://nodequality.com/r/") {
+        "https://nodequality.com/r/".len()
+    } else if lower.starts_with("https://www.nodequality.com/r/") {
+        "https://www.nodequality.com/r/".len()
+    } else {
+        return None;
+    };
+    let path = &raw[prefix_len..];
+    valid_nodequality_token(path).then(|| format!("https://nodequality.com/r/{path}"))
+}
+
+fn extract_nodequality_token(output: &str) -> Option<String> {
+    output
+        .match_indices('{')
+        .filter_map(|(start, _)| {
+            serde_json::Deserializer::from_str(&output[start..])
+                .into_iter::<Value>()
+                .next()?
+                .ok()
         })
-        .map(|value| value.chars().take(2000).collect())
+        .filter(|value| value.get("success").and_then(Value::as_bool) != Some(false))
+        .filter_map(|value| {
+            value
+                .pointer("/data/token")
+                .or_else(|| value.get("token"))
+                .and_then(Value::as_str)
+                .filter(|token| valid_nodequality_token(token))
+                .map(str::to_string)
+        })
+        .last()
+}
+
+fn valid_nodequality_token(value: &str) -> bool {
+    (8..=128).contains(&value.len())
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
 }
 
 pub(crate) fn parse_unlock_services(output: &str) -> Vec<Value> {
@@ -748,9 +892,44 @@ mod tests {
     #[test]
     fn extracts_nodequality_report_url() {
         assert_eq!(
-            extract_report_url("完成：https://nodequality.com/r/abc123。"),
-            Some("https://nodequality.com/r/abc123".to_string())
+            extract_report_url("完成：https://nodequality.com/r/abc12345。"),
+            Some("https://nodequality.com/r/abc12345".to_string())
         );
+    }
+
+    #[test]
+    fn ignores_script_entrypoint_and_builds_report_url_from_upload_token() {
+        let output = concat!(
+            "脚本入口：https://run.NodeQuality.com\n",
+            "{\"success\":true,\"data\":{\"token\":\"VLDpQuy3AFgJ8e3f4QA8BerZwBEwEldB\"}}\n",
+        );
+        assert_eq!(
+            extract_report_url(output),
+            Some("https://nodequality.com/r/VLDpQuy3AFgJ8e3f4QA8BerZwBEwEldB".to_string())
+        );
+        assert_eq!(extract_report_url("https://run.nodequality.com/"), None);
+        assert_eq!(
+            extract_report_url("https://api.nodequality.com/api/v1/record"),
+            None
+        );
+        assert_eq!(extract_report_url("https://nodequality.com/"), None);
+        assert_eq!(
+            extract_report_url(concat!(
+                "脚本入口：https://run.NodeQuality.com\n",
+                "测试完成，点击查看你的结果链接： ",
+                "https://nodequality.com/r/VLDpQuy3AFgJ8e3f4QA8BerZwBEwEldB\n",
+            )),
+            Some("https://nodequality.com/r/VLDpQuy3AFgJ8e3f4QA8BerZwBEwEldB".to_string())
+        );
+    }
+
+    #[test]
+    fn injects_capture_after_the_official_upload_step() {
+        let script = b"main(){\n    upload_result\n    post_cleanup\n}\n";
+        let patched = String::from_utf8(inject_nodequality_capture(script).unwrap()).unwrap();
+        assert!(patched.contains("upload_result\n    if [[ -n"));
+        assert!(patched.contains("backroute_trace.log"));
+        assert!(patched.find("upload_result").unwrap() < patched.find("header_info.log").unwrap());
     }
 
     #[cfg(unix)]
@@ -759,13 +938,14 @@ mod tests {
         use std::os::unix::process::ExitStatusExt;
 
         let output = FixedScriptOutput {
-            text: "Fio test 85%\rFio test 100%\nhttps://nodequality.com/r/abc123\n".into(),
+            text: "Fio test 85%\rFio test 100%\nhttps://nodequality.com/r/abc12345\n".into(),
             status: std::process::ExitStatus::from_raw(256),
+            nodequality: None,
         };
         let result = nodequality_task_output(&output).unwrap();
         assert_eq!(
             result.result["report_url"],
-            "https://nodequality.com/r/abc123"
+            "https://nodequality.com/r/abc12345"
         );
     }
 

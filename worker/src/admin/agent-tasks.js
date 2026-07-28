@@ -1,5 +1,6 @@
 import { ApiError, safeJson } from '../auth.js';
 import { nowSec, sanitizeAgentId } from '../utils.js';
+import { normalizeNodeQualityReport, normalizeNodeQualityReportUrl } from '../nodequality.js';
 
 export const AGENT_TASK_ACTIONS = Object.freeze({
   nodequality: { timeout_sec: 1800, label: 'NodeQuality' },
@@ -123,19 +124,29 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
   const excerpt = String(body?.output_excerpt || '').slice(0, MAX_EXCERPT_CHARS) || null;
   const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
   const finishedAt = nowSec();
+  const normalizedNq = succeeded && row.action === 'nodequality' && result?.report
+    ? normalizeAgentNodeQualityReport(result, finishedAt)
+    : null;
+  const storedResult = result && row.action === 'nodequality'
+    ? {
+        report_url: result.report_url,
+        report_saved: Boolean(normalizedNq?.report),
+        tabs: normalizedNq?.summary?.tabs || [],
+      }
+    : result;
   await env.DB.prepare(`UPDATE agent_tasks SET status = ?, finished_at = ?, result = ?, error = ?, output_excerpt = ?, agent_version = ?
     WHERE id = ? AND agent_id = ? AND status = 'running'`)
-    .bind(succeeded ? 'succeeded' : 'failed', finishedAt, result ? JSON.stringify(result) : null, error, excerpt, agentVersion, taskId, agentId).run();
+    .bind(succeeded ? 'succeeded' : 'failed', finishedAt, storedResult ? JSON.stringify(storedResult) : null, error, excerpt, agentVersion, taskId, agentId).run();
 
   if (succeeded && row.action === 'nodequality' && result?.report_url) {
-    await env.DB.prepare(`UPDATE targets SET nq_url = ?, nq_updated_at = ?, updated_at = ? WHERE id = ?`)
-      .bind(result.report_url, finishedAt, finishedAt, agentId).run();
+    await env.DB.prepare(`UPDATE targets SET nq_url = ?, nq_report = COALESCE(?, nq_report), nq_updated_at = ?, updated_at = ? WHERE id = ?`)
+      .bind(result.report_url, normalizedNq?.report || null, finishedAt, finishedAt, agentId).run();
   }
   if (succeeded && row.action === 'ip_unlock' && Array.isArray(result?.services)) {
     await env.DB.prepare(`UPDATE targets SET unlock_data = ?, unlock_updated_at = ?, updated_at = ? WHERE id = ?`)
       .bind(JSON.stringify({ checked_at: finishedAt, source: 'IP.Check.Place', services: result.services }), finishedAt, finishedAt, agentId).run();
   }
-  return { ok: true, task: taskForAdmin({ ...row, status: succeeded ? 'succeeded' : 'failed', finished_at: finishedAt, result: result ? JSON.stringify(result) : null, error, output_excerpt: excerpt, agent_version: agentVersion }) };
+  return { ok: true, task: taskForAdmin({ ...row, status: succeeded ? 'succeeded' : 'failed', finished_at: finishedAt, result: storedResult ? JSON.stringify(storedResult) : null, error, output_excerpt: excerpt, agent_version: agentVersion }) };
 }
 
 export async function cancelAgentTask(env, taskId) {
@@ -150,14 +161,14 @@ export function normalizeTaskResult(action, value) {
   const result = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   if (action === 'nodequality') {
     const reportUrl = String(result.report_url || '').trim();
-    let url;
-    try { url = new URL(reportUrl); } catch (_) { throw new ApiError(400, 'NodeQuality 结果缺少有效的 HTTPS 报告链接'); }
-    const hostname = url.hostname.toLowerCase();
-    if (url.protocol !== 'https:' || url.username || url.password || (hostname !== 'nodequality.com' && !hostname.endsWith('.nodequality.com'))) {
-      throw new ApiError(400, 'NodeQuality 报告链接必须来自 nodequality.com');
+    const normalizedUrl = normalizeNodeQualityReportUrl(reportUrl);
+    if (!normalizedUrl) {
+      throw new ApiError(400, 'NodeQuality 结果必须是 https://nodequality.com/r/<报告ID>');
     }
-    url.hash = '';
-    return { report_url: url.toString().slice(0, 2000) };
+    const report = result.report && typeof result.report === 'object' && !Array.isArray(result.report)
+      ? result.report
+      : null;
+    return { report_url: normalizedUrl, report };
   }
   if (action === 'ip_unlock') {
     const services = Array.isArray(result.services) ? result.services.slice(0, 20).map(normalizeUnlockService).filter(Boolean) : [];
@@ -165,6 +176,14 @@ export function normalizeTaskResult(action, value) {
     return { services };
   }
   throw new ApiError(400, '未知任务类型');
+}
+
+function normalizeAgentNodeQualityReport(result, finishedAt) {
+  try {
+    return normalizeNodeQualityReport({ ...result.report, link: result.report_url, source: 'agent' }, { now: finishedAt });
+  } catch (error) {
+    throw new ApiError(400, `Agent 返回的 NodeQuality 报告无法解析：${error.message}`);
+  }
 }
 
 function normalizeUnlockService(item) {
@@ -192,18 +211,26 @@ async function expireStaleTasks(env, agentId = '') {
 function taskForAdmin(row) {
   let result = null;
   try { result = row?.result ? JSON.parse(row.result) : null; } catch (_) {}
+  const invalidNodeQualityResult = row.action === 'nodequality'
+    && result?.report_url
+    && !normalizeNodeQualityReportUrl(result.report_url);
+  if (row.action === 'nodequality' && result?.report_url && !invalidNodeQualityResult) {
+    result.report_url = normalizeNodeQualityReportUrl(result.report_url);
+  } else if (invalidNodeQualityResult) {
+    result = null;
+  }
   return {
     id: row.id,
     agent_id: row.agent_id,
     action: row.action,
     action_label: AGENT_TASK_ACTIONS[row.action]?.label || row.action,
-    status: row.status,
+    status: invalidNodeQualityResult && row.status === 'succeeded' ? 'failed' : row.status,
     requested_at: Number(row.requested_at || 0) || null,
     claimed_at: Number(row.claimed_at || 0) || null,
     finished_at: Number(row.finished_at || 0) || null,
     expires_at: Number(row.expires_at || 0) || null,
     result,
-    error: row.error || null,
+    error: row.error || (invalidNodeQualityResult ? '旧任务没有生成有效的 NodeQuality 报告链接，请重新运行 NQ' : null),
     output_excerpt: row.output_excerpt || null,
     agent_version: row.agent_version || null,
   };

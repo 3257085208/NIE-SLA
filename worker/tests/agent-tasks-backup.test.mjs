@@ -111,14 +111,32 @@ assert.equal(JSON.parse(sqlite.prepare(`SELECT unlock_data FROM targets WHERE id
 const nq = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'nodequality' }), env);
 const nqClaim = await claimAgentTask(env, 'vps-a');
 assert.equal(nqClaim.task.id, nq.task.id);
-await completeAgentTask(jsonRequest({ status: 'succeeded', result: { report_url: 'https://nodequality.com/r/example' } }), env, nq.task.id, 'vps-a');
-assert.equal(sqlite.prepare(`SELECT nq_url FROM targets WHERE id = ?`).get('vps-a').nq_url, 'https://nodequality.com/r/example');
+await completeAgentTask(jsonRequest({
+  status: 'succeeded',
+  result: {
+    report_url: 'https://nodequality.com/r/example123',
+    report: {
+      tabs: [
+        { id: 'basic', title: '基本信息', content: 'CPU: Test' },
+        { id: 'ip', title: 'IP质量', content: 'IP: Test' },
+        { id: 'network', title: '网络质量', content: 'Network: Test' },
+        { id: 'route', title: '回程路由', content: 'Route: Test' },
+      ],
+    },
+  },
+}), env, nq.task.id, 'vps-a');
+const storedNq = sqlite.prepare(`SELECT nq_url, nq_report FROM targets WHERE id = ?`).get('vps-a');
+assert.equal(storedNq.nq_url, 'https://nodequality.com/r/example123');
+assert.deepEqual(JSON.parse(storedNq.nq_report).tabs.map((tab) => tab.id), ['basic', 'ip', 'network', 'route']);
 assert.equal((await listAgentTasks(env, new URL('https://example.test/api/agent-tasks?agent_id=vps-a'))).tasks.length, 2);
 const failedTask = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'ip_unlock' }), env);
 await claimAgentTask(env, 'vps-a');
 const failed = await completeAgentTask(jsonRequest({ status: 'failed', error: 'script failed' }), env, failedTask.task.id, 'vps-a');
 assert.equal(failed.task.status, 'failed');
 assert.throws(() => normalizeTaskResult('nodequality', { report_url: 'https://example.com/report' }), /nodequality\.com/i);
+assert.throws(() => normalizeTaskResult('nodequality', { report_url: 'https://run.nodequality.com/' }), /报告ID/i);
+assert.throws(() => normalizeTaskResult('nodequality', { report_url: 'https://api.nodequality.com/api/v1/record' }), /报告ID/i);
+assert.throws(() => normalizeTaskResult('nodequality', { report_url: 'https://nodequality.com/' }), /报告ID/i);
 
 const filteredTask = await createAgentTask(jsonRequest({ agent_id: 'vps-b', action: 'nodequality' }), env);
 assert.equal((await claimAgentTask(env, 'vps-b', 'ip_unlock')).task, null);

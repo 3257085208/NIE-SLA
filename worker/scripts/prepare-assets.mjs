@@ -11,6 +11,7 @@ const excluded = new Set([
   '.github',
   '.gitignore',
   '.wrangler',
+  '__pycache__',
   'AGENTS.md',
   '_redirects',
   'functions',

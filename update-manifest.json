@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.19",
-  "agent_version": "v1.0.33",
-  "source_ref": "app-v0.24.0-beta.19",
-  "published_at": "2026-07-27T19:06:41Z",
-  "title": "NIE-SLA 0.24 Beta 19",
+  "version": "0.24.0-beta.20",
+  "agent_version": "v1.0.34",
+  "source_ref": "app-v0.24.0-beta.20",
+  "published_at": "2026-07-28T10:38:23Z",
+  "title": "NIE-SLA 0.24 Beta 20",
   "changelog": [
-    "修复管理员账号密码更新受重复密码校验与限流影响而无法完成的问题，并持续显示失败原因",
-    "账号更新成功后立即撤销全部会话并返回登录页；启用 TOTP 时明确要求填写当期验证码",
-    "修复 NodeQuality 成功生成报告却因上游固定退出码与长进度输出被误判失败的问题",
-    "后台新增最近 30 天每日整体 VPS SLA 趋势，逐台节点按 SLA 从高到低排列",
-    "公开 VPS 列表增加轻量分隔并平衡 SLA 格子宽度；Rust Agent 更新至 v1.0.33"
+    "NodeQuality 只接收正式 nodequality.com/r/报告ID 链接，拒绝脚本入口、API 地址和无效旧结果",
+    "Agent 在官方脚本清理前保留基本信息、IP、网络与回程日志，后台和前端恢复完整四页签报告",
+    "Latency 与 TCP Ping 统一使用连续延迟曲线、黄色半透明丢包峰和当前延迟/丢包摘要",
+    "点击 Ping 目标或 Latency 来源可单独查看、追加多选并在全部选中时恢复完整图表",
+    "历史超过一秒探测预算的 Latency 伪成功记录按丢包显示；Rust Agent 更新至 v1.0.34"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

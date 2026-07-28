@@ -27,20 +27,19 @@ import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGr
 import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
-  buildLinePoints,
   chartColorToRgb,
   clampChartRange,
   countChartGaps,
   countMissedChecks,
   filterChecksByRange,
   hexToRgba,
-  normalizeChartRows,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
 import { buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -72,7 +71,11 @@ const state = {
   selectedMetricRange: '1h',
   targetMetrics: null,
   pingData: null,
+  pingVisibleTargets: null,
   externalLatencySources: [],
+  latencyVisibleSources: null,
+  latencyChartSources: [],
+  latencyChartSamples: [],
   metricsCache: new Map(),
   pingsCache: new Map(),
   groupByMode: localStorage.getItem('nstatus.groupByMode') || 'group',
@@ -149,6 +152,23 @@ if (els.chartCanvasWrap) {
   els.chartCanvasWrap.addEventListener('dblclick', (event) => {
     event.stopPropagation();
     resetChartZoom();
+  });
+}
+
+if (els.pingLossStats) {
+  els.pingLossStats.addEventListener('click', (event) => {
+    const item = event.target.closest('.ping-loss-item[data-target-id]');
+    if (!item) return;
+    event.stopPropagation();
+    const allIds = [...els.pingLossStats.querySelectorAll('.ping-loss-item[data-target-id]')]
+      .map(element => element.dataset.targetId);
+    if (state.selectedMetric === 'latency') {
+      state.latencyVisibleSources = nextPingTargetSelection(state.latencyVisibleSources, item.dataset.targetId, allIds);
+      applyLatencySourceSelection();
+    } else if (state.selectedMetric === 'ping') {
+      state.pingVisibleTargets = nextPingTargetSelection(state.pingVisibleTargets, item.dataset.targetId, allIds);
+      applyPingTargetSelection();
+    }
   });
 }
 
@@ -914,6 +934,9 @@ async function selectService(id, name, el) {
     state.targetMetrics = null;
     state.pingData = null;
     state.externalLatencySources = [];
+    state.latencyVisibleSources = null;
+    state.latencyChartSources = [];
+    state.latencyChartSamples = [];
 
     if (els.inlineChartPanel) {
       els.inlineChartPanel.hidden = true;
@@ -933,7 +956,11 @@ async function selectService(id, name, el) {
   state.selectedMetricRange = '1h';
   state.targetMetrics = null;
   state.pingData = null;
+  state.pingVisibleTargets = null;
   state.externalLatencySources = [];
+  state.latencyVisibleSources = null;
+  state.latencyChartSources = [];
+  state.latencyChartSamples = [];
   state.selectedTargetIntervalSec = Math.max(300, Number(target?.interval_sec || 300));
   const isHttp = target?.type === 'http';
 
@@ -1047,6 +1074,8 @@ async function loadChecks(id, name, target = null, options = {}) {
     state.targetMetrics = null;
     state.pingData = null;
     state.externalLatencySources = [];
+    state.latencyChartSources = [];
+    state.latencyChartSamples = [];
 
     els.chartMeta.textContent = `检查记录加载失败：${err.message}`;
     els.checks.innerHTML = `<div class="empty fail-text">${escapeHtml(err.message)}</div>`;
@@ -1311,7 +1340,7 @@ async function updatePingChart() {
     }
   } catch (err) {
     state.pingData = { pings: [] };
-    els.chartMeta.textContent = '暂无 Ping 数据';
+    els.chartMeta.textContent = `Ping 数据加载失败：${err.message}`;
     renderPingLossStats([]);
     if (state.chart) { state.chart.data.datasets = []; state.chart.update(); }
     return;
@@ -1341,23 +1370,47 @@ async function updatePingChart() {
     const points = byTarget.get(tid) || [];
     const tgt = targetById.get(String(tid)) || {};
     const color = configuredChartColor(tgt.color, PING_COLORS[idx % PING_COLORS.length]);
+    const label = tgt.name || tid;
     datasets.push({
-      label: tgt.name || tid,
+      label,
+      pingTargetId: String(tid),
       data: points.sort((a, b) => a.x - b.x),
       borderColor: color,
       borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 6,
       pointBackgroundColor: color,
       tension: 0.3, fill: false, spanGaps: true,
+      hidden: state.pingVisibleTargets instanceof Set && !state.pingVisibleTargets.has(String(tid)),
     });
     idx++;
   }
+  const visibleTargetIds = state.pingVisibleTargets instanceof Set
+    ? targetIds.filter(id => state.pingVisibleTargets.has(String(id)))
+    : targetIds;
+  datasets.push({
+    label: '丢包率',
+    packetLoss: true,
+    data: pingLossSeries(pings, visibleTargetIds),
+    yAxisID: 'packetLoss',
+    borderColor: 'rgba(202, 138, 4, 0.38)',
+    backgroundColor: 'rgba(250, 204, 21, 0.10)',
+    borderWidth: 1,
+    pointRadius: 0,
+    pointHoverRadius: 3,
+    pointHitRadius: 6,
+    tension: 0.12,
+    fill: 'origin',
+    spanGaps: true,
+    order: 10,
+  });
 
   state.chart.data.datasets = datasets;
   state.chart.options.scales.y.title = { display: true, text: 'ms' };
   delete state.chart.options.scales.y.beginAtZero;
   delete state.chart.options.scales.y.suggestedMax;
   delete state.chart.options.scales.y.max;
+  state.chart.options.scales.y.min = 0;
   state.chart.options.scales.y.grace = '18%';
+  state.chart.options.scales.packetLoss = { axis: 'y', type: 'linear', display: false, min: 0, max: 4 };
 
   const allX = datasets.flatMap(ds => (ds.data || []).map(p => p.x)).filter(Number.isFinite);
   const { min: xMin, max: xMax } = minMax(allX);
@@ -1381,7 +1434,7 @@ async function updatePingChart() {
   const okPings = rawStats.reduce((sum, item) => sum + Number(item.ok || 0), 0);
   els.chartAvg.textContent = `Ping 总数：${totalPings} · 成功：${okPings}`;
   els.chartMeta.textContent = `最近 ${hours} 小时 · ${targetIds.length} 个目标`;
-  renderPingLossStats(rawStats, targetById, targetIds);
+  renderPingLossStats(rawStats, targetById, targetIds, pings);
 }
 
 function fallbackPingStats(pings) {
@@ -1397,9 +1450,10 @@ function fallbackPingStats(pings) {
   return [...stats.values()].map(item => ({ ...item, lost: item.total - item.ok, loss_rate: item.total ? ((item.total - item.ok) / item.total) * 100 : null }));
 }
 
-function renderPingLossStats(stats, targetById = new Map(), targetIds = []) {
+function renderPingLossStats(stats, targetById = new Map(), targetIds = [], pings = [], visibleTargets = state.pingVisibleTargets) {
   if (!els.pingLossStats) return;
   const byId = new Map((stats || []).map(item => [String(item.target_id), item]));
+  const latestById = latestPingByTarget(pings);
   const ids = targetIds.length ? targetIds : [...byId.keys()];
   els.pingLossStats.hidden = !ids.length;
   els.pingLossStats.innerHTML = ids.map((id, index) => {
@@ -1410,8 +1464,64 @@ function renderPingLossStats(stats, targetById = new Map(), targetIds = []) {
     const name = targetById.get(String(id))?.name || id;
     const level = loss == null ? 'unknown' : loss === 0 ? 'good' : loss < 5 ? 'warn' : 'bad';
     const color = configuredChartColor(targetById.get(String(id))?.color, PING_COLORS[index % PING_COLORS.length]);
-    return `<span class="ping-loss-item ${level}" title="${escapeAttr(`${name} · ${total} 次 Ping · 丢失 ${Math.max(0, total - ok)} 次`)}"><i style="--ping-color:${color}"></i><b>${escapeHtml(name)}</b><strong>${loss == null ? '-' : `${loss.toFixed(loss > 0 && loss < 1 ? 2 : 1)}%`}</strong></span>`;
+    const latest = latestById.get(String(id));
+    const current = !latest ? '-' : latest.ok && Number.isFinite(latest.latency_ms) ? `${Math.round(latest.latency_ms)} ms` : '超时';
+    const currentClass = latest && !latest.ok ? ' timeout' : '';
+    const details = `${name} · 当前 ${current} · ${total} 次 Ping · 丢失 ${Math.max(0, total - ok)} 次`;
+    const hidden = visibleTargets instanceof Set && !visibleTargets.has(String(id));
+    return `<button type="button" class="ping-loss-item ${level}${hidden ? ' is-hidden' : ''}" data-target-id="${escapeAttr(String(id))}" title="${escapeAttr(details)}" aria-label="${escapeAttr(details)}" aria-pressed="${hidden ? 'false' : 'true'}"><i style="--ping-color:${color}"></i><b>${escapeHtml(name)}</b><span class="ping-loss-metric ping-current"><small>当前</small><span class="ping-current-value${currentClass}">${escapeHtml(current)}</span></span><span class="ping-loss-metric"><small>丢包</small><strong>${loss == null ? '-' : `${loss.toFixed(loss > 0 && loss < 1 ? 2 : 1)}%`}</strong></span></button>`;
   }).join('');
+}
+
+function applyPingTargetSelection() {
+  const visible = state.pingVisibleTargets;
+  const allIds = [...(els.pingLossStats?.querySelectorAll('.ping-loss-item[data-target-id]') || [])]
+    .map(item => String(item.dataset.targetId));
+  for (const dataset of state.chart?.data?.datasets || []) {
+    if (dataset.pingTargetId) {
+      dataset.hidden = visible instanceof Set && !visible.has(String(dataset.pingTargetId));
+    } else if (dataset.packetLoss) {
+      const selectedIds = visible instanceof Set ? allIds.filter(id => visible.has(id)) : allIds;
+      dataset.data = pingLossSeries(state.pingData?.pings || [], selectedIds);
+    }
+  }
+  els.pingLossStats?.querySelectorAll('.ping-loss-item[data-target-id]').forEach(item => {
+    const hidden = visible instanceof Set && !visible.has(String(item.dataset.targetId));
+    item.classList.toggle('is-hidden', hidden);
+    item.setAttribute('aria-pressed', String(!hidden));
+  });
+  state.chart?.update();
+}
+
+function applyLatencySourceSelection() {
+  const visible = state.latencyVisibleSources;
+  const allIds = state.latencyChartSources.map(source => String(source.id));
+  for (const dataset of state.chart?.data?.datasets || []) {
+    if (dataset.latencySourceId) {
+      dataset.hidden = visible instanceof Set && !visible.has(String(dataset.latencySourceId));
+    } else if (dataset.packetLoss) {
+      const selectedIds = visible instanceof Set ? allIds.filter(id => visible.has(id)) : allIds;
+      dataset.data = pingLossSeries(state.latencyChartSamples, selectedIds);
+    }
+  }
+  els.pingLossStats?.querySelectorAll('.ping-loss-item[data-target-id]').forEach(item => {
+    const hidden = visible instanceof Set && !visible.has(String(item.dataset.targetId));
+    item.classList.toggle('is-hidden', hidden);
+    item.setAttribute('aria-pressed', String(!hidden));
+  });
+  state.chart?.update();
+}
+
+function chartTooltipFailures() {
+  if (state.selectedMetric !== 'ping' && state.selectedMetric !== 'latency') return [];
+  const timestamp = chartHoverTimestamp();
+  if (!Number.isFinite(timestamp)) return [];
+  const points = state.selectedMetric === 'ping' ? (state.pingData?.pings || []) : state.latencyChartSamples;
+  const names = state.selectedMetric === 'ping'
+    ? new Map((state.pingData?.targets || []).map(target => [String(target.id), target.name || target.id]))
+    : new Map(state.latencyChartSources.map(source => [String(source.id), source.name || source.id]));
+  return failedPingTargetsNear(points, timestamp, pingSampleWindowSec(points))
+    .map(id => `${names.get(id) || id}: 超时`);
 }
 
 function normalizePingPayload(data) {
@@ -1524,7 +1634,7 @@ function initChart() {
   state.chart = new Chart(ctx, {
     type: 'line',
     data: {
-      datasets: buildChartDatasets([], [], []),
+      datasets: buildLatencyChartDatasets(),
     },
     options: {
       responsive: true,
@@ -1574,6 +1684,10 @@ function initChart() {
             },
 
             label(context) {
+              if (context.dataset.packetLoss) {
+                const loss = Math.max(0, Number(context.parsed.y || 0) * 100);
+                return `丢包率：${loss.toFixed(loss > 0 && loss < 1 ? 2 : 1)}%`;
+              }
               const v = context.parsed.y;
               if (!Number.isFinite(v)) return `${context.dataset.label}: failed`;
               const m = state.selectedMetric;
@@ -1592,7 +1706,17 @@ function initChart() {
               }
               const u = m === 'cpu' || m === 'mem' || m === 'disk' ? '%' : m === 'latency' ? ' ms' : '';
               return `${context.dataset.label}: ${v}${u}`;
-            }
+            },
+
+            afterBody(items) {
+              const shown = new Set((items || [])
+                .filter(item => item.dataset.packetLoss)
+                .map(item => String(item.dataset.sourceLabel || ''))
+                .filter(Boolean));
+              const failures = chartTooltipFailures()
+                .filter(line => !shown.has(line.replace(/:\s*超时$/, '')));
+              return failures.length ? ['', ...failures] : [];
+            },
           }
         }
       },
@@ -1658,12 +1782,19 @@ function isMobileChartViewport() {
 }
 
 function updateChartForCurrentRange() {
+  if (state.chart?.options?.plugins?.legend) {
+    state.chart.options.plugins.legend.display = !['latency', 'ping'].includes(state.selectedMetric);
+  }
   if (state.selectedMetric === 'ping') {
-    updatePingChart();
+    updatePingChart().catch(err => {
+      console.error('TCP Ping chart render failed', err);
+      els.chartMeta.textContent = `Ping 图表渲染失败：${err.message}`;
+      renderPingLossStats([]);
+    });
     return;
   }
-  renderPingLossStats([]);
   if (state.selectedMetric !== 'latency') {
+    renderPingLossStats([]);
     updateMetricsChart();
     return;
   }
@@ -1935,14 +2066,7 @@ function getChartPointsForRange() {
 }
 
 function updateChart(checks, name) {
-  const rows = normalizeChartRows(checks);
-  const points = trimEmptyPointEdges(buildLinePoints(rows));
-
-  const nums = points.map(p => p.y).filter(Number.isFinite);
-  const avg = nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
-
   els.chartServiceName.textContent = `${name} ${state.appearance.chart_title}`;
-  els.chartAvg.textContent = `平均值：${avg == null ? '-' : avg.toFixed(2) + ' ms'}`;
 
   if (!state.chart) {
     els.chartMeta.textContent = 'Chart.js 不可用，仍可在下方查看最近检查记录。';
@@ -1951,38 +2075,87 @@ function updateChart(checks, name) {
 
   delete state.chart.options.scales.y.title;
   delete state.chart.options.scales.y.max;
+  state.chart.options.scales.y.min = 0;
+  state.chart.options.scales.y.grace = '18%';
+  state.chart.options.scales.packetLoss = { axis: 'y', type: 'linear', display: false, min: 0, max: 4 };
 
+  const cloudflareSeries = cloudflareLatencyChartSeries(checks);
   const externalSeries = externalLatencyChartSeries();
-  const allPoints = [points, ...externalSeries.map(source => source.points)].flat();
-  state.chart.data.datasets = buildChartDatasets(points, externalSeries);
+  const sources = [cloudflareSeries, ...externalSeries].filter(source => source.samples.length);
+  const samples = sources.flatMap(source => source.samples);
+  if (state.latencyVisibleSources instanceof Set) {
+    const available = new Set(sources.map(source => String(source.id)));
+    const retained = new Set([...state.latencyVisibleSources].filter(id => available.has(String(id))));
+    state.latencyVisibleSources = !retained.size || retained.size >= available.size ? null : retained;
+  }
+  const visibleIds = state.latencyVisibleSources instanceof Set
+    ? sources.map(source => source.id).filter(id => state.latencyVisibleSources.has(String(id)))
+    : sources.map(source => source.id);
+  state.latencyChartSources = sources;
+  state.latencyChartSamples = samples;
+
+  const stats = fallbackPingStats(samples);
+  const total = stats.reduce((sum, item) => sum + Number(item.total || 0), 0);
+  const ok = stats.reduce((sum, item) => sum + Number(item.ok || 0), 0);
+  els.chartAvg.textContent = `Latency 总数：${total} · 成功：${ok}`;
+  renderPingLossStats(
+    stats,
+    new Map(sources.map(source => [String(source.id), source])),
+    sources.map(source => String(source.id)),
+    samples,
+    state.latencyVisibleSources,
+  );
+
+  const lossPoints = pingLossSeries(samples, visibleIds);
+  const allPoints = [...sources.flatMap(source => source.points), ...lossPoints];
+  state.chart.data.datasets = buildLatencyChartDatasets(sources, samples, visibleIds);
   applyChartFullRange(allPoints);
   tuneChartAnimation(allPoints.length);
   state.chart.update();
 }
 
-function buildChartDatasets(cfPoints, externalSeries = []) {
-  const datasets = [
-    lineDataset({
-      label: 'Cloudflare',
-      data: cfPoints,
-      color: '#159754',
-      fill: 'origin',
-      fillStrength: 1.18,
-      order: 3,
-    }),
-  ];
-
-  for (const source of externalSeries) {
+function buildLatencyChartDatasets(sources = [], samples = [], visibleIds = []) {
+  const selected = new Set(visibleIds.map(String));
+  const datasets = [];
+  for (const source of sources) {
     datasets.push(lineDataset({
       label: source.name,
       data: source.points,
       color: configuredChartColor(source.color, pingTargetColor(source.id || source.name)),
       fill: false,
       order: 2,
+      sourceId: source.id,
+      hidden: !selected.has(String(source.id)),
     }));
   }
-
+  datasets.push({
+    label: '丢包率',
+    packetLoss: true,
+    data: pingLossSeries(samples, visibleIds),
+    yAxisID: 'packetLoss',
+    borderColor: 'rgba(202, 138, 4, 0.38)',
+    backgroundColor: 'rgba(250, 204, 21, 0.10)',
+    borderWidth: 1,
+    pointRadius: 0,
+    pointHoverRadius: 3,
+    pointHitRadius: 6,
+    tension: 0.12,
+    fill: 'origin',
+    spanGaps: true,
+    order: 10,
+  });
   return datasets;
+}
+
+function cloudflareLatencyChartSeries(checks) {
+  const samples = latencySamples('cloudflare', checks, { excludeMissed: true });
+  return {
+    id: 'cloudflare',
+    name: 'Cloudflare',
+    color: '#159754',
+    samples,
+    points: latencyLinePoints(samples),
+  };
 }
 
 function externalLatencyChartSeries() {
@@ -1992,12 +2165,33 @@ function externalLatencyChartSeries() {
       latency_ms: point.latency_ms == null ? null : Number(point.latency_ms),
       ok: point.ok ? 1 : 0,
     })), state.selectedRange);
-    const points = trimEmptyPointEdges(buildLinePoints(normalizeChartRows(checks)));
-    return { id: String(source.id || ''), name: String(source.name || source.id || 'Latency'), color: source.color, points };
-  }).filter(source => source.points.length);
+    const id = String(source.id || '');
+    const samples = latencySamples(id, checks);
+    return {
+      id,
+      name: String(source.name || source.id || 'Latency'),
+      color: source.color,
+      samples,
+      points: latencyLinePoints(samples),
+    };
+  }).filter(source => source.id && source.samples.length);
 }
 
-function lineDataset({ label, data, color, fill, fillStrength = 1, order }) {
+function latencySamples(sourceId, checks, { excludeMissed = false } = {}) {
+  return (checks || [])
+    .filter(check => !excludeMissed || !check.missed)
+    .map(check => normalizeLatencySample(sourceId, check))
+    .filter(point => point.target_id && Number.isFinite(point.ts));
+}
+
+function latencyLinePoints(samples) {
+  return trimEmptyPointEdges((samples || []).map(point => ({
+    x: point.ts,
+    y: point.ok && Number.isFinite(point.latency_ms) ? point.latency_ms : null,
+  })));
+}
+
+function lineDataset({ label, data, color, fill, fillStrength = 1, order, sourceId = '', hidden = false }) {
   const fillEnabled = Boolean(fill);
   const alpha = fillEnabled ? Math.round(clampNumber(0.08 * fillStrength, 0.04, 0.14) * 100) / 100 : 0;
   return {
@@ -2015,8 +2209,10 @@ function lineDataset({ label, data, color, fill, fillStrength = 1, order }) {
     pointBorderWidth: 1.5,
     tension: 0.3,
     fill,
-    spanGaps: false,
+    spanGaps: true,
     order,
+    latencySourceId: String(sourceId || ''),
+    hidden,
   };
 }
 
