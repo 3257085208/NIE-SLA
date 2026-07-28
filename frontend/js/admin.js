@@ -1,7 +1,7 @@
 import { copyText } from "./install-command.js";
 import { createAdminClient } from "./admin/api.js";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260728-beta22";
+import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260729-beta23";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -76,6 +76,7 @@ let targets = [],
   targetOrderSaving = false,
   selectedTargetIds = new Set();
 let pendingBulkUpdate = null;
+let managedThemes = [];
 let toastTimer = 0;
 let vpsSlaChart = null;
 function toast(m, t = "info") {
@@ -224,7 +225,128 @@ function nav(p) {
   if (p === "targets") loadTargets();
   if (p === "latency") loadLatencyNodes();
   if (p === "pings") loadPings();
+  if (p === "themes") loadThemes();
   if (p === "settings") loadSettings();
+}
+
+async function loadThemes() {
+  loading("themeTable");
+  try {
+    const data = await apiAdmin("/api/themes/manage", {}, 20_000);
+    managedThemes = Array.isArray(data.themes) ? data.themes : [];
+    if (!managedThemes.length) {
+      byId("themeTable").innerHTML = `<div class="theme-empty"><strong>尚未安装第三方主题</strong><span>上传符合规范的 ZIP 后，可在这里检查信息并手动启用。</span></div>`;
+      return;
+    }
+    byId("themeTable").innerHTML = `<div class="theme-grid">${managedThemes.map(themeCardHtml).join("")}</div>`;
+  } catch (error) {
+    managedThemes = [];
+    errBox("themeTable", error);
+  }
+}
+
+function themeCardHtml(theme) {
+  const mode = theme.mode === "canvas" ? "交互画布" : "CSS 样式";
+  const digest = String(theme.package_sha256 || "");
+  const uploadedAt = Number(theme.uploaded_at || 0);
+  return `<article class="theme-card${theme.enabled ? " active" : ""}">
+    <div class="theme-card-head">
+      <div><span>${escapeHtml(mode)}</span><h3>${escapeHtml(theme.name || theme.id)}</h3></div>
+      <em>${theme.enabled ? "正在使用" : "未启用"}</em>
+    </div>
+    <p>${escapeHtml(theme.description || "作者未提供主题说明。")}</p>
+    <dl>
+      <div><dt>ID</dt><dd><code>${escapeHtml(theme.id)}</code></dd></div>
+      <div><dt>版本</dt><dd>${escapeHtml(theme.version || "-")}</dd></div>
+      <div><dt>作者</dt><dd>${escapeHtml(theme.author || "未署名")}</dd></div>
+      <div><dt>许可</dt><dd>${escapeHtml(theme.license || "未声明")}</dd></div>
+      <div><dt>上传</dt><dd>${uploadedAt ? escapeHtml(formatDateTime(uploadedAt)) : "旧版导入"}</dd></div>
+      <div><dt>SHA-256</dt><dd><code title="${escapeHtml(digest)}">${escapeHtml(digest ? `${digest.slice(0, 16)}...` : "未记录")}</code></dd></div>
+    </dl>
+    <div class="theme-card-actions">
+      <button class="btn btn-sm ${theme.enabled ? "" : "btn-primary"}" type="button" data-theme-action="toggle" data-theme-id="${escapeHtml(theme.id)}">${theme.enabled ? "停用并恢复原版" : "启用主题"}</button>
+      <button class="btn btn-sm btn-danger" type="button" data-theme-action="delete" data-theme-id="${escapeHtml(theme.id)}">删除</button>
+    </div>
+  </article>`;
+}
+
+async function uploadThemePackage(file) {
+  if (!file) return;
+  const input = byId("themeZip");
+  const button = byId("uploadThemeBtn");
+  if (!file.name.toLowerCase().endsWith(".zip")) {
+    input.value = "";
+    return toast("请选择 ZIP 主题包", "err");
+  }
+  if (!file.size || file.size > 8 * 1024 * 1024) {
+    input.value = "";
+    return toast("主题 ZIP 必须小于 8 MB", "err");
+  }
+  button.disabled = true;
+  button.textContent = "正在校验并上传...";
+  try {
+    const bytes = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest("SHA-256", bytes);
+    const sha256 = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+    const result = await apiAdmin("/api/themes/upload", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/zip",
+        "x-theme-sha256": sha256,
+      },
+      body: file,
+    }, 60_000);
+    toast(`已安装 ${result.theme?.name || file.name}，主题默认保持停用`, "ok");
+    await loadThemes();
+  } catch (error) {
+    toast(error.message, "err");
+  } finally {
+    input.value = "";
+    button.disabled = false;
+    button.textContent = "上传主题 ZIP";
+  }
+}
+
+function confirmThemeAction(theme, action) {
+  const isDelete = action === "delete";
+  const enabling = !isDelete && !theme.enabled;
+  const title = isDelete ? "删除第三方主题" : (enabling ? "启用第三方主题" : "恢复原版主题");
+  const detail = isDelete
+    ? "主题记录及其 R2 文件将被永久删除；如果它正在使用，公开页会恢复原版。"
+    : enabling
+      ? "启用后会替换当前主题。第三方主题来自独立开发者，请确认来源和 SHA-256 后继续。"
+      : "停用后公开状态页将在下次刷新时恢复 NIE-SLA 原版界面。";
+  byId("modal").className = "modal theme-confirm-modal";
+  byId("modal").innerHTML = `<div class="theme-confirm-head"><span>THIRD-PARTY THEME</span><h3>${title}</h3></div>
+    <p class="theme-confirm-name">${escapeHtml(theme.name || theme.id)} <code>${escapeHtml(theme.version || "")}</code></p>
+    <p class="hint">${detail}</p>
+    <div class="ma"><button class="btn" type="button" data-close>取消</button><button class="btn ${isDelete ? "btn-danger" : "btn-primary"}" type="button" id="confirmThemeAction">${isDelete ? "确认删除" : "确认"}</button></div>`;
+  byId("confirmThemeAction").onclick = () => applyThemeAction(theme, action);
+  openModal();
+}
+
+async function applyThemeAction(theme, action) {
+  const button = byId("confirmThemeAction");
+  button.disabled = true;
+  button.textContent = action === "delete" ? "正在删除..." : "正在应用...";
+  try {
+    if (action === "delete") {
+      await apiAdmin(`/api/themes/${encodeURIComponent(theme.id)}`, { method: "DELETE" }, 30_000);
+      toast("主题已删除", "ok");
+    } else {
+      await apiAdmin(`/api/themes/${encodeURIComponent(theme.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: !theme.enabled }),
+      }, 30_000);
+      toast(theme.enabled ? "已恢复原版主题" : "第三方主题已启用", "ok");
+    }
+    closeModal();
+    await loadThemes();
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = action === "delete" ? "确认删除" : "重试";
+    toast(error.message, "err");
+  }
 }
 async function loadDash() {
   loading("dStats");
@@ -2641,6 +2763,14 @@ byId("probeBtn").onclick = async () => {
   }
 };
 byId("addPingBtn").onclick = () => pingModal();
+byId("uploadThemeBtn").onclick = () => byId("themeZip").click();
+byId("themeZip").onchange = () => uploadThemePackage(byId("themeZip").files?.[0]);
+byId("themeTable").onclick = (event) => {
+  const button = event.target.closest("button[data-theme-action]");
+  if (!button) return;
+  const theme = managedThemes.find(item => item.id === button.dataset.themeId);
+  if (theme) confirmThemeAction(theme, button.dataset.themeAction);
+};
 byId("archiveBtn").onclick = async () => {
   try {
     await api("/api/archive", { method: "POST", body: "{}" });

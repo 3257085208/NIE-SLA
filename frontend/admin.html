@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./admin.css?v=20260728-beta22" />
+    <link rel="stylesheet" href="./admin.css?v=20260729-beta23" />
   </head>
   <body>
     <div class="login-bg" id="loginPage">
@@ -80,6 +80,7 @@
             ><a href="#" data-p="targets">探针</a
             ><a href="#" data-p="latency">Latency</a
             ><a href="#" data-p="pings">Ping</a
+            ><a href="#" data-p="themes">主题</a
             ><a href="#" data-p="settings">设置</a>
           </div>
           <div class="right">
@@ -146,9 +147,27 @@
           </div>
           <div id="pTable"><div class="loading">加载中...</div></div>
         </section>
+        <section class="page" id="pg-themes">
+          <div class="top-actions">
+            <div class="page-intro">
+              <span class="page-kicker">THEMES / 05</span>
+              <h2>第三方主题</h2>
+              <p>上传并管理符合 NIE-SLA 规范的 CSS 或交互画布主题。</p>
+            </div>
+            <div class="theme-upload-actions">
+              <input id="themeZip" type="file" accept=".zip,application/zip" hidden />
+              <button class="btn btn-primary" id="uploadThemeBtn" type="button">上传主题 ZIP</button>
+            </div>
+          </div>
+          <div class="theme-security-note">
+            <strong>安全边界</strong>
+            <span>CSS 主题只修改公开状态页样式；交互画布主题在隔离沙箱中运行，只能读取脱敏的公开状态，不能访问后台会话、主页面 DOM 或主动联网。上传后默认停用。</span>
+          </div>
+          <div id="themeTable"><div class="loading">加载中...</div></div>
+        </section>
         <section class="page" id="pg-settings">
           <div class="page-intro">
-            <span class="page-kicker">SYSTEM / 07</span>
+            <span class="page-kicker">SYSTEM / 06</span>
             <h2>系统设置</h2>
             <p>集中管理显示策略、自动更新、报警与数据维护。</p>
           </div>
@@ -243,7 +262,7 @@
 
     <script
       type="module"
-      src="./js/admin.js?v=20260728-beta22"
+      src="./js/admin.js?v=20260729-beta23"
     ></script>
   </body>
 </html>

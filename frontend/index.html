@@ -10,9 +10,18 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
 
-  <link rel="stylesheet" href="./style.css?v=20260728-beta22" />
+  <link rel="stylesheet" href="./style.css?v=20260729-beta23" />
 </head>
-<body>
+<body class="theme-pending">
+  <script src="./js/theme-bootstrap.js?v=20260729-beta23"></script>
+  <div class="theme-boot" id="themeBoot" role="status" aria-live="polite">
+    <div class="theme-boot-inner">
+      <strong>聶.NET</strong>
+      <span>正在载入主题</span>
+      <i aria-hidden="true"></i>
+    </div>
+  </div>
+  <section id="themeCanvas" class="extension-theme-canvas" hidden></section>
   <header class="topbar">
     <div class="wrap topbar-inner">
       <a class="brand" href="./" aria-label="聶.NET 首页">
@@ -147,6 +156,6 @@
 
   <script src="./config.js?v=20260704-runtime-config2"></script>
   <script src="./vendor/chart.umd.min.js?v=4.4.9"></script>
-  <script type="module" src="./app.js?v=20260728-beta22"></script>
+  <script type="module" src="./app.js?v=20260729-beta23"></script>
 </body>
 </html>

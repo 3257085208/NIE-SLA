@@ -1,0 +1,16 @@
+{
+  "schema": "nie-sla-theme-v1",
+  "id": "example-clean",
+  "name": "Example Clean",
+  "version": "1.0.0",
+  "type": "theme",
+  "mode": "css",
+  "styles": ["theme.css"],
+  "author": "NIE-SLA Example",
+  "description": "A restrained CSS theme example for the built-in status layout.",
+  "license": "MIT",
+  "files": [
+    "manifest.json",
+    "theme.css"
+  ]
+}

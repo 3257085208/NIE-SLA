@@ -1,0 +1,24 @@
+:root {
+  color: #18231f;
+  background: #edf4f0;
+  font-family: ui-rounded, "PingFang SC", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { width: min(960px, calc(100% - 28px)); margin: 0 auto; padding: 42px 0; }
+header { padding-bottom: 22px; border-bottom: 2px solid #1b7f5a; }
+header span { color: #1b7f5a; font-size: 12px; font-weight: 800; }
+h1 { margin: 6px 0; font-size: 34px; }
+header p { margin: 0; color: #66756e; }
+main { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding-top: 18px; }
+article { min-width: 0; padding: 14px; background: #fff; border: 1px solid #c8d8d0; border-radius: 6px; }
+article strong, article span { display: block; overflow-wrap: anywhere; }
+article span { margin-top: 6px; color: #6c7b74; font-size: 13px; }
+article[data-ok="false"] { border-color: #d6aaa7; }
+article[data-ok="false"] strong { color: #a43e38; }
+
+@media (max-width: 600px) {
+  body { width: calc(100% - 20px); padding-top: 24px; }
+  h1 { font-size: 27px; }
+  main { grid-template-columns: 1fr; }
+}

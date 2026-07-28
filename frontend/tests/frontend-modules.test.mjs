@@ -261,6 +261,10 @@ const sparseUnlock = renderNqReportHtml('五、流媒体服务解锁检测\n服�
 assert.match(sparseUnlock, /nq-media-label">地区<\/span>[\s\S]*nq-media-cell ">—<\/span>[\s\S]*nq-media-cell ">\[\]<\/span>/, 'sparse unlock fields must retain their source column');
 const networkLayout = renderNqNetworkReportHtml('报告标题\n一、BGP信息\n注册信息：ARIN\n二、本地策略\nTCP拥塞控制算法：bbr');
 assert.match(networkLayout, /nq-network-section[\s\S]*nq-network-title">一、BGP信息[\s\S]*nq-network-scroll/, 'network reports must split long terminal output into locally scrollable sections');
+const inlineNetworkHeading = renderNqNetworkReportHtml('\u001b[37m四、三网TCP大包延迟（依次为电信|联通|移动 Step=80ms） \u001b[36m京\u001b[31m155\u001b[0m\n津 156 168 307\n六、国内测速   发送 延迟 接收 延迟\n杭州电信 ERROR ERROR');
+assert.doesNotMatch(inlineNetworkHeading, /nq-network-title">(?:(?!<\/div>)[\s\S])*京/, 'the first province must not remain inside the network section title');
+assert.match(inlineNetworkHeading, /nq-network-scroll[\s\S]*京[\s\S]*155[\s\S]*津/, 'inline province data must move to the network section body');
+assert.match(inlineNetworkHeading, /nq-network-title">六、国内测速[\s\S]*nq-network-scroll[\s\S]*发送 延迟 接收 延迟/, 'inline speed-test columns must move below their section title');
 const routeLayout = renderNqRouteReportHtml('五、三网回程路由\n  北京 电信 Cogent -> 163\n地理路径：美国 -> 北京 自治系统路径：AS174 -> AS4134\n 3 0.66ms 10.9.*.* * RFC1918\n 5-8 146.85ms 202.97.*.* AS4134 [CHINANET-BB] 中国 北京 电信');
 assert.match(routeLayout, /nq-route-block[\s\S]*nq-route-path[\s\S]*nq-route-hop-number">3[\s\S]*nq-route-latency success">0\.66ms/, 'route reports must render responsive hop rows');
 assert.match(routeLayout, /nq-route-asn">AS4134[\s\S]*nq-route-network">CHINANET-BB[\s\S]*nq-route-location">中国 北京 电信/, 'route hop metadata must retain ASN, network, and location');

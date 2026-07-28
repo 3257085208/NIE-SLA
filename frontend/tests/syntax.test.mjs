@@ -15,13 +15,14 @@ for (const file of files) {
   assert.equal(result.status, 0, `${path.relative(root, file)} syntax failed:\n${result.stderr}`);
 }
 
-const [appSource, adminSource, adminCss, adminHtml, indexHtml, apiProxySource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
+const [appSource, adminSource, adminCss, adminHtml, indexHtml, apiProxySource, themeSource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
   readFile(path.join(root, 'app.js'), 'utf8'),
   readFile(path.join(root, 'js', 'admin.js'), 'utf8'),
   readFile(path.join(root, 'admin.css'), 'utf8'),
   readFile(path.join(root, 'admin.html'), 'utf8'),
   readFile(path.join(root, 'index.html'), 'utf8'),
   readFile(path.join(root, 'functions', 'api', '[[path]].js'), 'utf8'),
+  readFile(path.join(root, 'js', 'themes.js'), 'utf8'),
   readFile(path.join(root, 'latency-agent.py'), 'utf8'),
   readFile(path.join(root, 'install-latency.sh'), 'utf8'),
 ]);
@@ -60,8 +61,8 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260728-beta22/, 'admin CSS cache key must publish the responsive NQ network and route layout');
-assert.match(adminHtml, /js\/admin\.js\?v=20260728-beta22/, 'admin JS cache key must publish the responsive NQ network and route layout');
+assert.match(adminHtml, /admin\.css\?v=20260729-beta23/, 'admin CSS cache key must publish theme management');
+assert.match(adminHtml, /js\/admin\.js\?v=20260729-beta23/, 'admin JS cache key must publish theme management');
 assert.match(adminSource, /selectedTargetIds[\s\S]*targetBulkBarHtml[\s\S]*bulkTargetModal/, 'admin must support selecting and batch-editing VPS targets');
 assert.match(adminSource, /apiAdmin\("\/api\/targets\/bulk"[\s\S]*method:\s*"PATCH"/, 'batch target editing must use one protected Worker request');
 assert.match(adminSource, /只有左侧已勾选的字段会被覆盖/, 'batch editor must explain selective field updates');
@@ -89,21 +90,29 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260728-beta22/, 'frontend cache key must publish the responsive NQ network and route layout');
-assert.match(indexHtml, /style\.css\?v=20260728-beta22/, 'frontend CSS cache key must publish the responsive NQ network and route layout');
+assert.match(indexHtml, /app\.js\?v=20260729-beta23/, 'frontend cache key must publish the theme runtime');
+assert.match(indexHtml, /style\.css\?v=20260729-beta23/, 'frontend CSS cache key must publish the theme runtime');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
-assert.doesNotMatch(indexHtml, /data-frontend-theme|themeCanvas|themeBoot|theme-pending/, 'removed themes must not leave a startup shell');
+assert.match(indexHtml, /class="theme-pending"[\s\S]*id="themeBoot"[\s\S]*id="themeCanvas"/, 'theme runtime must wait behind a first-paint shell');
 assert.match(adminHtml, /id="sAppearance"/, 'admin must provide a centralized appearance editor');
-assert.doesNotMatch(adminHtml, /id="pg-themes"|id="pg-plugins"|themeZip|pluginZip/, 'theme and plugin package UI must stay removed');
+assert.match(adminHtml, /data-p="themes"[\s\S]*id="pg-themes"[\s\S]*id="themeZip"[\s\S]*id="themeTable"/, 'admin must expose a dedicated theme package page');
+assert.doesNotMatch(adminHtml, /id="pg-plugins"|pluginZip|uploadPluginBtn/, 'plugin package UI must stay removed');
 assert.match(adminSource, /appearanceSections/, 'admin must expose grouped frontend appearance fields');
 assert.match(adminSource, /brand_home_url[\s\S]*header_right_image_width/, 'admin must expose brand and header media controls');
 assert.match(adminSource, /show_header[\s\S]*show_chart[\s\S]*show_vps_details/, 'admin must expose frontend section visibility controls');
 assert.match(appSource, /data\?\.frontend\?\.appearance/, 'frontend must consume public appearance settings');
 assert.match(appSource, /--appearance-brand-logo-height/, 'frontend must apply the configured brand dimensions');
 assert.match(adminSource, /JSON\.stringify\(\{ appearance \}\)/, 'admin must save frontend appearance settings');
-assert.doesNotMatch(adminSource, /\/api\/(?:extensions|themes|plugins)|data-extension-action|x-extension-sha256/, 'admin must not retain extension package management');
-assert.doesNotMatch(appSource, /js\/themes|frontendTheme|cardTheme/, 'frontend must not retain a theme runtime');
+assert.match(adminSource, /\/api\/themes\/manage[\s\S]*\/api\/themes\/upload[\s\S]*x-theme-sha256/, 'admin must list and integrity-check theme packages');
+assert.doesNotMatch(adminSource, /\/api\/(?:extensions|plugins)|pluginZip|data-extension-action/, 'generic extension and plugin management must stay removed');
+assert.match(appSource, /js\/themes\.js[\s\S]*initializeFrontendTheme\(\)/, 'frontend must initialize the active theme runtime');
+assert.match(themeSource, /frame\.sandbox = 'allow-scripts'/, 'canvas themes must execute in a script-only sandbox');
+assert.doesNotMatch(themeSource, /allow-same-origin/, 'canvas themes must never share the application origin');
+assert.match(themeSource, /addEventListener\('load', \(\) => finish\(\)/, 'successful theme resource loads must not be treated as errors');
+assert.match(themeSource, /THEME_API_RESOURCES = new Set\(\['status', 'checks', 'metrics', 'pings', 'latency'\]\)/, 'canvas requests must use the explicit read-only resource allowlist');
+assert.match(themeSource, /permissions\?\.includes\('status:read'\)/, 'canvas requests must require the read-only theme permission');
+assert.match(apiProxySource, /x-theme-sha256/, 'Pages proxy preflight must allow theme integrity headers');
 assert.doesNotMatch(apiProxySource, /x-extension-filename|x-extension-sha256/, 'Pages proxy must not retain extension upload headers');
 assert.doesNotMatch(appSource, /meta-provider">🏪/, 'provider metadata must use typography instead of decorative emoji');
 assert.match(appSource, /function serviceDisplayName[\s\S]*startsWith\(normalize\(provider\)\)/, 'VPS titles must prefix the provider without duplicating existing provider names');

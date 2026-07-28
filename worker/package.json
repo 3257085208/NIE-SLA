@@ -2,6 +2,9 @@
   "name": "nstatus-worker",
   "private": true,
   "type": "module",
+  "dependencies": {
+    "fflate": "0.8.2"
+  },
   "scripts": {
     "admin:reset": "node scripts/reset-admin.mjs"
   }

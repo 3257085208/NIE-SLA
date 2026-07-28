@@ -13,6 +13,7 @@ import { developerApiPreflight, developerApiUrl, getDeveloperApiManifest, withDe
 import { publicNodeQualityReport } from './nodequality.js';
 import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from './admin-auth.js';
 import { getAppUpdateInfo } from './app-update.js';
+import { deleteTheme, getPublicTheme, getThemeFile, listManagedThemes, updateTheme, uploadTheme } from './themes.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
@@ -88,6 +89,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/v1/metrics', rl: 'public' },
   { method: 'GET', path: '/api/v1/pings', rl: 'public' },
   { method: 'GET', path: '/api/v1/latency', rl: 'public' },
+  { method: 'GET', path: '/api/themes', rl: 'public' },
   { method: 'GET', path: '/api/nq/:id', rl: 'public' },
   { method: 'GET', path: '/api/nq/:id/image/:tab', rl: 'public' },
 
@@ -142,6 +144,8 @@ const ROUTES = [
   { method: 'GET', path: '/api/agent/install-command', rl: 'write' },
   { method: 'GET', path: '/api/latency-agent/install-command', rl: 'write' },
   { method: 'POST', path: '/api/maintenance/cleanup', rl: 'write' },
+  { method: 'GET', path: '/api/themes/manage', rl: 'write' },
+  { method: 'POST', path: '/api/themes/upload', rl: 'write' },
 
   // Admin CRUD
   { method: 'GET', path: '/api/debug-colo', rl: 'write' },
@@ -183,6 +187,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/v1/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getAgentMetricsCached(request, env, developerApiUrl(url, '/api/agent/metrics'), ctx), request, env); }
   if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/v1/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(await getPublicLatencyCached(env, developerApiUrl(url, '/api/latency'), ctx), request, env); }
+  if (path === '/api/themes' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny(); return json(await getPublicTheme(env), 200, env, { 'cache-control': 'public, max-age=20' }); }
   const nqImageMatch = path.match(/^\/api\/(?:nq|nodequality)\/([^/]+)\/image\/([^/]+)$/);
   if (nqImageMatch && m === 'GET') {
     if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny();
@@ -243,6 +248,16 @@ async function dispatchStatic(env, url, request, ctx) {
     const report = publicNodeQualityReport(target);
     if (!report) return json({ ok: false, error: '该探针尚未上传 NodeQuality 报告' }, 404, env);
     return json(report, 200, env, { 'cache-control': 'public, max-age=30' });
+  }
+  const revisionedThemeFileMatch = path.match(/^\/api\/themes\/file\/([^/]+)\/@([^/]+)\/(.+)$/);
+  if (revisionedThemeFileMatch && m === 'GET') {
+    if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true })) return deny();
+    return getThemeFile(env, pathParam(revisionedThemeFileMatch[1]), pathParam(revisionedThemeFileMatch[3]), pathParam(revisionedThemeFileMatch[2]));
+  }
+  const themeFileMatch = path.match(/^\/api\/themes\/file\/([^/]+)\/(.+)$/);
+  if (themeFileMatch && m === 'GET') {
+    if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true })) return deny();
+    return getThemeFile(env, pathParam(themeFileMatch[1]), pathParam(themeFileMatch[2]));
   }
   // Prefer cheap bearer presence check before durable D1 rate-limit tables.
   // Unauthenticated admin probes should not burn durable counters.
@@ -321,6 +336,8 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/agent/install-command' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getAgentInstallCommand(env, url, request), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agent/install-command' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getLatencyAgentInstallCommand(env, url, request), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/maintenance/cleanup' && m === 'POST') { await withAdmin(request, env); const body = await safeJson(request).catch(() => ({})); return json({ ok: true, d1: await cleanupVolatileHistory(env, body), r2: await cleanupAgentMetricsR2(env, body) }, 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/themes/manage' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listManagedThemes(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/themes/upload' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await uploadTheme(request, env), 201, env, { 'cache-control': 'no-store' }); }
 
   // Admin CRUD
   if (path === '/api/debug-colo' && m === 'GET') { await withAdmin(request, env); return debugColo(env, url); }
@@ -352,6 +369,10 @@ async function dispatchStatic(env, url, request, ctx) {
 
   const adminTaskMatch = path.match(/^\/api\/agent-tasks\/([^/]+)$/);
   if (adminTaskMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); return json(await cancelAgentTask(env, pathParam(adminTaskMatch[1])), 200, env, { 'cache-control': 'no-store' }); }
+
+  const themeMatch = path.match(/^\/api\/themes\/([^/]+)$/);
+  if (themeMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateTheme(pathParam(themeMatch[1]), request, env), 200, env, { 'cache-control': 'no-store' }); }
+  if (themeMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); return json(await deleteTheme(pathParam(themeMatch[1]), env), 200, env, { 'cache-control': 'no-store' }); }
 
   return null;
 }

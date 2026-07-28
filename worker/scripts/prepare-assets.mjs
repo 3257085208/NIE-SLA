@@ -33,7 +33,6 @@ await cp(frontendRoot, outputRoot, {
   recursive: true,
   filter(entry) {
     const relative = path.relative(frontendRoot, entry);
-    if (relative === path.join('js', 'themes') || relative.startsWith(`${path.join('js', 'themes')}${path.sep}`)) return false;
     return !relative.split(path.sep).some(part => excluded.has(part));
   },
 });

@@ -43,7 +43,7 @@ cd worker
 
 脚本从生产前端生成 `dist-one-click`，然后部署 Worker。公开一键部署仓库由根目录 `npm run build` 生成同源资源。
 
-发布前检查产物不含 `AGENTS.md`、测试、Pages Functions、node_modules 或旧主题文件。
+发布前检查产物不含 `AGENTS.md`、测试、Pages Functions、node_modules 或废弃的通用扩展运行时；公开主题运行时与示例必须保留。
 
 ## 公开脱敏
 

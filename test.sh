@@ -60,6 +60,7 @@ for f in "$ROOT/worker/src"/*.js; do
 done
 run_check "worker utility tests" node "$ROOT/worker/tests/utils.test.mjs"
 run_check "worker hardening tests" node "$ROOT/worker/tests/hardening.test.mjs"
+run_check "third-party theme package tests" node "$ROOT/worker/tests/themes.test.mjs"
 run_check "admin authentication tests" node "$ROOT/worker/tests/admin-auth.test.mjs"
 run_check "custom admin path tests" node "$ROOT/worker/tests/admin-path.test.mjs"
 run_check "admin reset tests" node "$ROOT/worker/tests/reset-admin.test.mjs"

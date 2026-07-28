@@ -16,7 +16,9 @@ assert.match(
   'GeoIP settings must require an admin session and must not be cached',
 );
 assert.match(routesSource, /\/api\/backup\/restore[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}ensureV6Schema\(env\)/, 'restore must require an admin session and an initialized schema');
-assert.doesNotMatch(routesSource, /\/api\/(?:extensions|themes|plugins)(?:['/])/, 'extension package routes must stay disabled');
+assert.match(routesSource, /\/api\/themes\/manage[\s\S]{0,1800}withAdmin\(request, env\)[\s\S]{0,300}listManagedThemes/, 'theme management must require an admin session');
+assert.match(routesSource, /\/api\/themes\/upload[\s\S]{0,1800}withAdmin\(request, env\)[\s\S]{0,300}uploadTheme/, 'theme uploads must require an admin session');
+assert.doesNotMatch(routesSource, /\/api\/(?:extensions|plugins)(?:['/])/, 'plugin and generic extension routes must stay disabled');
 assert.match(statusSource, /getStatusFresh\(env, url\)[\s\S]{0,240}await ensureV6Schema\(env\)/, 'the first public page view must initialize a fresh D1 database');
 assert.match(statusSource, /async function getChecks\(env, url\)\s*\{\s*await ensureV6Schema\(env\)/, 'direct checks reads must initialize a fresh D1 database');
 const dueTargetsSource = probeSource.slice(probeSource.indexOf('export async function runDueTargets'), probeSource.indexOf('export async function runFastStatusTargets'));

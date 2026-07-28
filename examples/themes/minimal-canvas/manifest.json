@@ -1,0 +1,22 @@
+{
+  "schema": "nie-sla-theme-v1",
+  "id": "example-canvas",
+  "name": "Example Canvas",
+  "version": "1.0.0",
+  "type": "theme",
+  "mode": "canvas",
+  "entry": "index.html",
+  "permissions": [
+    "status:read"
+  ],
+  "height": 1000,
+  "author": "NIE-SLA Example",
+  "description": "A minimal isolated Canvas theme using the public status message.",
+  "license": "MIT",
+  "files": [
+    "index.html",
+    "manifest.json",
+    "theme.css",
+    "theme.js"
+  ]
+}

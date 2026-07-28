@@ -1,0 +1,26 @@
+body[data-extension-theme="example-clean"] {
+  --appearance-accent: #087f5b;
+  --appearance-bg: #eef5f1;
+  --appearance-surface: #ffffff;
+  --green: #087f5b;
+  --green-dark: #076b4e;
+  --green-soft: #e2f2ea;
+  --line: #cfddd6;
+  --line-strong: #9eb8ac;
+}
+
+body[data-extension-theme="example-clean"] .topbar {
+  border-bottom-color: #c6d8cf;
+  box-shadow: none;
+}
+
+body[data-extension-theme="example-clean"] .system-banner,
+body[data-extension-theme="example-clean"] .search-input,
+body[data-extension-theme="example-clean"] .inline-chart-panel,
+body[data-extension-theme="example-clean"] .checks-panel {
+  border-radius: 2px;
+}
+
+body[data-extension-theme="example-clean"] .group-head {
+  background: #f7faf8;
+}

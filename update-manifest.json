@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.22",
+  "version": "0.24.0-beta.23",
   "agent_version": "v1.0.34",
-  "source_ref": "app-v0.24.0-beta.22",
-  "published_at": "2026-07-28T14:47:10Z",
-  "title": "NIE-SLA 0.24 Beta 22",
+  "source_ref": "app-v0.24.0-beta.23",
+  "published_at": "2026-07-28T16:45:19Z",
+  "title": "NIE-SLA 0.24 Beta 23",
   "changelog": [
-    "NodeQuality 网络质量按章节拆分，宽表在对应章节内独立滚动，不再裁切整份报告",
-    "回程路由改为线路、地理与自治系统路径、逐跳节点的响应式结构",
-    "逐跳节点完整显示延迟、IP、ASN、网络与地理位置，IPv4 和 IPv6 长内容自动换行",
-    "网络质量章节去除深色标题横条，仅保留透明标题和低对比度分隔线",
-    "桌面与移动端共享同一报告解析器，切换页签时重置所有内部横向位置"
+    "恢复独立第三方主题 ZIP 管理，上传、覆盖更新后默认停用，插件与任意扩展执行继续关闭",
+    "支持只覆盖公开页样式的 CSS 主题，以及无同源权限、只能读取脱敏状态的 Canvas 主题",
+    "主题包增加压缩与解压大小、文件数、路径、Manifest、权限和 SHA-256 双端校验",
+    "公开页先加载主题注册表并在资源失败时自动回退原版，避免原版闪现或空白页面",
+    "修复 NodeQuality 网络质量章节标题与同一行首组数据没有正确拆分的问题"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

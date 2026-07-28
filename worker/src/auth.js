@@ -156,10 +156,10 @@ export async function safeJson(request, maxBytes = 256_000) {
 }
 
 export function json(data, status = 200, env = null, extraHeaders = null) {
-  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'access-control-allow-origin': resolveCorsOrigin(env) || 'null', 'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type,authorization,x-admin-session,x-totp-code,x-extension-filename,x-extension-sha256', 'access-control-max-age': '86400', ...(extraHeaders || {}) } });
+  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'access-control-allow-origin': resolveCorsOrigin(env) || 'null', 'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type,authorization,x-admin-session,x-totp-code,x-theme-sha256,x-extension-filename,x-extension-sha256', 'access-control-max-age': '86400', ...(extraHeaders || {}) } });
 }
 
 export function corsPreflight(env) {
   const origin = resolveCorsOrigin(env) || 'null';
-  return new Response(null, { status: 204, headers: { 'access-control-allow-origin': origin, 'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type,authorization,x-admin-session,x-totp-code,x-extension-filename,x-extension-sha256', 'access-control-max-age': '86400' } });
+  return new Response(null, { status: 204, headers: { 'access-control-allow-origin': origin, 'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type,authorization,x-admin-session,x-totp-code,x-theme-sha256,x-extension-filename,x-extension-sha256', 'access-control-max-age': '86400' } });
 }

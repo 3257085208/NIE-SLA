@@ -174,13 +174,49 @@ function isNqSectionHeading(line) {
   return /^[一二三四五六七八九十]+、/.test(stripNqAnsi(line).trim());
 }
 
+function splitNqAnsiLineAt(line, visibleIndex) {
+  const source = String(line || '');
+  let rawIndex = 0;
+  let visible = 0;
+  let activeCodes = '';
+  while (rawIndex < source.length && visible < visibleIndex) {
+    const code = source.slice(rawIndex).match(/^\u001b\[[0-9;]*m/);
+    if (code) {
+      activeCodes += code[0];
+      rawIndex += code[0].length;
+      continue;
+    }
+    rawIndex += 1;
+    visible += 1;
+  }
+  const body = `${activeCodes}${source.slice(rawIndex)}`
+    .replace(/^((?:\u001b\[[0-9;]*m)*)\s+/, '$1');
+  return { title: source.slice(0, rawIndex), body };
+}
+
+function nqSectionHeadingParts(line) {
+  const plain = stripNqAnsi(line);
+  const patterns = [
+    /^(四、三网TCP大包延迟（.*?）)\s+(.+)$/,
+    /^(六、国内测速)\s+(.+)$/,
+    /^(七、国际互连)\s+(.+)$/,
+  ];
+  for (const pattern of patterns) {
+    const match = plain.match(pattern);
+    if (!match) continue;
+    return splitNqAnsiLineAt(line, plain.length - match[2].length);
+  }
+  return { title: line, body: '' };
+}
+
 function splitNqSections(content = '') {
   const sections = [];
   let current = { title: '', lines: [] };
   for (const line of String(content || '').split('\n')) {
     if (isNqSectionHeading(line)) {
       if (current.title || current.lines.length) sections.push(current);
-      current = { title: line, lines: [] };
+      const heading = nqSectionHeadingParts(line);
+      current = { title: heading.title, lines: heading.body ? [heading.body] : [] };
     } else {
       current.lines.push(line);
     }

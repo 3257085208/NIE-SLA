@@ -11,8 +11,10 @@
 | GET | `/api/agent/pings?agent_id=...` | Agent TCP Ping |
 | GET | `/api/latency?target_id=...` | 外部 Latency Agent 历史 |
 | GET | `/api/v1` | 版本化只读开发接口清单 |
+| GET | `/api/themes` | 当前启用主题的公开清单 |
+| GET | `/api/themes/file/:id/@:revision/*` | 当前启用主题的版本化包内资源 |
 
-`/api/v1` 只提供只读数据，可用于第三方前端。写接口、主题/插件包运行时和任意扩展上传不开放。
+`/api/v1` 只提供只读数据，可用于第三方前端。主题 Canvas 只能通过父页面代理访问其中的白名单资源。插件与任意扩展上传不开放。
 
 旧版手工粘贴的 NodeQuality 报告接口仍保持只读兼容；新的 Beta NQ 动作只在后台显示报告 URL，不会自动抓取报告网站。
 
@@ -44,6 +46,7 @@ Agent 接口使用节点独立 Token：
 - Telegram、邮件和规则；
 - 外观、后台路径与更新；
 - 备份导出、预览和恢复。
+- 主题列表、ZIP 上传、启用、停用和删除。
 
 账号密码只发送到登录端点，不作为通用 API Token 使用。
 

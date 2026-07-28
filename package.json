@@ -1,6 +1,6 @@
 {
   "name": "nie-sla-cloudflare",
-  "version": "0.24.0-beta.22",
+  "version": "0.24.0-beta.23",
   "private": true,
   "type": "module",
   "description": "NIE-SLA Cloudflare 一键部署",
@@ -14,6 +14,9 @@
     "predeploy": "npm run build",
     "deploy": "wrangler deploy",
     "check:deploy": "npm run build && npm test && wrangler deploy --dry-run --outdir .wrangler-dry-run"
+  },
+  "dependencies": {
+    "fflate": "0.8.2"
   },
   "devDependencies": {
     "wrangler": "4.88.0"

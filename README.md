@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Beta · 0.24.0-beta.22**
+**Beta · 0.24.0-beta.23**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -50,6 +50,7 @@ NIE-SLA 把 Cloudflare 公网探测、公开状态页和 VPS 系统数据放在�
 | 安全 | 账号密码 Session、可选 OAuth/TOTP、每节点 Token、校验和更新 |
 | 备份 | 普通/加密敏感备份、预览、合并/替换恢复和恢复前 R2 快照 |
 | 开发接口 | `/api/v1` 公开只读接口，可用于第三方前端 |
+| 第三方主题 | SHA-256 校验的 CSS 主题与隔离 Canvas 完整布局主题 |
 
 ## 固定 Beta 动作
 
@@ -74,7 +75,8 @@ NIE-SLA 把 Cloudflare 公网探测、公开状态页和 VPS 系统数据放在�
 - 每台 Agent 使用独立 scoped Token。
 - 管理 API 只接受短期 Session。
 - 不提供 Web Shell 和任意定时脚本。
-- 主题/插件上传、包运行时与市场导入当前已移除。
+- 第三方主题上传后默认停用；Canvas 无同源权限且只有脱敏只读状态。
+- 插件、后台脚本、市场导入和任意扩展执行不开放。
 - 安装和更新校验版本、manifest 与二进制 SHA-256。
 - 敏感备份使用 PBKDF2-SHA256 与 AES-256-GCM。
 
@@ -90,6 +92,10 @@ Agent release 在本地生成：
 cd agent
 ./build-release.sh
 ```
+
+## 主题开发
+
+后台支持上传经过 SHA-256 校验的 CSS 与 Canvas 主题 ZIP。Manifest、沙箱消息协议、移动端与发布要求见[第三方主题开发规范](docs/zh-CN/14-third-party-themes.md)，可运行源码位于 `examples/themes/`。
 
 ## License
 

@@ -8,7 +8,7 @@ const output = path.join(root, 'dist-one-click');
 const deploymentValidation = process.env.NIE_SLA_DEPLOYMENT_VALIDATION === '1';
 
 for (const relative of [
-  'index.html', 'admin.html', 'config.js', 'bin/VERSION', 'bin/SHA256SUMS',
+  'index.html', 'admin.html', 'config.js', 'js/theme-bootstrap.js', 'js/themes.js', 'bin/VERSION', 'bin/SHA256SUMS',
   'bin/nstatus-metrics-linux-amd64', 'bin/nstatus-metrics-linux-arm64',
   'bin/jq-linux-amd64', 'bin/jq-linux-arm64', 'bin/jq-linux-i386', 'bin/jq-linux-armhf', 'bin/jq-linux-armel',
 ]) {
@@ -18,7 +18,7 @@ for (const relative of [
 
 for (const relative of [
   'AGENTS.md', '.gitattributes', '.github', '.gitignore', '.wrangler', 'README.md', '_redirects',
-  'package.json', 'pnpm-lock.yaml', 'functions', 'tests', 'js/themes',
+  'package.json', 'pnpm-lock.yaml', 'functions', 'tests',
 ]) {
   await assert.rejects(access(path.join(output, relative)), undefined, `build input leaked into assets: ${relative}`);
 }

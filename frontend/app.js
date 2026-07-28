@@ -35,11 +35,12 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260728-beta22';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260729-beta23';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
 import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260729-beta23';
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -256,6 +257,7 @@ window.addEventListener('nstatus:chartjs-ready', () => {
     if (state.selectedId) updateChartForCurrentRange();
   }
 });
+initializeFrontendTheme();
 loadStatus();
 setInterval(loadStatus, 60_000);
 
@@ -358,6 +360,7 @@ function render(data) {
 
   renderIncidentLog(data);
   renderGroupsIfChanged(data);
+  publishThemeStatus(data);
 }
 
 function renderGroupsIfChanged(data) {

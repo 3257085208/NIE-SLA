@@ -26,6 +26,7 @@ Agent tokens are generated automatically. TOTP is disabled by default.
 - Telegram and email alerts with templates;
 - portable and password-protected backup/restore;
 - versioned public read-only API for alternate frontends.
+- integrity-checked CSS themes and sandboxed full-layout Canvas themes.
 
 ## Fixed Beta Actions
 
@@ -41,7 +42,8 @@ Existing Pages + Worker installations should reuse their D1, R2, Agent API hostn
 - username/password sessions with optional OAuth allowlist and TOTP;
 - checksum-pinned Agent installation and updates;
 - no Web Shell or arbitrary scheduled commands;
-- no theme/plugin package upload runtime;
+- administrator-approved theme packages with no-same-origin Canvas isolation;
+- no plugin, admin-script, marketplace, or arbitrary extension runtime;
 - encrypted sensitive backups and public payload redaction.
 
 ## Validation
@@ -49,6 +51,10 @@ Existing Pages + Worker installations should reuse their D1, R2, Agent API hostn
 ```bash
 bash test.sh
 ```
+
+## Theme Development
+
+The admin panel accepts SHA-256-verified CSS and Canvas theme ZIPs. See the [Third-Party Theme Specification](docs/en/13-third-party-themes.md) for the manifest, sandbox protocol, responsive requirements, and release checklist. Runnable sources are in `examples/themes/`.
 
 ## License
 
