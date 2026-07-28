@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.20",
+  "version": "0.24.0-beta.21",
   "agent_version": "v1.0.34",
-  "source_ref": "app-v0.24.0-beta.20",
-  "published_at": "2026-07-28T10:38:23Z",
-  "title": "NIE-SLA 0.24 Beta 20",
+  "source_ref": "app-v0.24.0-beta.21",
+  "published_at": "2026-07-28T12:24:35Z",
+  "title": "NIE-SLA 0.24 Beta 21",
   "changelog": [
-    "NodeQuality 只接收正式 nodequality.com/r/报告ID 链接，拒绝脚本入口、API 地址和无效旧结果",
-    "Agent 在官方脚本清理前保留基本信息、IP、网络与回程日志，后台和前端恢复完整四页签报告",
-    "Latency 与 TCP Ping 统一使用连续延迟曲线、黄色半透明丢包峰和当前延迟/丢包摘要",
-    "点击 Ping 目标或 Latency 来源可单独查看、追加多选并在全部选中时恢复完整图表",
-    "历史超过一秒探测预算的 Latency 伪成功记录按丢包显示；Rust Agent 更新至 v1.0.34"
+    "后台成功的 NodeQuality 任务直接读取已保存报告，不再展示原始任务 JSON",
+    "后台与前端共用响应式四页签报告组件，桌面和移动端保持一致交互",
+    "管理员账号密码更新降低密码派生的 Worker CPU 峰值，修复免费套餐下写入前超时的问题",
+    "账号更新成功后撤销全部既有会话并立即返回登录页，要求使用新凭据重新登录",
+    "NodeQuality 展示内容来自 Agent 捕获的原始报告数据，不代替第三方网站的提交与 NodeSeek 格式生成"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

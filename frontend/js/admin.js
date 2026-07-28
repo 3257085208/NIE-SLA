@@ -1,6 +1,7 @@
 import { copyText } from "./install-command.js";
 import { createAdminClient } from "./admin/api.js";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
+import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260728-beta21";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -621,9 +622,7 @@ function betaTaskControlsHtml(target) {
   </div>`;
 }
 
-function showAgentTaskDetails(target) {
-  const task = agentTasks.get(target.id);
-  if (!task) return toast("暂无任务详情", "err");
+function showAgentTaskDiagnostic(target, task, loadError = "") {
   const resultText = task.result ? JSON.stringify(task.result, null, 2) : "";
   byId("modal").className = "modal task-details-modal";
   byId("modal").innerHTML = `
@@ -633,11 +632,52 @@ function showAgentTaskDetails(target) {
       <span>状态</span><strong>${escapeHtml(task.status || "未知")}</strong>
       <span>Agent</span><strong>${escapeHtml(task.agent_version || "-")}</strong>
     </div>
+    ${loadError ? `<div class="task-detail-error">报告加载失败：${escapeHtml(loadError)}</div>` : ""}
     ${task.error ? `<div class="task-detail-error">${escapeHtml(task.error)}</div>` : ""}
     ${task.output_excerpt ? `<h4>输出摘要</h4><pre class="task-detail-output">${escapeHtml(task.output_excerpt)}</pre>` : ""}
     ${resultText ? `<h4>任务结果</h4><pre class="task-detail-output">${escapeHtml(resultText)}</pre>` : ""}
     <div class="ma"><button type="button" class="btn" data-close>关闭</button></div>`;
   openModal();
+}
+
+function closeAdminNodeQualityReport() {
+  document.querySelector('.nq-modal-root[data-admin-nq-report]')?.remove();
+}
+
+async function showSavedNodeQualityReport(target, task) {
+  closeModal();
+  closeAdminNodeQualityReport();
+  const root = document.createElement("div");
+  root.className = "nq-modal-root";
+  root.dataset.adminNqReport = "";
+  root.innerHTML = `<div class="nq-modal-backdrop"><div class="nq-modal nq-modal-loading" role="dialog" aria-modal="true" aria-label="NodeQuality 报告"><div class="nq-modal-head"><div><strong>NodeQuality</strong><span>${escapeHtml(target.name)}</span></div><button type="button" class="nq-close" data-nq-close aria-label="关闭">×</button></div><div class="nq-loading">正在加载完整报告...</div></div></div>`;
+  document.body.appendChild(root);
+  root.addEventListener("click", (event) => {
+    if (event.target.closest(".nq-close") || event.target.classList.contains("nq-modal-backdrop")) closeAdminNodeQualityReport();
+  });
+  try {
+    const report = await apiPublic(`/api/nq/${encodeURIComponent(target.id)}`);
+    if (!root.isConnected) return;
+    report.name ||= target.name;
+    root.innerHTML = buildNqModalHtml(report);
+    bindNodeQualityModal(root);
+  } catch (error) {
+    closeAdminNodeQualityReport();
+    showAgentTaskDiagnostic(target, task, error.message || "未知错误");
+  }
+}
+
+function showAgentTaskDetails(target) {
+  const task = agentTasks.get(target.id);
+  if (!task) return toast("暂无任务详情", "err");
+  const hasSavedReport = task.action === "nodequality"
+    && task.status === "succeeded"
+    && Boolean(task.result?.report_saved);
+  if (hasSavedReport) {
+    void showSavedNodeQualityReport(target, task);
+    return;
+  }
+  showAgentTaskDiagnostic(target, task);
 }
 
 async function loadAgentTasks(render = true) {
@@ -2623,6 +2663,9 @@ byId("overlay").onclick = (e) => {
 byId("overlay").oncontextmenu = (e) => {
   if (e.target === byId("overlay")) e.preventDefault();
 };
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeAdminNodeQualityReport();
+});
 byId("tTable").onclick = (e) => {
   const b = e.target.closest("button[data-a]");
   if (!b) return;

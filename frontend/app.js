@@ -35,7 +35,7 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260728-beta21';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
@@ -826,25 +826,6 @@ async function openNodeQualityReport(targetId, targetName = '') {
     if (event.target.closest('.nq-close') || event.target.classList.contains('nq-modal-backdrop')) closeNodeQualityReport();
   });
   await load();
-}
-
-function bindNodeQualityModal(root) {
-  root.querySelectorAll('.nq-tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      const id = tab.dataset.nqTab;
-      root.querySelectorAll('.nq-tab').forEach((item) => item.classList.toggle('active', item === tab));
-      root.querySelectorAll('.nq-panel').forEach((panel) => panel.classList.toggle('active', panel.dataset.nqPanel === id));
-      const panels = root.querySelector('.nq-panels');
-      if (panels) {
-        panels.scrollTop = 0;
-        panels.scrollLeft = 0;
-        panels.querySelectorAll('.nq-ansi').forEach((ansi) => {
-          ansi.scrollTop = 0;
-          ansi.scrollLeft = 0;
-        });
-      }
-    });
-  });
 }
 
 function closeNodeQualityReport() {

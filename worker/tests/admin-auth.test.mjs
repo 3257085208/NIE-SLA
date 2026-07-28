@@ -97,6 +97,7 @@ function jsonRequest(url, body) {
   assert.equal(newLogin.session_valid, true);
   const stored = JSON.parse(env.DB.meta.get('admin_credentials_v1'));
   assert.equal(stored.algorithm, 'pbkdf2-sha256');
+  assert.equal(stored.iterations, 50_000, 'password hashing must fit the free Worker CPU budget');
   assert.ok(stored.password_hash && !JSON.stringify(stored).includes('replacement password'));
   await assert.rejects(
     updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {

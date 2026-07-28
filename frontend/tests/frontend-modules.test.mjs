@@ -22,7 +22,7 @@ import {
   normalizeCountryCode,
 } from '../js/shared/target-catalogs.js';
 import { formatLocationLabel, normalizeCityName } from '../js/shared/format.js';
-import { buildNqModalHtml, renderNqAnsiHtml, renderNqReportHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
+import { bindNodeQualityModal, buildNqModalHtml, renderNqAnsiHtml, renderNqReportHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from '../js/shared/appearance.js';
 import { unlockState } from '../js/shared/unlock.js';
 import { dailyFleetSlaSeries, targetSlaPercentage } from '../js/shared/sla.js';
@@ -156,6 +156,7 @@ assert.equal(formatLocationLabel('日本', '东京'), '日本 · 东京');
 assert.equal(formatLocationLabel('香港', '香港'), '香港');
 assert.equal(formatLocationLabel('', 'Singapore'), 'Singapore');
 assert.equal(formatLocationLabel('德国', ''), '德国');
+assert.equal(typeof bindNodeQualityModal, 'function');
 console.log('location label helpers ok');
 
 assert.equal(unlockState({ status: 'Yes', region: 'US', method: 'DNS' }), 'dns');
