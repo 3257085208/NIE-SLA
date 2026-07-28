@@ -31,6 +31,10 @@
       {
         "name": "REGION_PROXY",
         "class_name": "ProbeRegion"
+      },
+      {
+        "name": "TELEMETRY_BUFFER",
+        "class_name": "TelemetryBuffer"
       }
     ]
   },
@@ -38,6 +42,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["ProbeRegion"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["TelemetryBuffer"]
     }
   ]
 }

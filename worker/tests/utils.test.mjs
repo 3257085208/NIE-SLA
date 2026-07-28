@@ -118,6 +118,10 @@ assert.deepEqual(checkBucketSummaryQueryPlan('2026-06-19', {
   { where: 'day >= ?', params: ['2026-07-17'] },
   { where: 'day >= ? AND day < ? AND target_id IN (?,?)', params: ['2026-06-19', '2026-07-17', 'vps-a', 'vps-b'] },
 ]);
+assert.deepEqual(checkBucketSummaryQueryPlan('2026-06-19', { targetIds: [] }), []);
+assert.deepEqual(checkBucketSummaryQueryPlan('2026-06-19', { targetIds: ['vps-a'] }), [
+  { where: '(day >= ?) AND target_id IN (?)', params: ['2026-06-19', 'vps-a'] },
+]);
 
 assert.equal(await rateLimitD1({}, 'missing-db', 1, 60), false);
 const rateEnv = fakeRateLimitEnv();

@@ -37,8 +37,10 @@ AGENT_PINGS_PUBLIC_MAX_HOURS = "72"
 AGENT_PINGS_HARD_MAX_POINTS_PER_TARGET = "2000"
 MISSED_BACKFILL_GRACE_SEC = "150"
 STATUS_CACHE_TTL = "20"
-STATUS_SNAPSHOT_EVERY_SEC = "60"
-STATUS_SNAPSHOT_MAX_AGE_SEC = "150"
+STATUS_SNAPSHOT_EVERY_SEC = "300"
+STATUS_SNAPSHOT_MAX_AGE_SEC = "450"
+AGENT_CREDENTIAL_TOUCH_SEC = "21600"
+TRAFFIC_PERSIST_INTERVAL_SEC = "1800"
 AGENT_METRICS_TO_D1 = "false"
 AGENT_PINGS_TO_D1 = "false"
 PING_HISTORY_RETENTION_HOURS = "6"
@@ -63,6 +65,14 @@ bucket_name = "nstatus-archive"
 name = "REGION_PROXY"
 class_name = "ProbeRegion"
 
+[[durable_objects.bindings]]
+name = "TELEMETRY_BUFFER"
+class_name = "TelemetryBuffer"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ProbeRegion"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["TelemetryBuffer"]

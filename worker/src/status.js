@@ -3,7 +3,7 @@ import { json } from './auth.js';
 import { validateAdminSession } from './totp.js';
 import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
 import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, convertPriceToCny, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
-import { summarizeTraffic, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
+import { summarizeTrafficWithPending, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 import { compactStatusPayload, refreshLatencySources } from './status-payload.js';
 import { mergeAgentAvailabilityRows } from './agent-availability.js';
 
@@ -81,15 +81,21 @@ async function buildStatusPayload(env, url = null) {
   const [targets, metricsResult, agentAvailabilityResult, latestResult, pingTargetsResult] = await Promise.all([targetsPromise, metricsPromise, agentAvailabilityPromise, latestPromise, pingTargetsPromise]);
   const r2State = await readR2State(env);
   const r2SummaryRows = getSummaryRowsFromState(r2State, startDay);
-  const recentFromDay = dateAddLocal(env, -1);
-  const r2HistoricalTargets = new Set(r2SummaryRows.filter(row => row.day < recentFromDay).map(row => String(row.target_id)));
-  const historicalTargetIds = (targets.results || [])
-    .filter(target => dayFromSec(Number(target.created_at || 0), env) < recentFromDay && !r2HistoricalTargets.has(String(target.id)))
-    .map(target => String(target.id));
   const latestMap = {};
   for (const row of latestResult.results || []) latestMap[row.target_id] = row;
+  const r2SummaryKeys = new Set(r2SummaryRows.map(row => `${row.target_id}|${row.day}`));
+  const fallbackTargetIds = (targets.results || []).filter((target) => {
+    const id = String(target.id);
+    const r2Target = r2State.targets?.[id];
+    const newestAt = Math.max(Number(latestMap[id]?.checked_at || 0), Number(r2Target?.checked_at || 0));
+    const newestDay = newestAt ? dayFromSec(newestAt, env) : '';
+    return !newestDay || !r2SummaryKeys.has(`${id}|${newestDay}`)
+      || Number(latestMap[id]?.checked_at || 0) > Number(r2Target?.checked_at || 0);
+  }).map(target => String(target.id));
   const noPublicTargetIds = new Set((targets.results || []).filter(target => Number(target.no_public_ip || 0) === 1).map(target => String(target.id)));
-  const summaries = mergeSummaryRows(r2SummaryRows, await getCheckBucketSummaries(env, startDay, { recentFromDay, historicalTargetIds }))
+  const summaries = mergeSummaryRows(r2SummaryRows, fallbackTargetIds.length
+    ? await getCheckBucketSummaries(env, startDay, { targetIds: fallbackTargetIds })
+    : [])
     .filter(summary => !noPublicTargetIds.has(String(summary.target_id)));
   const dayList = [];
   for (let i = days - 1; i >= 0; i--) dayList.push(dateAddLocal(env, -i));
@@ -110,7 +116,7 @@ async function buildStatusPayload(env, url = null) {
     if (r.updated_at) {
       const key = sanitizeAgentId(r.agent_id);
       const settings = targetTrafficSettings[key] || { enabled: false, quota_gb: 0, quota_bytes: 0, ...traffic };
-      if (key) metricsMap[key] = publicAgentSummary(r, summarizeTraffic(trafficMap[`${key}|${settings.month}`], settings));
+      if (key) metricsMap[key] = publicAgentSummary(r, summarizeTrafficWithPending(trafficMap[`${key}|${settings.month}`], settings, r));
     }
   }
   const noPublicTargetByAgent = new Map((targets.results || [])
@@ -350,7 +356,7 @@ async function attachAgentState(payload, env) {
     for (const row of rows.results || []) {
       const key = sanitizeAgentId(row.agent_id);
       const settings = targetTrafficSettings[key] || { enabled: false, quota_gb: 0, quota_bytes: 0, ...traffic };
-      if (key) byAgent[key] = publicAgentSummary(row, summarizeTraffic(trafficMap[`${key}|${settings.month}`], settings));
+      if (key) byAgent[key] = publicAgentSummary(row, summarizeTrafficWithPending(trafficMap[`${key}|${settings.month}`], settings, row));
     }
     for (const target of payload.targets) {
       const state = byAgent[sanitizeAgentId(target.id)];

@@ -8,10 +8,12 @@ GeoIP providers are IP.SB, Cloudflare, IPIP.net, or a custom public HTTPS JSON e
 
 Two explicitly triggered Linux actions are marked Beta:
 
-- NodeQuality stores only an allowed report URL.
+- NodeQuality stores a normalized report and an allow-listed report URL.
 - IPv4 unlock stores only selected media-unlock fields.
 
 No arbitrary command, URL, arguments, stdin, or schedule is accepted.
+
+Under **Settings → Agent → NQ Report Image Host**, NIE-SLA can upload the Network Quality and Return Route sections to a self-hosted `MarSeventh/CloudFlare-ImgBed` instance. Configure the full public HTTPS `/upload` endpoint and an API token with the `upload` permission, then use the built-in test upload before enabling it. The token is encrypted in D1 and is never sent to an Agent or browser. Upload failures keep the NQ task successful and the UI falls back to the stored text report.
 
 Telegram and email, appearance settings, updates, and backup/restore remain available.
 

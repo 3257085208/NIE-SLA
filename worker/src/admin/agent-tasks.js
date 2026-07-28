@@ -1,6 +1,7 @@
 import { ApiError, safeJson } from '../auth.js';
 import { nowSec, sanitizeAgentId } from '../utils.js';
 import { normalizeNodeQualityReport, normalizeNodeQualityReportUrl } from '../nodequality.js';
+import { uploadNodeQualityReportImages } from '../nq-image-host.js';
 
 export const AGENT_TASK_ACTIONS = Object.freeze({
   nodequality: { timeout_sec: 1800, label: 'NodeQuality' },
@@ -124,14 +125,25 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
   const excerpt = String(body?.output_excerpt || '').slice(0, MAX_EXCERPT_CHARS) || null;
   const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
   const finishedAt = nowSec();
-  const normalizedNq = succeeded && row.action === 'nodequality' && result?.report
+  let normalizedNq = succeeded && row.action === 'nodequality' && result?.report
     ? normalizeAgentNodeQualityReport(result, finishedAt)
     : null;
+  let imageUpload = null;
+  if (normalizedNq) {
+    try {
+      const uploaded = await uploadNodeQualityReportImages(env, normalizedNq, { agentId, finishedAt });
+      normalizedNq = uploaded.normalized;
+      imageUpload = uploaded.status;
+    } catch (uploadError) {
+      imageUpload = { enabled: true, uploaded: 0, errors: [String(uploadError?.message || '图床上传失败').slice(0, 180)] };
+    }
+  }
   const storedResult = result && row.action === 'nodequality'
     ? {
         report_url: result.report_url,
         report_saved: Boolean(normalizedNq?.report),
         tabs: normalizedNq?.summary?.tabs || [],
+        image_upload: imageUpload,
       }
     : result;
   await env.DB.prepare(`UPDATE agent_tasks SET status = ?, finished_at = ?, result = ?, error = ?, output_excerpt = ?, agent_version = ?

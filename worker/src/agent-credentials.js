@@ -156,8 +156,12 @@ function subjectBytes(subject) {
 }
 
 async function touchCredential(env, subjectType, subjectId) {
-  await env.DB.prepare(`UPDATE agent_credentials SET last_used_at = ? WHERE subject_type = ? AND subject_id = ?`)
-    .bind(nowSec(), subjectType, subjectId)
+  const now = nowSec();
+  const interval = Math.max(3600, Math.min(86400, Number(env.AGENT_CREDENTIAL_TOUCH_SEC || 21600)));
+  await env.DB.prepare(`UPDATE agent_credentials SET last_used_at = ?
+    WHERE subject_type = ? AND subject_id = ?
+      AND (last_used_at IS NULL OR last_used_at <= ?)`)
+    .bind(now, subjectType, subjectId, now - interval)
     .run()
     .catch(() => {});
 }

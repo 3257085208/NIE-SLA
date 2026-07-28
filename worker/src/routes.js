@@ -14,6 +14,7 @@ import { publicNodeQualityReport } from './nodequality.js';
 import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from './admin-auth.js';
 import { getAppUpdateInfo } from './app-update.js';
 import { deleteTheme, getPublicTheme, getThemeFile, listManagedThemes, updateTheme, uploadTheme } from './themes.js';
+import { getNodeQualityImageHostSettings, testNodeQualityImageHost, updateNodeQualityImageHostSettings } from './nq-image-host.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
@@ -132,6 +133,9 @@ const ROUTES = [
   { method: 'GET', path: '/api/system/update', rl: 'write' },
   { method: 'GET', path: '/api/settings/geoip', rl: 'write' },
   { method: 'PATCH', path: '/api/settings/geoip', rl: 'write' },
+  { method: 'GET', path: '/api/settings/nq-image-host', rl: 'write' },
+  { method: 'PATCH', path: '/api/settings/nq-image-host', rl: 'write' },
+  { method: 'POST', path: '/api/settings/nq-image-host/test', rl: 'write' },
   { method: 'GET', path: '/api/agent-tasks', rl: 'write' },
   { method: 'POST', path: '/api/agent-tasks', rl: 'write' },
   { method: 'GET', path: '/api/backup/export', rl: 'write' },
@@ -232,6 +236,7 @@ async function dispatchStatic(env, url, request, ctx) {
     const headers = new Headers({
       'cache-control': 'public, max-age=3600',
       'content-type': contentType,
+      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
       'referrer-policy': 'no-referrer',
       'x-content-type-options': 'nosniff',
     });
@@ -319,6 +324,9 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/system/update' && m === 'GET') { await withAdmin(request, env); return json(await getAppUpdateInfo(env, { force: url.searchParams.get('refresh') === '1' }), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/settings/geoip' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json({ ok: true, ...(await getGeoIpSettings(env, { includeAdmin: true })) }, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/settings/geoip' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateGeoIpSettings(request, env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/settings/nq-image-host' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getNodeQualityImageHostSettings(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/settings/nq-image-host' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateNodeQualityImageHostSettings(request, env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/settings/nq-image-host/test' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await testNodeQualityImageHost(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent-tasks' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listAgentTasks(env, url), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent-tasks' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await createAgentTask(request, env), 201, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/backup/export' && (m === 'GET' || m === 'POST')) { await withAdmin(request, env); await ensureV6Schema(env); return json(await exportBackup(request, env), 200, env, { 'cache-control': 'no-store' }); }

@@ -202,6 +202,10 @@ export async function readCheckBucketDaySummary(env, targetId, day, beforeAt) {
 }
 
 export function checkBucketSummaryQueryPlan(startDay, options = {}) {
+  const targetIds = options.targetIds === undefined
+    ? null
+    : [...new Set((options.targetIds || []).map(String).filter(Boolean))];
+  if (targetIds && !targetIds.length) return [];
   const recentFromDay = String(options.recentFromDay || startDay);
   const historicalTargetIds = [...new Set((options.historicalTargetIds || []).map(String).filter(Boolean))];
   const plans = [{
@@ -213,6 +217,13 @@ export function checkBucketSummaryQueryPlan(startDay, options = {}) {
       where: `day >= ? AND day < ? AND target_id IN (${historicalTargetIds.map(() => '?').join(',')})`,
       params: [startDay, recentFromDay, ...historicalTargetIds],
     });
+  }
+  if (targetIds) {
+    const marks = targetIds.map(() => '?').join(',');
+    for (const plan of plans) {
+      plan.where = `(${plan.where}) AND target_id IN (${marks})`;
+      plan.params.push(...targetIds);
+    }
   }
   return plans;
 }
@@ -275,7 +286,7 @@ export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrite
     if (incidentStmt) stmts.push(incidentStmt);
   }
   if (incidentWrite?.action === 'still_down') stmts.push(touchActiveIncidentStatement(env, targetId, checkedAt, incidentWrite.colo, incidentWrite.error));
-  stmts.push(targetLastCheckedStatement(env, targetId, checkedAt));
+  if (!stmts.length) return { ok: true, writes: 0 };
   await env.DB.batch(stmts);
   return { ok: true, writes: stmts.length };
 }

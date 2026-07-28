@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Beta · 0.24.0-beta.23**
+**Beta · 0.24.0-beta.24**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -56,7 +56,8 @@ NIE-SLA 把 Cloudflare 公网探测、公开状态页和 VPS 系统数据放在�
 
 后台可手动触发 NodeQuality 与 IPv4 解锁检测。两者均为固定动作，不接受任意命令、参数、脚本地址、stdin 或定时计划。
 
-- NodeQuality 固定输入 `v/y/y/y`，后台只保存并展示 `nodequality.com` 报告链接。
+- NodeQuality 固定输入 `v/y/y/y`，后台保存结构化报告与经过限制的 `nodequality.com` 报告链接。
+- 可选兼容 `MarSeventh/CloudFlare-ImgBed`：Worker 把网络质量与回程路由渲染成 SVG 后上传；API Token 加密保存在 D1，失败时回退到文本报告。
 - IPv4 解锁使用 `IP.Check.Place` JSON 模式，只保存最终媒体解锁字段，不保存纯净度。
 - 缺少 `dig` 或 `nslookup` 时使用 Agent 内置受限解析器，不安装软件、不要求 root，并保留报告原始地区值。
 - Linux 主遥测服务继续低权限运行，常驻 root Manager 只识别编译进 Agent 的动作，并负责校验更新、维护服务和上报能力。

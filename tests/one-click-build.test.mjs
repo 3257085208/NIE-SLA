@@ -53,13 +53,18 @@ const databaseId = wrangler.d1_databases?.[0]?.database_id || '';
 assert.match(databaseId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 if (!deploymentValidation) assert.equal(databaseId, '00000000-0000-0000-0000-000000000000');
 assert.deepEqual(wrangler.triggers?.crons, ['* * * * *']);
+assert.deepEqual(
+  wrangler.durable_objects?.bindings?.map(binding => [binding.name, binding.class_name]),
+  [['REGION_PROXY', 'ProbeRegion'], ['TELEMETRY_BUFFER', 'TelemetryBuffer']],
+);
+assert.deepEqual(wrangler.migrations?.at(-1), { tag: 'v2', new_sqlite_classes: ['TelemetryBuffer'] });
 
 const describedBindings = packageJson.cloudflare?.bindings || {};
 assert.match(packageJson.cloudflare?.label || '', /\p{Script=Han}/u);
 assert.deepEqual(wrangler.vars || {}, {});
 assert.deepEqual(
   Object.keys(describedBindings).sort(),
-  ['ADMIN_PASSWORD', 'ADMIN_PATH', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'REGION_PROXY'].sort(),
+  ['ADMIN_PASSWORD', 'ADMIN_PATH', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'REGION_PROXY', 'TELEMETRY_BUFFER'].sort(),
 );
 for (const name of Object.keys(describedBindings)) assert.match(describedBindings[name]?.description || '', /\p{Script=Han}/u);
 assert.equal('AGENT_TOKEN' in describedBindings, false);

@@ -180,20 +180,23 @@ function buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous) 
 
 // ── Batch runner ─────────────────────────────────────────────────────────────
 
-export async function runDueTargets(env) {
+export async function runDueTargets(env, options = {}) {
   const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 20), 1, 200);
   const now = nowSec();
   const rows = await env.DB.prepare(
-     `SELECT * FROM targets
-     WHERE enabled = 1
-       AND COALESCE(no_public_ip, 0) = 0
-       AND (last_checked_at IS NULL OR last_checked_at <= ? - CASE WHEN interval_sec < ? THEN ? ELSE interval_sec END)
-     ORDER BY group_name, name`
+     `SELECT t.*, COALESCE(s.checked_at, t.last_checked_at) AS last_checked_at
+      FROM targets t
+      LEFT JOIN latest_status s ON s.target_id = t.id
+      WHERE t.enabled = 1
+        AND COALESCE(t.no_public_ip, 0) = 0
+        AND (COALESCE(s.checked_at, t.last_checked_at) IS NULL
+          OR COALESCE(s.checked_at, t.last_checked_at) <= ? - CASE WHEN t.interval_sec < ? THEN ? ELSE t.interval_sec END)
+      ORDER BY t.group_name, t.name`
   ).bind(now, MIN_INTERVAL_SEC, MIN_INTERVAL_SEC).all();
   const allTargets = rows.results || [];
   if (!allTargets.length) return { ok: true, count: 0, results: [] };
-  const lease = await acquireProbeRunLease(env);
-  if (!lease) return { ok: true, count: 0, results: [], skipped: true, reason: 'probe_run_in_progress' };
+  const lease = options.skipLease ? null : await acquireProbeRunLease(env);
+  if (!options.skipLease && !lease) return { ok: true, count: 0, results: [], skipped: true, reason: 'probe_run_in_progress' };
   try {
     const state = await readR2State(env);
     const d1Latest = await readLatestStatusMap(env, allTargets.map(target => target.id));
@@ -205,11 +208,11 @@ export async function runDueTargets(env) {
     if (!targets.length) return { ok: true, count: 0, results: [] };
     return { ok: true, count: targets.length, results: await runTargetBatch(env, targets, previousById) };
   } finally {
-    await releaseProbeRunLease(env, lease);
+    if (!options.skipLease) await releaseProbeRunLease(env, lease);
   }
 }
 
-export async function runFastStatusTargets(env) {
+export async function runFastStatusTargets(env, options = {}) {
   if (!parseBoolean(env.FAST_STATUS_ENABLED ?? true, true)) return { ok: true, skipped: true, reason: 'disabled', count: 0, results: [] };
   if (!env.DB || !env.ARCHIVE) return { ok: true, skipped: true, reason: 'r2_required', count: 0, results: [] };
   const intervalSec = clamp(Number(env.FAST_STATUS_INTERVAL_SEC || 60), 60, 300);
@@ -225,8 +228,8 @@ export async function runFastStatusTargets(env) {
     .slice(0, maxTargets);
   if (!targets.length) return { ok: true, count: 0, results: [] };
 
-  const lease = await acquireProbeRunLease(env, 120);
-  if (!lease) return { ok: true, count: 0, results: [], skipped: true, reason: 'probe_run_in_progress' };
+  const lease = options.skipLease ? null : await acquireProbeRunLease(env, 120);
+  if (!options.skipLease && !lease) return { ok: true, count: 0, results: [], skipped: true, reason: 'probe_run_in_progress' };
   try {
     const concurrency = clamp(Number(env.CONCURRENCY || 40), 1, 40);
     const results = [];
@@ -243,7 +246,7 @@ export async function runFastStatusTargets(env) {
       results: results.map(({ state_update, ...result }) => result),
     };
   } finally {
-    await releaseProbeRunLease(env, lease);
+    if (!options.skipLease) await releaseProbeRunLease(env, lease);
   }
 }
 

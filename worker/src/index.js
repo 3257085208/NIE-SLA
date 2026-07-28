@@ -9,13 +9,14 @@ import { handleRequest } from './routes.js';
 import { constantTimeEqual, json } from './auth.js';
 import { parseBoolean, shouldRunScheduledFollowups } from './utils.js';
 import { routeStaticAssets } from './static-assets.js';
+export { TelemetryBuffer } from './telemetry-buffer.js';
 
 const INTERNAL_SCHEDULE_PATH = '/api/internal/scheduled';
 
 // Durable Object for region probing.
 
 export class ProbeRegion {
-  constructor(state, env) { this.state = state; this.env = env; }
+  constructor(state, env) { this.state = state; this.env = env; this.scheduledRun = null; }
 
   async fetch(request) {
     if (request.method !== 'POST') return json({ ok: false, error: '不支持该请求方法' }, 405);
@@ -25,7 +26,10 @@ export class ProbeRegion {
       const presented = String(request.headers.get('x-nstatus-internal-secret') || '');
       if (!expected || !constantTimeEqual(expected, presented)) return json({ ok: false, error: '未授权' }, 401, this.env);
       const body = await request.json().catch(() => ({}));
-      return json(await runScheduledTasks(this.env, String(body.cron || '* * * * *')), 200, this.env);
+      if (this.scheduledRun) return json({ ok: true, skipped: true, reason: 'scheduled_run_in_progress' }, 200, this.env);
+      this.scheduledRun = runScheduledTasks(this.env, String(body.cron || '* * * * *'), { serialized: true });
+      try { return json(await this.scheduledRun, 200, this.env); }
+      finally { this.scheduledRun = null; }
     }
     if (url.pathname === '/debug-colo') {
       const meta = await request.json().catch(() => ({}));
@@ -69,7 +73,7 @@ export default {
   },
 };
 
-export async function runScheduledTasks(env, cron) {
+export async function runScheduledTasks(env, cron, options = {}) {
   const results = {};
   const timings = {};
   const measure = async (name, task) => {
@@ -80,7 +84,7 @@ export async function runScheduledTasks(env, cron) {
   try { await ensureV6Schema(env); } catch (err) { results.schema_error = String(err?.message || err); }
   // Availability checks are the time-sensitive task; maintenance must never
   // consume the cron execution window before probes have run.
-  try { results.probe = await measure('probe', () => runDueTargets(env)); } catch (err) { results.probe_error = String(err?.message || err); }
+  try { results.probe = await measure('probe', () => runDueTargets(env, { skipLease: options.serialized === true })); } catch (err) { results.probe_error = String(err?.message || err); }
   if (results.probe_error || shouldRunScheduledFollowups(results.probe)) {
     try { await recordProbeResult(env, cron, results.probe, results.probe_error, timings.probe); } catch (_) {}
   }
@@ -88,7 +92,7 @@ export async function runScheduledTasks(env, cron) {
   if (historyProbeCount > 0) {
     results.fast_status = { ok: true, skipped: true, reason: 'history_probe_completed', count: 0 };
   } else {
-    try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env)); } catch (err) { results.fast_status_error = String(err?.message || err); }
+    try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env, { skipLease: options.serialized === true })); } catch (err) { results.fast_status_error = String(err?.message || err); }
   }
   const hasCurrentStatus = historyProbeCount > 0 || Number(results.fast_status?.count || 0) > 0;
   if (!shouldRunScheduledFollowups(results.probe) && !hasCurrentStatus) {
@@ -121,7 +125,7 @@ export async function runScheduledTasks(env, cron) {
 async function dispatchScheduledTasks(env, cron) {
   const secret = internalScheduleSecret(env);
   const base = String(env.PUBLIC_WORKER_URL || env.PUBLIC_AGENT_API_BASE || '').trim().replace(/\/+$/, '');
-  if (secret && !base && env.REGION_PROXY) {
+  if (secret && env.REGION_PROXY) {
     const id = env.REGION_PROXY.idFromName('nie-sla-scheduled-runner');
     const response = await env.REGION_PROXY.get(id).fetch('https://nie-sla.internal/scheduled', {
       method: 'POST',
@@ -201,8 +205,10 @@ async function recordScheduledResult(env, cron, results) {
   if (!env.DB) return;
   const now = Math.floor(Date.now() / 1000);
   const value = JSON.stringify({ at: now, cron, results: compactScheduledResults(results) }).slice(0, 8000);
-  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
-    .bind('scheduled:last', value, now)
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+    WHERE app_meta.updated_at <= ?`)
+    .bind('scheduled:last', value, now, now - 300)
     .run();
 }
 

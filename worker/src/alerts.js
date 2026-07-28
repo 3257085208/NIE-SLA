@@ -1,5 +1,5 @@
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, isPrivateHost } from './utils.js';
-import { summarizeTraffic, trafficSettingsFromTarget } from './traffic.js';
+import { summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffic.js';
 import { ApiError, safeJson } from './auth.js';
 import { readR2State } from './storage.js';
 
@@ -197,7 +197,7 @@ export async function runAlertChecks(env, options = {}) {
     if (messages.length >= maxMessages) break;
     await collectExpiryAlert(alertEnv, targetSettings, target, now, messages, maxMessages);
     if (messages.length >= maxMessages) break;
-    await collectTrafficAlert(alertEnv, targetSettings, target, trafficByKey, now, messages, maxMessages);
+    await collectTrafficAlert(alertEnv, targetSettings, target, trafficByKey, metric, now, messages, maxMessages);
   }
 
   const sent = [];
@@ -429,14 +429,14 @@ async function collectExpiryAlert(env, settings, target, now, messages, maxMessa
   await enqueueActiveAlert(env, settings, messages, maxMessages, target.id, `expiry:${expiresAt}`, text, { value: daysLeft });
 }
 
-async function collectTrafficAlert(env, settings, target, trafficByKey, now, messages, maxMessages) {
+async function collectTrafficAlert(env, settings, target, trafficByKey, metric, now, messages, maxMessages) {
   const trafficSettings = trafficSettingsFromTarget(target, env, now);
   if (!trafficSettings.enabled || trafficSettings.quota_bytes <= 0) {
     await clearTrafficStates(env, target.id, now);
     return;
   }
   const row = trafficByKey.get(`${sanitizeAgentId(target.id)}|${trafficSettings.month}`);
-  const traffic = summarizeTraffic(row, trafficSettings);
+  const traffic = summarizeTrafficWithPending(row, trafficSettings, metric);
   const remainingBytes = Math.max(0, traffic.quota_bytes - traffic.total_bytes);
   const remainingPercent = traffic.quota_bytes > 0 ? Math.max(0, 100 - Number(traffic.percent || 0)) : 100;
   const percentLimit = Number(settings.traffic_remaining_percent || 0);
@@ -642,11 +642,16 @@ function configuredAlertChannels(env, settings) {
 
 async function finishAlertRun(env, result) {
   try {
-    await setMeta(env, 'alert_last_result', JSON.stringify({
+    const now = nowSec();
+    const value = JSON.stringify({
       ...result,
-      at: nowSec(),
+      at: now,
       errors: sanitizeAlertErrors(result.errors),
-    }));
+    });
+    await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+      WHERE app_meta.updated_at <= ?`)
+      .bind('alert_last_result', value, now, now - 300).run();
   } catch (_) {}
   return result;
 }

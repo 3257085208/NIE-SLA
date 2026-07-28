@@ -333,7 +333,7 @@ export function publicNodeQualityReport(target = {}) {
         id: String(tab.id || ''),
         title: String(tab.title || defaultTabTitle(tab.id) || ''),
         kind: tab.kind === 'image' ? 'image' : 'ansi',
-        content: tab.kind === 'image' ? undefined : sanitizeAnsiContent(tab.content || ''),
+        content: tab.content ? sanitizeAnsiContent(tab.content || '') : undefined,
         image: tab.kind === 'image' && isSafeImageUrl(tab.image) ? String(tab.image) : undefined,
       })).filter((tab) => tab.id && (tab.content || tab.image)) : [],
     };

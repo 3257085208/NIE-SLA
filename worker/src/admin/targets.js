@@ -1,6 +1,6 @@
 ﻿// Admin sub-module: target CRUD, probes, and agent target listing.
 import { clamp, nowSec, sanitizeId, sanitizeAgentId, parseBoolean, normalizeTarget, parseExpectedStatus, REGION_LABELS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC } from '../utils.js';
-import { normalizeTrafficMode, normalizeTrafficQuotaGb, normalizeTrafficResetDay, summarizeTraffic, trafficSettingsFromTarget } from '../traffic.js';
+import { normalizeTrafficMode, normalizeTrafficQuotaGb, normalizeTrafficResetDay, summarizeTrafficWithPending, trafficSettingsFromTarget } from '../traffic.js';
 import { safeJson } from '../auth.js';
 import { removeTargetFromR2State } from '../storage.js';
 import { runTargetBatch } from '../probe.js';
@@ -48,9 +48,12 @@ function dayStartSec(dayStr, env) {
 
 export async function listTargets(env) {
   await syncEnvTargetsMaybe(env);
-  const rows = await env.DB.prepare(`SELECT * FROM targets ORDER BY ${TARGET_ORDER_SQL}`).all();
+  const rows = await env.DB.prepare(`SELECT t.*, COALESCE(s.checked_at, t.last_checked_at) AS last_checked_at
+    FROM targets t LEFT JOIN latest_status s ON s.target_id = t.id
+    ORDER BY CASE WHEN t.sort_order IS NULL THEN 1 ELSE 0 END, t.sort_order, t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all();
   const trafficRows = {};
   const agentStates = {};
+  const agentTrafficStates = {};
   try {
     const result = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all();
     for (const row of result.results || []) trafficRows[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
@@ -58,7 +61,7 @@ export async function listTargets(env) {
   try {
     let result;
     try {
-      result = await env.DB.prepare(`SELECT agent_id, agent_version, updated_at, capabilities FROM agent_metrics_state`).all();
+      result = await env.DB.prepare(`SELECT agent_id, agent_version, updated_at, capabilities, net FROM agent_metrics_state`).all();
     } catch (err) {
       if (!isMissingAgentCapabilitiesColumn(err)) throw err;
       result = await env.DB.prepare(`SELECT agent_id, agent_version, updated_at, NULL AS capabilities FROM agent_metrics_state`).all();
@@ -69,6 +72,7 @@ export async function listTargets(env) {
         last_metrics_at: row.updated_at || null,
         capabilities: parseJsonObject(row.capabilities),
       };
+      agentTrafficStates[sanitizeAgentId(row.agent_id)] = { net: row.net, updated_at: row.updated_at };
     }
   } catch (_) {}
   const rates = await getExchangeRates(env);
@@ -81,7 +85,7 @@ export async function listTargets(env) {
     return {
       ...target,
       ...(priceCny == null ? {} : { price_cny: priceCny }),
-      traffic: summarizeTraffic(trafficRows[`${sanitizeAgentId(target.id)}|${settings.month}`], settings),
+      traffic: summarizeTrafficWithPending(trafficRows[`${sanitizeAgentId(target.id)}|${settings.month}`], settings, agentTrafficStates[sanitizeAgentId(target.id)]),
       nq,
       nq_url: nqUrl || null,
       has_nq: Boolean(nq?.has_report || nqUrl),

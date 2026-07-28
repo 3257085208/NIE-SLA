@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.23",
+  "version": "0.24.0-beta.24",
   "agent_version": "v1.0.34",
-  "source_ref": "app-v0.24.0-beta.23",
-  "published_at": "2026-07-28T16:45:19Z",
-  "title": "NIE-SLA 0.24 Beta 23",
+  "source_ref": "app-v0.24.0-beta.24",
+  "published_at": "2026-07-28T19:00:15Z",
+  "title": "NIE-SLA 0.24 Beta 24",
   "changelog": [
-    "恢复独立第三方主题 ZIP 管理，上传、覆盖更新后默认停用，插件与任意扩展执行继续关闭",
-    "支持只覆盖公开页样式的 CSS 主题，以及无同源权限、只能读取脱敏状态的 Canvas 主题",
-    "主题包增加压缩与解压大小、文件数、路径、Manifest、权限和 SHA-256 双端校验",
-    "公开页先加载主题注册表并在资源失败时自动回退原版，避免原版闪现或空白页面",
-    "修复 NodeQuality 网络质量章节标题与同一行首组数据没有正确拆分的问题"
+    "NodeQuality 网络质量与回程路由可渲染为 SVG 并上传到兼容 CloudFlare-ImgBed 的自建图床",
+    "图床 Token 加密保存，接口限制为公开 HTTPS /upload，上传失败自动回退文本报告",
+    "Agent Metrics 与 TCP Ping 通过 Durable Object 按小时合并写 R2，保持五分钟上传与完整图表点",
+    "SLA 汇总、凭据活跃时间、状态快照和流量账本改为低读写路径，现有 API 与前端不变",
+    "默认配置新增 100 台 VPS、五分钟上传的 Cloudflare 免费额度回归预算"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

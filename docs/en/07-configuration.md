@@ -18,6 +18,7 @@
 | `FAST_STATUS_ENABLED` | `true` | Enable lightweight R2 current-status probes |
 | `FAST_STATUS_INTERVAL_SEC` | `60` | Current-status interval, bounded to 60-300 seconds |
 | `FAST_STATUS_MAX_TARGETS` | `50` | Maximum fast targets when no persistent probes are due |
+| `STATUS_SNAPSHOT_EVERY_SEC` | `300` | Full R2 snapshot interval; minute-level current state is still overlaid in responses |
 | `AGENT_AUTO_UPDATE_DEFAULT` | `true` | Default verified Agent update policy until an administrator explicitly changes it in D1 |
 | `STATUS_CACHE_TTL` | `20` | Status cache seconds |
 | `AGENT_OFFLINE_AFTER_SEC` | `900` | Heartbeat gap before an Agent is considered offline |
@@ -25,6 +26,8 @@
 | `AGENT_METRICS_TO_D1` | `false` | Store metric history in D1 |
 | `AGENT_PINGS_TO_D1` | `false` | Store ping history in D1 |
 | `AGENT_METRICS_R2_RETENTION_HOURS` | `72` | R2 telemetry retention |
+| `AGENT_CREDENTIAL_TOUCH_SEC` | `21600` | Minimum interval between per-node credential activity writes |
+| `TRAFFIC_PERSIST_INTERVAL_SEC` | `1800` | Maximum traffic-ledger persistence interval; responses include pending counter deltas |
 | `RATE_LIMIT_D1` | `true` | Durable D1 rate limits |
 | `TELEGRAM_CHAT_ID` | empty | Optional Telegram chat id |
 | `GITHUB_OAUTH_CLIENT_ID` | empty | Optional GitHub OAuth client id |
@@ -32,6 +35,12 @@
 | `GITHUB_OAUTH_CALLBACK_ORIGIN` | current API origin | Optional fixed HTTPS origin for the OAuth callback |
 | `ALERT_EMAIL_FROM` | empty | Resend sender |
 | `ALERT_EMAIL_TO` | empty | Comma-separated email recipients |
+| `NQ_IMGBED_URL` | empty | Optional public HTTPS CloudFlare-ImgBed endpoint ending in `/upload` |
+| `NQ_IMGBED_CHANNEL` | `cfr2` | Optional image-host storage channel |
+| `NQ_IMGBED_CHANNEL_NAME` | empty | Optional named channel when several channels of the same type exist |
+| `NQ_IMGBED_FOLDER` | `NIE-SLA/NodeQuality` | Upload folder for NQ images |
+
+The `TELEMETRY_BUFFER` Durable Object binding is required by the default free-tier architecture. It keeps the five-minute upload interval, serves active-hour Metrics/Ping samples directly, and writes one merged R2 object per completed Agent hour. Without this binding the Worker uses the compatible per-report R2 fallback, which is not suitable for the 100-node free-tier budget.
 
 ## Secrets
 
@@ -44,6 +53,8 @@
 | `RESEND_API_KEY` | Optional Resend email API key |
 | `GITHUB_OAUTH_CLIENT_SECRET` | Optional GitHub OAuth secret |
 | `ALERT_ENCRYPTION_KEY` | Optional alert secret encryption key for D1 storage; falls back to `TOTP_ENCRYPTION_KEY`, then deployment `ADMIN_PASSWORD` |
+| `NQ_IMGBED_TOKEN` | Optional CloudFlare-ImgBed API token with the `upload` permission; overrides the encrypted Admin value |
+| `NQ_IMGBED_ENCRYPTION_KEY` | Optional dedicated encryption key for the stored image-host token |
 
 ## Agent Environment
 

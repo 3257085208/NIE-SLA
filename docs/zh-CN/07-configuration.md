@@ -14,6 +14,7 @@
 | `FAST_STATUS_ENABLED` | `true` | 启用 R2 轻量当前状态探测 |
 | `FAST_STATUS_INTERVAL_SEC` | `60` | 当前状态探测间隔，限制 60–300 秒 |
 | `FAST_STATUS_MAX_TARGETS` | `50` | 没有持久检查时每分钟最多快速探测目标数，限制 1–50 |
+| `STATUS_SNAPSHOT_EVERY_SEC` | `300` | 完整 R2 状态快照间隔；最新状态仍按分钟覆盖到响应 |
 | `CHECKS_DEFAULT_LIMIT` | `864` | 明细默认上限 |
 | `CHECKS_WINDOW_HOURS` | `72` | 明细默认窗口 |
 | `PUBLIC_MASK_IPS` | `true` | 公开接口掩码 IP |
@@ -36,8 +37,12 @@
 | `AGENT_METRICS_TO_D1` | `false` | 是否将高频指标写 D1 |
 | `AGENT_PINGS_TO_D1` | `false` | 是否将 Ping 高频历史写 D1 |
 | `PING_HISTORY_RETENTION_HOURS` | `6` | D1 Ping 临时历史 |
+| `AGENT_CREDENTIAL_TOUCH_SEC` | `21600` | 每节点 Token 最近使用时间的最小写入间隔 |
+| `TRAFFIC_PERSIST_INTERVAL_SEC` | `1800` | 流量周期行最大落盘间隔；页面会合并未落盘计数差值 |
 
 高频写 D1 会显著增加写入量，除非明确评估额度，不要轻易设为 `true`。
+
+`TELEMETRY_BUFFER` Durable Object 绑定属于默认架构的必需项。它不改变 Agent 的 5 分钟上传间隔；当前小时 Metrics/Ping 直接从缓冲读取，完成后按小时写入 R2。删除绑定会回退到兼容的逐上报 R2 写入，但不再适合 100 台免费额度预算。
 
 ## 安装与更新 vars
 
@@ -62,6 +67,8 @@
 | `TELEGRAM_BOT_TOKEN` | 可选 | 环境配置 TG Bot |
 | `RESEND_API_KEY` | 可选 | 环境配置 Resend 邮件 API |
 | `GITHUB_OAUTH_CLIENT_SECRET` | 可选 | GitHub OAuth App secret |
+| `NQ_IMGBED_TOKEN` | 可选 | CloudFlare-ImgBed 的 `upload` 权限 API Token；后台加密保存值的环境变量覆盖 |
+| `NQ_IMGBED_ENCRYPTION_KEY` | 可选 | NQ 图床 Token 专用加密密钥；依次回退告警密钥、TOTP 密钥和部署时管理员密码 |
 
 写入：
 
@@ -88,6 +95,10 @@ npx wrangler secret list
 | `ALERT_EMAIL_FROM` | 空 | Resend 发件人 |
 | `ALERT_EMAIL_TO` | 空 | 收件人，英文逗号分隔 |
 | `ALERT_EMAIL_REPLY_TO` | 空 | 可选 Reply-To |
+| `NQ_IMGBED_URL` | 空 | 可选 CloudFlare-ImgBed 完整上传地址，必须为公网 HTTPS 且以 `/upload` 结尾 |
+| `NQ_IMGBED_CHANNEL` | `cfr2` | 可选上传渠道：`cfr2`、`telegram`、`s3`、`discord`、`huggingface`、`webdav` 或 `external` |
+| `NQ_IMGBED_CHANNEL_NAME` | 空 | 图床配置了同类多渠道时指定渠道名称 |
+| `NQ_IMGBED_FOLDER` | `NIE-SLA/NodeQuality` | NQ 图片上传目录 |
 
 GitHub 登录必须同时配置 Client ID、Client Secret 和非空白名单，否则登录按钮不会显示。callback 默认使用发起登录请求的 API Origin；仅在反向代理无法保留公开 Origin 时设置 `GITHUB_OAUTH_CALLBACK_ORIGIN`。授权完成后再按 `PUBLIC_SITE_ORIGIN` 返回管理页。
 

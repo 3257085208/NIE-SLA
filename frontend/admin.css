@@ -1337,6 +1337,8 @@ th {
 .nq-ansi-panel { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
 .nq-ansi-panel .nq-ansi { width: max-content; min-width: 100%; overflow: visible; }
 .nq-image-panel.active { display: flex; align-items: flex-start; justify-content: center; min-height: 0; overflow: auto; }
+.nq-image-panel.fallback-active { display: block; }
+.nq-image-fallback { width: 100%; min-width: 0; color: #dbe5f1; }
 .nq-ansi { margin: 0; overflow: auto; color: #e5e7eb; white-space: pre; tab-size: 8; font: 12px/1.4 "Noto Sans Mono CJK SC", "Sarasa Mono SC", "SFMono-Regular", Menlo, Consolas, monospace; font-variant-ligatures: none; }
 .nq-media-block { display: block; margin: 2px 0 5px; white-space: normal; font: 12px/1.3 "Noto Sans Mono CJK SC", "Sarasa Mono SC", "SFMono-Regular", Menlo, Consolas, monospace; }
 .nq-media-title { display: block; margin: 1px 0 2px; color: #e5e7eb; font-weight: 400; }

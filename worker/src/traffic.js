@@ -96,3 +96,29 @@ export function summarizeTraffic(row, settings) {
     updated_at: Number(row?.updated_at || 0) || null,
   };
 }
+
+export function summarizeTrafficWithPending(row, settings, metricRow) {
+  const net = parseJsonObject(metricRow?.net);
+  const currentRx = Number(net?.rx_bytes);
+  const currentTx = Number(net?.tx_bytes);
+  const lastRx = Number(row?.last_rx_bytes);
+  const lastTx = Number(row?.last_tx_bytes);
+  const pendingRx = Number.isFinite(currentRx) && Number.isFinite(lastRx) && currentRx >= lastRx ? currentRx - lastRx : 0;
+  const pendingTx = Number.isFinite(currentTx) && Number.isFinite(lastTx) && currentTx >= lastTx ? currentTx - lastTx : 0;
+  return summarizeTraffic({
+    ...(row || {}),
+    rx_bytes: Number(row?.rx_bytes || 0) + pendingRx,
+    tx_bytes: Number(row?.tx_bytes || 0) + pendingTx,
+    updated_at: metricRow?.updated_at ? Math.floor(new Date(metricRow.updated_at).getTime() / 1000) : row?.updated_at,
+  }, settings);
+}
+
+function parseJsonObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(String(value || '{}'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}

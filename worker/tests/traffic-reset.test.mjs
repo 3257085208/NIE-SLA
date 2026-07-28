@@ -3,9 +3,32 @@ import { webcrypto } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { ensureV6Schema } from '../src/admin/schema.js';
 import { persistAgentTraffic, rebuildAgentTrafficPeriod } from '../src/metrics.js';
-import { trafficSettingsFromTarget } from '../src/traffic.js';
+import { summarizeTrafficWithPending, trafficSettingsFromTarget } from '../src/traffic.js';
 
 globalThis.crypto ||= webcrypto;
+
+assert.deepEqual(summarizeTrafficWithPending(
+  { rx_bytes: 100, tx_bytes: 200, last_rx_bytes: 1000, last_tx_bytes: 2000, updated_at: 1 },
+  { enabled: true, mode: 'total', month: '2026-07-01', quota_bytes: 10_000, quota_gb: 0.00001 },
+  { net: JSON.stringify({ rx_bytes: 1100, tx_bytes: 2200 }), updated_at: '2026-07-29T00:00:00.000Z' },
+), {
+  enabled: true,
+  mode: 'total',
+  mode_label: '双向合计',
+  month: '2026-07-01',
+  reset: 'calendar-month',
+  reset_day: 1,
+  period_start: '',
+  period_end: '',
+  rx_bytes: 200,
+  tx_bytes: 400,
+  raw_total_bytes: 600,
+  total_bytes: 600,
+  quota_gb: 0.00001,
+  quota_bytes: 10_000,
+  percent: 6,
+  updated_at: 1785283200,
+});
 
 const database = new DatabaseSync(':memory:');
 database.exec(`

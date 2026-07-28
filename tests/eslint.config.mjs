@@ -53,6 +53,7 @@ export default [
         sessionStorage: 'readonly',
         setInterval: 'readonly',
         setTimeout: 'readonly',
+        structuredClone: 'readonly',
         window: 'readonly',
       },
     },

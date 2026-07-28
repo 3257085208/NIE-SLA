@@ -23,4 +23,4 @@ Hourly cloud instances can leave expiry empty and use the hourly billing cycle. 
 
 ## Accuracy
 
-Traffic is calculated from interface counter deltas and stored in D1. Reboots are handled conservatively, but a small amount of traffic between boot and the first report may not be counted. High-frequency reports continue to update the existing period row; each Agent normally adds only one daily row per day, and reset-day changes read roughly one period of daily rows.
+Traffic is calculated from interface counter deltas. API responses and alerts combine the persisted period row with the latest unflushed counter delta, so visible totals still follow every five-minute Agent report. The D1 period row is persisted at most every 30 minutes and immediately at day, counter-reset, or billing-period boundaries. Reboots are handled conservatively, but a small amount of traffic between boot and the first report may not be counted. Each Agent normally adds only one daily row per day, and reset-day changes read roughly one period of daily rows.

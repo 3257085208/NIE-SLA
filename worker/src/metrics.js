@@ -1,10 +1,11 @@
 ﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean } from './utils.js';
-import { summarizeTraffic, trafficSettingsFromTarget } from './traffic.js';
+import { summarizeTraffic, summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffic.js';
 import { requireAgentForId, safeJson, json } from './auth.js';
 import { readR2Json, writeR2Json } from './storage.js';
 import { rateLimitByIp } from './ratelimit.js';
 import { recordAgentAvailability } from './agent-availability.js';
 import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn } from './admin/schema.js';
+import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry } from './telemetry-buffer.js';
 
 const MAX_AGENT_SAMPLES_PER_REPORT = 310;
 const MAX_AGENT_PINGS_PER_REPORT = 5_000;
@@ -264,9 +265,11 @@ async function readAgentTraffic(env, agentId) {
   const settings = await agentTrafficSettings(env, agentId);
   if (!settings.enabled || !agentId) return summarizeTraffic(null, settings);
   try {
-    const row = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? AND month = ?`)
-      .bind(agentId, settings.month).first();
-    return summarizeTraffic(row, settings);
+    const [row, metric] = await Promise.all([
+      env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? AND month = ?`).bind(agentId, settings.month).first(),
+      env.DB.prepare(`SELECT net, updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first(),
+    ]);
+    return summarizeTrafficWithPending(row, settings, metric);
   } catch (_) {
     return summarizeTraffic(null, settings);
   }
@@ -314,12 +317,19 @@ export async function rebuildAgentTrafficPeriod(env, agentId, target = null, ts 
       .bind(agentId).first();
   }
   const settings = trafficSettingsFromTarget(source, env, ts);
-  const latest = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? ORDER BY updated_at DESC, month DESC LIMIT 1`)
-    .bind(id).first();
+  const [latest, metric] = await Promise.all([
+    env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? ORDER BY updated_at DESC, month DESC LIMIT 1`).bind(id).first(),
+    env.DB.prepare(`SELECT net FROM agent_metrics_state WHERE agent_id = ?`).bind(id).first().catch(() => null),
+  ]);
   const daily = await dailyTrafficSum(env, id, settings.period_start, settings.period_end);
   const includeActive = dayInTrafficPeriod(latest?.active_day, settings);
-  const activeRx = includeActive ? Math.max(0, Number(latest?.day_rx_bytes || 0) || 0) : 0;
-  const activeTx = includeActive ? Math.max(0, Number(latest?.day_tx_bytes || 0) || 0) : 0;
+  const net = parseJsonSafe(metric?.net);
+  const currentRxRaw = Number(net?.rx_bytes);
+  const currentTxRaw = Number(net?.tx_bytes);
+  const pendingRx = includeActive && Number.isFinite(currentRxRaw) ? rawTrafficDelta(currentRxRaw, latest?.last_rx_bytes) : 0;
+  const pendingTx = includeActive && Number.isFinite(currentTxRaw) ? rawTrafficDelta(currentTxRaw, latest?.last_tx_bytes) : 0;
+  const activeRx = includeActive ? Math.max(0, Number(latest?.day_rx_bytes || 0) || 0) + pendingRx : 0;
+  const activeTx = includeActive ? Math.max(0, Number(latest?.day_tx_bytes || 0) || 0) + pendingTx : 0;
   const latestUpdatedAt = Number(latest?.updated_at || 0) || 0;
   const updatedAt = Math.max(ts, latestUpdatedAt + (latest && latest.month !== settings.month ? 1 : 0));
   await env.DB.prepare(`INSERT INTO agent_traffic_monthly
@@ -336,7 +346,8 @@ export async function rebuildAgentTrafficPeriod(env, agentId, target = null, ts 
       updated_at = excluded.updated_at`)
     .bind(
       id, settings.month, Math.floor(daily.rx + activeRx), Math.floor(daily.tx + activeTx),
-      latest?.last_rx_bytes ?? null, latest?.last_tx_bytes ?? null,
+      pendingRx > 0 ? Math.floor(currentRxRaw) : (latest?.last_rx_bytes ?? null),
+      pendingTx > 0 ? Math.floor(currentTxRaw) : (latest?.last_tx_bytes ?? null),
       latest?.active_day || dayFromSec(ts, env), activeRx, activeTx, updatedAt,
     ).run();
   return summarizeTraffic({
@@ -353,27 +364,6 @@ export async function persistAgentTraffic(env, agentId, metrics, ts) {
   const txRaw = Number(metrics?.net?.tx_bytes);
   if (!Number.isFinite(rxRaw) || !Number.isFinite(txRaw) || rxRaw < 0 || txRaw < 0) return;
   const month = settings.month;
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_traffic_monthly (
-    agent_id TEXT NOT NULL,
-    month TEXT NOT NULL,
-    rx_bytes INTEGER NOT NULL DEFAULT 0,
-    tx_bytes INTEGER NOT NULL DEFAULT 0,
-    last_rx_bytes INTEGER,
-    last_tx_bytes INTEGER,
-    active_day TEXT,
-    day_rx_bytes INTEGER NOT NULL DEFAULT 0,
-    day_tx_bytes INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (agent_id, month)
-  )`).run();
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_traffic_daily (
-    agent_id TEXT NOT NULL,
-    day TEXT NOT NULL,
-    rx_bytes INTEGER NOT NULL DEFAULT 0,
-    tx_bytes INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (agent_id, day)
-  )`).run();
   const row = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? AND month = ?`)
     .bind(agentId, month).first();
   const latest = row || await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? ORDER BY updated_at DESC, month DESC LIMIT 1`)
@@ -381,6 +371,10 @@ export async function persistAgentTraffic(env, agentId, metrics, ts) {
   const deltaRx = rawTrafficDelta(rxRaw, latest?.last_rx_bytes);
   const deltaTx = rawTrafficDelta(txRaw, latest?.last_tx_bytes);
   const today = dayFromSec(ts, env);
+  const flushInterval = clamp(Number(env.TRAFFIC_PERSIST_INTERVAL_SEC || 1800), 300, 3600);
+  const countersContinuous = latest?.last_rx_bytes != null && latest?.last_tx_bytes != null
+    && rxRaw >= Number(latest.last_rx_bytes) && txRaw >= Number(latest.last_tx_bytes);
+  if (row && row.active_day === today && countersContinuous && Number(row.updated_at || 0) > ts - flushInterval) return;
 
   if (row) {
     const crossedDay = Boolean(row.active_day && row.active_day !== today);
@@ -468,12 +462,19 @@ async function loadAgentMetricsR2History(env, agentId, since, until, historyByTs
     }
     return localCount;
   });
-  const count = counts.reduce((a, b) => a + b, 0);
+  const buffered = await readBufferedAgentTelemetry(env, agentId, since, until).catch(() => ({ points: [] }));
+  for (const point of buffered.points || []) {
+    const ts = Number(point?.ts || 0);
+    if (ts >= since && ts <= until) historyByTs.set(ts, selectMetricFields(point, fields));
+  }
+  const count = counts.reduce((a, b) => a + b, 0) + (buffered.points?.length || 0);
   return { loaded: count > 0, count };
 }
 
 export async function writeAgentTelemetryR2History(env, agentId, points = [], pings = []) {
   if (!env.ARCHIVE || (!points?.length && !pings?.length)) return { ok: true, skipped: true };
+  const buffered = await appendBufferedAgentTelemetry(env, agentId, points, pings);
+  if (buffered) return buffered;
   const lock = await acquireAgentHistoryLock(env, agentId);
   if (env.DB && !lock) throw new Error('Agent 历史数据正在写入，请重试本次上报');
   try {
@@ -582,6 +583,9 @@ export async function deleteAgentTelemetry(env, agentId) {
       cursor = listed.truncated ? listed.cursor : undefined;
     } while (cursor);
   }
+  await deleteBufferedAgentTelemetry(env, id).catch((error) => {
+    console.error('delete telemetry buffer failed:', String(error?.message || error));
+  });
   return { d1, r2 };
 }
 
@@ -856,7 +860,15 @@ export async function loadAgentPingsR2History(env, agentId, since, until, out = 
     }
     return localCount;
   });
-  const count = counts.reduce((a, b) => a + b, 0);
+  const buffered = await readBufferedAgentTelemetry(env, id, since, until).catch(() => ({ pings: [] }));
+  for (const ping of buffered.pings || []) {
+    const normalized = normalizePingPoint(ping);
+    if (normalized.target_id && normalized.ts >= since && normalized.ts <= until) out.push(normalized);
+  }
+  const unique = new Map();
+  for (const ping of out) unique.set(pingKey(ping), ping);
+  out.splice(0, out.length, ...[...unique.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id)));
+  const count = out.length;
   return { loaded: count > 0, count, pings: out };
 }
 
@@ -1017,9 +1029,14 @@ async function persistAgentMetrics(env, data) {
   const { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts } = data;
   const rawPings = mapPings(pings, ts);
   const statePings = await mergeStatePings(env, agentId, rawPings);
-  const previousState = await env.DB.prepare('SELECT updated_at FROM agent_metrics_state WHERE agent_id = ?').bind(agentId).first().catch(() => null);
-  await recordAgentAvailability(env, agentId, previousState?.updated_at, ts)
-    .catch(err => console.error('recordAgentAvailability failed:', String(err?.message || err)));
+  const previousState = await env.DB.prepare(`SELECT s.updated_at,
+    COALESCE((SELECT no_public_ip FROM targets WHERE id = ?), 0) AS no_public_ip
+    FROM agent_metrics_state s WHERE s.agent_id = ?`)
+    .bind(agentId, agentId).first().catch(() => null);
+  if (Number(previousState?.no_public_ip || 0) === 1) {
+    await recordAgentAvailability(env, agentId, previousState?.updated_at, ts)
+      .catch(err => console.error('recordAgentAvailability failed:', String(err?.message || err)));
+  }
   const writeState = () => env.DB.prepare(`
     INSERT INTO agent_metrics_state (agent_id, agent_label, agent_version, updated_at, hostname, cpu_percent, process_count, thread_count, memory, load, disk, net, diskio, stats, uptime_sec, vps_info, pings, capabilities)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
