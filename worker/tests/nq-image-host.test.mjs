@@ -66,6 +66,7 @@ try {
   assert.match(uploads[0].url, /uploadFolder=NIE-SLA%2FNodeQuality/);
   assert.match(uploads[0].url, /serverCompress=false/);
   assert.equal(uploads[0].options.headers.authorization, 'Bearer imgbed_test_token_with_upload_permission');
+  assert.equal(uploads[0].options.redirect, 'manual');
   assert.equal(uploads[0].file.type, 'image/svg+xml');
 
   const normalized = normalizeNodeQualityReport({
@@ -89,6 +90,7 @@ try {
 }
 
 for (const [status, expectedStatus, message] of [
+  [302, 502, /不允许的重定向/],
   [400, 502, /上传渠道/],
   [401, 502, /Token 无效或已过期/],
   [403, 502, /upload 权限/],

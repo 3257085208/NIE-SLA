@@ -2,6 +2,13 @@
 
 NIE-SLA 当前处于 Beta。应用使用 `0.x.y-beta.N`，Rust Agent 使用独立 `vX.Y.Z` 版本。
 
+## 0.24.0-beta.26 - 2026-07-29
+
+- 修复 Cloudflare Workers 运行时不支持 `fetch(..., { redirect: "error" })`，导致 NQ 图床请求在发送到 `img.nkx.moe` 之前直接抛出 `TypeError` 的问题。
+- 图床出站请求改用 Workers 支持的 `redirect: "manual"`，并在收到任何 `3xx` 时主动拒绝，继续防止 Token 被重定向到其他主机。
+- 使用 Cloudflare 远程开发运行时复现并验证：同一请求现在可以正常到达图床并返回上游 HTTP 状态；本机与远程链路的 API 地址、TLS 和请求字段保持一致。
+- 继续保留 30 秒超时、分级错误提示、响应体限制、公开 HTTPS 校验与文本报告回退；Rust Agent 仍为 `v1.0.34`，无需更新。
+
 ## 0.24.0-beta.25 - 2026-07-29
 
 - NQ 图床上传严格对齐 CloudFlare ImgBed 官方 `POST /upload` 文档：保留 `multipart/form-data`、Bearer Token、渠道、渠道名称、目录及数组响应兼容，Telegram 渠道明确使用非压缩文件模式。

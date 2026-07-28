@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.25",
+  "version": "0.24.0-beta.26",
   "agent_version": "v1.0.34",
-  "source_ref": "app-v0.24.0-beta.25",
-  "published_at": "2026-07-28T19:47:47Z",
-  "title": "NIE-SLA 0.24 Beta 25",
+  "source_ref": "app-v0.24.0-beta.26",
+  "published_at": "2026-07-28T20:12:00Z",
+  "title": "NIE-SLA 0.24 Beta 26",
   "changelog": [
-    "NQ 图床上传严格对齐 CloudFlare ImgBed 官方 API，Telegram 渠道明确使用非压缩文件模式",
-    "图床等待窗口适配 Telegram 上传链路，测试结果区分 Token、权限、渠道、限流、上游故障与超时",
-    "后台和文档明确要求使用 Token 创建时返回的完整值，避免误用列表中的截断值",
-    "图床响应正文、内部地址与 API Token 继续保持不对外泄露，NQ 上传失败仍回退文本报告"
+    "修复 Cloudflare Workers 不支持 fetch redirect=error，导致 NQ 图床请求在发出前直接失败的问题",
+    "图床请求改用 Workers 支持的 manual 模式，并继续拒绝所有 HTTP 重定向",
+    "Cloudflare 远程运行时已验证请求可正常到达 img.nkx.moe 并获得上游 HTTP 响应",
+    "现有 Token 加密、公开 HTTPS 校验、响应限制及文本回退安全边界保持不变"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

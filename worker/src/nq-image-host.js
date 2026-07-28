@@ -198,7 +198,7 @@ async function uploadSvg(env, settingsValue, token, svg, filename) {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
       body: form,
-      redirect: 'error',
+      redirect: 'manual',
       signal: controller.signal,
     });
   } catch (error) {
@@ -231,6 +231,9 @@ async function uploadSvg(env, settingsValue, token, svg, filename) {
 
 function imageHostHttpError(statusValue) {
   const status = Math.max(0, Math.trunc(Number(statusValue) || 0));
+  if (status >= 300 && status < 400) {
+    return new ApiError(502, `图床上传 API 返回了不允许的重定向（HTTP ${status}）`);
+  }
   if (status === 400 || status === 422) {
     return new ApiError(502, `图床拒绝上传（HTTP ${status}），请检查上传渠道、渠道名称及图床存储配置`);
   }
