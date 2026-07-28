@@ -22,7 +22,15 @@ import {
   normalizeCountryCode,
 } from '../js/shared/target-catalogs.js';
 import { formatLocationLabel, normalizeCityName } from '../js/shared/format.js';
-import { bindNodeQualityModal, buildNqModalHtml, renderNqAnsiHtml, renderNqReportHtml, targetHasNodeQuality } from '../js/shared/nodequality.js';
+import {
+  bindNodeQualityModal,
+  buildNqModalHtml,
+  renderNqAnsiHtml,
+  renderNqNetworkReportHtml,
+  renderNqReportHtml,
+  renderNqRouteReportHtml,
+  targetHasNodeQuality,
+} from '../js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from '../js/shared/appearance.js';
 import { unlockState } from '../js/shared/unlock.js';
 import { dailyFleetSlaSeries, targetSlaPercentage } from '../js/shared/sla.js';
@@ -251,5 +259,11 @@ assert.match(renderNqAnsiHtml('\u001b[31mred\u001b[0m'), /color:#ef4444/);
 assert.match(renderNqReportHtml('五、流媒体服务解锁检测\n服务商： TikTok Netflix\n状态： 解锁 失败\n地区： [TW] []\n方式： DNS\n六、邮局连通性及黑名单检测'), /nq-media-grid[\s\S]*nq-media-badge success[\s\S]*nq-media-badge danger/);
 const sparseUnlock = renderNqReportHtml('五、流媒体服务解锁检测\n服务商：  TikTok   Disney+  Netflix Youtube  AmazonPV  Reddit   Bilibili\n状态：     失败     失败     失败    失败     屏蔽     解锁     失败\n地区：                         []\n方式：                         DNS\n六、邮局连通性及黑名单检测');
 assert.match(sparseUnlock, /nq-media-label">地区<\/span>[\s\S]*nq-media-cell ">—<\/span>[\s\S]*nq-media-cell ">\[\]<\/span>/, 'sparse unlock fields must retain their source column');
+const networkLayout = renderNqNetworkReportHtml('报告标题\n一、BGP信息\n注册信息：ARIN\n二、本地策略\nTCP拥塞控制算法：bbr');
+assert.match(networkLayout, /nq-network-section[\s\S]*nq-network-title">一、BGP信息[\s\S]*nq-network-scroll/, 'network reports must split long terminal output into locally scrollable sections');
+const routeLayout = renderNqRouteReportHtml('五、三网回程路由\n  北京 电信 Cogent -> 163\n地理路径：美国 -> 北京 自治系统路径：AS174 -> AS4134\n 3 0.66ms 10.9.*.* * RFC1918\n 5-8 146.85ms 202.97.*.* AS4134 [CHINANET-BB] 中国 北京 电信');
+assert.match(routeLayout, /nq-route-block[\s\S]*nq-route-path[\s\S]*nq-route-hop-number">3[\s\S]*nq-route-latency success">0\.66ms/, 'route reports must render responsive hop rows');
+assert.match(routeLayout, /nq-route-asn">AS4134[\s\S]*nq-route-network">CHINANET-BB[\s\S]*nq-route-location">中国 北京 电信/, 'route hop metadata must retain ASN, network, and location');
 assert.match(buildNqModalHtml({ report_time: '2026-07-23 22:41:36 CST', tabs: [{ id: 'network', kind: 'image', image: 'https://example.com/network.webp' }] }), /network\.webp/);
+assert.match(buildNqModalHtml({ tabs: [{ id: 'network', kind: 'ansi', content: '一、BGP信息' }, { id: 'route', kind: 'ansi', content: '五、三网回程路由' }] }), /nq-network-panel[\s\S]*nq-route-panel/, 'ANSI network and route tabs must use their dedicated layouts');
 console.log('NodeQuality frontend helpers ok');

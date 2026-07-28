@@ -165,6 +165,137 @@ export function renderNqReportHtml(content = '') {
   return html + renderNqAnsiHtml(lines.slice(cursor).join('\n'));
 }
 
+function nqReportPre(lines, className = '') {
+  if (!lines.length) return '';
+  return `<pre class="nq-report-pre ${className}">${renderNqAnsiHtml(lines.join('\n'))}</pre>`;
+}
+
+function isNqSectionHeading(line) {
+  return /^[一二三四五六七八九十]+、/.test(stripNqAnsi(line).trim());
+}
+
+function splitNqSections(content = '') {
+  const sections = [];
+  let current = { title: '', lines: [] };
+  for (const line of String(content || '').split('\n')) {
+    if (isNqSectionHeading(line)) {
+      if (current.title || current.lines.length) sections.push(current);
+      current = { title: line, lines: [] };
+    } else {
+      current.lines.push(line);
+    }
+  }
+  if (current.title || current.lines.length) sections.push(current);
+  return sections;
+}
+
+export function renderNqNetworkReportHtml(content = '') {
+  const sections = splitNqSections(content);
+  return `<div class="nq-network-report">${sections.map((section) => {
+    if (!section.title) {
+      return `<div class="nq-report-intro nq-scroll-region">${nqReportPre(section.lines)}</div>`;
+    }
+    return `<section class="nq-network-section">
+      <div class="nq-network-title">${renderNqAnsiHtml(section.title)}</div>
+      <div class="nq-network-scroll nq-scroll-region">${nqReportPre(section.lines, 'nq-network-pre')}</div>
+    </section>`;
+  }).join('')}</div>`;
+}
+
+function parseNqRouteHop(line) {
+  const plain = stripNqAnsi(line).trim();
+  const match = plain.match(/^(\d+(?:-\d+)?)\s+(\d+(?:\.\d+)?ms)\s+(\S+)\s*(.*)$/);
+  if (!match) return null;
+  let rest = match[4].trim();
+  let asn = '';
+  let network = '';
+  const asnMatch = rest.match(/^(AS\d+)\b\s*/);
+  if (asnMatch) {
+    asn = asnMatch[1];
+    rest = rest.slice(asnMatch[0].length);
+  }
+  const networkMatch = rest.match(/^\[([^\]]+)]\s*/);
+  if (networkMatch) {
+    network = networkMatch[1];
+    rest = rest.slice(networkMatch[0].length);
+  }
+  const latency = Number.parseFloat(match[2]);
+  const latencyClass = latency >= 250 ? 'danger' : latency >= 150 ? 'warning' : 'success';
+  return {
+    hop: match[1],
+    latency: match[2],
+    latencyClass,
+    ip: match[3],
+    asn,
+    network,
+    location: rest,
+  };
+}
+
+function renderNqRouteHops(lines) {
+  const parsed = lines.map(parseNqRouteHop);
+  if (!parsed.some(Boolean)) {
+    return `<div class="nq-route-raw nq-scroll-region">${nqReportPre(lines)}</div>`;
+  }
+  return `<div class="nq-route-hops">${lines.map((line, index) => {
+    const hop = parsed[index];
+    if (!hop) return `<div class="nq-route-note">${renderNqAnsiHtml(line)}</div>`;
+    return `<div class="nq-route-hop">
+      <span class="nq-route-hop-number">${escapeHtml(hop.hop)}</span>
+      <span class="nq-route-latency ${hop.latencyClass}">${escapeHtml(hop.latency)}</span>
+      <span class="nq-route-ip">${escapeHtml(hop.ip)}</span>
+      <span class="nq-route-asn">${escapeHtml(hop.asn || '—')}</span>
+      <span class="nq-route-network">${escapeHtml(hop.network || '—')}</span>
+      <span class="nq-route-location">${escapeHtml(hop.location || '—')}</span>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function isNqRouteHeading(line) {
+  return /^\s*(?:北京|上海|广东|广州)\s+(?:电信|联通|移动)\s+.+?\s+->\s+.+?\s*$/.test(stripNqAnsi(line));
+}
+
+function isNqRoutePath(line) {
+  return /^地理路径：/.test(stripNqAnsi(line).trim());
+}
+
+export function renderNqRouteReportHtml(content = '') {
+  const lines = String(content || '').split('\n');
+  const chunks = [];
+  let cursor = 0;
+  while (cursor < lines.length) {
+    const routeStart = lines.findIndex((line, index) => index >= cursor && isNqRouteHeading(line));
+    if (routeStart < 0) {
+      if (cursor < lines.length) chunks.push({ kind: 'plain', lines: lines.slice(cursor) });
+      break;
+    }
+    if (routeStart > cursor) chunks.push({ kind: 'plain', lines: lines.slice(cursor, routeStart) });
+    const nextRoute = lines.findIndex((line, index) => index > routeStart && isNqRouteHeading(line));
+    const reportBreak = lines.findIndex((line, index) => index > routeStart && /^={20,}$/.test(stripNqAnsi(line).trim()));
+    const candidates = [nextRoute, reportBreak].filter((index) => index >= 0);
+    const end = candidates.length ? Math.min(...candidates) : lines.length;
+    const blockLines = lines.slice(routeStart + 1, end);
+    const pathIndex = blockLines.findIndex(isNqRoutePath);
+    chunks.push({
+      kind: 'route',
+      title: lines[routeStart],
+      path: pathIndex >= 0 ? blockLines[pathIndex] : '',
+      hops: blockLines.filter((_, index) => index !== pathIndex),
+    });
+    cursor = end;
+  }
+  return `<div class="nq-route-report">${chunks.map((chunk) => {
+    if (chunk.kind === 'plain') {
+      return `<div class="nq-report-intro nq-scroll-region">${nqReportPre(chunk.lines)}</div>`;
+    }
+    return `<section class="nq-route-block">
+      <div class="nq-route-title">${renderNqAnsiHtml(chunk.title)}</div>
+      ${chunk.path ? `<div class="nq-route-path">${renderNqAnsiHtml(chunk.path)}</div>` : ''}
+      ${renderNqRouteHops(chunk.hops)}
+    </section>`;
+  }).join('')}</div>`;
+}
+
 export function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -185,14 +316,21 @@ export function buildNqModalHtml(report) {
     return `<button type="button" class="nq-tab${index === 0 ? ' active' : ''}" data-nq-tab="${id}">${title}</button>`;
   }).join('');
   const panels = tabs.map((tab, index) => {
-    const id = escapeHtml(tab.id || `tab-${index}`);
+    const rawId = String(tab.id || `tab-${index}`).toLowerCase();
+    const id = escapeHtml(rawId);
     if (tab.kind === 'image' && tab.image) {
       const imageSrc = report?.image_proxy_base
         ? `${String(report.image_proxy_base).replace(/\/+$/, '')}/${encodeURIComponent(tab.id || `tab-${index}`)}`
         : tab.image;
       return `<div class="nq-panel nq-image-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><img class="nq-image" src="${escapeHtml(imageSrc)}" data-nq-original="${escapeHtml(tab.image)}" alt="${escapeHtml(nqTabTitle(tab))}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></div>`;
     }
-    return `<div class="nq-panel nq-ansi-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><pre class="nq-ansi">${renderNqReportHtml(tab.content || '')}</pre></div>`;
+    const content = rawId === 'network'
+      ? renderNqNetworkReportHtml(tab.content || '')
+      : rawId === 'route'
+        ? renderNqRouteReportHtml(tab.content || '')
+        : `<pre class="nq-ansi">${renderNqReportHtml(tab.content || '')}</pre>`;
+    const layoutClass = rawId === 'network' || rawId === 'route' ? ` nq-${rawId}-panel` : '';
+    return `<div class="nq-panel nq-ansi-panel${layoutClass}${index === 0 ? ' active' : ''}" data-nq-panel="${id}">${content}</div>`;
   }).join('');
   return `
     <div class="nq-modal-backdrop" data-nq-close>
@@ -228,6 +366,9 @@ export function bindNodeQualityModal(root) {
       panels.querySelectorAll('.nq-ansi').forEach((ansi) => {
         ansi.scrollTop = 0;
         ansi.scrollLeft = 0;
+      });
+      panels.querySelectorAll('.nq-ansi-panel, .nq-scroll-region').forEach((region) => {
+        region.scrollLeft = 0;
       });
     });
   });

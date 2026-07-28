@@ -1,7 +1,7 @@
 import { copyText } from "./install-command.js";
 import { createAdminClient } from "./admin/api.js";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260728-beta21";
+import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260728-beta22";
 import {
   CURRENCIES,
   PROVIDERS,

@@ -60,8 +60,8 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260728-beta21/, 'admin CSS cache key must publish the full NQ report layout');
-assert.match(adminHtml, /js\/admin\.js\?v=20260728-beta21/, 'admin JS cache key must publish the full NQ task report');
+assert.match(adminHtml, /admin\.css\?v=20260728-beta22/, 'admin CSS cache key must publish the responsive NQ network and route layout');
+assert.match(adminHtml, /js\/admin\.js\?v=20260728-beta22/, 'admin JS cache key must publish the responsive NQ network and route layout');
 assert.match(adminSource, /selectedTargetIds[\s\S]*targetBulkBarHtml[\s\S]*bulkTargetModal/, 'admin must support selecting and batch-editing VPS targets');
 assert.match(adminSource, /apiAdmin\("\/api\/targets\/bulk"[\s\S]*method:\s*"PATCH"/, 'batch target editing must use one protected Worker request');
 assert.match(adminSource, /只有左侧已勾选的字段会被覆盖/, 'batch editor must explain selective field updates');
@@ -89,8 +89,8 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260728-beta21/, 'frontend cache key must publish the shared NQ report behavior');
-assert.match(indexHtml, /style\.css\?v=20260728-beta19/, 'frontend CSS cache key must publish VPS separation and layout balancing');
+assert.match(indexHtml, /app\.js\?v=20260728-beta22/, 'frontend cache key must publish the responsive NQ network and route layout');
+assert.match(indexHtml, /style\.css\?v=20260728-beta22/, 'frontend CSS cache key must publish the responsive NQ network and route layout');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.doesNotMatch(indexHtml, /data-frontend-theme|themeCanvas|themeBoot|theme-pending/, 'removed themes must not leave a startup shell');
@@ -181,6 +181,10 @@ assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-image\s*\{\
 assert.match(styleSource, /\.nq-ansi-panel\s*\{[\s\S]*-webkit-overflow-scrolling:\s*touch/, 'ANSI reports must support touch scrolling on iPhone');
 assert.match(styleSource, /\.nq-panels\s*\{[\s\S]*flex:\s*1 1 auto[\s\S]*overscroll-behavior:\s*contain/, 'NQ report content must scroll without covering tabs');
 assert.match(nodeQualitySource, /panels\.scrollTop\s*=\s*0/, 'switching NQ tabs must reset vertical scroll');
+assert.match(nodeQualitySource, /renderNqNetworkReportHtml[\s\S]*renderNqRouteReportHtml/, 'long NQ network and route reports must use dedicated renderers');
+assert.match(styleSource, /\.nq-route-hop\s*\{[\s\S]*grid-template-areas:/, 'route hops must use a responsive grid');
+assert.match(styleSource, /\.nq-route-path\s*\{[\s\S]*overflow-wrap:\s*anywhere/, 'route path metadata must wrap within the modal width');
+assert.match(styleSource, /\.nq-network-scroll\s*\{[\s\S]*overflow-x:\s*auto/, 'each wide network section must expose its own horizontal scrolling region');
 assert.match(adminSource, /data-a="task-nq"/, 'admin must expose the fixed NodeQuality action');
 assert.match(adminSource, /data-a="task-unlock"/, 'admin must expose the fixed IPv4 unlock action');
 assert.match(adminSource, /\/api\/agent-tasks/, 'Beta actions must use the fixed task API');

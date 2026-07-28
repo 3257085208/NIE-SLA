@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.21",
+  "version": "0.24.0-beta.22",
   "agent_version": "v1.0.34",
-  "source_ref": "app-v0.24.0-beta.21",
-  "published_at": "2026-07-28T12:24:35Z",
-  "title": "NIE-SLA 0.24 Beta 21",
+  "source_ref": "app-v0.24.0-beta.22",
+  "published_at": "2026-07-28T14:47:10Z",
+  "title": "NIE-SLA 0.24 Beta 22",
   "changelog": [
-    "后台成功的 NodeQuality 任务直接读取已保存报告，不再展示原始任务 JSON",
-    "后台与前端共用响应式四页签报告组件，桌面和移动端保持一致交互",
-    "管理员账号密码更新降低密码派生的 Worker CPU 峰值，修复免费套餐下写入前超时的问题",
-    "账号更新成功后撤销全部既有会话并立即返回登录页，要求使用新凭据重新登录",
-    "NodeQuality 展示内容来自 Agent 捕获的原始报告数据，不代替第三方网站的提交与 NodeSeek 格式生成"
+    "NodeQuality 网络质量按章节拆分，宽表在对应章节内独立滚动，不再裁切整份报告",
+    "回程路由改为线路、地理与自治系统路径、逐跳节点的响应式结构",
+    "逐跳节点完整显示延迟、IP、ASN、网络与地理位置，IPv4 和 IPv6 长内容自动换行",
+    "网络质量章节去除深色标题横条，仅保留透明标题和低对比度分隔线",
+    "桌面与移动端共享同一报告解析器，切换页签时重置所有内部横向位置"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

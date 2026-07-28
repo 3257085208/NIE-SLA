@@ -1351,6 +1351,95 @@ th {
 .nq-media-badge.warning { background: #ca8a04; }
 .nq-media-badge.neutral { background: #475569; }
 .nq-image { display: block; width: min(100%, 760px); max-width: 100%; height: auto; margin: 0 auto; background: #fff; }
+.nq-network-panel,
+.nq-route-panel { overflow-x: hidden; }
+.nq-network-report,
+.nq-route-report {
+  min-width: 0;
+  color: #e5e7eb;
+  font-family: "Noto Sans Mono CJK SC", "Sarasa Mono SC", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-variant-ligatures: none;
+}
+.nq-report-intro {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 5px 10px 8px;
+  border-bottom: 1px solid #334155;
+  -webkit-overflow-scrolling: touch;
+}
+.nq-report-pre {
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
+  color: #e5e7eb;
+  white-space: pre;
+  font: 10.5px/1.45 "Noto Sans Mono CJK SC", "Sarasa Mono SC", "SFMono-Regular", Menlo, Consolas, monospace;
+  font-variant-ligatures: none;
+}
+.nq-network-section { min-width: 0; border-top: 1px solid #334155; }
+.nq-network-title {
+  padding: 8px 10px 3px;
+  color: #f8fafc;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+.nq-network-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 5px 10px 11px;
+  -webkit-overflow-scrolling: touch;
+}
+.nq-network-pre { font-size: 10px; line-height: 1.45; }
+.nq-route-report { display: grid; gap: 0; }
+.nq-route-block { min-width: 0; padding: 9px 10px 11px; border-bottom: 1px solid #334155; }
+.nq-route-title {
+  min-width: 0;
+  color: #f8fafc;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+.nq-route-path {
+  margin: 5px 0 7px;
+  padding: 5px 7px;
+  color: #dbeafe;
+  background: #1e3a5f;
+  border-left: 3px solid #3b82f6;
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.nq-route-hops { display: grid; gap: 1px; min-width: 0; }
+.nq-route-hop {
+  display: grid;
+  grid-template-areas: "hop latency ip asn network location";
+  grid-template-columns: 36px 61px minmax(88px, 1.1fr) 57px minmax(74px, .85fr) minmax(120px, 1.7fr);
+  gap: 5px;
+  align-items: start;
+  min-width: 0;
+  padding: 4px 6px;
+  color: #dbe4f0;
+  background: rgba(30, 41, 59, .42);
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+.nq-route-hop:nth-child(even) { background: rgba(51, 65, 85, .4); }
+.nq-route-hop-number { grid-area: hop; color: #f8fafc; font-weight: 700; }
+.nq-route-latency { grid-area: latency; font-weight: 700; white-space: nowrap; }
+.nq-route-latency.success { color: #84cc16; }
+.nq-route-latency.warning { color: #facc15; }
+.nq-route-latency.danger { color: #f87171; }
+.nq-route-ip { grid-area: ip; color: #e2e8f0; overflow-wrap: anywhere; }
+.nq-route-asn { grid-area: asn; color: #bfdbfe; font-weight: 700; overflow-wrap: anywhere; }
+.nq-route-network { grid-area: network; color: #cbd5e1; overflow-wrap: anywhere; }
+.nq-route-location { grid-area: location; color: #cbd5e1; overflow-wrap: anywhere; }
+.nq-route-note { padding: 4px 6px; color: #cbd5e1; font-size: 10px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.nq-route-raw { max-width: 100%; overflow-x: auto; padding: 5px 0; -webkit-overflow-scrolling: touch; }
 .nq-empty,
 .nq-loading { padding: 42px 18px; color: #64748b; background: #fff; text-align: center; }
 @media (max-width: 760px) {
@@ -1370,6 +1459,27 @@ th {
   .nq-media-cell { min-height: 17px; padding: 1px 3px; }
   .nq-media-badge { min-width: 36px; padding: 2px 5px; font-size: 10px; }
   .nq-image { width: 100%; }
+  .nq-report-pre { font-size: 9px; line-height: 1.4; }
+  .nq-network-title { padding: 7px 8px 3px; font-size: 11px; }
+  .nq-network-scroll { padding: 5px 8px 9px; }
+  .nq-network-pre { font-size: 9px; }
+  .nq-route-block { padding: 8px 7px 9px; }
+  .nq-route-title { font-size: 10px; }
+  .nq-route-path { margin: 4px 0 6px; padding: 5px 6px; font-size: 9px; }
+  .nq-route-hop {
+    grid-template-areas:
+      "hop latency ip"
+      "asn network network"
+      "location location location";
+    grid-template-columns: 36px 58px minmax(0, 1fr);
+    gap: 3px 5px;
+    padding: 5px 6px;
+    font-size: 9px;
+  }
+  .nq-route-network,
+  .nq-route-asn { font-size: 8.5px; }
+  .nq-route-location { padding-top: 1px; color: #94a3b8; }
+  .nq-route-note { font-size: 9px; }
 }
 @media (max-width: 420px) {
   .nq-modal-backdrop { padding: 4px; }
