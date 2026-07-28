@@ -64,6 +64,7 @@ try {
   assert.match(uploads[0].url, /uploadChannel=cfr2/);
   assert.match(uploads[0].url, /channelName=NQ-R2/);
   assert.match(uploads[0].url, /uploadFolder=NIE-SLA%2FNodeQuality/);
+  assert.match(uploads[0].url, /serverCompress=false/);
   assert.equal(uploads[0].options.headers.authorization, 'Bearer imgbed_test_token_with_upload_permission');
   assert.equal(uploads[0].file.type, 'image/svg+xml');
 
@@ -86,6 +87,49 @@ try {
 } finally {
   globalThis.fetch = originalFetch;
 }
+
+for (const [status, expectedStatus, message] of [
+  [400, 502, /上传渠道/],
+  [401, 502, /Token 无效或已过期/],
+  [403, 502, /upload 权限/],
+  [404, 502, /\/upload/],
+  [429, 503, /请求过于频繁/],
+  [503, 502, /暂时不可用/],
+]) {
+  globalThis.fetch = async () => new Response('upstream details must remain private', { status });
+  await assert.rejects(
+    () => testNodeQualityImageHost(jsonRequest({}), env),
+    (error) => error?.status === expectedStatus && message.test(error.message) && !error.message.includes('upstream details'),
+  );
+}
+
+for (const [body, message] of [
+  ['not-json', /无效 JSON/],
+  ['{}', /没有图片地址/],
+  ['{"src":"http://127.0.0.1/private.svg"}', /无效或不安全/],
+]) {
+  globalThis.fetch = async () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } });
+  await assert.rejects(
+    () => testNodeQualityImageHost(jsonRequest({}), env),
+    (error) => error?.status === 502 && message.test(error.message),
+  );
+}
+
+globalThis.fetch = async () => { throw new TypeError('fetch failed for https://secret-upstream.example/path'); };
+await assert.rejects(
+  () => testNodeQualityImageHost(jsonRequest({}), env),
+  (error) => error?.status === 502 && /无法连接/.test(error.message) && !error.message.includes('secret-upstream'),
+);
+globalThis.fetch = async () => {
+  const error = new Error('aborted');
+  error.name = 'AbortError';
+  throw error;
+};
+await assert.rejects(
+  () => testNodeQualityImageHost(jsonRequest({}), env),
+  (error) => error?.status === 504 && /上传超时/.test(error.message),
+);
+globalThis.fetch = originalFetch;
 
 await updateNodeQualityImageHostSettings(jsonRequest({ enabled: false, api_token_clear: true }), env);
 assert.equal((await getNodeQualityImageHostSettings(env)).api_token_set, false);

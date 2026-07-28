@@ -9,7 +9,7 @@ const SECRET_CONTEXT = new TextEncoder().encode('NIE-SLA:nq-image-host-token:v1'
 const MAX_RESPONSE_BYTES = 32 * 1024;
 const MAX_RENDER_LINES = 1400;
 const MAX_RENDER_COLUMNS = 240;
-const UPLOAD_TIMEOUT_MS = 10_000;
+const UPLOAD_TIMEOUT_MS = 30_000;
 const CHANNELS = new Set(['', 'telegram', 'cfr2', 's3', 'discord', 'huggingface', 'webdav', 'external']);
 
 const DEFAULT_SETTINGS = Object.freeze({
@@ -183,6 +183,7 @@ async function uploadSvg(env, settingsValue, token, svg, filename) {
   const uploadUrl = new URL(endpoint);
   uploadUrl.searchParams.set('returnFormat', 'full');
   uploadUrl.searchParams.set('autoRetry', 'false');
+  uploadUrl.searchParams.set('serverCompress', 'false');
   if (settings.upload_channel) uploadUrl.searchParams.set('uploadChannel', settings.upload_channel);
   if (settings.channel_name) uploadUrl.searchParams.set('channelName', settings.channel_name);
   if (settings.folder) uploadUrl.searchParams.set('uploadFolder', settings.folder);
@@ -200,18 +201,46 @@ async function uploadSvg(env, settingsValue, token, svg, filename) {
       redirect: 'error',
       signal: controller.signal,
     });
+  } catch (error) {
+    if (controller.signal.aborted || error?.name === 'AbortError') {
+      throw new ApiError(504, '图床上传超时，请检查所选上传渠道及其网络连接');
+    }
+    throw new ApiError(502, '无法连接图床上传 API，请确认地址可访问且没有发生跳转');
   } finally {
     clearTimeout(timer);
   }
   const finalEndpoint = validateUploadEndpoint(response.url || uploadUrl.toString());
-  const body = await readResponseTextLimited(response, MAX_RESPONSE_BYTES);
-  if (!response.ok) throw new Error(`图床返回 HTTP ${response.status}`);
+  let body;
+  try {
+    body = await readResponseTextLimited(response, MAX_RESPONSE_BYTES);
+  } catch (_) {
+    throw new ApiError(502, '图床响应无法读取或超过大小限制');
+  }
+  if (!response.ok) throw imageHostHttpError(response.status);
   let data;
-  try { data = JSON.parse(body); } catch (_) { throw new Error('图床返回了无效 JSON'); }
+  try { data = JSON.parse(body); } catch (_) { throw new ApiError(502, '图床返回了无效 JSON'); }
   const item = Array.isArray(data) ? data[0] : data;
   const rawUrl = String(item?.publicUrl || item?.src || '').trim();
-  if (!rawUrl) throw new Error('图床响应中没有图片地址');
-  return validatePublicImageUrl(new URL(rawUrl, finalEndpoint.origin).toString());
+  if (!rawUrl) throw new ApiError(502, '图床响应中没有图片地址');
+  try {
+    return validatePublicImageUrl(new URL(rawUrl, finalEndpoint.origin).toString());
+  } catch (_) {
+    throw new ApiError(502, '图床返回的图片地址无效或不安全');
+  }
+}
+
+function imageHostHttpError(statusValue) {
+  const status = Math.max(0, Math.trunc(Number(statusValue) || 0));
+  if (status === 400 || status === 422) {
+    return new ApiError(502, `图床拒绝上传（HTTP ${status}），请检查上传渠道、渠道名称及图床存储配置`);
+  }
+  if (status === 401) return new ApiError(502, '图床 API Token 无效或已过期（HTTP 401）');
+  if (status === 403) return new ApiError(502, '图床 API Token 缺少 upload 权限（HTTP 403）');
+  if (status === 404) return new ApiError(502, '图床上传 API 不存在（HTTP 404），地址应以 /upload 结尾');
+  if (status === 408 || status === 504) return new ApiError(504, `图床上传超时（HTTP ${status}）`);
+  if (status === 429) return new ApiError(503, '图床请求过于频繁（HTTP 429），请稍后重试');
+  if (status >= 500) return new ApiError(502, `图床服务暂时不可用（HTTP ${status}）`);
+  return new ApiError(502, `图床上传失败（HTTP ${status || '未知'}）`);
 }
 
 function normalizeSettings(input = {}) {

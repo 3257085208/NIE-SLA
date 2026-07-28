@@ -42,6 +42,8 @@ Cloudflare 模式只保证国家代码。定位失败不会阻止指标上报，
 
 “设置 → Agent → NQ 报告图床”兼容 `MarSeventh/CloudFlare-ImgBed` 的 `POST /upload` 接口。填写完整上传地址与具有 `upload` 权限的 API Token 后，可先点“测试上传”；启用后，以后运行的 NQ 会把“网络质量”和“回程路由”渲染为自包含 SVG 并上传。
 
+API Token 必须使用创建成功时返回的完整值。CloudFlare-ImgBed 的 Token 列表之后只显示截断值，该值不能用于上传。Telegram 渠道会按文档模式上传 SVG 文件；测试失败时后台会分别提示 Token 无效、权限不足、渠道配置、限流、上游故障或超时。
+
 - Token 由 Worker 加密保存在 D1，不会返回前端或下发到 VPS；
 - 上传仅接受公网 HTTPS 地址，图片响应地址也会再次校验；
 - 图床失败不会把 NQ 任务判为失败，前端会回退到原始文本报告；

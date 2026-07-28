@@ -1,16 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.24",
+  "version": "0.24.0-beta.25",
   "agent_version": "v1.0.34",
-  "source_ref": "app-v0.24.0-beta.24",
-  "published_at": "2026-07-28T19:00:15Z",
-  "title": "NIE-SLA 0.24 Beta 24",
+  "source_ref": "app-v0.24.0-beta.25",
+  "published_at": "2026-07-28T19:47:47Z",
+  "title": "NIE-SLA 0.24 Beta 25",
   "changelog": [
-    "NodeQuality 网络质量与回程路由可渲染为 SVG 并上传到兼容 CloudFlare-ImgBed 的自建图床",
-    "图床 Token 加密保存，接口限制为公开 HTTPS /upload，上传失败自动回退文本报告",
-    "Agent Metrics 与 TCP Ping 通过 Durable Object 按小时合并写 R2，保持五分钟上传与完整图表点",
-    "SLA 汇总、凭据活跃时间、状态快照和流量账本改为低读写路径，现有 API 与前端不变",
-    "默认配置新增 100 台 VPS、五分钟上传的 Cloudflare 免费额度回归预算"
+    "NQ 图床上传严格对齐 CloudFlare ImgBed 官方 API，Telegram 渠道明确使用非压缩文件模式",
+    "图床等待窗口适配 Telegram 上传链路，测试结果区分 Token、权限、渠道、限流、上游故障与超时",
+    "后台和文档明确要求使用 Token 创建时返回的完整值，避免误用列表中的截断值",
+    "图床响应正文、内部地址与 API Token 继续保持不对外泄露，NQ 上传失败仍回退文本报告"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -2085,7 +2085,7 @@ async function loadNqImageHost() {
     const data = await api("/api/settings/nq-image-host");
     const tokenHint = data.api_token_set
       ? `已配置${data.api_token_source === "env" ? "（环境变量）" : "（后台加密保存）"}；留空不修改`
-      : "填写 CloudFlare-ImgBed 中具有 upload 权限的 API Token";
+      : "填写创建时返回的完整 API Token（需要 upload 权限）";
     const endpointLocked = data.endpoint_source === "env";
     const tokenLocked = data.api_token_source === "env";
     box.innerHTML = `
@@ -2098,7 +2098,7 @@ async function loadNqImageHost() {
       </div>
       <div class="f"><label>上传目录</label><input id="nqImgFolder" value="${escapeHtml(data.folder || "")}" maxlength="160" placeholder="NIE-SLA/NodeQuality"></div>
       ${data.api_token_set && !tokenLocked ? '<label class="switch-line"><input id="nqImgClearToken" type="checkbox"><span>保存时清除已存 API Token</span></label>' : ""}
-      <p class="hint">兼容 MarSeventh/CloudFlare-ImgBed。只处理以后运行的 NQ 报告；图床失败时仍保存并显示原始文本，不会把 Token 下发给 Agent 或前端。</p>
+      <p class="hint">兼容 MarSeventh/CloudFlare-ImgBed。必须使用 Token 创建成功时返回的完整值；Token 列表之后显示的截断值不能用于上传。只处理以后运行的 NQ 报告；图床失败时仍保存并显示原始文本，不会把 Token 下发给 Agent 或前端。</p>
       ${endpointLocked || tokenLocked ? '<p class="hint">标记为环境变量的项目由 Worker 配置优先控制，后台不能覆盖。</p>' : ""}
       <div class="backup-actions"><button class="btn btn-primary btn-sm" id="saveNqImageHost">保存图床设置</button><button class="btn btn-blue btn-sm" id="testNqImageHost">测试上传</button></div>
       <div id="nqImageHostTestResult"></div>`;

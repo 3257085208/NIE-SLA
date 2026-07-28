@@ -2,6 +2,14 @@
 
 NIE-SLA 当前处于 Beta。应用使用 `0.x.y-beta.N`，Rust Agent 使用独立 `vX.Y.Z` 版本。
 
+## 0.24.0-beta.25 - 2026-07-29
+
+- NQ 图床上传严格对齐 CloudFlare ImgBed 官方 `POST /upload` 文档：保留 `multipart/form-data`、Bearer Token、渠道、渠道名称、目录及数组响应兼容，Telegram 渠道明确使用非压缩文件模式。
+- 上传等待窗口由 10 秒调整为 30 秒，适配 Telegram 上传、文件登记和可选内容检测链路；普通 NQ 报告与现有前端展示保持不变。
+- 测试上传不再把所有图床错误折叠成“服务器内部错误”，现在分别提示 Token 无效、缺少 `upload` 权限、渠道配置、接口地址、限流、上游故障与超时，同时继续隐藏响应正文、内部地址和 Token。
+- 后台与中英文文档明确要求使用 Token 创建成功时返回的完整值；CloudFlare ImgBed Token 列表之后显示的截断值不能用于上传。
+- Rust Agent 版本保持 `v1.0.34`，本次无需重新安装、自动更新或重新构建 Agent。
+
 ## 0.24.0-beta.24 - 2026-07-29
 
 - 后台新增兼容 `MarSeventh/CloudFlare-ImgBed` 的 NodeQuality 图床：网络质量与回程路由可渲染为自包含 SVG 后上传，支持渠道、渠道名称和目录；API Token 使用 AES-GCM 加密保存在 D1，不返回浏览器或 Agent，上传失败自动回退文本报告。
