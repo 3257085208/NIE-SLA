@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::io::Read;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
 use std::thread;
@@ -687,19 +687,23 @@ impl Collector {
     }
 
     fn disk(&self) -> DiskInfo {
-        let mut total = 0_u64;
-        let mut avail = 0_u64;
-        for disk in self.disks.list() {
-            total = total.saturating_add(disk.total_space());
-            avail = avail.saturating_add(disk.available_space());
-        }
-        let used = total.saturating_sub(avail);
-        DiskInfo {
-            total_gb: bytes_to_gb(total),
-            used_gb: bytes_to_gb(used),
-            avail_gb: bytes_to_gb(avail),
-            percent: pct(used as f64, total as f64),
-        }
+        let disks = self.disks.list();
+        let mount_points: Vec<_> = disks.iter().map(|disk| disk.mount_point()).collect();
+        let preferred_paths = preferred_disk_paths();
+        let preferred_refs: Vec<_> = preferred_paths.iter().map(PathBuf::as_path).collect();
+        let selected = select_mount_index(&mount_points, &preferred_refs)
+            .and_then(|index| disks.get(index))
+            .or_else(|| {
+                disks
+                    .iter()
+                    .filter(|disk| !disk.is_removable())
+                    .max_by_key(|disk| disk.total_space())
+            })
+            .or_else(|| disks.iter().max_by_key(|disk| disk.total_space()));
+
+        selected
+            .map(|disk| disk_info(disk.total_space(), disk.available_space()))
+            .unwrap_or_default()
     }
 
     fn vps_info(&mut self) -> VpsInfo {
@@ -737,6 +741,47 @@ impl Collector {
             chipset_temp_c: thermal.chipset_temp_c,
             temperature_sensors: thermal.sensors,
         }
+    }
+}
+
+fn preferred_disk_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    #[cfg(unix)]
+    paths.push(PathBuf::from("/"));
+    #[cfg(windows)]
+    if let Some(drive) = env::var_os("SystemDrive") {
+        paths.push(PathBuf::from(format!(
+            "{}\\",
+            drive.to_string_lossy().trim_end_matches(['\\', '/'])
+        )));
+    }
+    if let Ok(path) = env::current_exe() {
+        paths.push(path);
+    } else if let Ok(path) = env::current_dir() {
+        paths.push(path);
+    }
+    paths
+}
+
+fn select_mount_index(mount_points: &[&Path], preferred_paths: &[&Path]) -> Option<usize> {
+    preferred_paths.iter().find_map(|preferred| {
+        mount_points
+            .iter()
+            .enumerate()
+            .filter(|(_, mount)| preferred.starts_with(mount))
+            .max_by_key(|(_, mount)| mount.components().count())
+            .map(|(index, _)| index)
+    })
+}
+
+fn disk_info(total: u64, avail: u64) -> DiskInfo {
+    let avail = avail.min(total);
+    let used = total.saturating_sub(avail);
+    DiskInfo {
+        total_gb: bytes_to_gb(total),
+        used_gb: bytes_to_gb(used),
+        avail_gb: bytes_to_gb(avail),
+        percent: pct(used as f64, total as f64),
     }
 }
 
@@ -1262,6 +1307,38 @@ fn upload_report_due(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disk_uses_the_root_filesystem_instead_of_summing_bind_mounts() {
+        let mount_points = [
+            Path::new("/"),
+            Path::new("/etc/hostname"),
+            Path::new("/etc/hosts"),
+            Path::new("/etc/resolv.conf"),
+        ];
+        let index = select_mount_index(&mount_points, &[Path::new("/")]).unwrap();
+        let fourteen_gib = 14 * 1024 * 1024 * 1024;
+        let info = disk_info(fourteen_gib, 4 * 1024 * 1024 * 1024);
+
+        assert_eq!(index, 0);
+        assert_eq!(info.total_gb, 14.0);
+        assert_eq!(info.used_gb, 10.0);
+        assert_eq!(info.avail_gb, 4.0);
+        assert_eq!(info.percent, 71.43);
+    }
+
+    #[test]
+    fn disk_selects_the_longest_mount_containing_the_preferred_path() {
+        let mount_points = [Path::new("/"), Path::new("/srv"), Path::new("/srv/agent")];
+
+        assert_eq!(
+            select_mount_index(
+                &mount_points,
+                &[Path::new("/srv/agent/bin/nstatus-metrics")]
+            ),
+            Some(2)
+        );
+    }
 
     #[test]
     fn sample_deadline_does_not_add_work_time_to_the_period() {

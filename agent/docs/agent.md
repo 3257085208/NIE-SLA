@@ -30,7 +30,7 @@ OpenWrt/routers are supported when their CPU/ABI matches one of the Linux binari
 |--------|--------|----------|
 | CPU | `sysinfo` / platform counters | Every 1s |
 | Memory + Swap | `sysinfo` | Every 1s |
-| Disk usage | `sysinfo` disks | Every 1s |
+| System disk usage | Root filesystem / system volume from `sysinfo` | Every 1s |
 | Load | `sysinfo` load average | Every 1s |
 | Network rate | `/proc/net/dev` on Linux | Every 1s |
 | TCP/UDP connections | `/proc/net/tcp*`, `/proc/net/udp*` on Linux | Every 1s |
@@ -39,6 +39,8 @@ OpenWrt/routers are supported when their CPU/ABI matches one of the Linux binari
 | VPS info | CPU, OS, kernel, memory, disk, virtualization | Cached at start |
 
 The Agent samples locally every 1 second and uploads batches every 300 seconds by default. Uploads run in the background so slow network requests do not pause sampling.
+
+Disk capacity and usage describe the root filesystem on Unix and the system volume on Windows. Bind mounts and additional data volumes are not added together, so one underlying filesystem cannot be counted multiple times.
 
 ### Management Commands
 

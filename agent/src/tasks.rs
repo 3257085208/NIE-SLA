@@ -696,7 +696,7 @@ fn extract_report_url(output: &str) -> Option<String> {
         .filter_map(|part| part.find("https://").map(|index| &part[index..]))
         .map(|part| part.trim_matches(|ch: char| "[](){}<>\"',，。；;：:".contains(ch)))
         .filter_map(normalize_nodequality_report_url)
-        .last();
+        .next_back();
     direct.or_else(|| {
         extract_nodequality_token(output).map(|token| format!("https://nodequality.com/r/{token}"))
     })
@@ -734,7 +734,7 @@ fn extract_nodequality_token(output: &str) -> Option<String> {
                 .filter(|token| valid_nodequality_token(token))
                 .map(str::to_string)
         })
-        .last()
+        .next_back()
 }
 
 fn valid_nodequality_token(value: &str) -> bool {

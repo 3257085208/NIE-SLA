@@ -2,6 +2,13 @@
 
 NIE-SLA 当前处于 Beta。应用使用 `0.x.y-beta.N`，Rust Agent 使用独立 `vX.Y.Z` 版本。
 
+## 0.24.0-beta.28 - 2026-07-29
+
+- 修复 Rust Agent 将根文件系统与 `/etc/hosts`、`/etc/hostname`、`/etc/resolv.conf` 等同设备绑定挂载重复相加，导致约 14 GB 的 VPS 被显示为约 54 GB 的问题。
+- 磁盘容量和使用率现在以系统根文件系统为准；Windows 优先系统卷，缺失根挂载信息时回退到 Agent 所在卷，不再把互不相关或重复的挂载点合并成一个虚假容量。
+- 新增重复绑定挂载、最长匹配挂载点和容量换算回归测试，并在 macOS 本地完成 Rust 全量测试、严格 Clippy 与 Linux 多架构静态构建。
+- Rust Agent 更新至 `v1.0.36`，现有 Linux Agent 会通过校验后的自动更新获取；新数据上报后前端磁盘容量会自动恢复为正确值。
+
 ## 0.24.0-beta.27 - 2026-07-29
 
 - NodeQuality 网络质量与回程路由图床图片改为与原报告一致的 AdventureTime 终端主题，去除额外标题栏，并使用 14px 等宽排版、对称边距与 2 倍清晰度输出。

@@ -21,6 +21,8 @@ journalctl -u nstatus-metrics -n 100 --no-pager
 
 OpenRC 系统由安装器创建对应服务。
 
+磁盘容量与使用率表示 Unix 根文件系统或 Windows 系统卷。绑定挂载和其他数据盘不会相加，避免同一个底层文件系统被重复计数。
+
 ## 自动 GeoIP
 
 主 Agent 启动后读取后台 GeoIP 配置，查询出口 IPv4/IPv6 并上报。位置失败不阻止指标上报。

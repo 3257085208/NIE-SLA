@@ -1,16 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.27",
-  "agent_version": "v1.0.35",
-  "source_ref": "app-v0.24.0-beta.27",
-  "published_at": "2026-07-28T21:54:08Z",
-  "title": "NIE-SLA 0.24 Beta 27",
+  "version": "0.24.0-beta.28",
+  "agent_version": "v1.0.36",
+  "source_ref": "app-v0.24.0-beta.28",
+  "published_at": "2026-07-29T11:20:25Z",
+  "title": "NIE-SLA 0.24 Beta 28",
   "changelog": [
-    "NQ 网络质量与回程路由图片改为 NodeQuality 同款终端主题，并稳定绘制连续方格图形",
-    "完整支持 ANSI 前景色、背景色、反色、粗体、暗色、256 色与 RGB 色，报告不再依赖客户端字体",
-    "Agent 网络请求优先 IPv4，传输层失败时自动回退 IPv6，修复单栈故障导致的持续离线",
-    "上传失败后的积压数据严格遵守退避周期，避免短周期重复请求消耗 Workers 免费额度",
-    "安装程序必须确认服务存活且首包上报成功；Rust Agent 更新至 v1.0.35"
+    "修复重复累加根文件系统和同设备绑定挂载，导致 VPS 磁盘容量显示为实际数倍的问题",
+    "磁盘容量与使用率统一以系统根文件系统为准，并保留跨平台系统卷回退",
+    "新增重复绑定挂载、最长匹配挂载点与容量换算回归测试",
+    "Rust Agent 更新至 v1.0.36，节点自动更新并完成新上报后前端会显示正确容量"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
