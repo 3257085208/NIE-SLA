@@ -2664,10 +2664,12 @@ async function loadAccount() {
       api("/api/auth/account"),
       api("/api/login"),
     ]);
+    const currentUsername = String(account.username || "admin");
     const source = account.credentials_source === "db" ? "后台账号" : "环境变量（首次修改后迁移）";
     box.innerHTML = `
       <div class="account-form">
-        ${formField("管理员账号", `<input id="accountUsername" autocomplete="username" value="${escapeHtml(account.username || "admin")}">`)}
+        ${formField("当前管理员账号", `<input id="accountCurrentUsername" value="${escapeHtml(currentUsername)}" readonly aria-readonly="true" autocomplete="off">`)}
+        ${formField("新管理员账号", '<input id="accountUsername" name="nie-sla-new-admin-username" autocomplete="off" autocapitalize="none" spellcheck="false" data-1p-ignore data-lpignore="true" placeholder="留空则保持当前账号">')}
         ${formField("当前密码", '<input id="accountCurrentPassword" type="password" autocomplete="current-password">')}
         ${formField("新密码", `<input id="accountNewPassword" type="password" minlength="${escapeHtml(account.password_min_length || 9)}" maxlength="256" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{9,256}" autocomplete="new-password">`)}
         ${formField("确认新密码", `<input id="accountConfirmPassword" type="password" minlength="${escapeHtml(account.password_min_length || 9)}" maxlength="256" pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).{9,256}" autocomplete="new-password">`)}
@@ -2692,11 +2694,18 @@ function accountSaveStatus(message, type = 'info') {
 
 async function saveAccount() {
   const button = byId("saveAccount");
-  const username = byId("accountUsername")?.value.trim() || "";
+  const currentUsername = byId("accountCurrentUsername")?.value.trim() || "";
+  const requestedUsername = byId("accountUsername")?.value.trim() || "";
+  const changeUsername = Boolean(requestedUsername);
+  const username = requestedUsername || currentUsername;
   const currentPassword = byId("accountCurrentPassword")?.value || "";
   const newPassword = byId("accountNewPassword")?.value || "";
   const confirmPassword = byId("accountConfirmPassword")?.value || "";
   const totp = byId("accountTotp")?.value.trim() || "";
+  if (!currentUsername || !/^[A-Za-z0-9._@-]{3,64}$/.test(username)) {
+    accountSaveStatus("管理员账号需为 3-64 位字母、数字或 . _ @ -", "err");
+    return toast("管理员账号格式不正确", "err");
+  }
   if (!currentPassword || !newPassword || !confirmPassword) {
     accountSaveStatus("请完整填写当前密码和新密码", "err");
     return toast("请完整填写当前密码和新密码", "err");
@@ -2726,6 +2735,8 @@ async function saveAccount() {
       cache: "no-store",
       body: JSON.stringify({
         username,
+        current_username: currentUsername,
+        change_username: changeUsername,
         current_password: currentPassword,
         new_password: newPassword,
         confirm_password: confirmPassword,
@@ -2733,8 +2744,11 @@ async function saveAccount() {
       }),
     }, 30000);
     if (!result.logout_required) throw new Error("账号已更新，但服务端未确认会话撤销");
+    if (result.username !== username || Boolean(result.username_changed) !== changeUsername) {
+      throw new Error("服务端未确认管理员账号变更，请重新登录后检查");
+    }
     clearAuth();
-    byId("loginUsername").value = username;
+    byId("loginUsername").value = result.username;
     byId("loginPassword").value = "";
     showLogin("账号密码已更新，请使用新账号密码重新登录");
   } catch (error) {

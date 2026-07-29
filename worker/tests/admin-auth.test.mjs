@@ -72,11 +72,14 @@ function jsonRequest(url, body) {
   }), env);
   const changed = await updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {
     username: 'new.owner',
+    current_username: 'owner',
+    change_username: true,
     current_password: 'correct horse battery staple',
     new_password: 'A-much-stronger-replacement1',
     confirm_password: 'A-much-stronger-replacement1',
   }), env);
   assert.equal(changed.credentials_source, 'db');
+  assert.equal(changed.username_changed, true);
   assert.equal(changed.logout_required, true);
   assert.equal(changed.session_valid, false);
   assert.equal(changed.message, '账号密码已更新，请重新登录');
@@ -118,6 +121,48 @@ function jsonRequest(url, body) {
       confirm_password: 'Another-sufficiently-long1!',
     }), env),
     /需要有效的 TOTP 验证码/,
+  );
+}
+
+{
+  const env = { DB: memoryDb(), ADMIN_USERNAME: 'admin', ADMIN_PASSWORD: 'Admin-current1!' };
+  const passwordOnly = await updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {
+    username: 'admin',
+    current_username: 'admin',
+    change_username: false,
+    current_password: 'Admin-current1!',
+    new_password: 'Admin-replacement2!',
+    confirm_password: 'Admin-replacement2!',
+  }), env);
+  assert.equal(passwordOnly.username, 'admin');
+  assert.equal(passwordOnly.username_changed, false);
+  assert.equal((await getAdminAccount(env)).username, 'admin');
+  assert.equal((await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
+    username: 'admin',
+    password: 'Admin-replacement2!',
+  }), env)).session_valid, true);
+
+  await assert.rejects(
+    updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {
+      username: 'admin',
+      current_username: 'admin',
+      change_username: true,
+      current_password: 'Admin-replacement2!',
+      new_password: 'Another-replacement3!',
+      confirm_password: 'Another-replacement3!',
+    }), env),
+    /新管理员账号与当前账号相同/,
+  );
+  await assert.rejects(
+    updateAdminAccount(jsonRequest('https://status.example/api/auth/account', {
+      username: 'new.admin',
+      current_username: 'stale.admin',
+      change_username: true,
+      current_password: 'Admin-replacement2!',
+      new_password: 'Another-replacement3!',
+      confirm_password: 'Another-replacement3!',
+    }), env),
+    /管理员账号已发生变化/,
   );
 }
 

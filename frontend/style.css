@@ -1584,22 +1584,24 @@ body:not(.is-loaded) .incident-log {
 .nq-empty, .nq-loading { padding: 42px 18px; color: #64748b; background: #fff; text-align: center; }
 
 @media (max-width: 760px) {
-  .nq-modal-backdrop { align-items: stretch; padding: 8px; }
-  .nq-modal { width: 100%; max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); border-radius: 7px; }
-  .nq-modal-head { gap: 8px; padding: 10px 12px; }
+  .nq-modal-backdrop { align-items: center; padding: 10px 14px; }
+  .nq-modal { width: min(100%, 560px); max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px); border-radius: 7px; }
+  .nq-modal-head { gap: 8px; padding: 8px 10px; }
   .nq-modal-head > div { gap: 6px; }
-  .nq-modal-head strong { font-size: 15px; }
-  .nq-modal-head span { font-size: 11px; }
-  .nq-modal-meta { gap: 6px 10px; padding: 7px 12px; font-size: 11px; }
-  .nq-tabs { gap: 0; padding: 0 8px; }
-  .nq-tab { padding: 9px 10px 8px; font-size: 12px; }
-  .nq-panels { padding: 7px; }
+  .nq-modal-head strong { font-size: 14px; }
+  .nq-modal-head span { font-size: 10.5px; }
+  .nq-close { width: 44px; height: 44px; padding: 0; }
+  .nq-modal-meta { gap: 5px 9px; padding: 6px 10px; font-size: 10.5px; }
+  .nq-tabs { gap: 0; padding: 0 6px; }
+  .nq-tab { min-height: 40px; display: inline-flex; align-items: center; padding: 7px 9px 6px; font-size: 11px; }
+  .nq-panels { padding: 5px; }
   .nq-ansi { font-size: 10px; line-height: 1.35; }
   .nq-media-block { font-size: 10px; }
   .nq-media-cell { min-height: 17px; padding: 1px 3px; }
   .nq-media-badge { min-width: 36px; padding: 2px 5px; font-size: 10px; }
   .nq-report-btn { height: 20px; padding: 2px 6px; font-size: 9px; }
-  .nq-image { width: 100%; }
+  .nq-image-panel.active { padding: 4px 0 8px; }
+  .nq-image { width: min(90%, 520px); }
   .nq-report-pre { font-size: 9px; line-height: 1.4; }
   .nq-network-title { padding: 7px 8px 3px; font-size: 11px; }
   .nq-network-scroll { padding: 5px 8px 9px; }
@@ -1624,6 +1626,11 @@ body:not(.is-loaded) .incident-log {
 }
 
 @media (max-width: 420px) {
+  .nq-modal-backdrop { padding: 8px 10px; }
+  .nq-modal { max-height: calc(100dvh - 16px); }
+  .nq-modal-meta { padding-block: 5px; }
+  .nq-tab { min-height: 38px; padding-inline: 8px; font-size: 10.5px; }
+  .nq-image { width: 88%; }
   .vps-info-section {
     grid-template-columns: 1fr;
   }
@@ -1907,6 +1914,6 @@ html, body { background-color: var(--appearance-bg, var(--bg)); }
   .inline-chart-panel { padding-inline: 8px; }
   .chart-canvas-wrap { height: 240px; max-height: 240px; }
   #latencyChart { height: 240px !important; max-height: 240px !important; }
-  .nq-modal-backdrop { padding: 4px; }
-  .nq-modal { max-height: calc(100dvh - 8px); }
+  .nq-modal-backdrop { padding: 8px 10px; }
+  .nq-modal { max-height: calc(100dvh - 16px); }
 }

@@ -64,12 +64,24 @@ export async function updateAdminAccount(request, env) {
   if (!env.DB) throw new ApiError(500, '修改账号需要 D1 数据库');
   const body = await safeJson(request, 16_384);
   const currentPassword = String(body.current_password || '');
+  const requestedCurrentUsername = normalizeUsername(body.current_username);
+  const hasUsernameChangeIntent = typeof body.change_username === 'boolean';
+  const changeUsername = body.change_username === true;
   const username = normalizeUsername(body.username);
   const password = String(body.new_password || '');
   const confirmPassword = String(body.confirm_password || '');
   const current = await resolveAdminCredentials(env);
 
   if (!current || !await verifyPassword(currentPassword, current)) throw new ApiError(401, '当前密码错误');
+  if (requestedCurrentUsername && requestedCurrentUsername !== current.username) {
+    throw new ApiError(409, '管理员账号已发生变化，请刷新页面后重试');
+  }
+  if (hasUsernameChangeIntent && changeUsername && username === current.username) {
+    throw new ApiError(400, '新管理员账号与当前账号相同，请重新输入');
+  }
+  if (hasUsernameChangeIntent && !changeUsername && username !== current.username) {
+    throw new ApiError(400, '账号变更状态不一致，请刷新页面后重试');
+  }
   validateNewCredentials(username, password, confirmPassword);
 
   const totp = await checkTOTP(env);
@@ -97,6 +109,7 @@ export async function updateAdminAccount(request, env) {
   return {
     ok: true,
     username,
+    username_changed: username !== current.username,
     totp_enabled: Boolean(totp.totp_enabled),
     session_valid: false,
     logout_required: true,

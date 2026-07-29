@@ -61,8 +61,8 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260729-beta24/, 'admin CSS cache key must publish the current release');
-assert.match(adminHtml, /js\/admin\.js\?v=20260729-beta24/, 'admin JS cache key must publish the current release');
+assert.match(adminHtml, /admin\.css\?v=20260729-mobile-nq-auth1/, 'admin CSS cache key must publish the current release');
+assert.match(adminHtml, /js\/admin\.js\?v=20260729-mobile-nq-auth1/, 'admin JS cache key must publish the current release');
 assert.match(adminSource, /selectedTargetIds[\s\S]*targetBulkBarHtml[\s\S]*bulkTargetModal/, 'admin must support selecting and batch-editing VPS targets');
 assert.match(adminSource, /apiAdmin\("\/api\/targets\/bulk"[\s\S]*method:\s*"PATCH"/, 'batch target editing must use one protected Worker request');
 assert.match(adminSource, /只有左侧已勾选的字段会被覆盖/, 'batch editor must explain selective field updates');
@@ -91,7 +91,7 @@ assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day war
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
 assert.match(indexHtml, /app\.js\?v=20260729-beta24/, 'frontend cache key must publish the current release');
-assert.match(indexHtml, /style\.css\?v=20260729-beta24/, 'frontend CSS cache key must publish the current release');
+assert.match(indexHtml, /style\.css\?v=20260729-mobile-nq-auth1/, 'frontend CSS cache key must publish the current release');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /class="theme-pending"[\s\S]*id="themeBoot"[\s\S]*id="themeCanvas"/, 'theme runtime must wait behind a first-paint shell');
@@ -171,6 +171,9 @@ assert.match(adminSource, /setupSettingsTabs\(\)/, 'settings must initialize the
 assert.match(adminSource, /function renderVpsSla\(data\)[\s\S]*targetSlaPercentage/, 'dashboard must show fleet-wide VPS SLA instead of an unused default Agent');
 assert.doesNotMatch(adminSource, /api\("\/api\/agent\/metrics"\)/, 'dashboard must not request a hard-coded default Agent');
 assert.match(adminSource, /accountSaveStatus\("正在验证并更新账号密码/, 'account updates must show progress and errors inside the settings card');
+assert.match(adminSource, /id="accountCurrentUsername"[\s\S]*readonly[\s\S]*id="accountUsername"[\s\S]*autocomplete="off"/, 'account settings must separate the current username from the autofill-resistant new username');
+assert.match(adminSource, /current_username:\s*currentUsername[\s\S]*change_username:\s*changeUsername/, 'account updates must declare whether the username should change');
+assert.match(adminSource, /result\.username !== username[\s\S]*result\.username_changed/, 'account updates must verify the server-confirmed username before reporting success');
 assert.match(adminSource, /id="pColor" type="color"/, 'Ping targets must expose a configurable chart color');
 assert.match(adminSource, /id="latencyNodeColor" type="color"/, 'Latency nodes must expose a configurable chart color');
 assert.match(appSource, /configuredChartColor\(tgt\.color/, 'TCP Ping charts must use the configured target color');
@@ -186,7 +189,9 @@ assert.match(appSource, /event\.target\.closest\('\.nq-close'\)\s*\|\|\s*event\.
 assert.match(styleSource, /\.nq-modal\s*\{[\s\S]*width:\s*min\(640px/, 'NQ modal should have a restrained desktop width');
 assert.match(appSource, /service-title-line[\s\S]*nqButton/, 'classic VPS cards must place NQ beside the name');
 assert.match(styleSource, /\.nq-image\s*\{[\s\S]*width:\s*min\(100%,\s*760px\)/, 'NQ images must use a readable content width');
-assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-image\s*\{\s*width:\s*100%/, 'NQ images must fill the available mobile content width');
+assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-image\s*\{\s*width:\s*min\(90%,\s*520px\)/, 'NQ images must use a restrained mobile content width');
+assert.match(styleSource, /@media \(max-width: 420px\) \{[\s\S]*\.nq-image\s*\{\s*width:\s*88%/, 'NQ images must shrink further on compact iPhones');
+assert.doesNotMatch(styleSource, /\.nq-modal-backdrop\s*\{\s*padding:\s*4px/, 'compact NQ dialogs must retain visible breathing room at the viewport edge');
 assert.match(styleSource, /\.nq-ansi-panel\s*\{[\s\S]*-webkit-overflow-scrolling:\s*touch/, 'ANSI reports must support touch scrolling on iPhone');
 assert.match(styleSource, /\.nq-panels\s*\{[\s\S]*flex:\s*1 1 auto[\s\S]*overscroll-behavior:\s*contain/, 'NQ report content must scroll without covering tabs');
 assert.match(nodeQualitySource, /panels\.scrollTop\s*=\s*0/, 'switching NQ tabs must reset vertical scroll');
