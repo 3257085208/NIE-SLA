@@ -16,6 +16,10 @@ CFTZ_BIN="$INSTALL_DIR/cftz"
 AGENT_USER="nstatus"
 CACHE_KEY="$(printf '%s' "${NSTATUS_SHA256SUMS_SHA256:-$(date +%s)}" | tr -cd 'A-Za-z0-9._-')"
 [[ -n "$CACHE_KEY" ]] || CACHE_KEY="$(date +%s)"
+INSTALL_STARTED_AT="$(date +%s)"
+HEALTH_CHECK_TIMEOUT_SEC="${NSTATUS_INSTALL_HEALTH_TIMEOUT_SEC:-75}"
+case "$HEALTH_CHECK_TIMEOUT_SEC" in ''|*[!0-9]*) HEALTH_CHECK_TIMEOUT_SEC=75 ;; esac
+if (( HEALTH_CHECK_TIMEOUT_SEC < 10 || HEALTH_CHECK_TIMEOUT_SEC > 300 )); then HEALTH_CHECK_TIMEOUT_SEC=75; fi
 
 ok() { printf '  [OK] %s\n' "$*"; }
 info() { printf '  %s\n' "$*"; }
@@ -250,6 +254,66 @@ EOF
   systemctl restart "$TASK_SERVICE_NAME"
 }
 
+redact_agent_output() {
+  sed \
+    -e 's/[Bb]earer[[:space:]][^[:space:]]*/Bearer [REDACTED]/g' \
+    -e 's/nst_[A-Za-z0-9._-]*/[REDACTED]/g'
+}
+
+systemd_agent_logs_since_install() {
+  journalctl -u "$SERVICE_NAME" --since "@${INSTALL_STARTED_AT}" --no-pager -o cat 2>/dev/null || true
+}
+
+print_systemd_agent_diagnostics() {
+  systemctl status "$SERVICE_NAME" --no-pager -l 2>&1 | redact_agent_output >&2 || true
+  systemd_agent_logs_since_install | tail -n 80 | redact_agent_output >&2 || true
+}
+
+verify_systemd_agent_health() {
+  local waited=0 logs=""
+  while (( waited < HEALTH_CHECK_TIMEOUT_SEC )); do
+    logs="$(systemd_agent_logs_since_install)"
+    if systemctl is-active --quiet "$SERVICE_NAME" \
+      && systemctl is-active --quiet "$TASK_SERVICE_NAME" \
+      && grep -q '"submitted_at"' <<<"$logs"; then
+      ok "systemd 服务运行正常，首包已上报"
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+
+  err "Agent 未能在 ${HEALTH_CHECK_TIMEOUT_SEC}s 内完成首包上报，安装未通过健康检查"
+  print_systemd_agent_diagnostics
+  return 1
+}
+
+service_log_lines() {
+  local file="$1"
+  if [[ -f "$file" ]]; then wc -l < "$file" | tr -d '[:space:]'
+  else printf '0'
+  fi
+}
+
+verify_file_logged_agent_health() {
+  local file="$1" start_line="$2" service_label="$3" waited=0 logs=""
+  while (( waited < HEALTH_CHECK_TIMEOUT_SEC )); do
+    if [[ -f "$file" ]]; then
+      logs="$(tail -n "+$((start_line + 1))" "$file" 2>/dev/null || true)"
+      if grep -q '"submitted_at"' <<<"$logs"; then
+        ok "${service_label} 服务运行正常，首包已上报"
+        return 0
+      fi
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+
+  err "Agent 未能在 ${HEALTH_CHECK_TIMEOUT_SEC}s 内完成首包上报，安装未通过健康检查"
+  if [[ -f "$file" ]]; then tail -n 80 "$file" | redact_agent_output >&2 || true; fi
+  return 1
+}
+
 install_openrc_update_job() {
   local job_dir=""
   if [[ -d /etc/periodic/hourly ]]; then
@@ -434,9 +498,25 @@ write_env_file "$API_BASE" "$TOKEN" "$AGENT_ID" "$AGENT_LABEL" "$INTERVAL" "$PIN
 secure_install_permissions
 
 case "$INIT" in
-  systemd) install_systemd_service; ok "systemd service started"; info "logs: journalctl -u ${SERVICE_NAME} -f" ;;
-  openrc) install_openrc_service; ok "OpenRC service started"; info "logs: tail -f /var/log/${SERVICE_NAME}.log" ;;
-  *) warn "systemd/OpenRC not detected; starting in background"; set -a; . "$ENV_FILE"; set +a; "${WORK_DIR}/${BIN_NAME}" >/var/log/${SERVICE_NAME}.log 2>&1 & ok "started pid $!"; NSTATUS_TASK_RUNNER_ONLY=1 "${WORK_DIR}/${BIN_NAME}" --task-runner-only >/var/log/${TASK_SERVICE_NAME}.log 2>&1 & ;;
+  systemd)
+    install_systemd_service
+    verify_systemd_agent_health
+    info "logs: journalctl -u ${SERVICE_NAME} -f"
+    ;;
+  openrc)
+    LOG_START_LINE="$(service_log_lines "/var/log/${SERVICE_NAME}.log")"
+    install_openrc_service
+    verify_file_logged_agent_health "/var/log/${SERVICE_NAME}.log" "$LOG_START_LINE" "OpenRC"
+    info "logs: tail -f /var/log/${SERVICE_NAME}.log"
+    ;;
+  *)
+    warn "systemd/OpenRC not detected; starting in background"
+    set -a; . "$ENV_FILE"; set +a
+    : > "/var/log/${SERVICE_NAME}.log"
+    "${WORK_DIR}/${BIN_NAME}" >"/var/log/${SERVICE_NAME}.log" 2>&1 &
+    NSTATUS_TASK_RUNNER_ONLY=1 "${WORK_DIR}/${BIN_NAME}" --task-runner-only >"/var/log/${TASK_SERVICE_NAME}.log" 2>&1 &
+    verify_file_logged_agent_health "/var/log/${SERVICE_NAME}.log" 0 "后台"
+    ;;
 esac
 
 verify_agent_version "${WORK_DIR}/${BIN_NAME}"

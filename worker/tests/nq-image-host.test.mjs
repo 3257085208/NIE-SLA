@@ -29,11 +29,22 @@ assert.throws(() => validateUploadEndpoint('http://img.example.com/upload'), /HT
 assert.throws(() => validateUploadEndpoint('https://127.0.0.1/upload'), /私有|内部/);
 assert.throws(() => validateUploadEndpoint('https://img.example.com/api'), /\/upload/);
 
-const svg = renderNodeQualitySvg('\u001b[32m成功\u001b[0m <script>alert(1)</script>', { title: '网络质量' });
+const svg = renderNodeQualitySvg('\u001b[32m成功\u001b[0m <script>alert(1)</script>');
 assert.match(svg, /<svg/);
-assert.match(svg, /#86efac/);
+assert.match(svg, /#4ab118/);
+assert.match(svg, /#1d1d1e/);
+assert.doesNotMatch(svg, /NodeQuality · 网络质量/);
 assert.doesNotMatch(svg, /<script>/);
 assert.match(svg, /&lt;script&gt;/);
+
+const styledSvg = renderNodeQualitySvg('\u001b[1;37;44m标签\u001b[0m \u001b[3;4;31m强调\u001b[0m');
+assert.match(styledSvg, /fill="#0f4ac6"/);
+assert.match(styledSvg, /fill="#f6f5fb" font-weight="700"/);
+assert.match(styledSvg, /font-style="italic"/);
+assert.match(styledSvg, /text-decoration="underline"/);
+const squareBarSvg = renderNodeQualitySvg('⣿⣀');
+assert.match(squareBarSvg, /data-nq-bar="square"/);
+assert.doesNotMatch(squareBarSvg, /[⣿⣀]/);
 
 await updateNodeQualityImageHostSettings(jsonRequest({
   enabled: true,

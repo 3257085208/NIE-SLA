@@ -1,15 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.26",
-  "agent_version": "v1.0.34",
-  "source_ref": "app-v0.24.0-beta.26",
-  "published_at": "2026-07-28T20:12:00Z",
-  "title": "NIE-SLA 0.24 Beta 26",
+  "version": "0.24.0-beta.27",
+  "agent_version": "v1.0.35",
+  "source_ref": "app-v0.24.0-beta.27",
+  "published_at": "2026-07-28T21:54:08Z",
+  "title": "NIE-SLA 0.24 Beta 27",
   "changelog": [
-    "修复 Cloudflare Workers 不支持 fetch redirect=error，导致 NQ 图床请求在发出前直接失败的问题",
-    "图床请求改用 Workers 支持的 manual 模式，并继续拒绝所有 HTTP 重定向",
-    "Cloudflare 远程运行时已验证请求可正常到达 img.nkx.moe 并获得上游 HTTP 响应",
-    "现有 Token 加密、公开 HTTPS 校验、响应限制及文本回退安全边界保持不变"
+    "NQ 网络质量与回程路由图片改为 NodeQuality 同款终端主题，并稳定绘制连续方格图形",
+    "完整支持 ANSI 前景色、背景色、反色、粗体、暗色、256 色与 RGB 色，报告不再依赖客户端字体",
+    "Agent 网络请求优先 IPv4，传输层失败时自动回退 IPv6，修复单栈故障导致的持续离线",
+    "上传失败后的积压数据严格遵守退避周期，避免短周期重复请求消耗 Workers 免费额度",
+    "安装程序必须确认服务存活且首包上报成功；Rust Agent 更新至 v1.0.35"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -20,12 +20,18 @@ const DEFAULT_SETTINGS = Object.freeze({
   folder: 'NIE-SLA/NodeQuality',
 });
 
-const ANSI_COLORS = Object.freeze({
-  30: '#111827', 31: '#f87171', 32: '#86efac', 33: '#fde047',
-  34: '#93c5fd', 35: '#d8b4fe', 36: '#67e8f9', 37: '#e5e7eb',
-  90: '#94a3b8', 91: '#fca5a5', 92: '#bbf7d0', 93: '#fef08a',
-  94: '#bfdbfe', 95: '#e9d5ff', 96: '#a5f3fc', 97: '#f8fafc',
+// Matches the xterm.js settings used by NodeQuality's own image export.
+const TERMINAL_THEME = Object.freeze({
+  foreground: '#f8dcc0',
+  background: '#1d1d1e',
+  normal: ['#050404', '#bd0013', '#4ab118', '#e7741e', '#0f4ac6', '#665993', '#70a598', '#f8dcc0'],
+  bright: ['#4e7cbf', '#fc5f5a', '#9eff6e', '#efc11a', '#1997c6', '#9b5953', '#c8faf4', '#f6f5fb'],
 });
+const TERMINAL_CELL_WIDTH = 8.45;
+const TERMINAL_LINE_HEIGHT = 17;
+const TERMINAL_FONT_SIZE = 14;
+const TERMINAL_PADDING = 20;
+const TERMINAL_SCALE = 2;
 
 export async function getNodeQualityImageHostSettings(env, { includeSecret = false } = {}) {
   const stored = await readStoredSettings(env);
@@ -112,10 +118,7 @@ export async function uploadNodeQualityReportImages(env, normalized, options = {
   const reportId = safeFilePart(extractReportId(report.link) || String(options.finishedAt || nowSec()));
   const results = await Promise.all(candidates.map(async (tab) => {
     try {
-      const svg = renderNodeQualitySvg(tab.content, {
-        title: tab.id === 'route' ? 'NodeQuality · 回程路由' : 'NodeQuality · 网络质量',
-        subtitle: String(options.targetName || options.agentId || '').trim(),
-      });
+      const svg = renderNodeQualitySvg(tab.content);
       const filename = `${agentId}-${reportId}-${safeFilePart(tab.id)}.svg`;
       const image = await uploadSvg(env, settings, settings.api_token, svg, filename);
       return { id: tab.id, image };
@@ -140,40 +143,96 @@ export async function uploadNodeQualityReportImages(env, normalized, options = {
   };
 }
 
-export function renderNodeQualitySvg(content, options = {}) {
-  const source = sanitizeAnsiContent(String(content || '')).replace(/\t/g, '    ');
+export function renderNodeQualitySvg(content) {
+  const source = sanitizeAnsiContent(String(content || ''))
+    .replace(/\t/g, '    ')
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, (sequence) => sequence.endsWith('m') ? sequence : '');
   const originalLines = source.split('\n');
   const truncated = originalLines.length > MAX_RENDER_LINES;
   const lines = originalLines.slice(0, MAX_RENDER_LINES);
   if (truncated) lines.push(`... 报告过长，已截取前 ${MAX_RENDER_LINES} 行`);
-  const columns = Math.min(MAX_RENDER_COLUMNS, Math.max(88, ...lines.map((line) => visibleColumns(stripAnsiSafe(line)))));
-  const width = Math.min(2200, Math.max(760, Math.ceil(columns * 8.1 + 48)));
-  const headerHeight = 58;
-  const lineHeight = 18;
-  const height = Math.max(150, headerHeight + 24 + lines.length * lineHeight);
-  const title = xmlEscape(String(options.title || 'NodeQuality').slice(0, 120));
-  const subtitle = xmlEscape(String(options.subtitle || '').slice(0, 160));
-  const textLines = lines.map((line, index) => {
-    const segments = ansiSegments(line);
-    const spans = segments.length
-      ? segments.map((segment) => `<tspan fill="${segment.color}"${segment.bold ? ' font-weight="700"' : ''}>${xmlEscape(segment.text || ' ')}</tspan>`).join('')
-      : '<tspan> </tspan>';
-    return `<text x="24" y="${headerHeight + 24 + index * lineHeight}" class="line" xml:space="preserve">${spans}</text>`;
-  }).join('');
+  // NodeQuality resizes with spare cells, then crops them back to a symmetric
+  // 20px margin before uploading. Emit the already-cropped dimensions.
+  const columns = Math.min(MAX_RENDER_COLUMNS, Math.max(1, ...lines.map((line) => visibleColumns(stripAnsiSafe(line)))));
+  const rows = Math.max(1, lines.length);
+  const logicalWidth = columns * TERMINAL_CELL_WIDTH + TERMINAL_PADDING * 2;
+  const logicalHeight = rows * TERMINAL_LINE_HEIGHT + TERMINAL_PADDING * 2;
+  const width = Math.ceil(logicalWidth * TERMINAL_SCALE);
+  const height = Math.ceil(logicalHeight * TERMINAL_SCALE);
+  const state = defaultAnsiState();
+  const renderedLines = lines.map((line, row) => renderTerminalLine(line, row, state)).join('');
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${title}">
-  <rect width="100%" height="100%" fill="#0f172a"/>
-  <rect width="100%" height="${headerHeight}" fill="#162033"/>
-  <circle cx="24" cy="29" r="5" fill="#2ea36d"/>
-  <text x="39" y="26" class="title">${title}</text>
-  ${subtitle ? `<text x="39" y="44" class="subtitle">${subtitle}</text>` : ''}
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="NodeQuality terminal report">
+  <rect width="100%" height="100%" fill="${TERMINAL_THEME.background}"/>
   <style>
-    .title { fill:#f8fafc; font:700 14px ui-monospace,SFMono-Regular,Menlo,Consolas,"Noto Sans Mono CJK SC",monospace; }
-    .subtitle { fill:#94a3b8; font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,"Noto Sans Mono CJK SC",monospace; }
-    .line { fill:#dbe5f1; font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,"Noto Sans Mono CJK SC",monospace; }
+    .cell { font-family:Consolas,"Noto Sans Mono CJK SC","Sarasa Mono SC","Courier New",monospace; font-size:${TERMINAL_FONT_SIZE}px; font-variant-ligatures:none; }
   </style>
-  ${textLines}
+  <g transform="scale(${TERMINAL_SCALE})">${renderedLines}</g>
 </svg>`;
+}
+
+function renderTerminalLine(line, row, state) {
+  const y = TERMINAL_PADDING + row * TERMINAL_LINE_HEIGHT;
+  return ansiSegments(line, state).map((segment) => {
+    const x = TERMINAL_PADDING + segment.column * TERMINAL_CELL_WIDTH;
+    const width = Math.max(0, segment.columns * TERMINAL_CELL_WIDTH);
+    const style = terminalSegmentStyle(segment);
+    const background = style.background === TERMINAL_THEME.background || width === 0
+      ? ''
+      : `<rect x="${formatNumber(x)}" y="${formatNumber(y)}" width="${formatNumber(width)}" height="${TERMINAL_LINE_HEIGHT}" fill="${style.background}"/>`;
+    const text = renderTerminalSegmentText(segment, x, y, style.foreground);
+    return background + text;
+  }).join('');
+}
+
+function renderTerminalSegmentText(segment, x, y, foreground) {
+  if (segment.hidden) return '';
+  const decorations = [segment.underline ? 'underline' : '', segment.strike ? 'line-through' : ''].filter(Boolean).join(' ');
+  const textAttributes = `${segment.bold ? ' font-weight="700"' : ''}${segment.italic ? ' font-style="italic"' : ''}${decorations ? ` text-decoration="${decorations}"` : ''}${segment.dim ? ' opacity="0.6"' : ''}`;
+  const textParts = [];
+  let plain = '';
+  let plainColumn = 0;
+  let column = 0;
+  let braillePath = '';
+  const flushPlain = () => {
+    if (!plain) return;
+    const textX = x + plainColumn * TERMINAL_CELL_WIDTH;
+    textParts.push(`<text class="cell" x="${formatNumber(textX)}" y="${formatNumber(y + 13.4)}" fill="${foreground}"${textAttributes} xml:space="preserve">${xmlEscape(plain)}</text>`);
+    plain = '';
+  };
+  for (const char of segment.text) {
+    const cp = char.codePointAt(0);
+    if (cp >= 0x2800 && cp <= 0x28ff) {
+      flushPlain();
+      braillePath += brailleSquarePath(cp - 0x2800, x + column * TERMINAL_CELL_WIDTH, y);
+    } else {
+      if (!plain) plainColumn = column;
+      plain += char;
+    }
+    column += isWide(cp) ? 2 : 1;
+  }
+  flushPlain();
+  if (braillePath) textParts.push(`<path data-nq-bar="square" fill="${foreground}"${segment.dim ? ' opacity="0.6"' : ''} d="${braillePath}"/>`);
+  return textParts.join('');
+}
+
+function brailleSquarePath(bits, x, y) {
+  const gap = 0.45;
+  const size = 3.45;
+  const left = x + 0.55;
+  const top = y + 0.9;
+  const positions = [
+    [0, 0], [0, 1], [0, 2], [1, 0],
+    [1, 1], [1, 2], [0, 3], [1, 3],
+  ];
+  let path = '';
+  positions.forEach(([column, row], bit) => {
+    if ((bits & (1 << bit)) === 0) return;
+    const px = formatNumber(left + column * (size + gap));
+    const py = formatNumber(top + row * (size + gap));
+    path += `M${px} ${py}h${size}v${size}h-${size}z`;
+  });
+  return path;
 }
 
 async function uploadSvg(env, settingsValue, token, svg, filename) {
@@ -341,17 +400,31 @@ function isWide(cp) {
   );
 }
 
-function ansiSegments(line) {
+function defaultAnsiState() {
+  return {
+    foreground: null,
+    background: null,
+    bold: false,
+    dim: false,
+    italic: false,
+    underline: false,
+    inverse: false,
+    hidden: false,
+    strike: false,
+  };
+}
+
+function ansiSegments(line, state = defaultAnsiState()) {
   const source = String(line || '');
   const matcher = /\u001b\[([0-9;]*)m/g;
-  const state = { color: '#dbe5f1', bold: false };
   const output = [];
+  let column = 0;
   let cursor = 0;
   const append = (text) => {
     if (!text) return;
-    const previous = output[output.length - 1];
-    if (previous && previous.color === state.color && previous.bold === state.bold) previous.text += text;
-    else output.push({ text, color: state.color, bold: state.bold });
+    const columns = visibleColumns(text);
+    output.push({ text, column, columns, ...state });
+    column += columns;
   };
   let match;
   while ((match = matcher.exec(source))) {
@@ -367,26 +440,54 @@ function applyAnsiCodes(state, value) {
   const codes = String(value || '0').split(';').map((part) => Number(part || 0));
   for (let index = 0; index < codes.length; index++) {
     const code = codes[index];
-    if (code === 0) { state.color = '#dbe5f1'; state.bold = false; }
+    if (code === 0) Object.assign(state, defaultAnsiState());
     else if (code === 1) state.bold = true;
-    else if (code === 22) state.bold = false;
-    else if (code === 39) state.color = '#dbe5f1';
-    else if (ANSI_COLORS[code]) state.color = ANSI_COLORS[code];
-    else if (code === 38 && codes[index + 1] === 5 && Number.isInteger(codes[index + 2])) {
-      state.color = ansi256Color(codes[index + 2]);
+    else if (code === 2) state.dim = true;
+    else if (code === 3) state.italic = true;
+    else if (code === 4 || code === 21) state.underline = true;
+    else if (code === 7) state.inverse = true;
+    else if (code === 8) state.hidden = true;
+    else if (code === 9) state.strike = true;
+    else if (code === 22) { state.bold = false; state.dim = false; }
+    else if (code === 23) state.italic = false;
+    else if (code === 24) state.underline = false;
+    else if (code === 27) state.inverse = false;
+    else if (code === 28) state.hidden = false;
+    else if (code === 29) state.strike = false;
+    else if (code >= 30 && code <= 37) state.foreground = { palette: code - 30, bright: false };
+    else if (code >= 90 && code <= 97) state.foreground = { palette: code - 90, bright: true };
+    else if (code >= 40 && code <= 47) state.background = { palette: code - 40, bright: false };
+    else if (code >= 100 && code <= 107) state.background = { palette: code - 100, bright: true };
+    else if (code === 39) state.foreground = null;
+    else if (code === 49) state.background = null;
+    else if ((code === 38 || code === 48) && codes[index + 1] === 5 && Number.isInteger(codes[index + 2])) {
+      state[code === 38 ? 'foreground' : 'background'] = { color: ansi256Color(codes[index + 2]) };
       index += 2;
-    } else if (code === 38 && codes[index + 1] === 2 && codes.slice(index + 2, index + 5).every(Number.isFinite)) {
+    } else if ((code === 38 || code === 48) && codes[index + 1] === 2 && codes.slice(index + 2, index + 5).every(Number.isFinite)) {
       const [r, g, b] = codes.slice(index + 2, index + 5).map((item) => Math.max(0, Math.min(255, item)));
-      state.color = `rgb(${r},${g},${b})`;
+      state[code === 38 ? 'foreground' : 'background'] = { color: `rgb(${r},${g},${b})` };
       index += 4;
     }
   }
 }
 
+function terminalSegmentStyle(segment) {
+  let foreground = resolveTerminalColor(segment.foreground, segment.bold, false);
+  let background = resolveTerminalColor(segment.background, false, true);
+  if (segment.inverse) [foreground, background] = [background, foreground];
+  return { foreground, background };
+}
+
+function resolveTerminalColor(value, bold, background) {
+  if (!value) return background ? TERMINAL_THEME.background : TERMINAL_THEME.foreground;
+  if (value.color) return value.color;
+  return (value.bright || (bold && !background) ? TERMINAL_THEME.bright : TERMINAL_THEME.normal)[value.palette];
+}
+
 function ansi256Color(value) {
   const index = Math.max(0, Math.min(255, Number(value) || 0));
-  if (index < 8) return ['#111827', '#f87171', '#86efac', '#fde047', '#93c5fd', '#d8b4fe', '#67e8f9', '#e5e7eb'][index];
-  if (index < 16) return ['#94a3b8', '#fca5a5', '#bbf7d0', '#fef08a', '#bfdbfe', '#e9d5ff', '#a5f3fc', '#f8fafc'][index - 8];
+  if (index < 8) return TERMINAL_THEME.normal[index];
+  if (index < 16) return TERMINAL_THEME.bright[index - 8];
   if (index >= 232) {
     const level = 8 + (index - 232) * 10;
     return `rgb(${level},${level},${level})`;
@@ -399,14 +500,22 @@ function ansi256Color(value) {
   return `rgb(${r},${g},${b})`;
 }
 
+function formatNumber(value) {
+  return Number(value.toFixed(2)).toString();
+}
+
 function xmlEscape(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;');
 }
 
 async function readResponseTextLimited(response, maxBytes) {
+  return new TextDecoder().decode(await readResponseBytesLimited(response, maxBytes));
+}
+
+async function readResponseBytesLimited(response, maxBytes) {
   const declared = Number(response.headers.get('content-length') || 0);
   if (declared > maxBytes) throw new Error('图床响应过大');
-  if (!response.body) return '';
+  if (!response.body) return new Uint8Array();
   const reader = response.body.getReader();
   const chunks = [];
   let total = 0;
@@ -427,7 +536,7 @@ async function readResponseTextLimited(response, maxBytes) {
   const bytes = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-  return new TextDecoder().decode(bytes);
+  return bytes;
 }
 
 async function readStoredSettings(env) {

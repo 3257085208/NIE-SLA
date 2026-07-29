@@ -10,7 +10,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, System};
-use ureq::ResponseExt;
+use ureq::{config::IpFamily, ResponseExt};
 
 mod dns_compat;
 mod geoip;
@@ -59,7 +59,8 @@ struct Config {
 
 #[derive(Clone)]
 struct HttpClient {
-    agent: ureq::Agent,
+    ipv4: ureq::Agent,
+    ipv6: ureq::Agent,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -411,13 +412,15 @@ fn run() -> Result<()> {
             }
         }
 
-        let report_due = first_report
-            || cfg.once
-            || samples.len() > REPORT_MAX_SAMPLES
-            || last_report.elapsed() >= Duration::from_secs(cfg.report_sec)
-            || (last_upload_failed
-                && !samples.is_empty()
-                && last_report.elapsed() >= Duration::from_secs(retry_sec));
+        let report_due = upload_report_due(
+            first_report,
+            cfg.once,
+            samples.len(),
+            last_upload_failed,
+            last_report.elapsed(),
+            Duration::from_secs(cfg.report_sec),
+            Duration::from_secs(retry_sec),
+        );
         if !uploading && report_due {
             let upload_samples: Vec<_> = samples.iter().take(REPORT_MAX_SAMPLES).cloned().collect();
             let mut metrics =
@@ -966,24 +969,30 @@ fn ping_json(p: &PingResult) -> serde_json::Value {
 
 impl HttpClient {
     fn new() -> Self {
-        let config = ureq::Agent::config_builder()
-            .user_agent(format!("NIE-SLA-Agent/{}", AGENT_VERSION))
-            .timeout_connect(Some(Duration::from_secs(10)))
-            .timeout_send_request(Some(Duration::from_secs(10)))
-            .timeout_recv_response(Some(Duration::from_secs(30)))
-            .timeout_recv_body(Some(Duration::from_secs(30)))
-            .build();
         Self {
-            agent: ureq::Agent::new_with_config(config),
+            ipv4: build_http_agent(IpFamily::Ipv4Only),
+            ipv6: build_http_agent(IpFamily::Ipv6Only),
+        }
+    }
+
+    fn request_with_ip_fallback<T>(
+        &self,
+        request: impl Fn(&ureq::Agent) -> std::result::Result<T, ureq::Error>,
+    ) -> std::result::Result<T, ureq::Error> {
+        match request(&self.ipv4) {
+            Err(err) if should_try_other_ip_family(&err) => request(&self.ipv6),
+            result => result,
         }
     }
 
     fn get(&self, url: &str, token: &str) -> Result<String> {
         let mut res = self
-            .agent
-            .get(url)
-            .header("Authorization", auth_header(token))
-            .call()
+            .request_with_ip_fallback(|agent| {
+                agent
+                    .get(url)
+                    .header("Authorization", auth_header(token))
+                    .call()
+            })
             .map_err(|err| http_error("GET", url, err))?;
         res.body_mut()
             .read_to_string()
@@ -992,11 +1001,13 @@ impl HttpClient {
 
     fn post_json(&self, url: &str, token: &str, body: &str) -> Result<String> {
         let mut res = self
-            .agent
-            .post(url)
-            .header("Authorization", auth_header(token))
-            .header("Content-Type", "application/json")
-            .send(body)
+            .request_with_ip_fallback(|agent| {
+                agent
+                    .post(url)
+                    .header("Authorization", auth_header(token))
+                    .header("Content-Type", "application/json")
+                    .send(body)
+            })
             .map_err(|err| http_error("POST", url, err))?;
         res.body_mut()
             .read_to_string()
@@ -1018,9 +1029,7 @@ impl HttpClient {
             return Err(anyhow!("public download URL must use HTTPS"));
         }
         let mut res = self
-            .agent
-            .get(url)
-            .call()
+            .request_with_ip_fallback(|agent| agent.get(url).call())
             .map_err(|err| http_error("GET", url, err))?;
         if res.get_uri().scheme_str() != Some("https") {
             return Err(anyhow!("public download redirected away from HTTPS"));
@@ -1036,6 +1045,28 @@ impl HttpClient {
         }
         Ok(bytes)
     }
+}
+
+fn build_http_agent(ip_family: IpFamily) -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .user_agent(format!("NIE-SLA-Agent/{}", AGENT_VERSION))
+        .ip_family(ip_family)
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_send_request(Some(Duration::from_secs(10)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_recv_body(Some(Duration::from_secs(30)))
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
+fn should_try_other_ip_family(err: &ureq::Error) -> bool {
+    matches!(
+        err,
+        ureq::Error::HostNotFound
+            | ureq::Error::ConnectionFailed
+            | ureq::Error::Timeout(_)
+            | ureq::Error::Io(_)
+    )
 }
 
 fn auth_header(token: &str) -> String {
@@ -1211,6 +1242,22 @@ fn advance_sample_deadline(previous_deadline: Instant, now: Instant, period: Dur
     next
 }
 
+fn upload_report_due(
+    first_report: bool,
+    once: bool,
+    sample_count: usize,
+    last_upload_failed: bool,
+    elapsed: Duration,
+    report_period: Duration,
+    retry_period: Duration,
+) -> bool {
+    if last_upload_failed {
+        sample_count > 0 && elapsed >= retry_period
+    } else {
+        first_report || once || sample_count > REPORT_MAX_SAMPLES || elapsed >= report_period
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
@@ -1303,6 +1350,46 @@ mod tests {
             });
 
         assert_eq!(latency, Some(37));
+    }
+
+    #[test]
+    fn failed_upload_backlog_obeys_retry_period() {
+        assert!(!upload_report_due(
+            false,
+            false,
+            REPORT_MAX_SAMPLES + 1,
+            true,
+            Duration::from_secs(5),
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        ));
+        assert!(upload_report_due(
+            false,
+            false,
+            REPORT_MAX_SAMPLES + 1,
+            true,
+            Duration::from_secs(60),
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        ));
+        assert!(upload_report_due(
+            false,
+            false,
+            REPORT_MAX_SAMPLES + 1,
+            false,
+            Duration::from_secs(5),
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        ));
+    }
+
+    #[test]
+    fn ip_family_fallback_is_limited_to_transport_failures() {
+        assert!(should_try_other_ip_family(&ureq::Error::HostNotFound));
+        assert!(should_try_other_ip_family(&ureq::Error::Io(
+            std::io::Error::from(std::io::ErrorKind::HostUnreachable),
+        )));
+        assert!(!should_try_other_ip_family(&ureq::Error::StatusCode(401)));
     }
 }
 
