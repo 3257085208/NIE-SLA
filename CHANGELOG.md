@@ -2,6 +2,13 @@
 
 NIE-SLA 当前处于 Beta。应用使用 `0.x.y-beta.N`，Rust Agent 使用独立 `vX.Y.Z` 版本。
 
+## 0.24.0-beta.29 - 2026-07-29
+
+- NQ 图片上传改为 Worker 内部固定策略：上传渠道强制为 `s3`，上传目录留空，旧数据库值及已废弃的 `NQ_IMGBED_CHANNEL`、`NQ_IMGBED_FOLDER` 均不能覆盖。
+- 移除后台 NQ 图床卡片及读取、保存、测试三条 HTTP API；上传地址、Token 和可选渠道名只从 Worker Secret 读取，旧版 D1 密文仅保留只读迁移兼容。
+- 公开 NQ JSON 和前端 DOM 只使用 NIE-SLA 同源图片代理，不再暴露上游图床域名或原始图片地址；上传错误、重定向、响应正文与普通备份继续保持脱敏。
+- 新增固定 S3、空目录、旧配置不可覆盖、上游地址隐藏、敏感备份隔离和旧 D1 解密回退测试；Rust Agent 保持 `v1.0.36`，无需重新安装或构建 Agent。
+
 ## 0.24.0-beta.28 - 2026-07-29
 
 - 修复 Rust Agent 将根文件系统与 `/etc/hosts`、`/etc/hostname`、`/etc/resolv.conf` 等同设备绑定挂载重复相加，导致约 14 GB 的 VPS 被显示为约 54 GB 的问题。

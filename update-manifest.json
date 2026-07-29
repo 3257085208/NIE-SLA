@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.28",
+  "version": "0.24.0-beta.29",
   "agent_version": "v1.0.36",
-  "source_ref": "app-v0.24.0-beta.28",
-  "published_at": "2026-07-29T11:20:25Z",
-  "title": "NIE-SLA 0.24 Beta 28",
+  "source_ref": "app-v0.24.0-beta.29",
+  "published_at": "2026-07-29T13:43:44Z",
+  "title": "NIE-SLA 0.24 Beta 29",
   "changelog": [
-    "修复重复累加根文件系统和同设备绑定挂载，导致 VPS 磁盘容量显示为实际数倍的问题",
-    "磁盘容量与使用率统一以系统根文件系统为准，并保留跨平台系统卷回退",
-    "新增重复绑定挂载、最长匹配挂载点与容量换算回归测试",
-    "Rust Agent 更新至 v1.0.36，节点自动更新并完成新上报后前端会显示正确容量"
+    "NQ 图片上传固定使用 S3 渠道且不发送上传目录，旧配置和废弃环境变量无法覆盖",
+    "移除图床管理与测试 API，地址、Token 和可选渠道名仅由 Worker Secret 控制",
+    "公开报告只返回同源图片代理地址，普通备份、错误响应和前端 DOM 均不暴露图床信息",
+    "Rust Agent 保持 v1.0.36，本次无需重新安装或更新 Agent"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

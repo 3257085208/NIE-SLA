@@ -1,5 +1,5 @@
-import { ApiError, safeJson } from './auth.js';
-import { assertPublicHttpUrl, nowSec, parseBoolean } from './utils.js';
+import { ApiError } from './auth.js';
+import { assertPublicHttpUrl, nowSec } from './utils.js';
 import { sanitizeAnsiContent, stripAnsiSafe } from './nodequality.js';
 
 const SETTINGS_KEY = 'nq_image_host_settings';
@@ -10,15 +10,10 @@ const MAX_RESPONSE_BYTES = 32 * 1024;
 const MAX_RENDER_LINES = 1400;
 const MAX_RENDER_COLUMNS = 240;
 const UPLOAD_TIMEOUT_MS = 30_000;
-const CHANNELS = new Set(['', 'telegram', 'cfr2', 's3', 'discord', 'huggingface', 'webdav', 'external']);
-
 const DEFAULT_SETTINGS = Object.freeze({
-  enabled: false,
   endpoint: '',
-  upload_channel: 'cfr2',
-  channel_name: '',
-  folder: 'NIE-SLA/NodeQuality',
 });
+const FIXED_UPLOAD_CHANNEL = 's3';
 
 // Matches the xterm.js settings used by NodeQuality's own image export.
 const TERMINAL_THEME = Object.freeze({
@@ -33,74 +28,25 @@ const TERMINAL_FONT_SIZE = 14;
 const TERMINAL_PADDING = 20;
 const TERMINAL_SCALE = 2;
 
-export async function getNodeQualityImageHostSettings(env, { includeSecret = false } = {}) {
-  const stored = await readStoredSettings(env);
+async function resolveNodeQualityImageHost(env) {
   const endpointFromEnv = String(env.NQ_IMGBED_URL || '').trim();
   const tokenFromEnv = String(env.NQ_IMGBED_TOKEN || '').trim();
-  const storedToken = await readStoredToken(env);
-  const settings = normalizeSettings({
-    ...stored,
-    endpoint: endpointFromEnv || stored.endpoint,
-    upload_channel: String(env.NQ_IMGBED_CHANNEL || '').trim() || stored.upload_channel,
-    channel_name: String(env.NQ_IMGBED_CHANNEL_NAME || '').trim() || stored.channel_name,
-    folder: String(env.NQ_IMGBED_FOLDER || '').trim() || stored.folder,
-  });
+  const stored = endpointFromEnv ? DEFAULT_SETTINGS : await readStoredSettings(env);
+  const storedToken = tokenFromEnv ? '' : await readStoredToken(env);
+  const endpointValue = endpointFromEnv || stored.endpoint;
+  const endpoint = endpointValue ? validateUploadEndpoint(endpointValue).toString() : '';
   const token = tokenFromEnv || storedToken;
-  const result = {
-    ok: true,
-    ...settings,
-    endpoint_source: endpointFromEnv ? 'env' : (settings.endpoint ? 'db' : 'none'),
-    api_token_set: Boolean(token),
-    api_token_source: tokenFromEnv ? 'env' : (storedToken ? 'db' : 'none'),
-    compatible_api: 'MarSeventh/CloudFlare-ImgBed',
+  return {
+    enabled: Boolean(endpoint && token),
+    endpoint,
+    api_token: token,
+    channel_name: String(env.NQ_IMGBED_CHANNEL_NAME || '').trim().slice(0, 80),
   };
-  if (includeSecret) result.api_token = token;
-  return result;
-}
-
-export async function updateNodeQualityImageHostSettings(request, env) {
-  if (!env.DB) throw new ApiError(500, '缺少 D1 的 DB 绑定');
-  const body = await safeJson(request, 32 * 1024);
-  const previous = await readStoredSettings(env);
-  const next = normalizeSettings({ ...previous, ...pickSettings(body) });
-  if (next.enabled && !resolvedEndpoint(next, env)) throw new ApiError(400, '启用 NQ 图床前必须填写上传 API 地址');
-  const currentToken = String(env.NQ_IMGBED_TOKEN || '').trim() || await readStoredToken(env);
-  const clearToken = parseBoolean(body?.api_token_clear, false);
-  let encryptedToken = null;
-  let suppliedToken = '';
-  if (Object.prototype.hasOwnProperty.call(body || {}, 'api_token')) {
-    suppliedToken = String(body.api_token || '').trim();
-    if (suppliedToken) {
-      if (suppliedToken.length < 16 || suppliedToken.length > 512) throw new ApiError(400, '图床 API Token 长度无效');
-      encryptedToken = await encryptSecret(suppliedToken, env);
-    }
-  }
-  const effectiveToken = String(env.NQ_IMGBED_TOKEN || '').trim() || suppliedToken || (clearToken ? '' : currentToken);
-  if (next.enabled && !effectiveToken) throw new ApiError(400, '启用 NQ 图床前必须配置具有 upload 权限的 API Token');
-
-  await setMeta(env, SETTINGS_KEY, JSON.stringify(next));
-  if (encryptedToken) await setMeta(env, TOKEN_KEY, encryptedToken);
-  else if (clearToken) await setMeta(env, TOKEN_KEY, '');
-  return getNodeQualityImageHostSettings(env);
-}
-
-export async function testNodeQualityImageHost(request, env) {
-  const body = await safeJson(request, 32 * 1024).catch(() => ({}));
-  const current = await getNodeQualityImageHostSettings(env, { includeSecret: true });
-  const settings = normalizeSettings({ ...current, ...pickSettings(body) });
-  const token = String(body?.api_token || '').trim() || current.api_token;
-  if (!token) throw new ApiError(400, '请先填写或保存具有 upload 权限的 API Token');
-  const svg = renderNodeQualitySvg('\u001b[36mNIE-SLA\u001b[0m 图床连接测试\n\u001b[32mCloudFlare-ImgBed API 正常\u001b[0m', {
-    title: 'NodeQuality 图床连接测试',
-    subtitle: new Date().toISOString(),
-  });
-  const imageUrl = await uploadSvg(env, settings, token, svg, `nie-sla-nq-test-${Date.now()}.svg`);
-  return { ok: true, image_url: imageUrl };
 }
 
 export async function uploadNodeQualityReportImages(env, normalized, options = {}) {
   if (!normalized?.report) return { normalized, status: { enabled: false, uploaded: 0, skipped: true } };
-  const settings = await getNodeQualityImageHostSettings(env, { includeSecret: true });
+  const settings = await resolveNodeQualityImageHost(env);
   if (!settings.enabled) return { normalized, status: { enabled: false, uploaded: 0, skipped: true } };
   if (!settings.endpoint || !settings.api_token) {
     return { normalized, status: { enabled: true, uploaded: 0, errors: ['图床地址或 API Token 未配置'] } };
@@ -120,7 +66,7 @@ export async function uploadNodeQualityReportImages(env, normalized, options = {
     try {
       const svg = renderNodeQualitySvg(tab.content);
       const filename = `${agentId}-${reportId}-${safeFilePart(tab.id)}.svg`;
-      const image = await uploadSvg(env, settings, settings.api_token, svg, filename);
+      const image = await uploadSvg(settings, svg, filename);
       return { id: tab.id, image };
     } catch (error) {
       return { id: tab.id, error: safeUploadError(error) };
@@ -235,17 +181,14 @@ function brailleSquarePath(bits, x, y) {
   return path;
 }
 
-async function uploadSvg(env, settingsValue, token, svg, filename) {
-  const settings = normalizeSettings(settingsValue);
-  const endpoint = resolvedEndpoint(settings, env);
-  if (!endpoint) throw new Error('图床上传地址未配置');
-  const uploadUrl = new URL(endpoint);
+async function uploadSvg(settings, svg, filename) {
+  if (!settings.endpoint || !settings.api_token) throw new Error('图床上传配置不完整');
+  const uploadUrl = new URL(settings.endpoint);
   uploadUrl.searchParams.set('returnFormat', 'full');
   uploadUrl.searchParams.set('autoRetry', 'false');
   uploadUrl.searchParams.set('serverCompress', 'false');
-  if (settings.upload_channel) uploadUrl.searchParams.set('uploadChannel', settings.upload_channel);
+  uploadUrl.searchParams.set('uploadChannel', FIXED_UPLOAD_CHANNEL);
   if (settings.channel_name) uploadUrl.searchParams.set('channelName', settings.channel_name);
-  if (settings.folder) uploadUrl.searchParams.set('uploadFolder', settings.folder);
 
   const form = new FormData();
   form.append('file', new Blob([svg], { type: 'image/svg+xml' }), filename);
@@ -255,7 +198,7 @@ async function uploadSvg(env, settingsValue, token, svg, filename) {
   try {
     response = await fetch(uploadUrl, {
       method: 'POST',
-      headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+      headers: { authorization: `Bearer ${settings.api_token}`, accept: 'application/json' },
       body: form,
       redirect: 'manual',
       signal: controller.signal,
@@ -305,31 +248,6 @@ function imageHostHttpError(statusValue) {
   return new ApiError(502, `图床上传失败（HTTP ${status || '未知'}）`);
 }
 
-function normalizeSettings(input = {}) {
-  const endpoint = String(input.endpoint || '').trim();
-  const uploadChannel = String(input.upload_channel ?? DEFAULT_SETTINGS.upload_channel).trim().toLowerCase();
-  return {
-    enabled: parseBoolean(input.enabled, DEFAULT_SETTINGS.enabled),
-    endpoint: endpoint ? validateUploadEndpoint(endpoint).toString() : '',
-    upload_channel: CHANNELS.has(uploadChannel) ? uploadChannel : DEFAULT_SETTINGS.upload_channel,
-    channel_name: String(input.channel_name || '').trim().slice(0, 80),
-    folder: normalizeFolder(input.folder ?? DEFAULT_SETTINGS.folder),
-  };
-}
-
-function pickSettings(body) {
-  const out = {};
-  for (const key of ['enabled', 'endpoint', 'upload_channel', 'channel_name', 'folder']) {
-    if (Object.prototype.hasOwnProperty.call(body || {}, key)) out[key] = body[key];
-  }
-  return out;
-}
-
-function resolvedEndpoint(settings, env) {
-  const value = String(env.NQ_IMGBED_URL || settings.endpoint || '').trim();
-  return value ? validateUploadEndpoint(value).toString() : '';
-}
-
 export function validateUploadEndpoint(value) {
   let url;
   try { url = assertPublicHttpUrl(String(value || '').trim()); } catch (error) {
@@ -351,14 +269,6 @@ function validatePublicImageUrl(value) {
     throw new Error('图床返回的图片地址不安全');
   }
   return url.toString();
-}
-
-function normalizeFolder(value) {
-  const raw = String(value || '').trim().replace(/\\/g, '/').replace(/[?#\u0000-\u001f]/g, '');
-  if (!raw) return '';
-  const segments = raw.split('/').map((part) => part.trim()).filter(Boolean);
-  if (segments.some((part) => part === '.' || part === '..')) throw new ApiError(400, '图床目录不能包含 . 或 ..');
-  return segments.join('/').slice(0, 160);
 }
 
 function extractReportId(value) {
@@ -542,7 +452,12 @@ async function readResponseBytesLimited(response, maxBytes) {
 async function readStoredSettings(env) {
   if (!env.DB) return { ...DEFAULT_SETTINGS };
   const raw = await getMeta(env, SETTINGS_KEY).catch(() => null);
-  try { return normalizeSettings(raw ? JSON.parse(raw) : DEFAULT_SETTINGS); } catch (_) { return { ...DEFAULT_SETTINGS }; }
+  try {
+    const value = raw ? JSON.parse(raw) : DEFAULT_SETTINGS;
+    return {
+      endpoint: String(value?.endpoint || '').trim(),
+    };
+  } catch (_) { return { ...DEFAULT_SETTINGS }; }
 }
 
 async function readStoredToken(env) {
@@ -556,24 +471,6 @@ async function readStoredToken(env) {
 async function getMeta(env, key) {
   const row = await env.DB.prepare('SELECT value FROM app_meta WHERE key = ?').bind(key).first();
   return row?.value ?? null;
-}
-
-async function setMeta(env, key, value) {
-  await env.DB.prepare('INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at')
-    .bind(key, String(value), nowSec()).run();
-}
-
-async function encryptSecret(secret, env) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: SECRET_CONTEXT },
-    await importSecretKey(secretKeyMaterials(env)[0], ['encrypt']),
-    new TextEncoder().encode(secret),
-  ));
-  const combined = new Uint8Array(iv.length + encrypted.length);
-  combined.set(iv, 0);
-  combined.set(encrypted, iv.length);
-  return SECRET_PREFIX + bytesToBase64(combined);
 }
 
 async function decryptSecret(payload, env) {
@@ -603,7 +500,7 @@ function secretKeyMaterials(env, required = true) {
     String(env.ADMIN_PASSWORD || '').trim(),
     String(env.ADMIN_TOKEN || '').trim(),
   ].filter(Boolean))];
-  if (required && !values.length) throw new ApiError(500, '保存图床 API Token 需要配置 ADMIN_PASSWORD、TOTP_ENCRYPTION_KEY 或 NQ_IMGBED_ENCRYPTION_KEY');
+  if (required && !values.length) throw new ApiError(500, '缺少旧版图床 Token 的解密材料');
   return values;
 }
 
@@ -611,12 +508,6 @@ async function importSecretKey(material, usages) {
   if (!material) throw new Error('缺少加密材料');
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM', length: 256 }, false, usages);
-}
-
-function bytesToBase64(bytes) {
-  let binary = '';
-  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-  return btoa(binary);
 }
 
 function base64ToBytes(value) {

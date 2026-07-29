@@ -32,6 +32,8 @@ Agent tokens are generated automatically. TOTP is disabled by default.
 
 The admin panel can explicitly request NodeQuality or an IPv4 unlock check on Linux. The main Agent remains unprivileged; a separate root runner accepts only these two action identifiers. No arbitrary command, URL, arguments, stdin, or schedule can be supplied.
 
+The Worker can render selected NodeQuality sections as SVG and upload them through a fixed S3 channel with no folder. Image-host credentials remain in Worker Secrets, and public reports use the same-origin image proxy instead of exposing the upstream host.
+
 ## Migration
 
 Existing Pages + Worker installations should reuse their D1, R2, Agent API hostname, Target IDs, scoped credentials, and encryption material. Existing Agents then continue reporting without reconfiguration. Portable backup is a migration fallback; full high-frequency history remains in R2.

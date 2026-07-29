@@ -268,6 +268,13 @@ assert.match(inlineNetworkHeading, /nq-network-title">六、国内测速[\s\S]*n
 const routeLayout = renderNqRouteReportHtml('五、三网回程路由\n  北京 电信 Cogent -> 163\n地理路径：美国 -> 北京 自治系统路径：AS174 -> AS4134\n 3 0.66ms 10.9.*.* * RFC1918\n 5-8 146.85ms 202.97.*.* AS4134 [CHINANET-BB] 中国 北京 电信');
 assert.match(routeLayout, /nq-route-block[\s\S]*nq-route-path[\s\S]*nq-route-hop-number">3[\s\S]*nq-route-latency success">0\.66ms/, 'route reports must render responsive hop rows');
 assert.match(routeLayout, /nq-route-asn">AS4134[\s\S]*nq-route-network">CHINANET-BB[\s\S]*nq-route-location">中国 北京 电信/, 'route hop metadata must retain ASN, network, and location');
-assert.match(buildNqModalHtml({ report_time: '2026-07-23 22:41:36 CST', tabs: [{ id: 'network', kind: 'image', image: 'https://example.com/network.webp' }] }), /network\.webp/);
+const proxiedNqImage = buildNqModalHtml({
+  report_time: '2026-07-23 22:41:36 CST',
+  image_proxy_base: '/api/nq/vps-a/image',
+  tabs: [{ id: 'network', kind: 'image', image: 'https://private-image-host.example/network.webp' }],
+});
+assert.match(proxiedNqImage, /\/api\/nq\/vps-a\/image\/network/);
+assert.doesNotMatch(proxiedNqImage, /private-image-host\.example|data-nq-original/);
+assert.match(proxiedNqImage, /referrerpolicy="no-referrer"/);
 assert.match(buildNqModalHtml({ tabs: [{ id: 'network', kind: 'ansi', content: '一、BGP信息' }, { id: 'route', kind: 'ansi', content: '五、三网回程路由' }] }), /nq-network-panel[\s\S]*nq-route-panel/, 'ANSI network and route tabs must use their dedicated layouts');
 console.log('NodeQuality frontend helpers ok');

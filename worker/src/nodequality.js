@@ -321,6 +321,7 @@ export function publicNodeQualityReport(target = {}) {
   try {
     const report = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (!report || typeof report !== 'object') return null;
+    const imageProxyBase = target.id ? `/api/nq/${encodeURIComponent(String(target.id))}/image` : null;
     return {
       ok: true,
       target_id: String(target.id || ''),
@@ -328,13 +329,15 @@ export function publicNodeQualityReport(target = {}) {
       report_time: report.report_time || extractReportTime(report.raw || '') || null,
       updated_at: target?.nq_updated_at ? Number(target.nq_updated_at) : null,
       link: safeReportLink(report.link || extractNodeQualityLink(report.raw || '')) || null,
-      image_proxy_base: target.id ? `/api/nq/${encodeURIComponent(String(target.id))}/image` : null,
+      image_proxy_base: imageProxyBase,
       tabs: Array.isArray(report.tabs) ? report.tabs.map((tab) => ({
         id: String(tab.id || ''),
         title: String(tab.title || defaultTabTitle(tab.id) || ''),
         kind: tab.kind === 'image' ? 'image' : 'ansi',
         content: tab.content ? sanitizeAnsiContent(tab.content || '') : undefined,
-        image: tab.kind === 'image' && isSafeImageUrl(tab.image) ? String(tab.image) : undefined,
+        image: tab.kind === 'image' && isSafeImageUrl(tab.image) && imageProxyBase
+          ? `${imageProxyBase}/${encodeURIComponent(String(tab.id || ''))}`
+          : undefined,
       })).filter((tab) => tab.id && (tab.content || tab.image)) : [],
     };
   } catch (_) {
@@ -349,5 +352,17 @@ export function publicNodeQualityReport(target = {}) {
       image_proxy_base: target.id ? `/api/nq/${encodeURIComponent(String(target.id))}/image` : null,
       tabs: [{ id: 'basic', title: '基本信息', kind: 'ansi', content: sanitizeAnsiContent(text) }],
     };
+  }
+}
+
+export function nodeQualityImageSource(target = {}, tabIdValue = '') {
+  const tabId = String(tabIdValue || '');
+  if (!target?.nq_report || !tabId) return null;
+  try {
+    const report = typeof target.nq_report === 'string' ? JSON.parse(target.nq_report) : target.nq_report;
+    const tab = Array.isArray(report?.tabs) ? report.tabs.find((item) => String(item?.id || '') === tabId) : null;
+    return tab?.kind === 'image' && isSafeImageUrl(tab.image) ? String(tab.image) : null;
+  } catch (_) {
+    return null;
   }
 }

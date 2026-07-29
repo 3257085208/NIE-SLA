@@ -169,19 +169,29 @@ assert.equal(sqlite.prepare(`SELECT country_code FROM nodes WHERE id = ?`).get('
 
 sqlite.prepare(`INSERT INTO agent_credentials (subject_type, subject_id, token_hash, token_ciphertext, created_at, updated_at)
   VALUES ('agent', 'vps-a', 'hash', 'ciphertext', ?, ?)`).run(now, now);
+sqlite.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?), (?, ?, ?)`)
+  .run(
+    'nq_image_host_settings', JSON.stringify({ endpoint: 'https://private-image-host.example/upload', upload_channel: 'cfr2', folder: 'legacy/path' }), now,
+    'nq_image_host_token', 'enc:v1:private-token-ciphertext', now,
+  );
 const portable = await exportBackup(new Request('https://example.test/api/backup/export'), env);
 assert.equal(portable.backup.portable.targets.length, 2);
 assert.equal('sensitive' in portable.backup, false);
+assert.equal(JSON.stringify(portable.backup).includes('private-image-host.example'), false);
+assert.equal(portable.backup.portable.app_meta.some((row) => row.key.startsWith('nq_image_host_')), false);
 const protectedBackup = await exportBackup(jsonRequest({ include_secrets: true, password: 'Backup-password-123!' }), env);
 assert.equal(protectedBackup.backup.sensitive.algorithm, 'PBKDF2-SHA256+A256GCM');
+assert.equal(JSON.stringify(protectedBackup.backup).includes('private-image-host.example'), false);
 const preview = await previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'Backup-password-123!' }));
 assert.equal(preview.preview.counts.targets, 2);
 assert.equal(preview.preview.sensitive_counts.agent_credentials, 1);
+assert.equal(preview.preview.sensitive_counts.app_meta, 2);
 await assert.rejects(
   () => previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'wrong-password' })),
   error => error?.status === 400,
 );
 sqlite.prepare(`UPDATE targets SET name = 'Changed' WHERE id = 'vps-a'`).run();
+sqlite.prepare(`DELETE FROM app_meta WHERE key LIKE 'nq_image_host_%'`).run();
 const restored = await restoreBackup(jsonRequest({
   backup: protectedBackup.backup,
   password: 'Backup-password-123!',
@@ -191,6 +201,7 @@ const restored = await restoreBackup(jsonRequest({
 assert.equal(restored.ok, true);
 assert.equal(sqlite.prepare(`SELECT name FROM targets WHERE id = 'vps-a'`).get().name, 'VPS A');
 assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM nodes WHERE id = 'vps-a'`).get().count, 1);
+assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM app_meta WHERE key LIKE 'nq_image_host_%'`).get().count, 2);
 assert.equal(restored.restore_snapshot.stored, true);
 assert.equal(env.ARCHIVE.objects.size, 1);
 const internalSnapshot = JSON.parse([...env.ARCHIVE.objects.values()][0]);

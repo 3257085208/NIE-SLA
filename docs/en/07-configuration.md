@@ -35,10 +35,6 @@
 | `GITHUB_OAUTH_CALLBACK_ORIGIN` | current API origin | Optional fixed HTTPS origin for the OAuth callback |
 | `ALERT_EMAIL_FROM` | empty | Resend sender |
 | `ALERT_EMAIL_TO` | empty | Comma-separated email recipients |
-| `NQ_IMGBED_URL` | empty | Optional public HTTPS CloudFlare-ImgBed endpoint ending in `/upload` |
-| `NQ_IMGBED_CHANNEL` | `cfr2` | Optional image-host storage channel |
-| `NQ_IMGBED_CHANNEL_NAME` | empty | Optional named channel when several channels of the same type exist |
-| `NQ_IMGBED_FOLDER` | `NIE-SLA/NodeQuality` | Upload folder for NQ images |
 
 The `TELEMETRY_BUFFER` Durable Object binding is required by the default free-tier architecture. It keeps the five-minute upload interval, serves active-hour Metrics/Ping samples directly, and writes one merged R2 object per completed Agent hour. Without this binding the Worker uses the compatible per-report R2 fallback, which is not suitable for the 100-node free-tier budget.
 
@@ -53,8 +49,12 @@ The `TELEMETRY_BUFFER` Durable Object binding is required by the default free-ti
 | `RESEND_API_KEY` | Optional Resend email API key |
 | `GITHUB_OAUTH_CLIENT_SECRET` | Optional GitHub OAuth secret |
 | `ALERT_ENCRYPTION_KEY` | Optional alert secret encryption key for D1 storage; falls back to `TOTP_ENCRYPTION_KEY`, then deployment `ADMIN_PASSWORD` |
-| `NQ_IMGBED_TOKEN` | Optional CloudFlare-ImgBed API token with the `upload` permission; overrides the encrypted Admin value |
-| `NQ_IMGBED_ENCRYPTION_KEY` | Optional dedicated encryption key for the stored image-host token |
+| `NQ_IMGBED_URL` | Optional public HTTPS image-host endpoint ending in `/upload`; store it as a secret to hide the host |
+| `NQ_IMGBED_TOKEN` | Optional image-host API token with the `upload` permission; Worker-only |
+| `NQ_IMGBED_CHANNEL_NAME` | Optional fixed S3 channel name when the host has several S3 channels; store it as a secret |
+| `NQ_IMGBED_ENCRYPTION_KEY` | Legacy-only key used to decrypt an existing D1 image-host token |
+
+NodeQuality image uploads always use the `s3` channel and send no upload-folder parameter. `NQ_IMGBED_CHANNEL` and `NQ_IMGBED_FOLDER` are obsolete and cannot override this policy. There is no browser-facing image-host configuration or test API: the endpoint, token, optional channel name, and upstream image URLs stay inside the Worker. Public reports expose only the same-origin NIE-SLA image proxy. Never place the real endpoint or token in `wrangler.toml`, frontend configuration, logs, tutorials, or the public repository. Open-source self-hosters must supply their own image-host credentials; official shared credentials are not distributed with the source. Existing encrypted D1 settings remain a read-only migration fallback.
 
 ## Agent Environment
 

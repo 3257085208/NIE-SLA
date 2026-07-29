@@ -2023,7 +2023,6 @@ async function loadSettings() {
   loadAccount();
   loadAdminPath();
   loadGeoIp();
-  loadNqImageHost();
   loadBackup();
   loadAgentUpdate();
   loadTraffic();
@@ -2064,93 +2063,6 @@ async function saveGeoIp() {
     toast(error.message, "err");
   } finally {
     if (button) button.disabled = false;
-  }
-}
-
-const NQ_IMAGE_CHANNELS = [
-  ["", "图床默认渠道"],
-  ["cfr2", "Cloudflare R2"],
-  ["telegram", "Telegram"],
-  ["s3", "S3"],
-  ["discord", "Discord"],
-  ["huggingface", "Hugging Face"],
-  ["webdav", "WebDAV"],
-  ["external", "外部存储"],
-];
-
-async function loadNqImageHost() {
-  const box = byId("sNqImageHost");
-  if (!box) return;
-  try {
-    const data = await api("/api/settings/nq-image-host");
-    const tokenHint = data.api_token_set
-      ? `已配置${data.api_token_source === "env" ? "（环境变量）" : "（后台加密保存）"}；留空不修改`
-      : "填写创建时返回的完整 API Token（需要 upload 权限）";
-    const endpointLocked = data.endpoint_source === "env";
-    const tokenLocked = data.api_token_source === "env";
-    box.innerHTML = `
-      <label class="switch-line"><input id="nqImgEnabled" type="checkbox"${checkedAttr(data.enabled)}><span>自动上传网络质量与回程路由图片</span></label>
-      <div class="f"><label>上传 API</label><input id="nqImgEndpoint" type="url" inputmode="url" value="${escapeHtml(data.endpoint || "")}" placeholder="https://img.example.com/upload"${endpointLocked ? " disabled" : ""}></div>
-      <div class="f"><label>API Token</label><input id="nqImgToken" type="password" autocomplete="new-password" placeholder="${escapeHtml(tokenHint)}"${tokenLocked ? " disabled" : ""}></div>
-      <div class="form-grid">
-        ${formField("上传渠道", `<select id="nqImgChannel">${NQ_IMAGE_CHANNELS.map(([value, label]) => `<option value="${escapeHtml(value)}"${selectedAttr(value === (data.upload_channel || ""))}>${escapeHtml(label)}</option>`).join("")}</select>`)}
-        ${formField("渠道名称（可选）", `<input id="nqImgChannelName" value="${escapeHtml(data.channel_name || "")}" maxlength="80" placeholder="多渠道时指定名称">`)}
-      </div>
-      <div class="f"><label>上传目录</label><input id="nqImgFolder" value="${escapeHtml(data.folder || "")}" maxlength="160" placeholder="NIE-SLA/NodeQuality"></div>
-      ${data.api_token_set && !tokenLocked ? '<label class="switch-line"><input id="nqImgClearToken" type="checkbox"><span>保存时清除已存 API Token</span></label>' : ""}
-      <p class="hint">兼容 MarSeventh/CloudFlare-ImgBed。必须使用 Token 创建成功时返回的完整值；Token 列表之后显示的截断值不能用于上传。只处理以后运行的 NQ 报告；图床失败时仍保存并显示原始文本，不会把 Token 下发给 Agent 或前端。</p>
-      ${endpointLocked || tokenLocked ? '<p class="hint">标记为环境变量的项目由 Worker 配置优先控制，后台不能覆盖。</p>' : ""}
-      <div class="backup-actions"><button class="btn btn-primary btn-sm" id="saveNqImageHost">保存图床设置</button><button class="btn btn-blue btn-sm" id="testNqImageHost">测试上传</button></div>
-      <div id="nqImageHostTestResult"></div>`;
-    byId("saveNqImageHost").onclick = saveNqImageHost;
-    byId("testNqImageHost").onclick = testNqImageHost;
-  } catch (error) {
-    errBox("sNqImageHost", error);
-  }
-}
-
-function nqImageHostPayload() {
-  const payload = {
-    enabled: !!byId("nqImgEnabled")?.checked,
-    endpoint: byId("nqImgEndpoint")?.value.trim() || "",
-    upload_channel: byId("nqImgChannel")?.value || "",
-    channel_name: byId("nqImgChannelName")?.value.trim() || "",
-    folder: byId("nqImgFolder")?.value.trim() || "",
-  };
-  const token = byId("nqImgToken")?.value.trim() || "";
-  if (token) payload.api_token = token;
-  if (byId("nqImgClearToken")?.checked) payload.api_token_clear = true;
-  return payload;
-}
-
-async function saveNqImageHost() {
-  const button = byId("saveNqImageHost");
-  if (button) button.disabled = true;
-  try {
-    await api("/api/settings/nq-image-host", { method: "PATCH", body: JSON.stringify(nqImageHostPayload()) });
-    toast("NQ 图床设置已保存", "ok");
-    loadNqImageHost();
-  } catch (error) {
-    toast(error.message, "err");
-  } finally {
-    if (button && document.body.contains(button)) button.disabled = false;
-  }
-}
-
-async function testNqImageHost() {
-  const button = byId("testNqImageHost");
-  const result = byId("nqImageHostTestResult");
-  if (button) { button.disabled = true; button.textContent = "上传中..."; }
-  if (result) result.innerHTML = '<p class="hint">正在上传测试图片...</p>';
-  try {
-    const data = await api("/api/settings/nq-image-host/test", { method: "POST", body: JSON.stringify(nqImageHostPayload()) });
-    if (result) result.innerHTML = `<p class="hint" style="color:#059669">测试成功：<a href="${escapeHtml(data.image_url)}" target="_blank" rel="noopener noreferrer">打开测试图片</a></p>`;
-    toast("图床测试上传成功", "ok");
-  } catch (error) {
-    if (result) result.innerHTML = `<p class="hint" style="color:#dc2626">${escapeHtml(error.message)}</p>`;
-    toast(error.message, "err");
-  } finally {
-    if (button && document.body.contains(button)) { button.disabled = false; button.textContent = "测试上传"; }
   }
 }
 

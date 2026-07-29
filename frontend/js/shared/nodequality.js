@@ -361,7 +361,7 @@ export function buildNqModalHtml(report) {
       const fallback = tab.content
         ? (rawId === 'network' ? renderNqNetworkReportHtml(tab.content) : rawId === 'route' ? renderNqRouteReportHtml(tab.content) : `<pre class="nq-ansi">${renderNqReportHtml(tab.content)}</pre>`)
         : '';
-      return `<div class="nq-panel nq-image-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><img class="nq-image" src="${escapeHtml(imageSrc)}" data-nq-original="${escapeHtml(tab.image)}" alt="${escapeHtml(nqTabTitle(tab))}" loading="lazy" referrerpolicy="strict-origin-when-cross-origin">${fallback ? `<div class="nq-image-fallback" hidden>${fallback}</div>` : ''}</div>`;
+      return `<div class="nq-panel nq-image-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><img class="nq-image" src="${escapeHtml(imageSrc)}" alt="${escapeHtml(nqTabTitle(tab))}" loading="lazy" referrerpolicy="no-referrer">${fallback ? `<div class="nq-image-fallback" hidden>${fallback}</div>` : ''}</div>`;
     }
     const content = rawId === 'network'
       ? renderNqNetworkReportHtml(tab.content || '')

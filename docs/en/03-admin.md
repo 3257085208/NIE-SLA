@@ -13,9 +13,9 @@ Two explicitly triggered Linux actions are marked Beta:
 
 No arbitrary command, URL, arguments, stdin, or schedule is accepted.
 
-Under **Settings → Agent → NQ Report Image Host**, NIE-SLA can upload the Network Quality and Return Route sections to a self-hosted `MarSeventh/CloudFlare-ImgBed` instance. Configure the full public HTTPS `/upload` endpoint and an API token with the `upload` permission, then use the built-in test upload before enabling it. The token is encrypted in D1 and is never sent to an Agent or browser. Upload failures keep the NQ task successful and the UI falls back to the stored text report.
+The Worker can render the Network Quality and Return Route sections as self-contained SVG images and upload them through a fixed S3 channel with no upload folder. There is no admin image-host card, configuration route, test route, or general-purpose upload proxy.
 
-Use the complete token returned when it is created. The later token list only shows a truncated value, which cannot authenticate uploads. Telegram uploads follow the documented file mode, and the test result distinguishes an invalid token, missing permission, channel configuration, rate limiting, upstream failure, and timeout.
+The endpoint, API token, and optional S3 channel name stay in Worker Secrets and are never returned to an Agent or browser. Only an administrator-created NQ task completed by the authenticated matching Agent can trigger an upload. Public reports expose a same-origin NIE-SLA image proxy instead of the upstream image URL. Upload failures keep the NQ task successful and the UI falls back to the stored text report.
 
 Telegram and email, appearance settings, updates, and backup/restore remain available.
 
