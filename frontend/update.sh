@@ -83,6 +83,41 @@ if [[ ! -f "$BINARY_PATH" && -f "/usr/local/bin/nstatus-metrics" && ! -L "/usr/l
 fi
 BACKUP_PATH="${BINARY_PATH}.bak"
 
+secure_binary_permissions() {
+    chown root:root "$BINARY_PATH"
+    chmod 0755 "$BINARY_PATH"
+}
+
+restart_service() {
+    if command -v systemctl &>/dev/null; then
+        systemctl restart nstatus-metrics
+    elif command -v rc-service &>/dev/null; then
+        rc-service nstatus-metrics restart
+    fi
+}
+
+service_is_healthy() {
+    if command -v systemctl &>/dev/null; then
+        systemctl is-active --quiet nstatus-metrics
+    elif command -v rc-service &>/dev/null; then
+        rc-service nstatus-metrics status >/dev/null 2>&1
+    else
+        "$BINARY_PATH" --version >/dev/null 2>&1
+    fi
+}
+
+rollback_update() {
+    local reason="$1"
+    err "$reason"
+    if [[ -f "$BACKUP_PATH" ]]; then
+        mv -f "$BACKUP_PATH" "$BINARY_PATH"
+        secure_binary_permissions
+        restart_service || true
+        ok "已恢复旧版本"
+    fi
+    exit 1
+}
+
 # 检查当前版本
 if [[ -f "$BINARY_PATH" ]]; then
     CURRENT_VERSION=$("$BINARY_PATH" --version 2>&1 || echo "unknown")
@@ -94,6 +129,8 @@ fi
 # 备份当前版本
 if [[ -f "$BINARY_PATH" ]]; then
     cp "$BINARY_PATH" "$BACKUP_PATH"
+    chown root:root "$BACKUP_PATH"
+    chmod 0755 "$BACKUP_PATH"
     ok "已备份当前版本"
 fi
 
@@ -104,15 +141,17 @@ SUMS_TMP="$(mktemp)"
 trap 'rm -f "${BINARY_PATH}.tmp" "$SUMS_TMP"' EXIT INT TERM
 if download_to "$DOWNLOAD_URL" "${BINARY_PATH}.tmp"; then
     verify_binary_checksum "${BINARY_PATH}.tmp" "$BINARY_NAME" "$SUMS_TMP"
-    chmod +x "${BINARY_PATH}.tmp"
+    chown root:root "${BINARY_PATH}.tmp"
+    chmod 0755 "${BINARY_PATH}.tmp"
     mv "${BINARY_PATH}.tmp" "$BINARY_PATH"
+    secure_binary_permissions
     ln -sf "$BINARY_PATH" /usr/local/bin/nstatus-metrics 2>/dev/null || true
-    chown nstatus:nstatus "$BINARY_PATH" 2>/dev/null || chown nstatus "$BINARY_PATH" 2>/dev/null || true
     ok "下载完成"
 else
     err "下载失败"
     if [[ -f "$BACKUP_PATH" ]]; then
         mv "$BACKUP_PATH" "$BINARY_PATH"
+        secure_binary_permissions
         ok "已恢复备份"
     fi
     exit 1
@@ -120,17 +159,12 @@ fi
 
 # 重启服务
 info "重启服务..."
-if command -v systemctl &>/dev/null; then
-    systemctl restart nstatus-metrics
-    ok "服务已重启"
-elif command -v rc-service &>/dev/null; then
-    rc-service nstatus-metrics restart
-    ok "服务已重启"
-fi
+restart_service || rollback_update "新版本服务重启失败"
 
 # 检查新版本
 sleep 2
-NEW_VERSION=$("$BINARY_PATH" --version 2>&1 || echo "unknown")
+service_is_healthy || rollback_update "新版本服务未能保持运行"
+NEW_VERSION=$("$BINARY_PATH" --version 2>&1) || rollback_update "新版本二进制自检失败"
 ok "新版本: $NEW_VERSION"
 
 # 清理备份

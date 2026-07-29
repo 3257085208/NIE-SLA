@@ -23,7 +23,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260725-machine-types1';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260730-audit1';
 import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
@@ -35,14 +35,20 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260729-beta24-imgbed1';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260730-audit1';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
 import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
 import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260729-beta23';
+import { readStorage, writeStorage } from './js/shared/storage.js?v=20260730-audit1';
 
 const $ = (sel) => document.querySelector(sel);
+const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
+const normalizeChecksPageSize = (value) => {
+  const size = Number(value);
+  return CHECKS_PAGE_SIZES.has(size) ? size : 5;
+};
 
 requestAnimationFrame(() => document.body.classList.add('is-loaded'));
 
@@ -66,7 +72,7 @@ const state = {
   dailyPoints: [],
   checksSource: '',
   checksPage: 1,
-  checksPageSize: Number(localStorage.getItem('nstatus.pageSize') || 5),
+  checksPageSize: normalizeChecksPageSize(readStorage('localStorage', 'nstatus.pageSize', 5)),
   incidentsOpen: false,
   selectedMetric: 'latency',
   selectedMetricRange: '1h',
@@ -79,7 +85,7 @@ const state = {
   latencyChartSamples: [],
   metricsCache: new Map(),
   pingsCache: new Map(),
-  groupByMode: localStorage.getItem('nstatus.groupByMode') || 'group',
+  groupByMode: normalizeGroupByMode(readStorage('localStorage', 'nstatus.groupByMode', 'group')),
   statusRequestSeq: 0,
   statusController: null,
   lastGroupsRenderKey: '',
@@ -182,9 +188,9 @@ if (els.serviceSearch) {
 
 if (els.pageSize) {
   els.pageSize.addEventListener('change', () => {
-    state.checksPageSize = Number(els.pageSize.value);
+    state.checksPageSize = normalizeChecksPageSize(els.pageSize.value);
     state.checksPage = 1;
-    localStorage.setItem('nstatus.pageSize', String(state.checksPageSize));
+    writeStorage('localStorage', 'nstatus.pageSize', state.checksPageSize);
     renderChecksPage();
   });
 }
@@ -318,6 +324,7 @@ function render(data) {
   const unknown = targets.length - checked.length;
   const delayed = stale.filter(targetIsUp).length;
   const avg = avgLatency(fresh);
+  const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
 
   let bannerText = appearanceText(state.appearance.banner_normal);
   let bannerClass = 'system-banner';
@@ -327,6 +334,9 @@ function render(data) {
     bannerClass += ' down';
   } else if (delayed > 0) {
     bannerText = appearanceText(state.appearance.banner_degraded, delayed);
+    bannerClass += ' degraded';
+  } else if (warnings.length > 0) {
+    bannerText = '部分状态数据暂不可用';
     bannerClass += ' degraded';
   } else if (unknown > 0) {
     bannerText = appearanceText(state.appearance.banner_unknown, unknown);
@@ -353,9 +363,10 @@ function render(data) {
       `<span>${escapeHtml(appearanceText(state.appearance.summary_down, down))}</span>`,
       `<span>${escapeHtml(appearanceText(state.appearance.summary_degraded, delayed))}</span>`,
       `<span>${escapeHtml(appearanceText(state.appearance.summary_unknown, unknown))}</span>`,
+      warnings.length ? `<span>数据读取异常 ${warnings.length}</span>` : '',
       `<span>${escapeHtml(appearanceText(state.appearance.summary_latency, 0, avg == null ? '-' : `${avg} ms`))}</span>`,
       `<span>${escapeHtml(appearanceText(state.appearance.summary_updated, 0, fmtTime(Date.now() / 1000, 'short')))}</span>`,
-    ].join('');
+    ].filter(Boolean).join('');
   }
 
   renderIncidentLog(data);
@@ -619,12 +630,10 @@ function ensurePublicGroupByBar() {
 
   bar.querySelectorAll('[data-group-by]').forEach((button) => {
     button.addEventListener('click', () => {
-      const nextMode = button.dataset.groupBy || 'group';
+      const nextMode = normalizeGroupByMode(button.dataset.groupBy);
       if (nextMode === state.groupByMode) return;
       state.groupByMode = nextMode;
-      try {
-        localStorage.setItem('nstatus.groupByMode', nextMode);
-      } catch (_) {}
+      writeStorage('localStorage', 'nstatus.groupByMode', nextMode);
       state.lastGroupsRenderKey = '';
       if (state.data) renderGroups(state.data);
     });
@@ -668,7 +677,7 @@ function renderGroups(data) {
       event.stopPropagation();
       const nqButton = event.target.closest('.nq-report-btn');
       if (nqButton) {
-        openNodeQualityReport(nqButton.dataset.nqTarget, nqButton.dataset.nqName || element.dataset.name);
+        openNodeQualityReport(nqButton.dataset.nqTarget, nqButton.dataset.nqName || element.dataset.name, nqButton);
         return;
       }
       selectService(element.dataset.id, element.dataset.name, element);
@@ -803,13 +812,17 @@ function renderService(t, days, summaries) {
   `;
 }
 
-async function openNodeQualityReport(targetId, targetName = '') {
+async function openNodeQualityReport(targetId, targetName = '', returnTarget = null) {
   if (!targetId) return;
   closeNodeQualityReport();
+  const returnFocus = returnTarget || document.activeElement;
   const root = document.createElement('div');
   root.className = 'nq-modal-root';
-  root.innerHTML = '<div class="nq-modal-backdrop"><div class="nq-modal nq-modal-loading" role="dialog" aria-modal="true"><div class="nq-modal-head"><strong>NodeQuality</strong><button type="button" class="nq-close" data-nq-close aria-label="关闭">×</button></div><div class="nq-loading">正在加载报告...</div></div></div>';
+  root.returnFocus = returnFocus;
+  root.innerHTML = '<div class="nq-modal-backdrop"><div class="nq-modal nq-modal-loading" role="dialog" aria-modal="true" aria-label="NodeQuality 报告"><div class="nq-modal-head"><strong>NodeQuality</strong><button type="button" class="nq-close" data-nq-close aria-label="关闭">×</button></div><div class="nq-loading">正在加载报告...</div></div></div>';
   document.body.appendChild(root);
+  document.body.classList.add('nq-modal-open');
+  bindNodeQualityModal(root);
   const load = async () => {
     try {
       const response = await fetch(api(`/api/nq/${encodeURIComponent(targetId)}`), { cache: 'no-store' });
@@ -819,7 +832,7 @@ async function openNodeQualityReport(targetId, targetName = '') {
       root.innerHTML = buildNqModalHtml(report);
       bindNodeQualityModal(root);
     } catch (error) {
-      root.innerHTML = `<div class="nq-modal-backdrop"><div class="nq-modal" role="dialog" aria-modal="true"><div class="nq-modal-head"><strong>NodeQuality</strong><button type="button" class="nq-close" data-nq-close aria-label="关闭">×</button></div><div class="nq-empty">报告加载失败：${escapeHtml(error.message)}</div></div></div>`;
+      root.innerHTML = `<div class="nq-modal-backdrop"><div class="nq-modal" role="dialog" aria-modal="true" aria-label="NodeQuality 报告"><div class="nq-modal-head"><strong>NodeQuality</strong><button type="button" class="nq-close" data-nq-close aria-label="关闭">×</button></div><div class="nq-empty">报告加载失败：${escapeHtml(error.message)}</div></div></div>`;
       bindNodeQualityModal(root);
     }
   };
@@ -832,7 +845,11 @@ async function openNodeQualityReport(targetId, targetName = '') {
 }
 
 function closeNodeQualityReport() {
-  document.querySelector('.nq-modal-root')?.remove();
+  const root = document.querySelector('.nq-modal-root');
+  const returnFocus = root?.returnFocus;
+  root?.remove();
+  document.body.classList.remove('nq-modal-open');
+  if (returnFocus?.isConnected && typeof returnFocus.focus === 'function') returnFocus.focus();
 }
 
 if (document.addEventListener) {

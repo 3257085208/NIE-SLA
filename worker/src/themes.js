@@ -256,9 +256,13 @@ function validateManifest(value, files) {
 function validatePackageFile(path, data) {
   const clean = cleanPackagePath(path);
   if (clean !== path || !data?.length || data.length > FILE_MAX_BYTES) throw new ApiError(400, `主题文件无效：${path}`);
-  const dot = clean.lastIndexOf('.');
-  const extension = dot >= 0 ? clean.slice(dot).toLowerCase() : '';
-  if (!ALLOWED_EXTENSIONS.has(extension)) throw new ApiError(400, `不允许的主题文件类型：${path}`);
+  if (!isAllowedPackageFile(clean)) throw new ApiError(400, `不允许的主题文件类型：${path}`);
+}
+
+function isAllowedPackageFile(path) {
+  const dot = path.lastIndexOf('.');
+  const extension = dot >= 0 ? path.slice(dot).toLowerCase() : '';
+  return ALLOWED_EXTENSIONS.has(extension);
 }
 
 function cleanThemeId(value) {
@@ -320,9 +324,38 @@ function parseRegistry(raw) {
   try {
     const value = JSON.parse(raw);
     if (!Array.isArray(value)) throw new Error();
-    return value.filter(item => item && item.type === 'theme');
+    return value.map(validateStoredTheme);
   } catch (_) {
     throw new ApiError(500, '主题注册表损坏，已拒绝自动覆盖');
+  }
+}
+
+function validateStoredTheme(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.type !== 'theme') throw new Error('invalid theme');
+  const id = cleanThemeId(value.id);
+  const revision = String(value.revision || '').trim();
+  const storageRoot = String(value.storage_root || '').trim() || 'extensions/v1';
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(revision)) throw new Error('invalid revision');
+  if (!['themes/v1', 'extensions/v1'].includes(storageRoot)) throw new Error('invalid storage root');
+  if (!Array.isArray(value.files) || !value.files.length || value.files.length > FILE_MAX_COUNT) throw new Error('invalid files');
+  const files = [...new Set(value.files.map(cleanPackagePath))];
+  if (files.length !== value.files.length || files.some(path => !isAllowedPackageFile(path))) throw new Error('invalid files');
+  const mode = String(value.mode || 'css');
+  if (!['css', 'canvas'].includes(mode)) throw new Error('invalid mode');
+  if (mode === 'canvas') {
+    const entry = cleanPackagePath(value.entry || 'index.html');
+    if (!entry.endsWith('.html') || !files.includes(entry)) throw new Error('invalid canvas entry');
+    const permissions = Array.isArray(value.permissions) ? value.permissions.map(String) : [];
+    if (permissions.length !== 1 || permissions[0] !== 'status:read') throw new Error('invalid permissions');
+    const height = Number(value.height);
+    if (!Number.isFinite(height) || height < 400 || height > 12000) throw new Error('invalid height');
+    return { ...value, type: 'theme', id, revision, storage_root: storageRoot, files, mode, entry, permissions, height };
+  } else {
+    const styles = Array.isArray(value.styles) ? value.styles.map(cleanPackagePath) : [];
+    if (!styles.length || styles.length > 4 || styles.some(path => !path.endsWith('.css') || !files.includes(path))) {
+      throw new Error('invalid styles');
+    }
+    return { ...value, type: 'theme', id, revision, storage_root: storageRoot, files, mode, styles: [...new Set(styles)] };
   }
 }
 

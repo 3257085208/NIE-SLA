@@ -8,6 +8,13 @@ export const GROUP_BY_OPTIONS = [
   { id: 'line_type', label: '机器类型' },
 ];
 
+const GROUP_BY_IDS = new Set(GROUP_BY_OPTIONS.map((option) => option.id));
+
+export function normalizeGroupByMode(value) {
+  const mode = String(value || '').trim();
+  return GROUP_BY_IDS.has(mode) ? mode : 'group';
+}
+
 export const LINE_TYPE_OPTIONS = [
   { id: '', label: '未设置' },
   { id: '建站机', label: '建站机' },
@@ -48,7 +55,7 @@ export function priceBandKey(target = {}) {
 }
 
 export function groupKeyFor(target = {}, mode = 'group') {
-  switch (String(mode || 'group')) {
+  switch (normalizeGroupByMode(mode)) {
     case 'provider':
       return displayGroupName(target.provider || '未设置商家');
     case 'location':

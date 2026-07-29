@@ -158,20 +158,58 @@ export function isPrivateHost(host) {
     if (a === 10 || a === 127 || a === 0) return true;
     if (a === 169 && b === 254) return true;
     if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 0 && parts[2] === 0) return true;
+    if (a === 192 && b === 0 && parts[2] === 2) return true; // documentation
+    if (a === 192 && b === 88 && parts[2] === 99) return true;
     if (a === 192 && b === 168) return true;
+    if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking
+    if (a === 198 && b === 51 && parts[2] === 100) return true; // documentation
+    if (a === 203 && b === 0 && parts[2] === 113) return true; // documentation
     if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
     if (a >= 224) return true; // multicast/reserved
     return false;
   }
   // IPv6
   if (hostname.includes(':')) {
-    const h = hostname;
-    if (h === '::' || h === '::1') return true;
-    if (h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe8') || h.startsWith('fe9') || h.startsWith('fea') || h.startsWith('feb')) return true;
-    if (h.startsWith('ff')) return true; // multicast
+    const groups = expandIpv6(hostname);
+    if (!groups) return true;
+    if (groups.every((part, index) => part === 0 || (index === 7 && part === 1))) return true;
+    if ((groups[0] & 0xfe00) === 0xfc00 || (groups[0] & 0xffc0) === 0xfe80) return true;
+    if ((groups[0] & 0xff00) === 0xff00) return true; // multicast
+    if (groups[0] === 0x0100 && groups.slice(1, 4).every(part => part === 0)) return true; // discard-only 100::/64
+    if (groups[0] === 0x2001 && groups[1] === 0x0db8) return true; // documentation
+    if (groups[0] === 0x2002) return true; // deprecated 6to4 can embed non-public IPv4
+    if (groups[0] === 0x0064 && groups[1] === 0xff9b
+      && (groups[2] === 1 || groups.slice(2, 6).every(part => part === 0))) return true; // NAT64 special-use prefixes
+    const mappedV4 = groups.slice(0, 5).every(part => part === 0) && groups[5] === 0xffff;
+    const compatibleV4 = groups.slice(0, 6).every(part => part === 0);
+    if (mappedV4 || compatibleV4) {
+      const ipv4 = `${groups[6] >> 8}.${groups[6] & 255}.${groups[7] >> 8}.${groups[7] & 255}`;
+      return isPrivateHost(ipv4);
+    }
     return false;
   }
   return false;
+}
+
+function expandIpv6(value) {
+  let input = String(value || '').toLowerCase();
+  const dotted = input.match(/(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (dotted) {
+    const bytes = dotted[1].split('.').map(Number);
+    if (bytes.some(byte => !Number.isInteger(byte) || byte < 0 || byte > 255)) return null;
+    input = `${input.slice(0, dotted.index)}${((bytes[0] << 8) | bytes[1]).toString(16)}:${((bytes[2] << 8) | bytes[3]).toString(16)}`;
+  }
+  if ((input.match(/::/g) || []).length > 1) return null;
+  const sides = input.split('::');
+  const left = sides[0] ? sides[0].split(':') : [];
+  const right = sides.length === 2 && sides[1] ? sides[1].split(':') : [];
+  if (sides.length === 1 && left.length !== 8) return null;
+  const missing = 8 - left.length - right.length;
+  if (missing < (sides.length === 2 ? 1 : 0)) return null;
+  const groups = [...left, ...Array(missing).fill('0'), ...right];
+  if (groups.length !== 8 || groups.some(part => !/^[0-9a-f]{1,4}$/.test(part))) return null;
+  return groups.map(part => Number.parseInt(part, 16));
 }
 
 export function assertPublicHttpUrl(url) {
@@ -190,6 +228,27 @@ export function assertPublicHttpUrl(url) {
     throw new Error('URL 不能指向私有或内部地址');
   }
   return u;
+}
+
+export async function fetchPublicHttpsWithValidatedRedirects(url, options = {}, fetchImpl = fetch, maxRedirects = 4) {
+  let current = validatedPublicHttpsUrl(url);
+  for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
+    const response = await fetchImpl(current.toString(), { ...options, redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get('location');
+    await response.body?.cancel().catch(() => {});
+    if (!location || redirects === maxRedirects) throw new Error('too many or invalid redirects');
+    current = validatedPublicHttpsUrl(new URL(location, current).toString());
+  }
+  throw new Error('too many redirects');
+}
+
+function validatedPublicHttpsUrl(value) {
+  const url = assertPublicHttpUrl(value);
+  if (url.protocol !== 'https:' || url.username || url.password) {
+    throw new Error('URL 必须使用无凭据的 HTTPS');
+  }
+  return url;
 }
 
 

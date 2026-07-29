@@ -4,6 +4,7 @@ set -euo pipefail
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 CFTZ_URL_BASE="${CFTZ_URL_BASE:-$DOWNLOAD_BASE}"
 DEFAULT_SHA256SUMS_SHA256=""
+DEFAULT_CFTZ_SHA256="a65e790a8d125aa1a4b68015e24f985ea52c2a456e1232e98637c64b1a8b8758"
 DEFAULT_EXPECTED_VERSION=""
 BIN_NAME="nstatus-metrics"
 SERVICE_NAME="nstatus-metrics"
@@ -469,7 +470,7 @@ INIT="$(detect_init)"
 BIN_URL="${DOWNLOAD_BASE%/}/bin/${BIN_NAME}-linux-${ARCH}?v=${CACHE_KEY}"
 TMPBIN="$(mktemp)"
 TMPSUMS="$(mktemp)"
-trap 'rm -f "$TMPBIN" "$TMPSUMS"' EXIT INT TERM
+trap 'rm -f "$TMPBIN" "$TMPSUMS" "${CFTZ_TMP:-}"' EXIT INT TERM
 
 title "安装 聶.NET Agent"
 info "api: $API_BASE"
@@ -489,9 +490,18 @@ ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
 
 CFTZ_URL="${CFTZ_URL_BASE%/}/cftz?v=${CACHE_KEY}"
 CFTZ_TMP="$(mktemp)"
-if download_to "$CFTZ_URL" "$CFTZ_TMP" >/dev/null 2>&1 && [[ -s "$CFTZ_TMP" ]]; then
-  install -m 0755 "$CFTZ_TMP" "$CFTZ_BIN" 2>/dev/null || { cp "$CFTZ_TMP" "$CFTZ_BIN"; chmod 0755 "$CFTZ_BIN"; }
+download_to "$CFTZ_URL" "$CFTZ_TMP" >/dev/null 2>&1 || { err "cftz 下载失败"; exit 1; }
+CFTZ_EXPECTED_SHA256="${NSTATUS_CFTZ_SHA256:-$DEFAULT_CFTZ_SHA256}"
+if [[ ! "$CFTZ_EXPECTED_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+  err "cftz 缺少有效的 SHA-256"
+  exit 1
 fi
+CFTZ_ACTUAL_SHA256="$(sha256_file "$CFTZ_TMP")"
+if [[ "${CFTZ_ACTUAL_SHA256,,}" != "${CFTZ_EXPECTED_SHA256,,}" ]]; then
+  err "cftz 的 SHA-256 不匹配"
+  exit 1
+fi
+install -m 0755 "$CFTZ_TMP" "$CFTZ_BIN" 2>/dev/null || { cp "$CFTZ_TMP" "$CFTZ_BIN"; chmod 0755 "$CFTZ_BIN"; }
 rm -f "$CFTZ_TMP"
 
 write_env_file "$API_BASE" "$TOKEN" "$AGENT_ID" "$AGENT_LABEL" "$INTERVAL" "$PING_TARGETS" "$PING_SEC"

@@ -1,29 +1,31 @@
+import { readStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260730-audit1";
+
 const SESSION_KEY = "nstatus_admin_session";
 const SESSION_EXP_KEY = "nstatus_admin_session_exp";
 
 export function createAdminClient({ apiBase, onUnauthorized }) {
-  for (const storage of [sessionStorage, localStorage]) {
-    storage.removeItem("nstatus_admin_t");
-    storage.removeItem("nstatus_admin_ts");
+  for (const name of ["sessionStorage", "localStorage"]) {
+    removeStorage(name, "nstatus_admin_t");
+    removeStorage(name, "nstatus_admin_ts");
   }
 
   function activeSessionId() {
-    const session = sessionStorage.getItem(SESSION_KEY);
-    const expiresAt = Number(sessionStorage.getItem(SESSION_EXP_KEY) || 0);
+    const session = readStorage("sessionStorage", SESSION_KEY, "");
+    const expiresAt = Number(readStorage("sessionStorage", SESSION_EXP_KEY, 0));
     if (session && expiresAt && Date.now() < expiresAt) return session;
-    sessionStorage.removeItem(SESSION_KEY);
-    sessionStorage.removeItem(SESSION_EXP_KEY);
+    removeStorage("sessionStorage", SESSION_KEY);
+    removeStorage("sessionStorage", SESSION_EXP_KEY);
     return "";
   }
 
   function saveSession(id, expiresAt) {
     if (id && expiresAt) {
-      sessionStorage.setItem(SESSION_KEY, id);
-      sessionStorage.setItem(SESSION_EXP_KEY, String(Number(expiresAt) * 1000));
+      writeStorage("sessionStorage", SESSION_KEY, id);
+      writeStorage("sessionStorage", SESSION_EXP_KEY, Number(expiresAt) * 1000);
       return;
     }
-    sessionStorage.removeItem(SESSION_KEY);
-    sessionStorage.removeItem(SESSION_EXP_KEY);
+    removeStorage("sessionStorage", SESSION_KEY);
+    removeStorage("sessionStorage", SESSION_EXP_KEY);
   }
 
   function clearAuth() {

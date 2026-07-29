@@ -301,7 +301,7 @@ export function publicNodeQualitySummary(target = {}) {
       report_time: reportTime || null,
       updated_at: target?.nq_updated_at ? Number(target.nq_updated_at) : null,
       tabs: ['basic'],
-      link: extractNodeQualityLink(raw) || null,
+      link: safeReportLink(extractNodeQualityLink(raw)) || null,
     };
   }
   if (!report || typeof report !== 'object') return null;
@@ -348,7 +348,7 @@ export function publicNodeQualityReport(target = {}) {
       name: String(target.name || ''),
       report_time: extractReportTime(text) || null,
       updated_at: target?.nq_updated_at ? Number(target.nq_updated_at) : null,
-      link: extractNodeQualityLink(text) || null,
+      link: safeReportLink(extractNodeQualityLink(text)) || null,
       image_proxy_base: target.id ? `/api/nq/${encodeURIComponent(String(target.id))}/image` : null,
       tabs: [{ id: 'basic', title: '基本信息', kind: 'ansi', content: sanitizeAnsiContent(text) }],
     };

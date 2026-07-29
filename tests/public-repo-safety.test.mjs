@@ -13,9 +13,11 @@ const textFiles = tracked.filter((file) =>
   && !/(?:^|\/)vendor\//.test(file)
   && !/(?:^|\/)Cargo\.lock$/.test(file)
   && !/(?:^|\/)bin\//.test(file));
+const hiddenImageHost = new RegExp(['img', 'nkx', 'moe'].join('\\.'), 'i');
 
 const checks = [
   ['production domain', /(?:niekaixiang\.com|nkx\.workers\.dev)/i],
+  ['private image host', hiddenImageHost],
   ['Agent token', /\bnst_[a-f0-9]{32,}\b/i],
   ['GitHub token', /\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b/],
   ['Telegram bot token', /\b\d{8,12}:[A-Za-z0-9_-]{30,}\b/],

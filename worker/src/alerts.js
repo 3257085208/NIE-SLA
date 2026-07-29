@@ -144,11 +144,11 @@ export async function runAlertChecks(env, options = {}) {
   await ensureAlertStateTable(env);
 
   const [targetRows, metricRows, trafficRows, latestRows, stateRows] = await Promise.all([
-    env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 ORDER BY group_name, name`).all().catch(() => ({ results: [] })),
-    env.DB.prepare(`SELECT * FROM agent_metrics_state`).all().catch(() => ({ results: [] })),
-    env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all().catch(() => ({ results: [] })),
-    env.DB.prepare(`SELECT * FROM latest_status`).all().catch(() => ({ results: [] })),
-    env.DB.prepare(`SELECT * FROM alert_state`).all().catch(() => ({ results: [] })),
+    env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 ORDER BY group_name, name`).all(),
+    env.DB.prepare(`SELECT * FROM agent_metrics_state`).all(),
+    env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all(),
+    env.DB.prepare(`SELECT * FROM latest_status`).all(),
+    env.DB.prepare(`SELECT * FROM alert_state`).all(),
   ]);
 
   const alertEnv = Object.create(env);
@@ -935,8 +935,11 @@ function metricValues(row) {
 
 function parseJsonSafe(value) {
   if (!value) return {};
-  if (typeof value === 'object') return value;
-  try { return JSON.parse(value); } catch (_) { return {}; }
+  if (typeof value === 'object') return Array.isArray(value) ? {} : value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) { return {}; }
 }
 
 function metricUpdatedAtSec(row) {

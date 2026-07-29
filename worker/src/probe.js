@@ -307,7 +307,9 @@ async function acquireProbeRunLease(env, ttlSec = 180) {
 
 async function releaseProbeRunLease(env, lease) {
   if (!env.DB || !lease) return;
-  await env.DB.prepare(`DELETE FROM app_meta WHERE key = ? AND value = ?`).bind(lease.key, lease.token).run().catch(() => {});
+  await env.DB.prepare(`DELETE FROM app_meta WHERE key = ? AND value = ?`).bind(lease.key, lease.token).run().catch((error) => {
+    console.error('release probe lease failed:', String(error?.message || error));
+  });
 }
 
 export async function runTargetBatch(env, targets, previousById = null) {
@@ -322,8 +324,16 @@ export async function runTargetBatch(env, targets, previousById = null) {
     const settled = await Promise.allSettled(chunk.map(target => runSingleTarget(env, target, previousById.get(target.id) || null)));
     for (const item of settled) out.push(item.status === 'fulfilled' ? item.value : { ok: false, error: String(item.reason?.message || item.reason) });
   }
-  try { await mergeR2StateUpdates(env, out.map(item => item.state_update).filter(Boolean)); } catch (_) {}
-  return out.map(({ state_update, ...publicResult }) => publicResult);
+  let stateSyncWarning = '';
+  try {
+    await mergeR2StateUpdates(env, out.map(item => item.state_update).filter(Boolean));
+  } catch (error) {
+    stateSyncWarning = 'r2_state_sync_failed';
+    console.error('probe R2 state sync failed:', String(error?.message || error));
+  }
+  return out.map(({ state_update, ...publicResult }) => stateSyncWarning
+    ? { ...publicResult, warning: stateSyncWarning }
+    : publicResult);
 }
 
 async function runSingleTarget(env, target, previousState = null) {
@@ -347,7 +357,7 @@ async function readLatestStatusMap(env, targetIds) {
       `SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo, uptime_24h, uptime_7d, avg_latency_24h, last_fail_at, current_outage_started_at, last_recover_at, status_changed_at
        FROM latest_status
        WHERE target_id IN (${marks})`
-    ).bind(...chunk).all().catch(() => ({ results: [] }));
+    ).bind(...chunk).all();
     for (const row of rows.results || []) map.set(String(row.target_id), row);
   }
   return map;

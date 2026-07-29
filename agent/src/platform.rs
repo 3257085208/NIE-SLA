@@ -1,4 +1,4 @@
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use std::path::Path;
 use std::process::Command;
 use std::sync::Mutex;
@@ -79,7 +79,7 @@ pub(super) fn disk_io_bytes() -> (u64, u64) {
             continue;
         }
         let name = fields[2];
-        if name.starts_with("loop") || name.starts_with("ram") {
+        if !should_count_disk_device_at(Path::new("/sys/class/block"), name) {
             continue;
         }
         let sectors_read = fields[5].parse::<u64>().unwrap_or(0);
@@ -88,6 +88,21 @@ pub(super) fn disk_io_bytes() -> (u64, u64) {
         write = write.saturating_add(sectors_written.saturating_mul(512));
     }
     (read, write)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn should_count_disk_device_at(sys_block: &Path, name: &str) -> bool {
+    if name.starts_with("loop") || name.starts_with("ram") || name.starts_with("zram") {
+        return false;
+    }
+    let device = sys_block.join(name);
+    if device.join("partition").exists() {
+        return false;
+    }
+    match std::fs::read_dir(device.join("slaves")) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(_) => true,
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -883,5 +898,28 @@ mod tests {
         assert_eq!(gpu_vendor_name("0x10DE"), Some("NVIDIA"));
         assert_eq!(gpu_vendor_name("0x8086"), Some("Intel"));
         assert_eq!(gpu_vendor_name("0xffff"), None);
+    }
+
+    #[test]
+    fn disk_io_counts_only_leaf_block_devices() {
+        let root = std::env::temp_dir().join(format!(
+            "nstatus-block-devices-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("vda/slaves")).unwrap();
+        std::fs::create_dir_all(root.join("vda1/slaves")).unwrap();
+        std::fs::write(root.join("vda1/partition"), "1").unwrap();
+        std::fs::create_dir_all(root.join("sda/slaves")).unwrap();
+        std::fs::create_dir_all(root.join("dm-0/slaves/sda2")).unwrap();
+
+        assert!(should_count_disk_device_at(&root, "vda"));
+        assert!(!should_count_disk_device_at(&root, "vda1"));
+        assert!(should_count_disk_device_at(&root, "sda"));
+        assert!(!should_count_disk_device_at(&root, "dm-0"));
+        assert!(!should_count_disk_device_at(&root, "loop0"));
+        assert!(!should_count_disk_device_at(&root, "zram0"));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

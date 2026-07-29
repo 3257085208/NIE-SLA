@@ -3,6 +3,10 @@ import { clamp, sanitizeAgentId } from '../utils.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { loadAgentRelease } from './settings.js';
 
+const INSTALLER_SHA256 = '419b9a8665a1ed93c996492379a510247840555b6a60f2ca9deab1c8d8073f0f';
+const SETUP_SHA256 = '1b9f78834b203d5b19e9efde39077537c73cb2b21a0f9f6c85ec4fac5c62b17c';
+const CFTZ_SHA256 = 'a65e790a8d125aa1a4b68015e24f985ea52c2a456e1232e98637c64b1a8b8758';
+
 export async function getAgentInstallCommand(env, url, request = null) {
   const targetId = sanitizeAgentId(url.searchParams.get('target_id') || '');
   if (!targetId) return { ok: false, error: '必须提供 target_id' };
@@ -28,6 +32,9 @@ export async function getAgentInstallCommand(env, url, request = null) {
     'NSTATUS_AGENT_ID',
     'NSTATUS_AGENT_LABEL',
     'NSTATUS_PING_SEC',
+    'NSTATUS_INSTALLER_SHA256',
+    'NSTATUS_SETUP_SHA256',
+    'NSTATUS_CFTZ_SHA256',
     'NSTATUS_SHA256SUMS_SHA256',
     'NSTATUS_EXPECTED_VERSION',
   ];
@@ -40,6 +47,9 @@ export async function getAgentInstallCommand(env, url, request = null) {
     ['NSTATUS_AGENT_ID', targetId],
     ['NSTATUS_AGENT_LABEL', label],
     ['NSTATUS_PING_SEC', pingSec],
+    ['NSTATUS_INSTALLER_SHA256', INSTALLER_SHA256],
+    ['NSTATUS_SETUP_SHA256', SETUP_SHA256],
+    ['NSTATUS_CFTZ_SHA256', CFTZ_SHA256],
     ['NSTATUS_SHA256SUMS_SHA256', sha256SumsSha256],
     ['NSTATUS_EXPECTED_VERSION', expectedVersion],
   ].map(([key, value]) => `${key}=${shellQuote(value)}`).join(' ');
@@ -50,6 +60,8 @@ export async function getAgentInstallCommand(env, url, request = null) {
     `tmp=$(mktemp)`,
     `trap 'rm -f "$tmp"' EXIT`,
     `curl -fsSL ${shellQuote(`${installBase}/install.sh?v=${encodeURIComponent(sha256SumsSha256)}`)} -o "$tmp"`,
+    `actual=$(if command -v sha256sum >/dev/null 2>&1; then sha256sum "$tmp" | awk '{print $1}'; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$tmp" | awk '{print $1}'; elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$tmp" | awk '{print $NF}'; else exit 127; fi)`,
+    `[ "$actual" = "$NSTATUS_INSTALLER_SHA256" ]`,
     linuxRunner,
   ].join(' && ');
 

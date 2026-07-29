@@ -12,7 +12,129 @@ const MAX_AGENT_PINGS_PER_REPORT = 5_000;
 const MAX_TELEMETRY_HOURS_PER_REPORT = 25;
 const MAX_TELEMETRY_AGE_SEC = 7 * 86400;
 const MAX_TELEMETRY_FUTURE_SEC = 300;
+const MAX_METRIC_RATE = 1024 ** 5;
+const MAX_METRIC_COUNT = 1_000_000_000;
 const AGENT_ACTIONS = new Set(['nodequality', 'ip_unlock']);
+
+function boundedMetric(value, min, max, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
+function normalizeCapacity(value = {}, unit = 'mb') {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const totalKey = `total_${unit}`;
+  const usedKey = `used_${unit}`;
+  const availableKey = unit === 'gb' ? 'avail_gb' : null;
+  const total = boundedMetric(source[totalKey], 0, 1_000_000_000_000);
+  const used = Math.min(total, boundedMetric(source[usedKey], 0, 1_000_000_000_000));
+  const out = {
+    [totalKey]: total,
+    [usedKey]: used,
+    percent: total > 0 ? Number(((used / total) * 100).toFixed(2)) : 0,
+  };
+  if (availableKey) out[availableKey] = Math.max(0, total - used);
+  return out;
+}
+
+function normalizeMetricStat(value, min, max) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const values = ['min', 'avg', 'max'].map(key => boundedMetric(source[key], min, max));
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  return { avg: Math.max(low, Math.min(high, values[1])), max: high, min: low };
+}
+
+function normalizeAgentStats(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return {
+    cpu: normalizeMetricStat(value.cpu, 0, 100),
+    mem: normalizeMetricStat(value.mem, 0, 100),
+    disk: normalizeMetricStat(value.disk, 0, 100),
+    load: normalizeMetricStat(value.load, 0, 1_000_000),
+    net_rx: normalizeMetricStat(value.net_rx, 0, MAX_METRIC_RATE),
+    net_tx: normalizeMetricStat(value.net_tx, 0, MAX_METRIC_RATE),
+    tcp_conns: normalizeMetricStat(value.tcp_conns, 0, MAX_METRIC_COUNT),
+    udp_conns: normalizeMetricStat(value.udp_conns, 0, MAX_METRIC_COUNT),
+    disk_read: normalizeMetricStat(value.disk_read, 0, MAX_METRIC_RATE),
+    disk_write: normalizeMetricStat(value.disk_write, 0, MAX_METRIC_RATE),
+  };
+}
+
+export function normalizeAgentVpsInfo(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const text = (key, max) => String(value[key] || '').trim().slice(0, max);
+  const out = {
+    cpu_model: text('cpu_model', 256),
+    cpu_cores: Math.floor(boundedMetric(value.cpu_cores, 0, 4096)),
+    physical_cores: Math.floor(boundedMetric(value.physical_cores, 0, 4096)),
+    arch: text('arch', 64),
+    total_mem_mb: boundedMetric(value.total_mem_mb, 0, 1_000_000_000_000),
+    total_swap_mb: boundedMetric(value.total_swap_mb, 0, 1_000_000_000_000),
+    total_disk_gb: boundedMetric(value.total_disk_gb, 0, 1_000_000_000_000),
+    os: text('os', 256),
+    kernel: text('kernel', 256),
+    virtualization: text('virtualization', 128),
+    gpu_name: text('gpu_name', 256),
+    gpu_count: Math.floor(boundedMetric(value.gpu_count, 0, 256)),
+    gpu_accessible: value.gpu_accessible === true,
+  };
+  for (const key of ['cpu_temp_c', 'gpu_temp_c', 'motherboard_temp_c', 'disk_temp_c', 'chipset_temp_c']) {
+    const number = Number(value[key]);
+    if (Number.isFinite(number)) out[key] = boundedMetric(number, -100, 1_000);
+  }
+  const gpuUtil = Number(value.gpu_util);
+  if (Number.isFinite(gpuUtil)) out.gpu_util = boundedMetric(gpuUtil, 0, 100);
+  if (Array.isArray(value.temperature_sensors)) {
+    out.temperature_sensors = value.temperature_sensors.slice(0, 128).flatMap((sensor) => {
+      const label = String(sensor?.label || '').trim().slice(0, 128);
+      const rawTemp = sensor?.temp_c;
+      const temp = Number(rawTemp);
+      if (!label || rawTemp == null || rawTemp === '' || typeof rawTemp === 'boolean' || !Number.isFinite(temp)) return [];
+      const kind = String(sensor?.kind || '');
+      return [{
+        label,
+        kind: ['cpu', 'gpu', 'motherboard', 'disk', 'chipset', 'other'].includes(kind) ? kind : 'other',
+        temp_c: boundedMetric(temp, -100, 1_000),
+      }];
+    });
+  }
+  return out;
+}
+
+export function normalizeAgentMetricState(metrics = {}) {
+  const memory = normalizeCapacity(metrics.memory, 'mb');
+  if (metrics.memory?.swap && typeof metrics.memory.swap === 'object') {
+    memory.swap = normalizeCapacity(metrics.memory.swap, 'mb');
+  }
+  return {
+    cpu_percent: boundedMetric(metrics.cpu_percent, 0, 100),
+    process_count: Math.floor(boundedMetric(metrics.process_count, 0, MAX_METRIC_COUNT)),
+    thread_count: Math.floor(boundedMetric(metrics.thread_count ?? metrics.process_count, 0, MAX_METRIC_COUNT)),
+    memory,
+    load: {
+      load1: boundedMetric(metrics.load?.load1, 0, 1_000_000),
+      load5: boundedMetric(metrics.load?.load5, 0, 1_000_000),
+      load15: boundedMetric(metrics.load?.load15, 0, 1_000_000),
+    },
+    disk: normalizeCapacity(metrics.disk, 'gb'),
+    net: {
+      rx_bytes_sec: boundedMetric(metrics.net?.rx_bytes_sec, 0, MAX_METRIC_RATE),
+      tx_bytes_sec: boundedMetric(metrics.net?.tx_bytes_sec, 0, MAX_METRIC_RATE),
+      rx_bytes: boundedMetric(metrics.net?.rx_bytes, 0, Number.MAX_SAFE_INTEGER),
+      tx_bytes: boundedMetric(metrics.net?.tx_bytes, 0, Number.MAX_SAFE_INTEGER),
+      tcp_conns: Math.floor(boundedMetric(metrics.net?.tcp_conns, 0, MAX_METRIC_COUNT)),
+      udp_conns: Math.floor(boundedMetric(metrics.net?.udp_conns, 0, MAX_METRIC_COUNT)),
+    },
+    diskio: {
+      read_bytes_sec: boundedMetric(metrics.diskio?.read_bytes_sec, 0, MAX_METRIC_RATE),
+      write_bytes_sec: boundedMetric(metrics.diskio?.write_bytes_sec, 0, MAX_METRIC_RATE),
+    },
+    stats: normalizeAgentStats(metrics.stats),
+    uptime_sec: Math.floor(boundedMetric(metrics.uptime_sec, 0, 1_000_000_000_000)),
+  };
+}
 
 export function normalizeAgentCapabilities(value, observedAt = nowSec()) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Number(value.protocol) !== 1) return null;
@@ -65,20 +187,9 @@ export async function submitAgentMetrics(request, env, ctx = null) {
 
   const ts = nowSec();
 
-  const state = {
-    cpu_percent: Number(metrics.cpu_percent) || 0,
-    process_count: Number(metrics.process_count) || 0,
-    thread_count: Number(metrics.thread_count ?? metrics.process_count) || 0,
-    memory: metrics.memory || {},
-    load: metrics.load || {},
-    disk: metrics.disk || {},
-    net: metrics.net || {},
-    diskio: metrics.diskio || {},
-    stats: metrics.stats || null,
-    uptime_sec: Number(metrics.uptime_sec) || 0,
-  };
+  const state = normalizeAgentMetricState(metrics);
 
-  const vpsInfo = metrics.vps_info && typeof metrics.vps_info === 'object' ? metrics.vps_info : null;
+  const vpsInfo = normalizeAgentVpsInfo(metrics.vps_info);
   const pings = Array.isArray(metrics.pings) ? metrics.pings : [];
   const telemetryError = validateTelemetryBatch(rawSamples, pings, ts);
   if (telemetryError) return json({ ok: false, error: telemetryError }, 400, env);
@@ -112,6 +223,7 @@ export async function getAgentMetrics(env, url, ctx = null) {
 
   let latest = null;
   let latestTs = 0;
+  const warnings = [];
   try {
     const row = await env.DB.prepare(`SELECT * FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first();
     if (row) {
@@ -132,7 +244,10 @@ export async function getAgentMetrics(env, url, ctx = null) {
       latest.traffic = await readAgentTraffic(env, agentId);
       latestTs = Math.floor(new Date(latest.updated_at || 0).getTime() / 1000);
     }
-  } catch (_) {}
+  } catch (error) {
+    console.error('latest Agent metrics unavailable:', String(error?.message || error));
+    warnings.push('Latest Agent metrics unavailable');
+  }
 
   const requestedUntil = nowSec();
   const until = includeHistory && latestTs > 0 ? Math.min(requestedUntil, latestTs + 600) : requestedUntil;
@@ -158,6 +273,7 @@ export async function getAgentMetrics(env, url, ctx = null) {
     history_downsampled: rawHistory.length > history.length,
     source,
     traffic: await readAgentTraffic(env, agentId),
+    warnings,
   };
   if (responseFormat === 'columns') payload.series = metricPointsToColumns(history, fields);
 
@@ -810,20 +926,22 @@ function roundMetric(value) {
 function normalizeMetricPoint(point) {
   const out = {
     ts: Number(point?.ts || 0),
-    cpu: Number(point?.cpu) || 0,
-    mem: Number(point?.mem) || 0,
-    disk: Number(point?.disk) || 0,
-    load1: Number(point?.load1 ?? point?.load) || 0,
-    net_rx: Number(point?.net_rx) || 0,
-    net_tx: Number(point?.net_tx) || 0,
-    tcp_conns: Number(point?.tcp_conns) || 0,
-    udp_conns: Number(point?.udp_conns) || 0,
-    disk_read: Number(point?.disk_read) || 0,
-    disk_write: Number(point?.disk_write) || 0,
+    cpu: boundedMetric(point?.cpu, 0, 100),
+    mem: boundedMetric(point?.mem, 0, 100),
+    disk: boundedMetric(point?.disk, 0, 100),
+    load1: boundedMetric(point?.load1 ?? point?.load, 0, 1_000_000),
+    net_rx: boundedMetric(point?.net_rx, 0, MAX_METRIC_RATE),
+    net_tx: boundedMetric(point?.net_tx, 0, MAX_METRIC_RATE),
+    tcp_conns: Math.floor(boundedMetric(point?.tcp_conns, 0, MAX_METRIC_COUNT)),
+    udp_conns: Math.floor(boundedMetric(point?.udp_conns, 0, MAX_METRIC_COUNT)),
+    disk_read: boundedMetric(point?.disk_read, 0, MAX_METRIC_RATE),
+    disk_write: boundedMetric(point?.disk_write, 0, MAX_METRIC_RATE),
   };
   for (const key of ['cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp']) {
     const n = Number(point?.[key]);
-    if (Number.isFinite(n)) out[key] = n;
+    if (Number.isFinite(n)) out[key] = key === 'gpu_util'
+      ? boundedMetric(n, 0, 100)
+      : boundedMetric(n, -100, 1_000);
   }
   return out;
 }
@@ -975,20 +1093,7 @@ function averagePingChunk(chunk) {
 }
 
 function mapSamples(samples) {
-  return samples.map(s => {
-    const point = {
-      ts: Number(s.ts) || 0, cpu: Number(s.cpu) || 0, mem: Number(s.mem) || 0,
-      disk: Number(s.disk) || 0, load1: Number(s.load) || 0,
-      net_rx: Number(s.net_rx) || 0, net_tx: Number(s.net_tx) || 0,
-      tcp_conns: Number(s.tcp_conns) || 0, udp_conns: Number(s.udp_conns) || 0,
-      disk_read: Number(s.disk_read) || 0, disk_write: Number(s.disk_write) || 0,
-    };
-    for (const key of ['cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp']) {
-      const n = Number(s?.[key]);
-      if (Number.isFinite(n)) point[key] = n;
-    }
-    return point;
-  });
+  return samples.map(normalizeMetricPoint);
 }
 
 function limitSeries(points, maxPoints) {
@@ -1015,7 +1120,10 @@ function toPoint(state) {
 function parseJsonSafe(v) {
   if (!v) return {};
   if (typeof v === 'object') return v;
-  try { return JSON.parse(v); } catch (_) { return {}; }
+  try {
+    const parsed = JSON.parse(v);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) { return {}; }
 }
 
 function normalizeOkInt(value) {

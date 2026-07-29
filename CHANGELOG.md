@@ -2,6 +2,16 @@
 
 NIE-SLA 当前处于 Beta。应用使用 `0.x.y-beta.N`，Rust Agent 使用独立 `vX.Y.Z` 版本。
 
+## 0.24.0-beta.31 - 2026-07-30
+
+- 修复根文件系统重复绑定挂载导致磁盘总容量虚高的问题，并按 Linux 叶子块设备统计磁盘 IO，避免 LVM、device-mapper 与其底层设备重复计数。
+- Agent 离线样本队列改为临时文件原子替换并主动落盘；上传失败会保留队列重试，退出或重启前先刷新，且拒绝类型不正确的队列 JSON。
+- Worker 对指标、状态、告警、主题、备份和代理边界进行全面输入规范化与失败处理；部分数据异常会明确标记，不再静默生成误导性结果。
+- 公开一键部署工具链升级到已修复已知开发依赖漏洞的 Wrangler 版本，保持构建与 dry-run 校验链可复现。
+- NodeQuality 上传固定使用 S3 且目录留空，上传地址和 Token 仅存在于 Worker Secret；浏览器、公开 API、普通备份和公开源码只接触本站同源图片代理。
+- 修复手机端 NQ 长行、图片宽度和滚动层级，以及后台弹窗初始焦点、焦点循环、关闭后焦点恢复和小屏内部滚动；同步更新静态资源缓存键。
+- Rust Agent 更新至 `v1.0.37`，本地完成五种 Linux 架构构建、SHA-256 校验和及完整安装引导哈希链固定。
+
 ## 0.24.0-beta.30 - 2026-07-30
 
 - 修复手机端 NodeQuality 基本信息与 IP 质量仍按桌面终端宽度排版，导致正文右侧大面积隐藏、触摸横向滚动层级混乱的问题。
@@ -34,7 +44,7 @@ NIE-SLA 当前处于 Beta。应用使用 `0.x.y-beta.N`，Rust Agent 使用独�
 
 ## 0.24.0-beta.26 - 2026-07-29
 
-- 修复 Cloudflare Workers 运行时不支持 `fetch(..., { redirect: "error" })`，导致 NQ 图床请求在发送到 `img.nkx.moe` 之前直接抛出 `TypeError` 的问题。
+- 修复 Cloudflare Workers 运行时不支持 `fetch(..., { redirect: "error" })`，导致 NQ 图床请求在发送到 `images.example.com` 之前直接抛出 `TypeError` 的问题。
 - 图床出站请求改用 Workers 支持的 `redirect: "manual"`，并在收到任何 `3xx` 时主动拒绝，继续防止 Token 被重定向到其他主机。
 - 使用 Cloudflare 远程开发运行时复现并验证：同一请求现在可以正常到达图床并返回上游 HTTP 状态；本机与远程链路的 API 地址、TLS 和请求字段保持一致。
 - 继续保留 30 秒超时、分级错误提示、响应体限制、公开 HTTPS 校验与文本报告回退；Rust Agent 仍为 `v1.0.34`，无需更新。

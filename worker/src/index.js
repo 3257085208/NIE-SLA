@@ -216,7 +216,8 @@ function compactScheduledResults(results) {
   const out = { ...results };
   if (out.probe?.results) {
     const failed = out.probe.results.filter(item => !item?.ok).length;
-    out.probe = { ok: out.probe.ok, count: out.probe.count, failed };
+    const warnings = [...new Set(out.probe.results.map(item => item?.warning).filter(Boolean))];
+    out.probe = { ok: out.probe.ok, count: out.probe.count, failed, ...(warnings.length ? { warnings } : {}) };
   }
   if (out.alerts?.errors) {
     out.alerts = { ...out.alerts, errors: out.alerts.errors.slice(0, 5) };

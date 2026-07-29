@@ -1,15 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.30",
-  "agent_version": "v1.0.36",
-  "source_ref": "app-v0.24.0-beta.30",
-  "published_at": "2026-07-29T16:21:37Z",
-  "title": "NIE-SLA 0.24 Beta 30",
+  "version": "0.24.0-beta.31",
+  "agent_version": "v1.0.37",
+  "source_ref": "app-v0.24.0-beta.31",
+  "published_at": "2026-07-29T18:49:21Z",
+  "title": "NIE-SLA 0.24 Beta 31",
   "changelog": [
-    "修复手机端 NQ ANSI 报告仍按桌面宽度排版，造成正文右侧隐藏和滚动层级混乱",
-    "弹窗外层只负责纵向滚动，ANSI 页签独立承接极端长行并按手机宽度使用固定等宽字号",
-    "网络质量与回程路由图片使用全部移动端内容宽度，公开页与后台同步生效",
-    "Rust Agent 保持 v1.0.36，本次无需重新安装或更新 Agent"
+    "修复根文件系统重复挂载造成的磁盘容量虚高，并按 Linux 叶子块设备统计磁盘 IO，避免 LVM 与 device-mapper 重复计数",
+    "强化 Agent 离线队列的原子写入、落盘、失败重试、退出前刷新和损坏数据拒绝，降低异常断电与短暂网络故障造成的数据丢失",
+    "固定 NodeQuality S3 上传策略且目录留空，凭据仅保存在 Worker Secret，公开接口与浏览器始终只看到同源图片代理",
+    "修复手机端 NQ 报告、图片与后台弹窗的宽度、滚动和焦点细节，并更新静态资源缓存键",
+    "Rust Agent 更新至 v1.0.37，本地完成五种 Linux 架构构建、校验和生成与安装引导链固定"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -3,6 +3,7 @@ set -eu
 
 BASE_URL="${NSTATUS_AGENT_BASE_URL:-https://status.example.com}"
 BASE_URL="${BASE_URL%/}"
+DEFAULT_SETUP_SHA256="1b9f78834b203d5b19e9efde39077537c73cb2b21a0f9f6c85ec4fac5c62b17c"
 
 need_root() {
   if [ "$(id -u 2>/dev/null || echo 1)" != "0" ]; then
@@ -46,23 +47,36 @@ download_to() {
   fi
 }
 
+sha256_file() {
+  file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$file" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$file" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$file" | awk '{print $NF}'
+  else echo "Missing sha256sum, shasum, or openssl for installer verification." >&2; exit 1; fi
+}
+
 need_root
 
 if ! command -v bash >/dev/null 2>&1; then
   install_pkg bash
 fi
-if ! command -v curl >/dev/null 2>&1; then
-  install_pkg curl
-fi
-
-tmp="${TMPDIR:-/tmp}/nstatus-setup.$$"
+tmp="$(mktemp "${TMPDIR:-/tmp}/nstatus-setup.XXXXXX")"
+chmod 0600 "$tmp"
 trap 'rm -f "$tmp"' EXIT INT TERM
 cache_key="$(printf '%s' "${NSTATUS_SHA256SUMS_SHA256:-$(date +%s)}" | tr -cd 'A-Za-z0-9._-')"
 [ -n "$cache_key" ] || cache_key="$(date +%s)"
 download_to "${BASE_URL}/setup.sh?v=${cache_key}" "$tmp"
+expected_setup_sha256="${NSTATUS_SETUP_SHA256:-$DEFAULT_SETUP_SHA256}"
+case "$expected_setup_sha256" in
+  *[!0-9A-Fa-f]*|'') echo "Invalid setup.sh SHA-256." >&2; exit 1 ;;
+esac
+[ "${#expected_setup_sha256}" -eq 64 ] || { echo "Invalid setup.sh SHA-256." >&2; exit 1; }
+actual_setup_sha256="$(sha256_file "$tmp")"
+expected_setup_sha256="$(printf '%s' "$expected_setup_sha256" | tr 'A-F' 'a-f')"
+[ "$actual_setup_sha256" = "$expected_setup_sha256" ] || { echo "setup.sh SHA-256 verification failed." >&2; exit 1; }
 
 export DOWNLOAD_BASE="${DOWNLOAD_BASE:-$BASE_URL}"
 export CFTZ_URL_BASE="${CFTZ_URL_BASE:-$BASE_URL}"
 export NSTATUS_PING_TARGETS="${NSTATUS_PING_TARGETS:-*}"
 export NSTATUS_PING_SEC="${NSTATUS_PING_SEC:-20}"
-exec bash "$tmp" "$@"
+bash "$tmp" "$@"

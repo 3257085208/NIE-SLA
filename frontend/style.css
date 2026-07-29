@@ -1428,6 +1428,7 @@ body:not(.is-loaded) .incident-log {
   font: 800 10px/1.2 var(--font), "Noto Sans SC", sans-serif;
 }
 .nq-report-btn:hover { background: #d1fae5; }
+body.nq-modal-open { overflow: hidden; }
 .nq-modal-root { position: relative; z-index: 1000; }
 .nq-modal-backdrop {
   position: fixed;
@@ -1584,8 +1585,11 @@ body:not(.is-loaded) .incident-log {
 .nq-empty, .nq-loading { padding: 42px 18px; color: #64748b; background: #fff; text-align: center; }
 
 @media (max-width: 760px) {
-  .nq-modal-backdrop { align-items: center; padding: 10px 14px; }
-  .nq-modal { width: min(100%, 560px); max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px); border-radius: 7px; }
+  .nq-modal-backdrop {
+    align-items: center;
+    padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  }
+  .nq-modal { width: min(100%, 560px); max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); border-radius: 7px; }
   .nq-modal-head { gap: 8px; padding: 8px 10px; }
   .nq-modal-head > div { gap: 6px; }
   .nq-modal-head strong { font-size: 14px; }
@@ -1626,15 +1630,17 @@ body:not(.is-loaded) .incident-log {
 }
 
 @media (max-width: 560px) {
-  .nq-ansi { font-size: 8px; line-height: 1.4; }
+  .nq-ansi { font-size: 10px; line-height: 1.4; }
 }
 
 @media (max-width: 420px) {
-  .nq-modal-backdrop { padding: 8px 6px; }
-  .nq-modal { max-height: calc(100dvh - 16px); }
+  .nq-modal-backdrop {
+    padding: max(8px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+  }
+  .nq-modal { max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .nq-modal-meta { padding-block: 5px; }
   .nq-tab { min-height: 38px; padding-inline: 8px; font-size: 10.5px; }
-  .nq-ansi { font-size: 7px; line-height: 1.45; }
+  .nq-ansi { font-size: 10px; line-height: 1.45; }
   .vps-info-section {
     grid-template-columns: 1fr;
   }

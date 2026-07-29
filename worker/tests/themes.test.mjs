@@ -131,6 +131,16 @@ assert.equal((await getPublicTheme(legacyEnv)).active_theme.id, 'legacy-theme');
 assert.ok(legacyEnv.DB.meta.has('themes:registry:v1'));
 assert.match(await (await getThemeFile(legacyEnv, 'legacy-theme', 'theme.css')).text(), /gray/);
 
+for (const unsafeRecord of [
+  { ...JSON.parse(legacyEnv.DB.meta.get('extensions:registry:v1'))[0], storage_root: 'backups', revision: '../../private' },
+  { ...JSON.parse(legacyEnv.DB.meta.get('extensions:registry:v1'))[0], files: ['manifest.json', '../private.json'] },
+  { ...JSON.parse(legacyEnv.DB.meta.get('extensions:registry:v1'))[0], mode: 'plugin' },
+]) {
+  const unsafeEnv = { DB: d1(), ARCHIVE: r2() };
+  unsafeEnv.DB.meta.set('themes:registry:v1', JSON.stringify([unsafeRecord]));
+  await assert.rejects(() => getPublicTheme(unsafeEnv), /注册表损坏/);
+}
+
 await deleteTheme('dashboard-canvas', env);
 assert.equal((await getPublicTheme(env)).active_theme, null);
 await assert.rejects(() => getThemeFile(env, 'dashboard-canvas', 'index.html'), /不存在/);

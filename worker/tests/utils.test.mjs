@@ -3,7 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, lastPersistedCheckAt, normalizeTarget, parseBoolean, publicCheckPoint, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
 import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, requireLatencyAgentForId, safeJson } from '../src/auth.js';
 import { rateLimitD1 } from '../src/ratelimit.js';
-import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, pingPointsFromPayload, pingPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
+import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, normalizeAgentMetricState, normalizeAgentVpsInfo, pingPointsFromPayload, pingPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
 import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
@@ -199,6 +199,10 @@ assert.match(installCommand.linux_command, /NSTATUS_AGENT_TOKEN='nst_[a-f0-9]{48
 assert.match(installCommand.linux_command, /NSTATUS_AGENT_LABEL='VPS A'/);
 assert.equal('windows_command' in installCommand, false);
 assert.match(installCommand.linux_command, /NSTATUS_EXPECTED_VERSION='v9\.8\.7'/);
+assert.match(installCommand.linux_command, /NSTATUS_INSTALLER_SHA256='[a-f0-9]{64}'/);
+assert.match(installCommand.linux_command, /NSTATUS_SETUP_SHA256='[a-f0-9]{64}'/);
+assert.match(installCommand.linux_command, /NSTATUS_CFTZ_SHA256='[a-f0-9]{64}'/);
+assert.match(installCommand.linux_command, /\[ "\$actual" = "\$NSTATUS_INSTALLER_SHA256" \]/);
 
 const installCommandWithoutSourceHeaders = await getAgentInstallCommand(
   {
@@ -417,6 +421,43 @@ assert.deepEqual(metricColumns.fields, ['cpu']);
 assert.deepEqual(metricColumns.dt, [0, 1, 2]);
 assert.deepEqual(metricColumns.values.cpu, [0, 1, 2]);
 assert.deepEqual(metricPointsFromPayload({ series: metricColumns }, ['cpu']).map(p => p.cpu), [0, 1, 2]);
+const boundedState = normalizeAgentMetricState({
+  cpu_percent: 150,
+  process_count: -5,
+  memory: { total_mb: 1024, used_mb: -1, percent: 125 },
+  disk: { total_gb: 14, used_gb: 6, avail_gb: 8, percent: -20 },
+  load: { load1: -1 },
+  net: { rx_bytes_sec: -1, tx_bytes_sec: 1e308 },
+  diskio: { read_bytes_sec: -1, write_bytes_sec: 1e308 },
+});
+assert.equal(boundedState.cpu_percent, 100);
+assert.equal(boundedState.process_count, 0);
+assert.equal(boundedState.memory.used_mb, 0);
+assert.equal(boundedState.memory.percent, 0);
+assert.equal(boundedState.disk.percent, 42.86);
+assert.equal(boundedState.net.rx_bytes_sec, 0);
+assert.equal(boundedState.net.tx_bytes_sec, 1024 ** 5);
+const boundedPoints = compactMetricPoints([{ ts: 1, cpu: 150, mem: -1, disk: 101, net_rx: -1, gpu_util: 150, cpu_temp: -500 }], 2);
+assert.deepEqual({ cpu: boundedPoints[0].cpu, mem: boundedPoints[0].mem, disk: boundedPoints[0].disk, net_rx: boundedPoints[0].net_rx }, { cpu: 100, mem: 0, disk: 100, net_rx: 0 });
+assert.equal(boundedPoints[0].gpu_util, 100);
+assert.equal(boundedPoints[0].cpu_temp, -100);
+const boundedVpsInfo = normalizeAgentVpsInfo({
+  cpu_model: 'x'.repeat(400),
+  cpu_cores: -1,
+  total_disk_gb: 1e308,
+  gpu_util: 150,
+  temperature_sensors: [
+    { label: 'CPU', kind: 'cpu', temp_c: 5000 },
+    { label: 'Null', kind: 'cpu', temp_c: null },
+    { label: 'Empty', kind: 'cpu', temp_c: '' },
+    { label: 'NaN', kind: 'cpu', temp_c: 'not-a-number' },
+  ],
+});
+assert.equal(boundedVpsInfo.cpu_model.length, 256);
+assert.equal(boundedVpsInfo.cpu_cores, 0);
+assert.equal(boundedVpsInfo.total_disk_gb, 1_000_000_000_000);
+assert.equal(boundedVpsInfo.gpu_util, 100);
+assert.deepEqual(boundedVpsInfo.temperature_sensors, [{ label: 'CPU', kind: 'cpu', temp_c: 1000 }]);
 
 const r2Env = fakeR2Env();
 const hourStart = Math.floor(Date.now() / 3_600_000) * 3600;

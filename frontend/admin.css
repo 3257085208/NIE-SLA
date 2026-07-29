@@ -706,6 +706,7 @@ th {
 .overlay.on {
   display: flex;
 }
+body.admin-modal-open { overflow: hidden; }
 .modal {
   min-width: 0;
   max-width: 100%;
@@ -739,11 +740,12 @@ th {
 }
 @media (max-width: 520px) {
   .overlay {
-    padding: 12px;
+    padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   }
   .modal {
     width: 100%;
-    max-height: calc(100dvh - 24px);
+    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
     padding: 18px 14px;
   }
   .modal .ma { flex-wrap: wrap; }
@@ -1289,6 +1291,7 @@ th {
 .task-detail-grid strong { overflow-wrap: anywhere; }
 .task-detail-error { margin: 12px 0; padding: 10px; color: #b42318; background: #fff1ef; border: 1px solid #f1b5ae; border-radius: 5px; overflow-wrap: anywhere; }
 .task-detail-output { max-height: 300px; overflow: auto; padding: 10px; color: #d1fae5; background: #0f172a; border-radius: 5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+body.nq-modal-open { overflow: hidden; }
 .nq-modal-root { position: relative; z-index: 1000; }
 .nq-modal-backdrop {
   position: fixed;
@@ -1445,8 +1448,11 @@ th {
 .nq-empty,
 .nq-loading { padding: 42px 18px; color: #64748b; background: #fff; text-align: center; }
 @media (max-width: 760px) {
-  .nq-modal-backdrop { align-items: center; padding: 10px 14px; }
-  .nq-modal { width: min(100%, 560px); max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px); border-radius: 7px; }
+  .nq-modal-backdrop {
+    align-items: center;
+    padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  }
+  .nq-modal { width: min(100%, 560px); max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); border-radius: 7px; }
   .nq-modal-head { gap: 8px; padding: 8px 10px; }
   .nq-modal-head > div { gap: 6px; }
   .nq-modal-head strong { font-size: 14px; }
@@ -1485,14 +1491,16 @@ th {
   .nq-route-note { font-size: 9px; }
 }
 @media (max-width: 560px) {
-  .nq-ansi { font-size: 8px; line-height: 1.4; }
+  .nq-ansi { font-size: 10px; line-height: 1.4; }
 }
 @media (max-width: 420px) {
-  .nq-modal-backdrop { padding: 8px 6px; }
-  .nq-modal { max-height: calc(100dvh - 16px); }
+  .nq-modal-backdrop {
+    padding: max(8px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+  }
+  .nq-modal { max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .nq-modal-meta { padding-block: 5px; }
   .nq-tab { min-height: 38px; padding-inline: 8px; font-size: 10.5px; }
-  .nq-ansi { font-size: 7px; line-height: 1.45; }
+  .nq-ansi { font-size: 10px; line-height: 1.45; }
 }
 .target-order-bar.has-bulk {
   border-radius: 0;

@@ -66,18 +66,28 @@ export async function getStatusFresh(env, url) {
 }
 
 async function buildStatusPayload(env, url = null) {
-  let sync_warning = null;
-  try { if (parseBoolean(env.AUTO_SYNC_TARGETS ?? false, false)) await syncEnvTargetsMaybe(env); } catch (_) { sync_warning = 'TARGETS_JSON sync failed; using last known targets'; }
+  const warnings = [];
+  const optionalQuery = (promise, warning) => promise.catch((error) => {
+    console.error(`${warning}:`, String(error?.message || error));
+    warnings.push(warning);
+    return { results: [] };
+  });
+  try {
+    if (parseBoolean(env.AUTO_SYNC_TARGETS ?? false, false)) await syncEnvTargetsMaybe(env);
+  } catch (error) {
+    console.error('TARGETS_JSON sync failed:', String(error?.message || error));
+    warnings.push('TARGETS_JSON sync failed; using last known targets');
+  }
   const days = clamp(Number(url?.searchParams?.get('days') || DEFAULT_STATUS_DAYS), 1, 90);
   const startDay = dateAddLocal(env, -days + 1);
   const targetsPromise = env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.no_public_ip, t.sort_order, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.city, t.location_source, t.location_updated_at, t.provider, t.line_type, t.traffic_enabled, t.traffic_quota_gb, t.traffic_mode, t.traffic_reset_day, t.nq_updated_at, t.unlock_data, t.unlock_updated_at, CASE WHEN t.nq_report IS NULL OR t.nq_report = '' THEN 0 ELSE 1 END AS has_nq FROM targets t WHERE t.enabled = 1 ORDER BY CASE WHEN t.sort_order IS NULL THEN 1 ELSE 0 END, t.sort_order, t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all()
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.provider, t.line_type, t.traffic_enabled, t.traffic_quota_gb FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all())
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.provider, t.line_type FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all())
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all());
-  const metricsPromise = env.DB.prepare(`SELECT * FROM agent_metrics_state`).all().catch(() => ({ results: [] }));
-  const agentAvailabilityPromise = env.DB.prepare(`SELECT agent_id, day, total_sec, online_sec FROM agent_daily_availability WHERE day >= ?`).bind(startDay).all().catch(() => ({ results: [] }));
-  const latestPromise = env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo, uptime_24h, uptime_7d, avg_latency_24h, last_fail_at, current_outage_started_at, last_recover_at, status_changed_at FROM latest_status`).all().catch(() => ({ results: [] }));
-  const pingTargetsPromise = env.DB.prepare(`SELECT id, name, color FROM ping_targets WHERE enabled = 1 ORDER BY name`).all().catch(() => ({ results: [] }));
+  const metricsPromise = optionalQuery(env.DB.prepare(`SELECT * FROM agent_metrics_state`).all(), 'Agent metrics unavailable');
+  const agentAvailabilityPromise = optionalQuery(env.DB.prepare(`SELECT agent_id, day, total_sec, online_sec FROM agent_daily_availability WHERE day >= ?`).bind(startDay).all(), 'Agent availability unavailable');
+  const latestPromise = optionalQuery(env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo, uptime_24h, uptime_7d, avg_latency_24h, last_fail_at, current_outage_started_at, last_recover_at, status_changed_at FROM latest_status`).all(), 'Latest probe status unavailable');
+  const pingTargetsPromise = optionalQuery(env.DB.prepare(`SELECT id, name, color FROM ping_targets WHERE enabled = 1 ORDER BY name`).all(), 'Ping target metadata unavailable');
   const [targets, metricsResult, agentAvailabilityResult, latestResult, pingTargetsResult] = await Promise.all([targetsPromise, metricsPromise, agentAvailabilityPromise, latestPromise, pingTargetsPromise]);
   const r2State = await readR2State(env);
   const r2SummaryRows = getSummaryRowsFromState(r2State, startDay);
@@ -109,7 +119,10 @@ async function buildStatusPayload(env, url = null) {
   try {
     const trafficRows = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all();
     for (const row of trafficRows.results || []) trafficMap[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
-  } catch (_) {}
+  } catch (error) {
+    console.error('Traffic totals unavailable:', String(error?.message || error));
+    warnings.push('Traffic totals unavailable');
+  }
   const metricsMap = {};
   // Agent heartbeat summaries use elapsed seconds, so missing reports become explicit downtime.
   for (const r of metricsResult.results || []) {
@@ -130,7 +143,11 @@ async function buildStatusPayload(env, url = null) {
 
   const externalLatency = await getLatestExternalLatencyByTarget(env, (targets.results || [])
     .filter(target => Number(target.no_public_ip || 0) !== 1 && target.type === 'tcp')
-    .map(target => target.id)).catch(() => new Map());
+    .map(target => target.id)).catch((error) => {
+      console.error('External latency unavailable:', String(error?.message || error));
+      warnings.push('External latency unavailable');
+      return new Map();
+    });
 
   const rows = (targets.results || []).map((targetRow) => {
     const r2Status = r2State.targets?.[targetRow.id] || {};
@@ -169,7 +186,7 @@ async function buildStatusPayload(env, url = null) {
     }
   }
   const frontend = await publicFrontend(env);
-  return { ok: true, name: frontend.appearance.site_name, now: new Date().toISOString(), days: dayList, regions: REGION_LABELS, region_proxy_enabled: Boolean(env.REGION_PROXY), frontend_theme: frontend.theme, frontend, traffic, ping_targets: pingTargetsResult.results || [], privacy: { mask_ips: maskIps, hide_ports: hidePorts, hide_colo: true }, storage: { mode: 'd1-check-buckets+r2-state', raw_checks_in_d1: false, raw_history_in_r2: Boolean(env.ARCHIVE), d1_regular_check_writes: true, status_cache_ttl: clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300) }, timezone: { offset_minutes: timezoneOffsetMin(env), label: timezoneLabel(env) }, targets: rows, summaries, incidents, warnings: sync_warning ? [sync_warning] : [] };
+  return { ok: true, name: frontend.appearance.site_name, now: new Date().toISOString(), days: dayList, regions: REGION_LABELS, region_proxy_enabled: Boolean(env.REGION_PROXY), frontend_theme: frontend.theme, frontend, traffic, ping_targets: pingTargetsResult.results || [], privacy: { mask_ips: maskIps, hide_ports: hidePorts, hide_colo: true }, storage: { mode: 'd1-check-buckets+r2-state', raw_checks_in_d1: false, raw_history_in_r2: Boolean(env.ARCHIVE), d1_regular_check_writes: true, status_cache_ttl: clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300) }, timezone: { offset_minutes: timezoneOffsetMin(env), label: timezoneLabel(env) }, targets: rows, summaries, incidents, warnings: [...new Set(warnings)] };
 }
 
 function publicUnlockData(value) {
@@ -244,8 +261,11 @@ function publicAgentSummary(row, traffic = null) {
 
 function parseJsonSafe(value) {
   if (!value) return {};
-  if (typeof value === 'object') return value;
-  try { return JSON.parse(value); } catch (_) { return {}; }
+  if (typeof value === 'object') return Array.isArray(value) ? {} : value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) { return {}; }
 }
 
 function mergeSummaryRows(...groups) {
@@ -270,7 +290,11 @@ async function overlayLiveTargetStatus(env, payload) {
   try {
     const externalPromise = getLatestExternalLatencyByTarget(env, payload.targets
       .filter(target => Number(target.no_public_ip || 0) !== 1 && target.type === 'tcp')
-      .map(target => target.id)).catch(() => new Map());
+      .map(target => target.id)).catch((error) => {
+        console.error('Snapshot external latency overlay failed:', String(error?.message || error));
+        payload.warnings = [...new Set([...(payload.warnings || []), 'External latency unavailable'])];
+        return new Map();
+      });
     const [rows, liveTargets, externalLatency] = await Promise.all([
       env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo FROM latest_status`).all(),
       env.DB.prepare(`SELECT id, location, city, location_source, location_updated_at, unlock_data, unlock_updated_at,
@@ -308,7 +332,10 @@ async function overlayLiveTargetStatus(env, payload) {
       return refreshLatencySources(current, externalLatency.get(String(t.id)) || []);
     });
     payload.live_overlay_at = nowSec();
-  } catch (_) {}
+  } catch (error) {
+    console.error('Snapshot live status overlay failed:', String(error?.message || error));
+    payload.warnings = [...new Set([...(payload.warnings || []), 'Live status overlay unavailable'])];
+  }
   return payload;
 }
 
@@ -329,7 +356,10 @@ export async function getStatusSnapshot(env, url) {
     await attachAgentState(payload, env);
     if (url?.searchParams?.get('lite') === '1') payload = compactStatusPayload(payload);
     return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300)}`, 'x-nstatus-source': 'r2-status-snapshot' });
-  } catch (_) { return null; }
+  } catch (error) {
+    console.error('Status snapshot read failed:', String(error?.message || error));
+    return null;
+  }
 }
 
 async function attachAgentState(payload, env) {
@@ -372,7 +402,10 @@ async function attachAgentState(payload, env) {
       if (Number(target.no_public_ip || 0) === 1) Object.assign(target, { status_source: 'agent', latency_ms: null, checked_at: null, ok: null, error: null });
     }
     if (targetOrder) payload.targets.sort((a, b) => (targetOrder.get(String(a.id)) ?? Number.MAX_SAFE_INTEGER) - (targetOrder.get(String(b.id)) ?? Number.MAX_SAFE_INTEGER));
-  } catch (_) {}
+  } catch (error) {
+    console.error('Snapshot Agent state overlay failed:', String(error?.message || error));
+    payload.warnings = [...new Set([...(payload.warnings || []), 'Agent state overlay unavailable'])];
+  }
 }
 
 export async function writeStatusSnapshot(env) {

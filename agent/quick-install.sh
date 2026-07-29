@@ -10,6 +10,7 @@ set -euo pipefail
 
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 SETUP_URL="${DOWNLOAD_BASE%/}/setup.sh"
+DEFAULT_SETUP_SHA256="1b9f78834b203d5b19e9efde39077537c73cb2b21a0f9f6c85ec4fac5c62b17c"
 
 if [[ -z "${NSTATUS_API_BASE:-${NSTATUS_API:-}}" ]]; then
   echo "缺少 NSTATUS_API_BASE，请从管理后台的部署按钮复制完整命令。" >&2
@@ -28,6 +29,7 @@ export NSTATUS_PING_TARGETS="${NSTATUS_PING_TARGETS:-*}"
 export NSTATUS_PING_SEC="${NSTATUS_PING_SEC:-20}"
 
 TMP="$(mktemp)"
+chmod 0600 "$TMP"
 cleanup() { rm -f "$TMP"; }
 trap cleanup EXIT INT TERM
 
@@ -40,4 +42,20 @@ else
   exit 2
 fi
 
-exec bash "$TMP" --non-interactive "$@"
+if command -v sha256sum >/dev/null 2>&1; then
+  SETUP_ACTUAL_SHA256="$(sha256sum "$TMP" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  SETUP_ACTUAL_SHA256="$(shasum -a 256 "$TMP" | awk '{print $1}')"
+elif command -v openssl >/dev/null 2>&1; then
+  SETUP_ACTUAL_SHA256="$(openssl dgst -sha256 "$TMP" | awk '{print $NF}')"
+else
+  echo "缺少 sha256sum、shasum 或 openssl，无法校验安装器" >&2
+  exit 2
+fi
+SETUP_EXPECTED_SHA256="${NSTATUS_SETUP_SHA256:-$DEFAULT_SETUP_SHA256}"
+if [[ ! "$SETUP_EXPECTED_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]] || [[ "${SETUP_ACTUAL_SHA256,,}" != "${SETUP_EXPECTED_SHA256,,}" ]]; then
+  echo "setup.sh SHA-256 校验失败" >&2
+  exit 2
+fi
+
+bash "$TMP" --non-interactive "$@"

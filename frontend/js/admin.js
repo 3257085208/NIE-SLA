@@ -1,7 +1,7 @@
 import { copyText } from "./install-command.js";
-import { createAdminClient } from "./admin/api.js";
+import { createAdminClient } from "./admin/api.js?v=20260730-audit1";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260729-beta24-imgbed1";
+import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260730-audit1";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -10,8 +10,10 @@ import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
+  normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260725-machine-types1";
+} from "./shared/grouping.js?v=20260730-audit1";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260730-audit1";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -52,7 +54,7 @@ const {
 let githubTicket = "";
 let appUpdateInfo = null;
 let targets = [],
-  adminGroupBy = localStorage.getItem("nstatus.adminGroupBy") || "group",
+  adminGroupBy = normalizeGroupByMode(readStorage("localStorage", "nstatus.adminGroupBy", "group")),
   statusMap = new Map(),
   latencyNodes = [],
   pingTargets = [],
@@ -79,6 +81,7 @@ let pendingBulkUpdate = null;
 let managedThemes = [];
 let toastTimer = 0;
 let vpsSlaChart = null;
+let modalReturnFocus = null;
 function toast(m, t = "info") {
   const e = byId("toast");
   clearTimeout(toastTimer);
@@ -763,7 +766,11 @@ function showAgentTaskDiagnostic(target, task, loadError = "") {
 }
 
 function closeAdminNodeQualityReport() {
-  document.querySelector('.nq-modal-root[data-admin-nq-report]')?.remove();
+  const root = document.querySelector('.nq-modal-root[data-admin-nq-report]');
+  const returnFocus = root?.returnFocus;
+  root?.remove();
+  document.body.classList.remove("nq-modal-open");
+  if (returnFocus?.isConnected && typeof returnFocus.focus === "function") returnFocus.focus();
 }
 
 async function showSavedNodeQualityReport(target, task) {
@@ -772,8 +779,11 @@ async function showSavedNodeQualityReport(target, task) {
   const root = document.createElement("div");
   root.className = "nq-modal-root";
   root.dataset.adminNqReport = "";
+  root.returnFocus = document.activeElement;
   root.innerHTML = `<div class="nq-modal-backdrop"><div class="nq-modal nq-modal-loading" role="dialog" aria-modal="true" aria-label="NodeQuality 报告"><div class="nq-modal-head"><div><strong>NodeQuality</strong><span>${escapeHtml(target.name)}</span></div><button type="button" class="nq-close" data-nq-close aria-label="关闭">×</button></div><div class="nq-loading">正在加载完整报告...</div></div></div>`;
   document.body.appendChild(root);
+  document.body.classList.add("nq-modal-open");
+  bindNodeQualityModal(root);
   root.addEventListener("click", (event) => {
     if (event.target.closest(".nq-close") || event.target.classList.contains("nq-modal-backdrop")) closeAdminNodeQualityReport();
   });
@@ -1026,8 +1036,8 @@ function bindAdminGroupBy() {
     }
   };
   const choose = value => {
-    adminGroupBy = value || "group";
-    localStorage.setItem("nstatus.adminGroupBy", adminGroupBy);
+    adminGroupBy = normalizeGroupByMode(value);
+    writeStorage("localStorage", "nstatus.adminGroupBy", adminGroupBy);
     renderTargets();
   };
 
@@ -2680,8 +2690,9 @@ function setupSettingsTabs() {
   const buttons = [...document.querySelectorAll("[data-settings-tab]")];
   const panels = [...document.querySelectorAll("[data-settings-panel]")];
   const validTabs = new Set(buttons.map((button) => button.dataset.settingsTab));
-  const initial = validTabs.has(localStorage.getItem("nstatus.settingsTab"))
-    ? localStorage.getItem("nstatus.settingsTab")
+  const savedTab = readStorage("localStorage", "nstatus.settingsTab", "");
+  const initial = validTabs.has(savedTab)
+    ? savedTab
     : "appearance";
   const activate = (tab) => {
     if (!validTabs.has(tab)) return;
@@ -2695,7 +2706,7 @@ function setupSettingsTabs() {
       panel.classList.toggle("on", active);
       panel.hidden = !active;
     }
-    localStorage.setItem("nstatus.settingsTab", tab);
+    writeStorage("localStorage", "nstatus.settingsTab", tab);
   };
   for (const button of buttons) button.onclick = () => activate(button.dataset.settingsTab);
   activate(initial);
@@ -2736,12 +2747,37 @@ async function disableTotp() {
   }
 }
 function openModal() {
-  byId("overlay").classList.add("on");
+  const overlay = byId("overlay");
+  const modal = byId("modal");
+  modalReturnFocus = document.activeElement?.isConnected ? document.activeElement : null;
+  overlay.classList.add("on");
+  overlay.setAttribute("aria-hidden", "false");
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", modal.querySelector("h1, h2, h3, h4")?.textContent?.trim() || "管理操作");
+  modal.tabIndex = -1;
+  document.body.classList.add("admin-modal-open");
+  Promise.resolve().then(() => {
+    const initial = modal.querySelector('input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])');
+    (initial || modal).focus();
+  });
 }
 function closeModal() {
-  byId("overlay").classList.remove("on");
-  byId("modal").innerHTML = "";
-  byId("modal").className = "modal";
+  const overlay = byId("overlay");
+  const modal = byId("modal");
+  const returnFocus = modalReturnFocus;
+  const wasOpen = overlay.classList.contains("on");
+  overlay.classList.remove("on");
+  overlay.setAttribute("aria-hidden", "true");
+  modal.innerHTML = "";
+  modal.className = "modal";
+  modal.removeAttribute("role");
+  modal.removeAttribute("aria-modal");
+  modal.removeAttribute("aria-label");
+  modal.removeAttribute("tabindex");
+  document.body.classList.remove("admin-modal-open");
+  modalReturnFocus = null;
+  if (wasOpen && returnFocus?.isConnected && typeof returnFocus.focus === "function") returnFocus.focus();
 }
 byId("loginBtn").onclick = login;
 byId("loginUsername").onkeydown = (e) => {
@@ -2804,11 +2840,32 @@ byId("syncBtn").onclick = async () => {
 byId("overlay").onclick = (e) => {
   if (e.target.closest("[data-close]")) closeModal();
 };
+byId("overlay").onkeydown = (event) => {
+  if (event.key !== "Tab" || !byId("overlay").classList.contains("on")) return;
+  const focusable = [...byId("modal").querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+    .filter(element => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+  if (!focusable.length) {
+    event.preventDefault();
+    byId("modal").focus();
+    return;
+  }
+  const first = focusable[0];
+  const last = focusable.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+};
 byId("overlay").oncontextmenu = (e) => {
   if (e.target === byId("overlay")) e.preventDefault();
 };
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") closeAdminNodeQualityReport();
+  if (event.key !== "Escape") return;
+  if (document.querySelector('.nq-modal-root[data-admin-nq-report]')) closeAdminNodeQualityReport();
+  else if (byId("overlay").classList.contains("on")) closeModal();
 });
 byId("tTable").onclick = (e) => {
   const b = e.target.closest("button[data-a]");

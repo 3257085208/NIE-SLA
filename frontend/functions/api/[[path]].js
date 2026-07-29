@@ -11,7 +11,8 @@ function getApiBase(env) {
 function withCors(response, request) {
   const headers = new Headers(response.headers);
   const origin = request.headers.get('Origin');
-  if (origin) headers.set('Access-Control-Allow-Origin', origin);
+  if (origin && origin === new URL(request.url).origin) headers.set('Access-Control-Allow-Origin', origin);
+  else headers.delete('Access-Control-Allow-Origin');
   headers.set('Vary', 'Origin');
   return new Response(response.body, {
     status: response.status,
@@ -22,8 +23,8 @@ function withCors(response, request) {
 
 export async function onRequestOptions({ request }) {
   const headers = new Headers();
-  const origin = request.headers.get('Origin') || '*';
-  headers.set('Access-Control-Allow-Origin', origin);
+  const origin = request.headers.get('Origin');
+  if (origin && origin === new URL(request.url).origin) headers.set('Access-Control-Allow-Origin', origin);
   headers.set('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
   headers.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,x-admin-session,x-theme-sha256');
   headers.set('Access-Control-Max-Age', '86400');

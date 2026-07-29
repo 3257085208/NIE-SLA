@@ -341,27 +341,50 @@ export function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
+export function normalizeNqReportLink(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash) return '';
+    if (!['nodequality.com', 'www.nodequality.com'].includes(url.hostname.toLowerCase())) return '';
+    const match = url.pathname.match(/^\/r\/([A-Za-z0-9_-]{8,128})\/?$/);
+    return match ? `https://nodequality.com/r/${match[1]}` : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function normalizeNqImageProxyBase(value) {
+  const path = String(value || '').trim().replace(/\/+$/, '');
+  return /^\/api\/nq\/[^/?#]{1,256}\/image$/.test(path) ? path : '';
+}
+
+function normalizeNqImagePath(value) {
+  const path = String(value || '').trim();
+  return /^\/api\/nq\/[^/?#]{1,256}\/image\/[^/?#]{1,128}$/.test(path) ? path : '';
+}
+
 export function buildNqModalHtml(report) {
   const tabs = Array.isArray(report?.tabs) ? report.tabs : [];
   const time = report?.report_time || '';
-  const link = report?.link || '';
+  const link = normalizeNqReportLink(report?.link);
   const name = report?.name || '';
+  const imageProxyBase = normalizeNqImageProxyBase(report?.image_proxy_base);
   const tabButtons = tabs.map((tab, index) => {
     const id = escapeHtml(tab.id || `tab-${index}`);
     const title = escapeHtml(nqTabTitle(tab));
-    return `<button type="button" class="nq-tab${index === 0 ? ' active' : ''}" data-nq-tab="${id}">${title}</button>`;
+    return `<button type="button" role="tab" id="nq-tab-${index}" aria-controls="nq-panel-${index}" aria-selected="${index === 0}" tabindex="${index === 0 ? '0' : '-1'}" class="nq-tab${index === 0 ? ' active' : ''}" data-nq-tab="${id}">${title}</button>`;
   }).join('');
   const panels = tabs.map((tab, index) => {
     const rawId = String(tab.id || `tab-${index}`).toLowerCase();
     const id = escapeHtml(rawId);
-    if (tab.kind === 'image' && tab.image) {
-      const imageSrc = report?.image_proxy_base
-        ? `${String(report.image_proxy_base).replace(/\/+$/, '')}/${encodeURIComponent(tab.id || `tab-${index}`)}`
-        : tab.image;
+    const imageSrc = imageProxyBase
+      ? `${imageProxyBase}/${encodeURIComponent(tab.id || `tab-${index}`)}`
+      : normalizeNqImagePath(tab.image);
+    if (tab.kind === 'image' && imageSrc) {
       const fallback = tab.content
         ? (rawId === 'network' ? renderNqNetworkReportHtml(tab.content) : rawId === 'route' ? renderNqRouteReportHtml(tab.content) : `<pre class="nq-ansi">${renderNqReportHtml(tab.content)}</pre>`)
         : '';
-      return `<div class="nq-panel nq-image-panel${index === 0 ? ' active' : ''}" data-nq-panel="${id}"><img class="nq-image" src="${escapeHtml(imageSrc)}" alt="${escapeHtml(nqTabTitle(tab))}" loading="lazy" referrerpolicy="no-referrer">${fallback ? `<div class="nq-image-fallback" hidden>${fallback}</div>` : ''}</div>`;
+      return `<div class="nq-panel nq-image-panel${index === 0 ? ' active' : ''}" id="nq-panel-${index}" role="tabpanel" aria-labelledby="nq-tab-${index}" tabindex="0" data-nq-panel="${id}"${index === 0 ? '' : ' hidden'}><img class="nq-image" src="${escapeHtml(imageSrc)}" alt="${escapeHtml(nqTabTitle(tab))}" loading="lazy" referrerpolicy="no-referrer">${fallback ? `<div class="nq-image-fallback" hidden>${fallback}</div>` : ''}</div>`;
     }
     const content = rawId === 'network'
       ? renderNqNetworkReportHtml(tab.content || '')
@@ -369,7 +392,7 @@ export function buildNqModalHtml(report) {
         ? renderNqRouteReportHtml(tab.content || '')
         : `<pre class="nq-ansi">${renderNqReportHtml(tab.content || '')}</pre>`;
     const layoutClass = rawId === 'network' || rawId === 'route' ? ` nq-${rawId}-panel` : '';
-    return `<div class="nq-panel nq-ansi-panel${layoutClass}${index === 0 ? ' active' : ''}" data-nq-panel="${id}">${content}</div>`;
+    return `<div class="nq-panel nq-ansi-panel${layoutClass}${index === 0 ? ' active' : ''}" id="nq-panel-${index}" role="tabpanel" aria-labelledby="nq-tab-${index}" tabindex="0" data-nq-panel="${id}"${index === 0 ? '' : ' hidden'}>${content}</div>`;
   }).join('');
   return `
     <div class="nq-modal-backdrop" data-nq-close>
@@ -385,7 +408,7 @@ export function buildNqModalHtml(report) {
           <span>报告时间：${escapeHtml(time || '未知')}</span>
           ${link ? `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">打开原报告</a>` : ''}
         </div>
-        <div class="nq-tabs">${tabButtons}</div>
+        <div class="nq-tabs" role="tablist" aria-label="报告章节">${tabButtons}</div>
         <div class="nq-panels">${panels || '<div class="nq-empty">暂无报告内容</div>'}</div>
       </div>
     </div>
@@ -402,22 +425,65 @@ export function bindNodeQualityModal(root) {
       image.parentElement.classList.add('fallback-active');
     }, { once: true });
   });
-  root?.querySelectorAll('.nq-tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
+  const tabs = [...(root?.querySelectorAll('.nq-tab') || [])];
+  const activateTab = (tab, focus = false) => {
+    if (!tab) return;
       const id = tab.dataset.nqTab;
-      root.querySelectorAll('.nq-tab').forEach((item) => item.classList.toggle('active', item === tab));
-      root.querySelectorAll('.nq-panel').forEach((panel) => panel.classList.toggle('active', panel.dataset.nqPanel === id));
+      root.querySelectorAll('.nq-tab').forEach((item) => {
+        const active = item === tab;
+        item.classList.toggle('active', active);
+        item.setAttribute('aria-selected', String(active));
+        item.tabIndex = active ? 0 : -1;
+      });
+      root.querySelectorAll('.nq-panel').forEach((panel) => {
+        const active = panel.dataset.nqPanel === id;
+        panel.classList.toggle('active', active);
+        panel.hidden = !active;
+      });
       const panels = root.querySelector('.nq-panels');
-      if (!panels) return;
-      panels.scrollTop = 0;
-      panels.scrollLeft = 0;
-      panels.querySelectorAll('.nq-ansi').forEach((ansi) => {
-        ansi.scrollTop = 0;
-        ansi.scrollLeft = 0;
-      });
-      panels.querySelectorAll('.nq-ansi-panel, .nq-scroll-region').forEach((region) => {
-        region.scrollLeft = 0;
-      });
+      if (panels) {
+        panels.scrollTop = 0;
+        panels.scrollLeft = 0;
+        panels.querySelectorAll('.nq-ansi').forEach((ansi) => {
+          ansi.scrollTop = 0;
+          ansi.scrollLeft = 0;
+        });
+        panels.querySelectorAll('.nq-ansi-panel, .nq-scroll-region').forEach((region) => {
+          region.scrollLeft = 0;
+        });
+      }
+      if (focus) tab.focus();
+  };
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => activateTab(tab));
+    tab.addEventListener('keydown', (event) => {
+      let next = null;
+      if (event.key === 'ArrowRight') next = tabs[(index + 1) % tabs.length];
+      else if (event.key === 'ArrowLeft') next = tabs[(index - 1 + tabs.length) % tabs.length];
+      else if (event.key === 'Home') next = tabs[0];
+      else if (event.key === 'End') next = tabs.at(-1);
+      if (!next) return;
+      event.preventDefault();
+      activateTab(next, true);
     });
   });
+  if (root && !root.nqFocusTrapBound) {
+    root.nqFocusTrapBound = true;
+    root.addEventListener('keydown', (event) => {
+      if (event.key !== 'Tab') return;
+      const focusable = [...root.querySelectorAll('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+        .filter(element => !element.hidden && element.getAttribute('aria-hidden') !== 'true');
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+  }
+  root?.querySelector('.nq-close')?.focus();
 }

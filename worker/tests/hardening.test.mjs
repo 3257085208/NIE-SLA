@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolvePublicMetricsQuery, defaultMetricsMaxPointsForHours } from '../src/metrics.js';
-import { isPrivateHost, assertPublicHttpUrl, buildOpenMissedPoints } from '../src/utils.js';
+import { isPrivateHost, assertPublicHttpUrl, buildOpenMissedPoints, fetchPublicHttpsWithValidatedRedirects } from '../src/utils.js';
 import { resolveCorsOrigin } from '../src/auth.js';
 import { getDeveloperApiManifest, resolveDeveloperApiOrigin, withDeveloperApiHeaders } from '../src/developer-api.js';
 
@@ -9,6 +9,7 @@ const routesSource = await readFile(new URL('../src/routes.js', import.meta.url)
 const statusSource = await readFile(new URL('../src/status.js', import.meta.url), 'utf8');
 const probeSource = await readFile(new URL('../src/probe.js', import.meta.url), 'utf8');
 const indexSource = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
+const metricsSource = await readFile(new URL('../src/metrics.js', import.meta.url), 'utf8');
 const wranglerSource = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
 assert.match(
   routesSource,
@@ -28,6 +29,13 @@ assert.doesNotMatch(dueTargetsSource, /previousById\.get\(target\.id\)\?\.checke
 assert.match(indexSource, /scheduled\(controller, env, ctx\)[\s\S]{0,160}dispatchScheduledTasks/, 'cron triggers must delegate work outside the 10ms scheduled CPU budget');
 assert.match(indexSource, /signInternalSchedule[\s\S]{0,500}HMAC[\s\S]{0,100}SHA-256/, 'delegated cron requests must be HMAC authenticated');
 assert.match(indexSource, /historyProbeCount > 0[\s\S]{0,180}history_probe_completed/, 'a full history probe must suppress the duplicate fast probe');
+assert.doesNotMatch(probeSource, /FROM latest_status[\s\S]{0,240}\.all\(\)\.catch\(\(\) => \(\{ results: \[\] \}\)\)/, 'latest probe state read failures must not be treated as an empty database');
+assert.match(probeSource, /stateSyncWarning = 'r2_state_sync_failed'/, 'D1 probe success with an R2 sync failure must return a warning');
+assert.match(indexSource, /out\.probe\.results\.map\(item => item\?\.warning\)/, 'scheduled probe diagnostics must retain state sync warnings');
+assert.match(statusSource, /optionalQuery[\s\S]{0,220}warnings\.push\(warning\)/, 'partial status query failures must be visible in the status warnings');
+assert.match(statusSource, /Live status overlay unavailable/, 'snapshot overlay failures must remain visible to status consumers');
+assert.match(statusSource, /parsed && typeof parsed === 'object' && !Array\.isArray\(parsed\) \? parsed : \{\}/, 'stored status JSON nulls and arrays must not be treated as metric objects');
+assert.match(metricsSource, /warnings\.push\('Latest Agent metrics unavailable'\)/, 'latest metrics read failures must not look like an empty Agent');
 assert.match(wranglerSource, /MAX_TARGETS_PER_RUN = "20"/, 'cron work must be spread across minute slots while retaining 100 targets per five minutes');
 assert.match(wranglerSource, /global_fetch_strictly_public/, 'signed cron dispatch must loop through the public Worker endpoint instead of bypassing the Worker route');
 
@@ -52,17 +60,41 @@ assert.equal(isPrivateHost('127.0.0.1'), true);
 assert.equal(isPrivateHost('10.0.0.1'), true);
 assert.equal(isPrivateHost('192.168.1.1'), true);
 assert.equal(isPrivateHost('172.16.5.5'), true);
+assert.equal(isPrivateHost('192.0.2.1'), true);
+assert.equal(isPrivateHost('198.19.0.1'), true);
+assert.equal(isPrivateHost('198.51.100.1'), true);
+assert.equal(isPrivateHost('203.0.113.1'), true);
 assert.equal(isPrivateHost('8.8.8.8'), false);
 assert.equal(isPrivateHost('localhost'), true);
 assert.equal(isPrivateHost('::1'), true);
 assert.equal(isPrivateHost('[::1]'), true);
 assert.equal(isPrivateHost('::ffff:127.0.0.1'), true);
+assert.equal(isPrivateHost('::ffff:7f00:1'), true);
+assert.equal(isPrivateHost('::ffff:0808:0808'), false);
+assert.equal(isPrivateHost('::127.0.0.1'), true);
+assert.equal(isPrivateHost('2001:db8::1'), true);
+assert.equal(isPrivateHost('64:ff9b::7f00:1'), true);
+assert.equal(isPrivateHost('2606:4700:4700::1111'), false);
 assert.equal(isPrivateHost('example.com'), false);
 
 assert.throws(() => assertPublicHttpUrl('not a url'), /无效|invalid/i);
 assert.throws(() => assertPublicHttpUrl('ftp://example.com'), /http/i);
 assert.throws(() => assertPublicHttpUrl('http://127.0.0.1/'), /私有|内部|private/i);
+assert.throws(() => assertPublicHttpUrl('https://[::ffff:7f00:1]/'), /私有|内部|private/i);
 assert.ok(assertPublicHttpUrl('https://example.com/path'));
+
+{
+  const requested = [];
+  const fetchImpl = async (url) => {
+    requested.push(String(url));
+    return new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/private' } });
+  };
+  await assert.rejects(
+    () => fetchPublicHttpsWithValidatedRedirects('https://images.example.test/start', {}, fetchImpl),
+    /HTTPS|私有|内部/,
+  );
+  assert.deepEqual(requested, ['https://images.example.test/start']);
+}
 
 // grace default >= 120
 {

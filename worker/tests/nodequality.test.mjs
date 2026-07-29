@@ -33,6 +33,12 @@ assert.equal(publicReport.tabs.length, 4);
 assert.equal(publicReport.image_proxy_base, '/api/nq/vps-a/image');
 assert.equal(normalizeNodeQualityReportUrl('https://nodequality.com/r/VLDpQuy3AFgJ8e3f4QA8BerZwBEwEldB'), 'https://nodequality.com/r/VLDpQuy3AFgJ8e3f4QA8BerZwBEwEldB');
 assert.equal(normalizeNodeQualityReportUrl('https://www.nodequality.com/r/example-report/'), 'https://nodequality.com/r/example-report');
+const unsafeLegacyReport = publicNodeQualityReport({
+  id: 'legacy-a',
+  name: 'Legacy',
+  nq_report: '[NodeQuality链接](https://evil.example/report)\n报告时间：2026-07-30 00:00:00 CST',
+});
+assert.equal(unsafeLegacyReport.link, null);
 assert.equal(normalizeNodeQualityReportUrl('https://run.nodequality.com/'), '');
 assert.equal(normalizeNodeQualityReportUrl('https://nodequality.com/'), '');
 const agentReport = normalizeNodeQualityReport({

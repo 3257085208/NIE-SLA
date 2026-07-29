@@ -83,6 +83,11 @@ if [[ ! -f "$BINARY_PATH" && -f "/usr/local/bin/nstatus-metrics" && ! -L "/usr/l
 fi
 BACKUP_PATH="${BINARY_PATH}.bak"
 
+secure_binary_permissions() {
+    chown root:root "$BINARY_PATH"
+    chmod 0755 "$BINARY_PATH"
+}
+
 restart_service() {
     if command -v systemctl &>/dev/null; then
         systemctl restart nstatus-metrics
@@ -106,7 +111,7 @@ rollback_update() {
     err "$reason"
     if [[ -f "$BACKUP_PATH" ]]; then
         mv -f "$BACKUP_PATH" "$BINARY_PATH"
-        chmod +x "$BINARY_PATH"
+        secure_binary_permissions
         restart_service || true
         ok "已恢复旧版本"
     fi
@@ -124,6 +129,8 @@ fi
 # 备份当前版本
 if [[ -f "$BINARY_PATH" ]]; then
     cp "$BINARY_PATH" "$BACKUP_PATH"
+    chown root:root "$BACKUP_PATH"
+    chmod 0755 "$BACKUP_PATH"
     ok "已备份当前版本"
 fi
 
@@ -134,15 +141,17 @@ SUMS_TMP="$(mktemp)"
 trap 'rm -f "${BINARY_PATH}.tmp" "$SUMS_TMP"' EXIT INT TERM
 if download_to "$DOWNLOAD_URL" "${BINARY_PATH}.tmp"; then
     verify_binary_checksum "${BINARY_PATH}.tmp" "$BINARY_NAME" "$SUMS_TMP"
-    chmod +x "${BINARY_PATH}.tmp"
+    chown root:root "${BINARY_PATH}.tmp"
+    chmod 0755 "${BINARY_PATH}.tmp"
     mv "${BINARY_PATH}.tmp" "$BINARY_PATH"
+    secure_binary_permissions
     ln -sf "$BINARY_PATH" /usr/local/bin/nstatus-metrics 2>/dev/null || true
-    chown nstatus:nstatus "$BINARY_PATH" 2>/dev/null || chown nstatus "$BINARY_PATH" 2>/dev/null || true
     ok "下载完成"
 else
     err "下载失败"
     if [[ -f "$BACKUP_PATH" ]]; then
         mv "$BACKUP_PATH" "$BINARY_PATH"
+        secure_binary_permissions
         ok "已恢复备份"
     fi
     exit 1

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import {
   buildLinePoints,
   clampChartRange,
@@ -10,7 +10,8 @@ import {
   trimEmptyPointEdges,
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
-import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, priceBandKey } from '../js/shared/grouping.js';
+import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, normalizeGroupByMode, priceBandKey } from '../js/shared/grouping.js';
+import { readStorage, removeStorage, writeStorage } from '../js/shared/storage.js';
 import { canShowTemperature, hasGpuData, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
 import {
   CURRENCIES,
@@ -25,6 +26,7 @@ import { formatLocationLabel, normalizeCityName } from '../js/shared/format.js';
 import {
   bindNodeQualityModal,
   buildNqModalHtml,
+  normalizeNqReportLink,
   renderNqAnsiHtml,
   renderNqNetworkReportHtml,
   renderNqReportHtml,
@@ -36,6 +38,7 @@ import { unlockState } from '../js/shared/unlock.js';
 import { dailyFleetSlaSeries, targetSlaPercentage } from '../js/shared/sla.js';
 import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from '../js/shared/ping.js';
 import { onRequest as routeAdminPage } from '../functions/[[path]].js';
+import { onRequestOptions as apiProxyOptions } from '../functions/api/[[path]].js';
 
 const rows = normalizeChartRows([
   { checked_at: 30, ok: 1, latency_ms: 20 },
@@ -98,6 +101,27 @@ assert.equal(Object.keys(groupByDimension(targets, 'line_type')).length, 2);
 assert.equal(priceBandKey({ price: 8 }), '5 – 10');
 assert.match(groupByMenuHtml('location'), /role="listbox"/);
 assert.match(groupByMenuHtml('location'), /data-group-value="location"[^>]*>国家\/地区<\/button>/);
+assert.equal(normalizeGroupByMode('provider'), 'provider');
+assert.equal(normalizeGroupByMode('legacy-invalid-value'), 'group');
+assert.equal(groupKeyFor(targets[0], 'legacy-invalid-value'), 'G1');
+
+const blockedStorage = {
+  getItem() { throw new DOMException('blocked', 'SecurityError'); },
+  setItem() { throw new DOMException('blocked', 'SecurityError'); },
+  removeItem() { throw new DOMException('blocked', 'SecurityError'); },
+};
+globalThis.blockedStorage = blockedStorage;
+assert.equal(readStorage('blockedStorage', 'key', 'fallback'), 'fallback');
+assert.equal(writeStorage('blockedStorage', 'key', 'value'), false);
+assert.equal(removeStorage('blockedStorage', 'key'), false);
+delete globalThis.blockedStorage;
+Object.defineProperty(globalThis, 'blockedStorage', {
+  configurable: true,
+  get() { throw new DOMException('blocked', 'SecurityError'); },
+});
+assert.equal(readStorage('blockedStorage', 'key', 'getter-fallback'), 'getter-fallback');
+assert.equal(writeStorage('blockedStorage', 'key', 'value'), false);
+delete globalThis.blockedStorage;
 assert.match(groupByMenuHtml('line_type'), /data-group-value="line_type"[^>]*>机器类型<\/button>/);
 for (const type of ['建站机', '线路机', '落地机', '中转机', '家宽机', '解锁机', '存储机', '备份机', '算力机', '游戏机', '邮件机', '综合用途']) {
   assert.equal(LINE_TYPE_OPTIONS.some((option) => option.id === type), true, `${type} must be available as a machine type`);
@@ -252,6 +276,18 @@ assert.equal(await (await routePage('/unrelated')).text(), 'next');
 globalThis.fetch = previousFetch;
 console.log('Pages admin path routing ok');
 
+const sameOriginPreflight = await apiProxyOptions({ request: new Request('https://status.example/api/status', {
+  method: 'OPTIONS',
+  headers: { origin: 'https://status.example' },
+}) });
+assert.equal(sameOriginPreflight.headers.get('access-control-allow-origin'), 'https://status.example');
+const crossOriginPreflight = await apiProxyOptions({ request: new Request('https://status.example/api/status', {
+  method: 'OPTIONS',
+  headers: { origin: 'https://evil.example' },
+}) });
+assert.equal(crossOriginPreflight.headers.get('access-control-allow-origin'), null);
+console.log('Pages API proxy CORS ok');
+
 assert.equal(targetHasNodeQuality({ type: 'tcp', has_nq: 1 }), true);
 assert.equal(targetHasNodeQuality({ type: 'tcp', nq: { has_report: true } }), true);
 assert.equal(targetHasNodeQuality({ type: 'http', has_nq: 1 }), false);
@@ -276,5 +312,27 @@ const proxiedNqImage = buildNqModalHtml({
 assert.match(proxiedNqImage, /\/api\/nq\/vps-a\/image\/network/);
 assert.doesNotMatch(proxiedNqImage, /private-image-host\.example|data-nq-original/);
 assert.match(proxiedNqImage, /referrerpolicy="no-referrer"/);
+assert.match(proxiedNqImage, /role="tab"[^>]+aria-selected="true"/);
+assert.match(proxiedNqImage, /role="tablist" aria-label="报告章节"/);
+assert.match(proxiedNqImage, /role="tabpanel" aria-labelledby="nq-tab-0" tabindex="0"/);
+assert.equal(normalizeNqReportLink('https://www.nodequality.com/r/example-report/'), 'https://nodequality.com/r/example-report');
+assert.equal(normalizeNqReportLink('javascript:alert(1)'), '');
+assert.equal(normalizeNqReportLink('https://nodequality.com.evil.example/r/example-report'), '');
+const unsafeNqUrls = buildNqModalHtml({
+  link: 'javascript:alert(1)',
+  image_proxy_base: '//image-host.example/api/nq/vps-a/image',
+  tabs: [{ id: 'network', kind: 'image', image: 'https://private-image-host.example/network.webp', content: 'safe fallback' }],
+});
+assert.doesNotMatch(unsafeNqUrls, /javascript:|image-host\.example|private-image-host\.example|打开原报告/);
+assert.match(unsafeNqUrls, /safe fallback/);
 assert.match(buildNqModalHtml({ tabs: [{ id: 'network', kind: 'ansi', content: '一、BGP信息' }, { id: 'route', kind: 'ansi', content: '五、三网回程路由' }] }), /nq-network-panel[\s\S]*nq-route-panel/, 'ANSI network and route tabs must use their dedicated layouts');
+const adminSource = readFileSync(new URL('../js/admin.js', import.meta.url), 'utf8');
+const appSource = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+const adminCss = readFileSync(new URL('../admin.css', import.meta.url), 'utf8');
+assert.match(adminSource, /document\.body\.classList\.add\("admin-modal-open"\)/, 'admin modals must lock background scrolling');
+assert.match(adminSource, /modalReturnFocus[\s\S]*returnFocus\.focus\(\)/, 'admin modals must restore focus to their opener');
+assert.match(adminSource, /onkeydown[\s\S]{0,900}event\.key !== "Tab"/, 'admin modals must trap keyboard focus');
+assert.equal(adminSource.match(/input:not\(\[disabled\]\):not\(\[type="hidden"\]\)/g)?.length, 2, 'admin modal focus management must exclude hidden form fields');
+assert.match(adminCss, /body\.admin-modal-open\s*\{\s*overflow:\s*hidden/, 'admin modal scroll locking must be styled');
+assert.match(appSource, /部分状态数据暂不可用/, 'public status warnings must not be rendered as real empty data');
 console.log('NodeQuality frontend helpers ok');

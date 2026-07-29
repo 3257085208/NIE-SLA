@@ -20,7 +20,7 @@ mod queue;
 mod tasks;
 mod updater;
 
-use queue::{default_queue_file, load_sample_queue, save_sample_queue, spawn_queue_writer};
+use queue::{default_queue_file, flush_sample_queue, load_sample_queue, spawn_queue_writer};
 use updater::{restart_after_update, spawn_update_worker, UpdateRole};
 
 const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -232,6 +232,7 @@ struct UpdatePolicy {
 enum QueueCommand {
     Append(SamplePoint),
     Acknowledge(i64),
+    Flush(mpsc::Sender<std::result::Result<(), String>>),
 }
 
 #[derive(Clone, Debug)]
@@ -297,7 +298,16 @@ fn run() -> Result<()> {
     let mut collector = Collector::new();
     let hostname = hostname_string();
     let vps_info = collector.vps_info();
-    let mut samples = load_sample_queue(&cfg.queue_file).unwrap_or_default();
+    let mut samples = match load_sample_queue(&cfg.queue_file) {
+        Ok(samples) => samples,
+        Err(err) => {
+            eprintln!(
+                "{{\"ok\":false,\"queue_load_error\":{}}}",
+                json_string(&err.to_string())
+            );
+            VecDeque::new()
+        }
+    };
     if samples.len() > cfg.queue_max_samples {
         samples.drain(0..samples.len() - cfg.queue_max_samples);
     }
@@ -395,7 +405,7 @@ fn run() -> Result<()> {
                         version,
                         executable,
                     }) => {
-                        save_sample_queue(&cfg.queue_file, &samples)?;
+                        flush_sample_queue(&queue_tx)?;
                         println!(
                             "{{\"ok\":true,\"update\":\"installed\",\"version\":{},\"restarting\":true}}",
                             json_string(&version)
@@ -452,6 +462,7 @@ fn run() -> Result<()> {
                     match result.result {
                         Ok(()) => {
                             let _ = queue_tx.send(QueueCommand::Acknowledge(result.last_sample_ts));
+                            flush_sample_queue(&queue_tx)?;
                             println!(
                                 "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
                                 now_sec(),

@@ -1,6 +1,6 @@
 {
   "name": "nie-sla-cloudflare",
-  "version": "0.24.0-beta.30",
+  "version": "0.24.0-beta.31",
   "private": true,
   "type": "module",
   "description": "NIE-SLA Cloudflare 一键部署",
@@ -19,7 +19,7 @@
     "fflate": "0.8.2"
   },
   "devDependencies": {
-    "wrangler": "4.88.0"
+    "wrangler": "4.115.0"
   },
   "cloudflare": {
     "label": "NIE-SLA 状态页与 VPS 探针",

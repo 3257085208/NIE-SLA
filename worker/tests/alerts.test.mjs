@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { getAlertSettings, renderNotificationTemplate, sendTestAlert, updateAlertSettings } from '../src/alerts.js';
+import { getAlertSettings, renderNotificationTemplate, runAlertChecks, sendTestAlert, updateAlertSettings } from '../src/alerts.js';
 
 function memoryDb() {
   const meta = new Map();
@@ -117,5 +117,27 @@ await assert.rejects(
   updateAlertSettings(jsonRequest({ email_template: '<p>{{title}}</p>' }), env),
   /必须包含 \{\{message\}\}/,
 );
+
+const failedReadEnv = {
+  TELEGRAM_BOT_TOKEN: '123:test',
+  TELEGRAM_CHAT_ID: '-100123',
+  DB: {
+    prepare(sql) {
+      return {
+        values: [],
+        bind(...values) { this.values = values; return this; },
+        async first() {
+          if (/SELECT value FROM app_meta/i.test(sql) && this.values[0] === 'alert_settings') {
+            return { value: JSON.stringify({ enabled: true }) };
+          }
+          return null;
+        },
+        async run() { return { success: true }; },
+        async all() { throw new Error('simulated D1 read failure'); },
+      };
+    },
+  },
+};
+await assert.rejects(() => runAlertChecks(failedReadEnv), /simulated D1 read failure/);
 
 console.log('email alert tests passed');

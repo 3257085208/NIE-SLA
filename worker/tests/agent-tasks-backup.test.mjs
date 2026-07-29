@@ -56,6 +56,9 @@ const env = {
   ARCHIVE: {
     objects: new Map(),
     async put(key, value) { this.objects.set(key, value); },
+    async delete(keys) {
+      for (const key of Array.isArray(keys) ? keys : [keys]) this.objects.delete(key);
+    },
   },
   TOTP_ENCRYPTION_KEY: 'test-key-that-is-long-enough-for-encryption',
   TIMEZONE_OFFSET_MINUTES: '480',
@@ -179,6 +182,15 @@ assert.equal(portable.backup.portable.targets.length, 2);
 assert.equal('sensitive' in portable.backup, false);
 assert.equal(JSON.stringify(portable.backup).includes('private-image-host.example'), false);
 assert.equal(portable.backup.portable.app_meta.some((row) => row.key.startsWith('nq_image_host_')), false);
+portable.backup.portable.targets[0].unknown_future_column = 'ignored';
+await restoreBackup(jsonRequest({ backup: portable.backup, mode: 'merge', confirm: 'RESTORE' }), env);
+env.ARCHIVE.objects.clear();
+await assert.rejects(
+  () => exportBackup(new Request('https://example.test/api/backup/export'), {
+    DB: { prepare() { return { all: async () => { throw new Error('simulated backup read failure'); } }; } },
+  }),
+  /simulated backup read failure/,
+);
 const protectedBackup = await exportBackup(jsonRequest({ include_secrets: true, password: 'Backup-password-123!' }), env);
 assert.equal(protectedBackup.backup.sensitive.algorithm, 'PBKDF2-SHA256+A256GCM');
 assert.equal(JSON.stringify(protectedBackup.backup).includes('private-image-host.example'), false);
@@ -210,6 +222,14 @@ assert.equal(typeof internalSnapshot.encrypted?.ciphertext, 'string');
 assert.equal(JSON.stringify(internalSnapshot).includes('test-key-that-is-long-enough-for-encryption'), false);
 assert.equal(JSON.stringify(internalSnapshot).includes('token_ciphertext'), false);
 assert.equal(JSON.stringify(internalSnapshot).includes('ciphertext\"'), true);
+
+const replaced = await restoreBackup(jsonRequest({
+  backup: protectedBackup.backup,
+  password: 'Backup-password-123!',
+  mode: 'replace',
+  confirm: 'RESTORE',
+}), env);
+assert.deepEqual(replaced.runtime_cleanup, { d1_cleared: true, r2_cleared: true, warnings: [] });
 
 console.log('Agent task, GeoIP, and backup tests passed');
 

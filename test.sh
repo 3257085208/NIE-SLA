@@ -79,6 +79,7 @@ run_check "Ping target color tests" node "$ROOT/worker/tests/ping-target-colors.
 run_check "legacy chart color schema migration" node "$ROOT/worker/tests/schema-color-migration.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
   run_check "public export tool" node --check "$ROOT/scripts/export-public.mjs"
+  run_check "public export file classification" node "$ROOT/tests/public-export-files.test.mjs"
 fi
 run_shell "worker module bundle" "cd '$ROOT' && $PACKAGE_EXEC esbuild worker/src/index.js --bundle --format=esm --platform=browser --external:cloudflare:sockets --outfile='$TMP_DIR/nstatus-worker-bundle.mjs' && rm -f '$TMP_DIR/nstatus-worker-bundle.mjs'"
 run_shell "js undefined references" "cd '$ROOT' && $PACKAGE_EXEC eslint@10.6.0 -c tests/eslint.config.mjs worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests --no-error-on-unmatched-pattern"
@@ -110,6 +111,7 @@ run_check "frontend shared imports" node --input-type=module -e "await import('.
 run_check "frontend app import smoke" node "$ROOT/tests/frontend-app-import-smoke.mjs"
 run_check "frontend module tests" node "$ROOT/tests/frontend-modules.test.mjs"
 run_check "installer manifest tests" node "$ROOT/tests/installer-manifest.test.mjs"
+run_check "production frontend release asset sync" node "$ROOT/tests/production-release-sync.test.mjs"
 
 echo ""
 echo "=== Rust Agent ==="
@@ -137,9 +139,11 @@ run_shell "no real target seed data" "cd '$ROOT' && ! grep -E \"INSERT INTO targ
 run_shell "safe generated install command" "cd '$ROOT' && ! grep -E \"ExecutionPolicy Bypass|sudo env\" worker/src/admin/install-command.js && ! grep -E \"ExecutionPolicy Bypass|sudo env\" worker/src/admin.js"
 run_shell "generated install command carries ping env" "cd '$ROOT' && (grep -q \"NSTATUS_PING_SEC\" worker/src/admin/install-command.js || grep -q \"NSTATUS_PING_SEC\" worker/src/admin.js)"
 run_shell "generated install command pins installer and version" "cd '$ROOT' && grep -q 'install.sh?v=' worker/src/admin/install-command.js && grep -q 'NSTATUS_EXPECTED_VERSION' worker/src/admin/install-command.js"
+run_shell "bootstrap scripts and cftz are checksum pinned" "cd '$ROOT' && grep -q 'NSTATUS_INSTALLER_SHA256' worker/src/admin/install-command.js && grep -q 'NSTATUS_SETUP_SHA256' agent/install.sh && grep -q 'NSTATUS_SETUP_SHA256' agent/quick-install.sh && grep -q 'NSTATUS_CFTZ_SHA256' agent/setup.sh"
 run_shell "linux reinstall replaces legacy agent" "cd '$ROOT' && grep -q 'stop_existing_agent' agent/setup.sh && grep -q 'verify_agent_version' agent/setup.sh && grep -q 'setup.sh?v=' agent/install.sh"
 run_shell "linux install requires a successful first upload" "cd '$ROOT' && grep -q 'verify_systemd_agent_health' agent/setup.sh && grep -q '\"submitted_at\"' agent/setup.sh && grep -q 'redact_agent_output' agent/setup.sh && ! grep -q 'ok \"systemd service started\"' agent/setup.sh"
 run_shell "linux agent keeps secrets root-owned" "cd '$ROOT' && grep -q 'chown \"root:\${agent_group}\" \"\$ENV_FILE\"' agent/setup.sh && grep -q 'EnvironmentFile=\${ENV_FILE}' agent/setup.sh && ! grep -q 'chown -R \"\$AGENT_USER\" \"\$WORK_DIR\"' agent/setup.sh"
+run_shell "manual update binaries stay root-owned" "cd '$ROOT' && grep -q 'secure_binary_permissions' agent/update.sh && grep -q 'chown root:root \"\$BINARY_PATH\"' agent/update.sh && grep -q 'chmod 0755 \"\$BINARY_PATH\"' agent/update.sh && ! grep -Eq 'chown (nstatus|\"?\$AGENT_USER)' agent/update.sh"
 run_shell "manual updates verify policy and checksums" "cd '$ROOT' && grep -q 'manifest_sha256' agent/cftz && grep -q 'Agent binary checksum mismatch' agent/cftz && ! grep -q 'download_binary_unverified' agent/cftz"
 run_shell "automatic updates reject downgrades" "cd '$ROOT' && bash -c 'set --; source agent/cftz >/dev/null; version_is_newer v1.0.20 v1.0.19; ! version_is_newer v1.0.18 v1.0.19; ! version_is_newer v1.0.19 v1.0.19'"
 run_shell "OpenRC installs hourly verified updates" "cd '$ROOT' && grep -q '/etc/periodic/hourly' agent/setup.sh && grep -q '/etc/cron.hourly' agent/setup.sh && grep -q 'update --automatic' agent/setup.sh && grep -q '/etc/periodic/hourly' agent/cftz && grep -q '/etc/cron.hourly' agent/cftz && grep -q 'update --automatic' agent/cftz"

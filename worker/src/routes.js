@@ -1,4 +1,4 @@
-import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
+import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValidatedRedirects, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
 import { requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
@@ -200,8 +200,7 @@ async function dispatchStatic(env, url, request, ctx) {
     if (!imageSource) return new Response('Not found', { status: 404 });
     let upstream;
     try {
-      upstream = await fetch(imageSource, {
-        redirect: 'follow',
+      upstream = await fetchPublicHttpsWithValidatedRedirects(imageSource, {
         headers: {
           accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
           referer: `${url.origin}/`,

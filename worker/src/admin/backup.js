@@ -72,6 +72,7 @@ export async function restoreBackup(request, env) {
   const before = await captureRestoreState(env);
   const snapshot = await createRestoreSnapshot(env, before);
   const restored = {};
+  let runtimeCleanup = null;
   try {
     if (mode === 'replace') {
       for (const table of [...PORTABLE_TABLES].reverse()) await env.DB.prepare(`DELETE FROM ${table}`).run();
@@ -85,7 +86,7 @@ export async function restoreBackup(request, env) {
       restored.sensitive_meta = await restoreRows(env, 'app_meta', (sensitive?.app_meta || []).filter(row => SENSITIVE_META_KEYS.has(String(row.key || ''))));
     }
     await rebuildCompatibilityTables(env);
-    if (mode === 'replace') await clearRuntimeState(env);
+    if (mode === 'replace') runtimeCleanup = await clearRuntimeState(env);
   } catch (error) {
     let rollbackError = null;
     try {
@@ -99,7 +100,13 @@ export async function restoreBackup(request, env) {
     }
     throw new ApiError(500, `恢复失败，原数据已自动回滚。${String(error?.message || error)}`);
   }
-  return { ok: true, mode, restored, restore_snapshot: snapshot };
+  return {
+    ok: true,
+    mode,
+    restored,
+    restore_snapshot: snapshot,
+    ...(runtimeCleanup ? { runtime_cleanup: runtimeCleanup } : {}),
+  };
 }
 
 async function rebuildCompatibilityTables(env) {
@@ -159,13 +166,19 @@ async function replaceRestoreState(env, state) {
 }
 
 async function clearRuntimeState(env) {
-  for (const table of RUNTIME_TABLES) await env.DB.prepare(`DELETE FROM ${table}`).run().catch(() => {});
-  if (!env.ARCHIVE) return;
+  await env.DB.batch(RUNTIME_TABLES.map(table => env.DB.prepare(`DELETE FROM ${table}`)));
+  if (!env.ARCHIVE) return { d1_cleared: true, r2_cleared: false, warnings: ['missing_r2'] };
   const keys = [
     String(env.R2_STATE_KEY || 'state/status.json').replace(/^\/+/, ''),
     String(env.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, ''),
   ];
-  await env.ARCHIVE.delete(keys).catch(() => {});
+  try {
+    await env.ARCHIVE.delete(keys);
+    return { d1_cleared: true, r2_cleared: true, warnings: [] };
+  } catch (error) {
+    console.error('restore runtime R2 cleanup failed:', String(error?.message || error));
+    return { d1_cleared: true, r2_cleared: false, warnings: ['r2_cleanup_failed'] };
+  }
 }
 
 function restoreSnapshotMaterial(env) {
@@ -194,16 +207,17 @@ function backupPreview(archive, sensitive) {
 }
 
 async function tableRows(env, table) {
-  const result = await env.DB.prepare(`SELECT * FROM ${table}`).all().catch(() => ({ results: [] }));
+  const result = await env.DB.prepare(`SELECT * FROM ${table}`).all();
   return result.results || [];
 }
 
 async function restoreRows(env, table, rows) {
   if (!Array.isArray(rows) || !rows.length) return 0;
+  const allowedColumns = await tableColumns(env, table);
   let count = 0;
   for (const row of rows.slice(0, 10_000)) {
     if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
-    const columns = Object.keys(row).filter(column => /^[a-z][a-z0-9_]*$/i.test(column));
+    const columns = Object.keys(row).filter(column => allowedColumns.has(column));
     if (!columns.length) continue;
     const quoted = columns.map(column => `"${column}"`).join(', ');
     const marks = columns.map(() => '?').join(', ');
@@ -211,6 +225,13 @@ async function restoreRows(env, table, rows) {
     count += 1;
   }
   return count;
+}
+
+async function tableColumns(env, table) {
+  const result = await env.DB.prepare(`PRAGMA table_info("${table}")`).all();
+  const columns = new Set((result.results || []).map(row => String(row.name || '')).filter(Boolean));
+  if (!columns.size) throw new ApiError(500, `无法读取备份表结构：${table}`);
+  return columns;
 }
 
 function isPortableMetaKey(keyValue) {
