@@ -1470,10 +1470,10 @@ body:not(.is-loaded) .incident-log {
 .nq-tabs { position: relative; z-index: 2; display: flex; flex: 0 0 auto; gap: 2px; overflow-x: auto; padding: 0 18px; background: #fff; border-bottom: 1px solid #cbd5e1; }
 .nq-tab { padding: 11px 14px 9px; color: #64748b; background: transparent; border: 0; border-bottom: 3px solid transparent; font: 700 13px/1.2 var(--font), "Noto Sans SC", sans-serif; white-space: nowrap; }
 .nq-tab.active { color: #0f172a; border-bottom-color: #059669; }
-.nq-panels { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 12px; background: #111827; }
-.nq-panel { display: none; min-width: 0; }
+.nq-panels { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 12px; background: #111827; }
+.nq-panel { display: none; width: 100%; min-width: 0; }
 .nq-panel.active { display: block; }
-.nq-ansi-panel { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+.nq-ansi-panel { width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
 .nq-ansi-panel .nq-ansi { width: max-content; min-width: 100%; overflow: visible; }
 .nq-image-panel.active { display: flex; align-items: flex-start; justify-content: center; min-height: 0; overflow: auto; }
 .nq-image-panel.fallback-active { display: block; }
@@ -1601,7 +1601,7 @@ body:not(.is-loaded) .incident-log {
   .nq-media-badge { min-width: 36px; padding: 2px 5px; font-size: 10px; }
   .nq-report-btn { height: 20px; padding: 2px 6px; font-size: 9px; }
   .nq-image-panel.active { padding: 4px 0 8px; }
-  .nq-image { width: min(90%, 520px); }
+  .nq-image { width: 100%; }
   .nq-report-pre { font-size: 9px; line-height: 1.4; }
   .nq-network-title { padding: 7px 8px 3px; font-size: 11px; }
   .nq-network-scroll { padding: 5px 8px 9px; }
@@ -1625,12 +1625,16 @@ body:not(.is-loaded) .incident-log {
   .nq-route-note { font-size: 9px; }
 }
 
+@media (max-width: 560px) {
+  .nq-ansi { font-size: 8px; line-height: 1.4; }
+}
+
 @media (max-width: 420px) {
-  .nq-modal-backdrop { padding: 8px 10px; }
+  .nq-modal-backdrop { padding: 8px 6px; }
   .nq-modal { max-height: calc(100dvh - 16px); }
   .nq-modal-meta { padding-block: 5px; }
   .nq-tab { min-height: 38px; padding-inline: 8px; font-size: 10.5px; }
-  .nq-image { width: 88%; }
+  .nq-ansi { font-size: 7px; line-height: 1.45; }
   .vps-info-section {
     grid-template-columns: 1fr;
   }

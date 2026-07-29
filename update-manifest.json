@@ -1,14 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "0.24.0-beta.29",
+  "version": "0.24.0-beta.30",
   "agent_version": "v1.0.36",
-  "source_ref": "app-v0.24.0-beta.29",
-  "published_at": "2026-07-29T13:43:44Z",
-  "title": "NIE-SLA 0.24 Beta 29",
+  "source_ref": "app-v0.24.0-beta.30",
+  "published_at": "2026-07-29T16:21:37Z",
+  "title": "NIE-SLA 0.24 Beta 30",
   "changelog": [
-    "NQ 图片上传固定使用 S3 渠道且不发送上传目录，旧配置和废弃环境变量无法覆盖",
-    "移除图床管理与测试 API，地址、Token 和可选渠道名仅由 Worker Secret 控制",
-    "公开报告只返回同源图片代理地址，普通备份、错误响应和前端 DOM 均不暴露图床信息",
+    "修复手机端 NQ ANSI 报告仍按桌面宽度排版，造成正文右侧隐藏和滚动层级混乱",
+    "弹窗外层只负责纵向滚动，ANSI 页签独立承接极端长行并按手机宽度使用固定等宽字号",
+    "网络质量与回程路由图片使用全部移动端内容宽度，公开页与后台同步生效",
     "Rust Agent 保持 v1.0.36，本次无需重新安装或更新 Agent"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
