@@ -3,8 +3,8 @@ import { clamp, sanitizeAgentId } from '../utils.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { loadAgentRelease } from './settings.js';
 
-const INSTALLER_SHA256 = '419b9a8665a1ed93c996492379a510247840555b6a60f2ca9deab1c8d8073f0f';
-const SETUP_SHA256 = '1b9f78834b203d5b19e9efde39077537c73cb2b21a0f9f6c85ec4fac5c62b17c';
+const INSTALLER_SHA256 = 'ba03de9f1d65c1e1548ac3b8a19e381f17eee5ad5119f27099ccdc93db4c2aa7';
+const SETUP_SHA256 = '7aa6143d22ab6c363c2484f758e3509d52271fa6591cc3e6753c1ea9292384ca';
 const CFTZ_SHA256 = 'a65e790a8d125aa1a4b68015e24f985ea52c2a456e1232e98637c64b1a8b8758';
 
 export async function getAgentInstallCommand(env, url, request = null) {

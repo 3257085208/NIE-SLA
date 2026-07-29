@@ -21,6 +21,7 @@ await cp(frontendRoot, outputRoot, {
     return !relative.split(path.sep).some(part => excluded.has(part));
   },
 });
+await cp(path.join(root, 'update-manifest.json'), path.join(outputRoot, 'update-manifest.json'));
 await prepareAgentRelease(path.join(outputRoot, 'bin'));
 console.log(`One-click assets prepared in ${path.relative(root, outputRoot)}`);
 

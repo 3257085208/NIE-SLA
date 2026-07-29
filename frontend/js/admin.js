@@ -1,7 +1,7 @@
 import { copyText } from "./install-command.js";
-import { createAdminClient } from "./admin/api.js?v=20260730-audit1";
+import { createAdminClient } from "./admin/api.js?v=20260730-v1038";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260730-audit1";
+import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260730-v1038";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -12,8 +12,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260730-audit1";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260730-audit1";
+} from "./shared/grouping.js?v=20260730-v1038";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260730-v1038";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -2159,7 +2159,7 @@ async function loadAppUpdate(refresh = false) {
         <div><span>当前版本</span><b>v${escapeHtml(data.current_version || "-")}</b></div>
         <div><span>最新版本</span><b>v${escapeHtml(data.latest_version || "-")}</b></div>
       </div>
-      <div class="app-update-status">${status}${data.stale ? '<span class="hint">使用缓存结果</span>' : ""}</div>
+      <div class="app-update-status">${status}${data.stale ? `<span class="hint">${data.update_source === "bundled" ? "官方源暂时受限，使用当前部署版本" : "官方源暂时受限，使用缓存结果"}</span>` : ""}</div>
       <p class="hint">发布时间：${escapeHtml(formatUpdateTime(data.published_at))}</p>
       <p class="hint app-update-note">部署仓库默认每 ${escapeHtml(data.automatic_check_hours || 6)} 小时自动检查并应用稳定更新，无需填写仓库或 Token。</p>
       <div class="app-update-actions">

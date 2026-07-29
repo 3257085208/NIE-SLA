@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Beta · 0.24.0-beta.31**
+**Stable · 1.0.38**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -22,7 +22,7 @@ Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
 NIE-SLA 把 Cloudflare 公网探测、公开状态页和 VPS 系统数据放在一起。控制面运行在 Cloudflare，VPS 安装主动上报的 Rust Agent，不需要购买中心服务器，也不需要开放 Agent 管理端口。
 
-当前项目处于 Beta，适合个人与小型团队自托管、测试和逐步上线。
+当前项目使用正式稳定版本，适合个人与小型团队自托管和持续升级。
 
 ## 一键部署
 

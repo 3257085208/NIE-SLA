@@ -1,6 +1,6 @@
 # NIE-SLA
 
-NIE-SLA is a Cloudflare-native status page and VPS telemetry platform. The project is currently in **Beta**.
+NIE-SLA is a Cloudflare-native status page and VPS telemetry platform. Application, Worker, and Agent releases share one stable SemVer.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/3257085208/NIE-SLA)
 

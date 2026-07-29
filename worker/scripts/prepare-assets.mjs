@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const workerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = path.resolve(workerRoot, '..', '..', 'frontend');
+const updateManifest = path.resolve(workerRoot, '..', 'public-release', 'update-manifest.json');
 const outputRoot = path.join(workerRoot, 'dist-one-click');
 const excluded = new Set([
   '.git',
@@ -36,5 +37,6 @@ await cp(frontendRoot, outputRoot, {
     return !relative.split(path.sep).some(part => excluded.has(part));
   },
 });
+await cp(updateManifest, path.join(outputRoot, 'update-manifest.json'));
 
 console.log(`静态资源已生成：${path.relative(workerRoot, outputRoot)}`);

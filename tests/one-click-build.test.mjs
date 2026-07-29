@@ -8,7 +8,7 @@ const output = path.join(root, 'dist-one-click');
 const deploymentValidation = process.env.NIE_SLA_DEPLOYMENT_VALIDATION === '1';
 
 for (const relative of [
-  'index.html', 'admin.html', 'config.js', 'js/theme-bootstrap.js', 'js/themes.js', 'bin/VERSION', 'bin/SHA256SUMS',
+  'index.html', 'admin.html', 'config.js', 'js/theme-bootstrap.js', 'js/themes.js', 'update-manifest.json', 'bin/VERSION', 'bin/SHA256SUMS',
   'bin/nstatus-metrics-linux-amd64', 'bin/nstatus-metrics-linux-arm64',
   'bin/jq-linux-amd64', 'bin/jq-linux-arm64', 'bin/jq-linux-i386', 'bin/jq-linux-armhf', 'bin/jq-linux-armel',
 ]) {
@@ -30,6 +30,11 @@ assert.doesNotMatch(frontendConfig, /https?:\/\//, 'one-click frontend must use 
 const version = (await readFile(path.join(output, 'bin/VERSION'), 'utf8')).trim();
 assert.match(version, /^v\d+\.\d+\.\d+$/);
 const updateManifest = JSON.parse(await readFile(path.join(root, 'update-manifest.json'), 'utf8'));
+assert.deepEqual(
+  JSON.parse(await readFile(path.join(output, 'update-manifest.json'), 'utf8')),
+  updateManifest,
+  'bundled update fallback must match the official release manifest',
+);
 assert.equal(version, updateManifest.agent_version, 'one-click build must bundle the declared Agent release');
 
 const manifest = await readFile(path.join(output, 'bin/SHA256SUMS'), 'utf8');

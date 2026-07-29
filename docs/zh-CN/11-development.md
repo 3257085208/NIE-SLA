@@ -56,6 +56,6 @@ node scripts/export-public.mjs --apply
 
 ## 版本
 
-- 应用：`0.x.y-beta.N`，包括 Worker 与同源前端；
-- Agent：独立 `vX.Y.Z`；
-- 正式稳定版才进入应用 `1.x.x`。
+- 应用、Worker 与 Agent 共用 `X.Y.Z`；展示、Tag 与 Agent Release 使用 `vX.Y.Z`。
+- 每次正常迭代增加补丁位 `0.0.1`，需要破坏性兼容变更时才提升次版本或主版本。
+- 应用源码 Tag 使用 `app-vX.Y.Z`，Agent 二进制与 Release 使用 `vX.Y.Z`，两者版本数字必须一致。
