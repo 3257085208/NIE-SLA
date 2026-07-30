@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./admin.css?v=20260730-v1040" />
+    <link rel="stylesheet" href="./admin.css?v=20260731-v1041" />
   </head>
   <body>
     <div class="login-bg" id="loginPage">
@@ -145,11 +145,10 @@
             </div>
             <div class="ping-admin-actions">
               <div class="ping-interval-row">
-                <label class="ping-interval-control" for="pingIntervalSec"><span>间隔</span><input id="pingIntervalSec" type="number" min="1" max="300" step="1" value="20"><span>秒</span></label>
+                <label class="ping-interval-control" for="pingIntervalSec"><span>间隔</span><input id="pingIntervalSec" type="number" min="5" max="300" step="1" value="20"><span>秒</span></label>
                 <button class="btn" id="savePingInterval" type="button">保存</button>
                 <button class="btn btn-primary" id="addPingBtn" type="button">+ 新增</button>
               </div>
-              <span class="ping-limit-note">1 秒时最多启用 5 个目标</span>
             </div>
           </div>
           <div id="pTable"><div class="loading">加载中...</div></div>
@@ -269,7 +268,7 @@
 
     <script
       type="module"
-      src="./js/admin.js?v=20260730-v1040"
+      src="./js/admin.js?v=20260731-v1041"
     ></script>
   </body>
 </html>

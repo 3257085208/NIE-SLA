@@ -1,14 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.40",
-  "agent_version": "v1.0.40",
-  "source_ref": "app-v1.0.40",
-  "published_at": "2026-07-30T00:00:00Z",
-  "title": "NIE-SLA 1.0.40",
+  "version": "1.0.41",
+  "agent_version": "v1.0.41",
+  "source_ref": "app-v1.0.41",
+  "published_at": "2026-07-31T00:00:00Z",
+  "title": "NIE-SLA 1.0.41",
   "changelog": [
-    "现有 Ping 目标字段兼容 TCP、HTTP/HTTPS 与 ICMP scheme；旧 Agent 继续只接收 TCP 目标",
-    "公开 Ping API 可选返回全部原始丢包事件的紧凑无损 runs，前端在原图表内绘制单点和连续丢包区间",
-    "增加默认关闭的 VictoriaMetrics/InfluxDB 小时批量导出，并为 Linux ICMP 安装最小 CAP_NET_RAW 权限"
+    "TCP Ping 恢复默认 20 秒和 5-300 秒配置范围，旧 1 秒配置自动回退",
+    "Agent 保留 TCP 与 HTTP/HTTPS 探测，移除 ICMP 及 Linux CAP_NET_RAW 权限",
+    "TCP Ping 图表移除丢包图层，目标摘要丢包率与后端丢包数据保持不变"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

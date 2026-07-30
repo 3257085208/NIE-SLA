@@ -3,7 +3,7 @@ import { nowSec, clamp, parseBoolean, sanitizeAgentId, retentionSeconds } from '
 import { safeJson, requireAgentForId, ApiError } from '../auth.js';
 import { writeAgentTelemetryR2History, compactPingPointsByTarget, loadAgentPingsR2History, pingLossPointsToRuns, pingPointsToSeries, summarizePingPointsByTarget } from '../metrics.js';
 import { rateLimitByIp } from '../ratelimit.js';
-import { getPingIntervalSec, ONE_SECOND_MAX_TARGETS, pingConfigPayload } from '../ping-config.js';
+import { getPingIntervalSec, pingConfigPayload } from '../ping-config.js';
 import { normalizePingTarget, normalizeProbeProtocols, pingTargetProtocol } from '../ping-target-protocol.js';
 
 function normalizeOkInt(value) {
@@ -37,8 +37,6 @@ export async function createPingTarget(request, env) {
   const id = sanitizeAgentId(body?.id || name);
   const color = normalizeChartColor(body?.color, '#159754');
   if (body?.color !== undefined && !/^#[0-9a-f]{6}$/i.test(String(body.color).trim())) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
-  const existing = await env.DB.prepare(`SELECT enabled FROM ping_targets WHERE id = ?`).bind(id).first();
-  if (!existing && await getPingIntervalSec(env) === 1) await assertOneSecondTargetCapacity(env);
   const now = nowSec();
   await env.DB.prepare(`INSERT INTO ping_targets (id, name, target, color, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, target=excluded.target, color=excluded.color, updated_at=excluded.updated_at`).bind(id, name, target, color, now, now).run();
   return { ok: true, id };
@@ -54,9 +52,6 @@ export async function updatePingTarget(id, request, env) {
   const color = body?.color !== undefined ? normalizeChartColor(body.color, '') : normalizeChartColor(existing.color, '#159754');
   if (!color) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
   const enabled = body?.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled;
-  if (enabled === 1 && Number(existing.enabled || 0) !== 1 && await getPingIntervalSec(env) === 1) {
-    await assertOneSecondTargetCapacity(env);
-  }
   await env.DB.prepare(`UPDATE ping_targets SET name = ?, target = ?, color = ?, enabled = ?, updated_at = ? WHERE id = ?`).bind(name, target, color, enabled, nowSec(), id).run();
   return { ok: true, id };
 }
@@ -115,15 +110,7 @@ export async function submitAgentPings(request, env) {
 export async function getAgentPings(env, url, ctx = null) {
   if (!env.DB) return { ok: true, targets: [], pings: [] };
   const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
-  const publicMaxHours = clamp(Number(env.AGENT_PINGS_PUBLIC_MAX_HOURS || env.AGENT_METRICS_PUBLIC_MAX_HOURS || 72), 1, 168);
-  const hours = clamp(Math.floor(Number(url.searchParams.get('hours') || 24)), 1, publicMaxHours);
-  const hardMax = clamp(Number(env.AGENT_PINGS_HARD_MAX_POINTS_PER_TARGET || 2000), 30, 10000);
-  const defaultMax = clamp(Number(env.AGENT_PINGS_MAX_POINTS_PER_TARGET || 360), 30, hardMax);
-  let maxPerTargetRaw = url.searchParams.has('max_points_per_target')
-    ? Number(url.searchParams.get('max_points_per_target'))
-    : defaultMax;
-  if (!Number.isFinite(maxPerTargetRaw) || maxPerTargetRaw <= 0) maxPerTargetRaw = defaultMax;
-  const maxPerTarget = clamp(Math.floor(maxPerTargetRaw), 30, hardMax);
+  const { hours, maxPerTarget } = resolvePublicPingQuery(url, env);
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
   const includeLoss = parseBoolean(url.searchParams.get('include_loss'), false);
   const requestedUntil = nowSec();
@@ -172,11 +159,17 @@ export async function getAgentPings(env, url, ctx = null) {
   return payload;
 }
 
-async function assertOneSecondTargetCapacity(env) {
-  const row = await env.DB.prepare(`SELECT COUNT(*) AS count FROM ping_targets WHERE enabled = 1`).first();
-  if (Number(row?.count || 0) >= ONE_SECOND_MAX_TARGETS) {
-    throw new ApiError(400, `1 秒 Ping 最多允许启用 ${ONE_SECOND_MAX_TARGETS} 个目标`);
-  }
+export function resolvePublicPingQuery(url, env = {}) {
+  const publicMaxHours = clamp(Number(env.AGENT_PINGS_PUBLIC_MAX_HOURS || env.AGENT_METRICS_PUBLIC_MAX_HOURS || 72), 1, 168);
+  const hours = clamp(Math.floor(Number(url.searchParams.get('hours') || 24)), 1, publicMaxHours);
+  const hardMax = clamp(Number(env.AGENT_PINGS_HARD_MAX_POINTS_PER_TARGET || 2000), 30, 10000);
+  const defaultMax = clamp(Number(env.AGENT_PINGS_MAX_POINTS_PER_TARGET || 360), 30, hardMax);
+  let maxPerTargetRaw = url.searchParams.has('max_points_per_target')
+    ? Number(url.searchParams.get('max_points_per_target'))
+    : defaultMax;
+  if (!Number.isFinite(maxPerTargetRaw) || maxPerTargetRaw <= 0) maxPerTargetRaw = defaultMax;
+  const maxPerTarget = clamp(Math.floor(maxPerTargetRaw), 30, hardMax);
+  return { hours, maxPerTarget, defaultMax, hardMax, publicMaxHours };
 }
 
 function normalizeChartColor(value, fallback) {

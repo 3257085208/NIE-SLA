@@ -434,6 +434,7 @@ fn reconcile_service_layout() -> Result<()> {
     if Path::new(AGENT_BINARY).is_symlink() || Path::new(ENV_FILE).is_symlink() {
         return Err(anyhow!("refusing to reconcile symlinked Agent paths"));
     }
+    clear_legacy_ping_capability();
     if Path::new("/run/systemd/system").is_dir() && command_exists("systemctl") {
         let telemetry = systemd_telemetry_unit();
         let manager = systemd_manager_unit();
@@ -469,6 +470,16 @@ fn reconcile_service_layout() -> Result<()> {
             .status();
     }
     Ok(())
+}
+
+fn clear_legacy_ping_capability() {
+    if cfg!(target_os = "linux") && command_exists("setcap") {
+        let _ = Command::new("setcap")
+            .args(["-r", AGENT_BINARY])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
 }
 
 fn retire_legacy_update_job() {

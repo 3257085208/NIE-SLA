@@ -1,6 +1,6 @@
 import { ApiError } from './auth.js';
 
-export const PING_PROTOCOLS = Object.freeze(['tcp', 'http', 'icmp']);
+export const PING_PROTOCOLS = Object.freeze(['tcp', 'http']);
 
 export function normalizePingTarget(value) {
   const target = String(value || '').trim();
@@ -13,11 +13,7 @@ export function normalizePingTarget(value) {
   }
 
   if (/^icmp:\/\//i.test(target)) {
-    const url = parseTargetUrl(target, ['icmp:']);
-    if (!url.hostname || url.port || !['', '/'].includes(url.pathname) || url.search || url.hash) {
-      throw new ApiError(400, 'ICMP Ping 目标必须使用 icmp://主机');
-    }
-    return { target: target.replace(/^icmp:/i, 'icmp:'), protocol: 'icmp' };
+    throw new ApiError(400, 'ICMP Ping 已不再支持，请使用 TCP 或 HTTP 目标');
   }
 
   if (/^tcp:\/\//i.test(target)) {
@@ -33,6 +29,7 @@ export function normalizePingTarget(value) {
 }
 
 export function pingTargetProtocol(value) {
+  if (/^icmp:\/\//i.test(String(value || '').trim())) return 'icmp';
   try { return normalizePingTarget(value).protocol; } catch (_) { return 'tcp'; }
 }
 

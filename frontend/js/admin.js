@@ -1,7 +1,7 @@
 import { agentInstallCommandFromPayload, copyText } from "./install-command.js?v=20260730-install1";
-import { createAdminClient } from "./admin/api.js?v=20260730-v1040";
+import { createAdminClient } from "./admin/api.js?v=20260731-v1041";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260730-v1040";
+import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1041";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -12,8 +12,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260730-v1040";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260730-v1040";
+} from "./shared/grouping.js?v=20260731-v1041";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260731-v1041";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -1859,8 +1859,8 @@ async function loadPings() {
 async function savePingInterval() {
   const input = byId("pingIntervalSec");
   const interval = Number(input?.value);
-  if (!Number.isInteger(interval) || interval < 1 || interval > 300) {
-    return toast("Ping 间隔必须是 1-300 秒之间的整数", "err");
+  if (!Number.isInteger(interval) || interval < 5 || interval > 300) {
+    return toast("Ping 间隔必须是 5-300 秒之间的整数", "err");
   }
   const button = byId("savePingInterval");
   button.disabled = true;

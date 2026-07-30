@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.0.40**
+**Stable · 1.0.41**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -42,7 +42,7 @@ NIE-SLA 把 Cloudflare 公网探测、公开状态页和 VPS 系统数据放在�
 | --- | --- |
 | 公网探测 | Cloudflare HTTP/TCP、当前状态、SLA、事件与多区域探测 |
 | Rust Agent | CPU、内存、磁盘、负载、IO、网络、进程、线程、运行时长与温度 |
-| 网络测量 | Cloudflare Latency、Agent TCP/HTTP/ICMP 探测、External Latency Agent |
+| 网络测量 | Cloudflare Latency、Agent TCP/HTTP 探测、External Latency Agent |
 | 节点管理 | 商家、自定义商家、机器类型、标签、价格、到期时间和独立流量重置日 |
 | 自动 GeoIP | Agent 查询 IPv4/IPv6；可选 IP.SB、Cloudflare、IPIP.net 或自定义 HTTPS JSON |
 | 流量 | 低写入每日账本、额度、统计方式与修改重置日后重算 |

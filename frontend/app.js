@@ -23,7 +23,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260730-v1040';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260731-v1041';
 import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
@@ -35,13 +35,13 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260730-v1040';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260731-v1041';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
-import { failedPingTargetsNear, failedPingTargetsNearRuns, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, normalizePingLossSeries, pingLossSeries, pingLossSeriesBounds, pingSampleWindowSec } from './js/shared/ping.js';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
 import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260729-beta23';
-import { readStorage, writeStorage } from './js/shared/storage.js?v=20260730-v1040';
+import { readStorage, writeStorage } from './js/shared/storage.js?v=20260731-v1041';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -1331,7 +1331,6 @@ async function updatePingChart() {
         agent_id: state.selectedId,
         hours: String(hours),
         format: 'series',
-        include_loss: '1',
         max_points_per_target: String(({ '1h': 360, '6h': 360, '24h': 480 }[range] || 360)),
       });
       const res = await fetch(api(`/api/agent/pings?${params}`), { cache: 'no-store' });
@@ -1385,26 +1384,6 @@ async function updatePingChart() {
     });
     idx++;
   }
-  const visibleTargetIds = state.pingVisibleTargets instanceof Set
-    ? targetIds.filter(id => state.pingVisibleTargets.has(String(id)))
-    : targetIds;
-  datasets.push({
-    label: '丢包率',
-    packetLoss: true,
-    data: pingLossSeries(pings, visibleTargetIds),
-    yAxisID: 'packetLoss',
-    borderColor: 'rgba(202, 138, 4, 0.38)',
-    backgroundColor: 'rgba(250, 204, 21, 0.10)',
-    borderWidth: 1,
-    pointRadius: 0,
-    pointHoverRadius: 3,
-    pointHitRadius: 6,
-    tension: 0.12,
-    fill: 'origin',
-    spanGaps: true,
-    order: 10,
-  });
-
   state.chart.data.datasets = datasets;
   state.chart.options.scales.y.title = { display: true, text: 'ms' };
   delete state.chart.options.scales.y.beginAtZero;
@@ -1414,9 +1393,7 @@ async function updatePingChart() {
   state.chart.options.scales.y.grace = '18%';
   state.chart.options.scales.packetLoss = { axis: 'y', type: 'linear', display: false, min: 0, max: 4 };
 
-  const lossBounds = pingLossSeriesBounds(state.pingData.loss_series, visibleTargetIds);
   const allX = datasets.flatMap(ds => (ds.data || []).map(p => p.x)).filter(Number.isFinite);
-  if (lossBounds) allX.push(lossBounds.min, lossBounds.max);
   const { min: xMin, max: xMax } = minMax(allX);
   if (allX.length) {
     const min = xMin === xMax ? xMin - 150 : xMin;
@@ -1479,14 +1456,9 @@ function renderPingLossStats(stats, targetById = new Map(), targetIds = [], ping
 
 function applyPingTargetSelection() {
   const visible = state.pingVisibleTargets;
-  const allIds = [...(els.pingLossStats?.querySelectorAll('.ping-loss-item[data-target-id]') || [])]
-    .map(item => String(item.dataset.targetId));
   for (const dataset of state.chart?.data?.datasets || []) {
     if (dataset.pingTargetId) {
       dataset.hidden = visible instanceof Set && !visible.has(String(dataset.pingTargetId));
-    } else if (dataset.packetLoss) {
-      const selectedIds = visible instanceof Set ? allIds.filter(id => visible.has(id)) : allIds;
-      dataset.data = pingLossSeries(state.pingData?.pings || [], selectedIds);
     }
   }
   els.pingLossStats?.querySelectorAll('.ping-loss-item[data-target-id]').forEach(item => {
@@ -1517,33 +1489,19 @@ function applyLatencySourceSelection() {
 }
 
 function chartTooltipFailures() {
-  if (state.selectedMetric !== 'ping' && state.selectedMetric !== 'latency') return [];
+  if (state.selectedMetric !== 'latency') return [];
   const timestamp = chartHoverTimestamp();
   if (!Number.isFinite(timestamp)) return [];
-  const points = state.selectedMetric === 'ping' ? (state.pingData?.pings || []) : state.latencyChartSamples;
-  const names = state.selectedMetric === 'ping'
-    ? new Map((state.pingData?.targets || []).map(target => [String(target.id), target.name || target.id]))
-    : new Map(state.latencyChartSources.map(source => [String(source.id), source.name || source.id]));
-  const visible = state.selectedMetric === 'ping' && state.pingVisibleTargets instanceof Set
-    ? [...state.pingVisibleTargets]
-    : null;
-  const exact = state.selectedMetric === 'ping'
-    ? failedPingTargetsNearRuns(
-      state.pingData?.loss_series || [],
-      timestamp,
-      Math.max(0.55, Number(state.pingData?.ping_interval_sec || 1) * 0.55),
-      visible,
-    )
-    : [];
+  const points = state.latencyChartSamples;
+  const names = new Map(state.latencyChartSources.map(source => [String(source.id), source.name || source.id]));
   const sampled = failedPingTargetsNear(points, timestamp, pingSampleWindowSec(points));
-  return [...new Set([...exact, ...sampled])]
-    .filter(id => visible == null || visible.includes(String(id)))
+  return sampled
     .sort((a, b) => String(a).localeCompare(String(b)))
     .map(id => `${names.get(id) || id}: 超时`);
 }
 
 function normalizePingPayload(data) {
-  if (!Array.isArray(data?.series)) return { ...data, loss_series: normalizePingLossSeries(data?.loss_series) };
+  if (!Array.isArray(data?.series)) return data;
   const pings = [];
   for (const series of data.series) {
     const targetId = series.target_id;
@@ -1558,7 +1516,7 @@ function normalizePingPayload(data) {
       });
     }
   }
-  return { ...data, pings, loss_series: normalizePingLossSeries(data.loss_series) };
+  return { ...data, pings };
 }
 
 function renderChecksPage() {
@@ -1791,7 +1749,7 @@ function initChart() {
         }
       }
     },
-    plugins: [pingLossOverlayPlugin(), chartHoverLinePlugin()],
+    plugins: [chartHoverLinePlugin()],
   });
 }
 
@@ -2231,57 +2189,6 @@ function lineDataset({ label, data, color, fill, fillStrength = 1, order, source
     order,
     latencySourceId: String(sourceId || ''),
     hidden,
-  };
-}
-
-function pingLossOverlayPlugin() {
-  return {
-    id: 'nstatusPingLossOverlay',
-    beforeDatasetsDraw(chart) {
-      if (state.selectedMetric !== 'ping') return;
-      const lossSeries = normalizePingLossSeries(state.pingData?.loss_series);
-      const xScale = chart.scales?.x;
-      const area = chart.chartArea;
-      if (!lossSeries.length || !xScale || !area) return;
-
-      const visible = state.pingVisibleTargets;
-      const targets = state.pingData?.targets || [];
-      const targetById = new Map(targets.map((target, index) => [String(target.id), { ...target, index }]));
-      const { ctx } = chart;
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(area.left, area.top, area.right - area.left, area.bottom - area.top);
-      ctx.clip();
-      for (const series of lossSeries) {
-        if (visible instanceof Set && !visible.has(series.target_id)) continue;
-        const target = targetById.get(series.target_id) || { index: targetById.size };
-        const color = configuredChartColor(target.color, PING_COLORS[target.index % PING_COLORS.length]);
-        ctx.fillStyle = hexToRgba(color, 0.13);
-        ctx.strokeStyle = hexToRgba(color, 0.38);
-        ctx.lineWidth = 1;
-        for (const [delta, step, count] of series.runs) {
-          const start = series.t0 + delta;
-          const end = start + step * (count - 1);
-          if (end < Number(xScale.min) || start > Number(xScale.max)) continue;
-          if (step === 1 && count >= 3) {
-            const left = xScale.getPixelForValue(Math.max(start, Number(xScale.min)));
-            const right = xScale.getPixelForValue(Math.min(end, Number(xScale.max)));
-            ctx.fillRect(Math.min(left, right), area.top, Math.max(1, Math.abs(right - left)), area.bottom - area.top);
-            continue;
-          }
-          ctx.beginPath();
-          for (let index = 0; index < count; index += 1) {
-            const timestamp = start + step * index;
-            if (timestamp < Number(xScale.min) || timestamp > Number(xScale.max)) continue;
-            const x = xScale.getPixelForValue(timestamp);
-            ctx.moveTo(x, area.top);
-            ctx.lineTo(x, area.bottom);
-          }
-          ctx.stroke();
-        }
-      }
-      ctx.restore();
-    },
   };
 }
 

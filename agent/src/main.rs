@@ -252,7 +252,6 @@ struct PingTarget {
 enum PingProtocol {
     Tcp,
     Http,
-    Icmp,
 }
 
 #[derive(Clone, Debug)]
@@ -583,7 +582,7 @@ impl Config {
 
         cfg.sample_sec = cfg.sample_sec.clamp(1, 3600);
         cfg.report_sec = cfg.report_sec.clamp(30, 3600);
-        cfg.ping_sec = cfg.ping_sec.clamp(1, 300);
+        cfg.ping_sec = cfg.ping_sec.clamp(5, 300);
         cfg.ping_target_refresh_sec =
             normalize_ping_target_refresh_sec(cfg.ping_target_refresh_sec);
         cfg.queue_max_samples = cfg.queue_max_samples.clamp(REPORT_MAX_SAMPLES, 604_800);
@@ -850,14 +849,14 @@ fn submit(cfg: &Config, http: &HttpClient, metrics: Metrics) -> Result<Option<u6
                 .get("ping_interval_sec")
                 .and_then(|item| item.as_u64())
         })
-        .filter(|value| (1..=300).contains(value));
+        .filter(|value| (5..=300).contains(value));
     println!("{{\"ok\":true,\"submitted_at\":{}}}", now_sec());
     Ok(ping_interval)
 }
 
 fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
     let url = format!(
-        "{}/api/agent/ping-targets?agent_id={}&probe_protocols=tcp%2Chttp%2Cicmp",
+        "{}/api/agent/ping-targets?agent_id={}&probe_protocols=tcp%2Chttp",
         cfg.api.trim_end_matches('/'),
         percent_encode_query(&cfg.agent_id)
     );
@@ -881,7 +880,7 @@ fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
                 .get("enabled")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            let protocol = ping_protocol(item.get("protocol").and_then(|v| v.as_str()), &target);
+            let protocol = ping_protocol(item.get("protocol").and_then(|v| v.as_str()), &target)?;
             Some(PingTarget {
                 id,
                 target,
@@ -894,7 +893,7 @@ fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
     let interval_sec = value
         .get("ping_interval_sec")
         .and_then(|item| item.as_u64())
-        .filter(|interval| (1..=300).contains(interval))
+        .filter(|interval| (5..=300).contains(interval))
         .unwrap_or(cfg.ping_sec);
     Ok(PingPlan {
         targets,
@@ -1240,12 +1239,6 @@ fn spawn_ping_worker(
 ) -> mpsc::Receiver<PingBatch> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let icmp_runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(1)
-            .enable_all()
-            .build()
-            .ok()
-            .map(Arc::new);
         let mut targets = Vec::new();
         let refresh_period = Duration::from_secs(cfg.ping_target_refresh_sec);
         let mut last_refresh = Instant::now() - refresh_period;
@@ -1262,12 +1255,7 @@ fn spawn_ping_worker(
             if last_ping.elapsed() >= Duration::from_secs(interval) {
                 if tx
                     .send(PingBatch {
-                        results: run_pings(
-                            &targets,
-                            &cfg.ping_targets,
-                            &http,
-                            icmp_runtime.as_ref(),
-                        ),
+                        results: run_pings(&targets, &cfg.ping_targets, &http),
                         interval_sec: interval,
                     })
                     .is_err()
@@ -1288,11 +1276,11 @@ fn spawn_ping_worker(
 }
 
 fn current_ping_interval(interval: &AtomicU64) -> u64 {
-    interval.load(Ordering::Relaxed).clamp(1, 300)
+    interval.load(Ordering::Relaxed).clamp(5, 300)
 }
 
 fn apply_ping_interval(interval: &AtomicU64, value: u64) {
-    if (1..=300).contains(&value) {
+    if (5..=300).contains(&value) {
         interval.store(value, Ordering::Relaxed);
     }
 }
@@ -1309,12 +1297,7 @@ fn next_ping_worker_sleep(
         .max(Duration::from_millis(50))
 }
 
-fn run_pings(
-    targets: &[PingTarget],
-    selector: &str,
-    http: &HttpClient,
-    icmp_runtime: Option<&Arc<tokio::runtime::Runtime>>,
-) -> Vec<PingResult> {
+fn run_pings(targets: &[PingTarget], selector: &str, http: &HttpClient) -> Vec<PingResult> {
     let selected: Vec<_> = targets
         .iter()
         .filter(|target| ping_target_selected(&target.id, selector))
@@ -1327,8 +1310,7 @@ fn run_pings(
             .cloned()
             .map(|target| {
                 let http = http.clone();
-                let icmp_runtime = icmp_runtime.cloned();
-                thread::spawn(move || ping_target(&target, &http, icmp_runtime.as_ref()))
+                thread::spawn(move || ping_target(&target, &http))
             })
             .collect();
         results.extend(handles.into_iter().filter_map(|handle| handle.join().ok()));
@@ -1346,16 +1328,11 @@ fn ping_target_selected(id: &str, selector: &str) -> bool {
             .any(|candidate| !candidate.is_empty() && candidate == id)
 }
 
-fn ping_target(
-    target: &PingTarget,
-    http: &HttpClient,
-    icmp_runtime: Option<&Arc<tokio::runtime::Runtime>>,
-) -> PingResult {
+fn ping_target(target: &PingTarget, http: &HttpClient) -> PingResult {
     let ts = now_sec();
     let latency_ms = match target.protocol {
         PingProtocol::Tcp => tcp_ping_target(&target.target),
         PingProtocol::Http => http.probe(&target.target),
-        PingProtocol::Icmp => icmp_ping_target(&target.target, icmp_runtime),
     };
     PingResult {
         target_id: target.id.clone(),
@@ -1365,7 +1342,7 @@ fn ping_target(
     }
 }
 
-fn ping_protocol(value: Option<&str>, target: &str) -> PingProtocol {
+fn ping_protocol(value: Option<&str>, target: &str) -> Option<PingProtocol> {
     let normalized_target = target.to_ascii_lowercase();
     match value
         .unwrap_or_default()
@@ -1373,16 +1350,16 @@ fn ping_protocol(value: Option<&str>, target: &str) -> PingProtocol {
         .to_ascii_lowercase()
         .as_str()
     {
-        "http" => PingProtocol::Http,
-        "icmp" => PingProtocol::Icmp,
-        "tcp" => PingProtocol::Tcp,
+        "http" => Some(PingProtocol::Http),
+        "icmp" => None,
+        "tcp" => Some(PingProtocol::Tcp),
         _ if normalized_target.starts_with("http://")
             || normalized_target.starts_with("https://") =>
         {
-            PingProtocol::Http
+            Some(PingProtocol::Http)
         }
-        _ if normalized_target.starts_with("icmp://") => PingProtocol::Icmp,
-        _ => PingProtocol::Tcp,
+        _ if normalized_target.starts_with("icmp://") => None,
+        _ => Some(PingProtocol::Tcp),
     }
 }
 
@@ -1413,50 +1390,6 @@ fn resolve_socket_addresses(authority: &str) -> Vec<SocketAddr> {
             unique
         })
         .unwrap_or_default()
-}
-
-fn icmp_ping_target(target: &str, runtime: Option<&Arc<tokio::runtime::Runtime>>) -> Option<u128> {
-    let runtime = runtime?;
-    let raw_host = strip_ascii_case_prefix(target, "icmp://").unwrap_or(target);
-    let host = raw_host
-        .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-        .unwrap_or(raw_host);
-    let addresses = (host, 0)
-        .to_socket_addrs()
-        .map(|resolved| {
-            resolved
-                .take(MAX_PING_RESOLVED_ADDRESSES)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    for address in addresses {
-        let result = runtime.block_on(async move {
-            let kind = if address.is_ipv6() {
-                surge_ping::ICMP::V6
-            } else {
-                surge_ping::ICMP::V4
-            };
-            let config = surge_ping::Config::builder().kind(kind).build();
-            let client = surge_ping::Client::new(&config).ok()?;
-            let identifier = surge_ping::PingIdentifier((std::process::id() & 0xffff) as u16);
-            let mut pinger = client.pinger(address.ip(), identifier).await;
-            if let SocketAddr::V6(ipv6) = address {
-                pinger.scope_id(ipv6.scope_id());
-            }
-            pinger.timeout(TCP_PING_TIMEOUT);
-            let sequence = surge_ping::PingSequence((now_sec() & 0xffff) as u16);
-            pinger
-                .ping(sequence, &[0; 16])
-                .await
-                .ok()
-                .map(|(_, elapsed)| elapsed.as_millis())
-        });
-        if result.is_some() {
-            return result;
-        }
-    }
-    None
 }
 
 fn strip_ascii_case_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
@@ -1625,7 +1558,9 @@ mod tests {
     fn worker_ping_interval_updates_are_hot_and_strictly_bounded() {
         let interval = AtomicU64::new(20);
         apply_ping_interval(&interval, 1);
-        assert_eq!(current_ping_interval(&interval), 1);
+        assert_eq!(current_ping_interval(&interval), 20);
+        apply_ping_interval(&interval, 5);
+        assert_eq!(current_ping_interval(&interval), 5);
         apply_ping_interval(&interval, 300);
         assert_eq!(current_ping_interval(&interval), 300);
         apply_ping_interval(&interval, 0);
@@ -1714,28 +1649,25 @@ mod tests {
     fn ping_protocols_are_backward_compatible_and_scheme_aware() {
         assert_eq!(
             ping_protocol(Some("tcp"), "example.com:443"),
-            PingProtocol::Tcp
+            Some(PingProtocol::Tcp)
         );
         assert_eq!(
             ping_protocol(Some("http"), "https://example.com/health"),
-            PingProtocol::Http
+            Some(PingProtocol::Http)
         );
-        assert_eq!(
-            ping_protocol(Some("icmp"), "icmp://example.com"),
-            PingProtocol::Icmp
-        );
+        assert_eq!(ping_protocol(Some("icmp"), "icmp://example.com"), None);
         assert_eq!(
             ping_protocol(None, "https://example.com/health"),
-            PingProtocol::Http
+            Some(PingProtocol::Http)
         );
+        assert_eq!(ping_protocol(None, "icmp://example.com"), None);
         assert_eq!(
-            ping_protocol(None, "icmp://example.com"),
-            PingProtocol::Icmp
+            ping_protocol(None, "example.com:443"),
+            Some(PingProtocol::Tcp)
         );
-        assert_eq!(ping_protocol(None, "example.com:443"), PingProtocol::Tcp);
         assert_eq!(
             ping_protocol(None, "HTTPS://example.com"),
-            PingProtocol::Http
+            Some(PingProtocol::Http)
         );
         assert_eq!(
             strip_ascii_case_prefix("TCP://example.com:443", "tcp://"),
