@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./admin.css?v=20260731-v1042" />
+    <link rel="stylesheet" href="./admin.css?v=20260731-v1043" />
   </head>
   <body>
     <div class="login-bg" id="loginPage">
@@ -200,61 +200,20 @@
             </section>
             <section class="settings-panel" id="settings-agent" data-settings-panel="agent" hidden>
               <div class="settings-panel-grid">
-                <div class="card">
-                  <h3>自动地理位置</h3>
-                  <div id="sGeoIp">加载中...</div>
-                </div>
-                <div class="card">
-                  <h3>Agent 自动更新</h3>
-                  <div id="sAgentUpdate">加载中...</div>
-                </div>
-                <div class="card">
-                  <h3>流量统计</h3>
-                  <div id="sTraffic">加载中...</div>
-                </div>
+                <div class="settings-card-stack"><div class="card"><h3>自动地理位置</h3><div id="sGeoIp">加载中...</div></div><div class="card"><h3>流量统计</h3><div id="sTraffic">加载中...</div></div></div>
+                <div class="settings-card-stack"><div class="card"><h3>Agent 自动更新</h3><div id="sAgentUpdate">加载中...</div></div></div>
               </div>
             </section>
             <section class="settings-panel" id="settings-security" data-settings-panel="security" hidden>
               <div class="settings-panel-grid">
-                <div class="card">
-                  <h3>TOTP</h3>
-                  <div id="sTotp">检查中...</div>
-                </div>
-                <div class="card">
-                  <h3>管理员账号</h3>
-                  <div id="sAccount">检查中...</div>
-                </div>
-                <div class="card">
-                  <h3>后台入口</h3>
-                  <div id="sAdminPath">加载中...</div>
-                </div>
+                <div class="settings-card-stack"><div class="card"><h3>TOTP</h3><div id="sTotp">检查中...</div></div><div class="card"><h3>后台入口</h3><div id="sAdminPath">加载中...</div></div></div>
+                <div class="settings-card-stack"><div class="card"><h3>管理员账号</h3><div id="sAccount">检查中...</div></div></div>
               </div>
             </section>
             <section class="settings-panel" id="settings-system" data-settings-panel="system" hidden>
               <div class="settings-panel-grid">
-                <div class="card">
-                  <h3>系统更新</h3>
-                  <div id="sAppUpdate">检查中...</div>
-                </div>
-                <div class="card">
-                  <h3>备份与恢复</h3>
-                  <div id="sBackup">加载中...</div>
-                  <input id="restoreBackupFile" type="file" accept="application/json,.json" hidden>
-                </div>
-                <div class="card">
-                  <h3>归档</h3>
-                  <p class="hint">手动触发昨日数据归档。</p>
-                  <button class="btn btn-blue" id="archiveBtn">立即归档</button>
-                </div>
-                <div class="card">
-                  <h3>系统信息</h3>
-                  <div id="sInfo">加载中...</div>
-                </div>
-                <div class="card">
-                  <h3>同步</h3>
-                  <p class="hint">从 TARGETS_JSON 同步探针。</p>
-                  <button class="btn" id="syncBtn">立即同步</button>
-                </div>
+                <div class="settings-card-stack"><div class="card"><h3>系统更新</h3><div id="sAppUpdate">检查中...</div></div><div class="card"><h3>系统信息</h3><div id="sInfo">加载中...</div></div></div>
+                <div class="settings-card-stack"><div class="card"><h3>备份与恢复</h3><div id="sBackup">加载中...</div><input id="restoreBackupFile" type="file" accept="application/json,.json" hidden></div><div class="card"><h3>归档</h3><p class="hint">手动触发昨日数据归档。</p><button class="btn btn-blue" id="archiveBtn">立即归档</button></div><div class="card"><h3>同步</h3><p class="hint">从 TARGETS_JSON 同步探针。</p><button class="btn" id="syncBtn">立即同步</button></div></div>
               </div>
             </section>
           </div>
@@ -268,7 +227,7 @@
 
     <script
       type="module"
-      src="./js/admin.js?v=20260731-v1042"
+      src="./js/admin.js?v=20260731-v1043"
     ></script>
   </body>
 </html>

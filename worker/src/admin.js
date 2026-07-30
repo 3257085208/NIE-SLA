@@ -37,6 +37,6 @@ export { getLatencyHealth } from './admin/latency-health.js';
 export { listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, getLatestExternalLatencyByTarget } from './admin/latency-agents.js';
 
 // Fixed Agent actions, automatic GeoIP, and migration backups.
-export { AGENT_TASK_ACTIONS, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, normalizeTaskResult } from './admin/agent-tasks.js';
+export { AGENT_TASK_ACTIONS, createAgentTask, createAgentTasks, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, normalizeTaskResult } from './admin/agent-tasks.js';
 export { GEOIP_PROVIDERS, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, validateCustomGeoIpUrl } from './admin/agent-location.js';
 export { exportBackup, previewBackup, restoreBackup, createRestoreSnapshot } from './admin/backup.js';

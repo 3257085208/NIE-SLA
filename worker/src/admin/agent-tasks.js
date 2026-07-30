@@ -12,11 +12,35 @@ const MAX_RESULT_BYTES = 256 * 1024;
 const MAX_EXCERPT_CHARS = 16 * 1024;
 const AGENT_TASK_POLL_SEC = 300;
 
+const MAX_BULK_AGENT_TASKS = 50;
+
 export async function createAgentTask(request, env) {
   const body = await safeJson(request, 16 * 1024);
   const agentId = sanitizeAgentId(body?.agent_id || '');
   const action = String(body?.action || '').trim();
+  if (Array.isArray(body?.agent_ids)) return createAgentTasks(env, body.agent_ids, action);
   if (!agentId) throw new ApiError(400, '请选择 Agent');
+  return createAgentTaskForAgent(env, agentId, action);
+}
+
+export async function createAgentTasks(env, agentIdsValue, action) {
+  const ids = [...new Set((Array.isArray(agentIdsValue) ? agentIdsValue : [])
+    .map((id) => sanitizeAgentId(id)).filter(Boolean))];
+  if (!ids.length) throw new ApiError(400, '请选择至少一台 VPS');
+  if (ids.length > MAX_BULK_AGENT_TASKS) throw new ApiError(400, `一次最多运行 ${MAX_BULK_AGENT_TASKS} 台 VPS`);
+  const created = [];
+  const rejected = [];
+  for (const agentId of ids) {
+    try {
+      created.push((await createAgentTaskForAgent(env, agentId, action)).task);
+    } catch (error) {
+      rejected.push({ agent_id: agentId, error: String(error?.message || '无法排队').slice(0, 200) });
+    }
+  }
+  return { ok: true, bulk: true, action, requested: ids.length, created, rejected };
+}
+
+async function createAgentTaskForAgent(env, agentId, action) {
   const policy = AGENT_TASK_ACTIONS[action];
   if (!policy) throw new ApiError(400, '只允许 NodeQuality 或 IP 解锁任务');
 

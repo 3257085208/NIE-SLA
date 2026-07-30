@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { webcrypto } from 'node:crypto';
 import { ensureV6Schema } from '../src/admin/schema.js';
-import { createAgentTask, claimAgentTask, completeAgentTask, listAgentTasks, normalizeTaskResult } from '../src/admin/agent-tasks.js';
+import { createAgentTask, createAgentTasks, claimAgentTask, completeAgentTask, listAgentTasks, normalizeTaskResult } from '../src/admin/agent-tasks.js';
 import { getGeoIpSettings, submitAgentLocation, updateGeoIpSettings, validateCustomGeoIpUrl } from '../src/admin/agent-location.js';
 import { exportBackup, previewBackup, restoreBackup } from '../src/admin/backup.js';
 import { normalizeAgentCapabilities } from '../src/metrics.js';
@@ -87,6 +87,21 @@ sqlite.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at, capabilit
 sqlite.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at, capabilities) VALUES (?, ?, ?)`)
   .run('vps-b', new Date().toISOString(), managerCapabilities);
 
+const batch = await createAgentTasks(env, ['vps-a', 'vps-b', 'missing-agent', 'vps-a'], 'ip_unlock');
+assert.equal(batch.requested, 3);
+assert.equal(batch.created.length, 2);
+assert.deepEqual(batch.created.map((task) => task.agent_id).sort(), ['vps-a', 'vps-b']);
+assert.equal(batch.rejected.length, 1);
+assert.equal(batch.rejected[0].agent_id, 'missing-agent');
+await assert.rejects(
+  () => createAgentTasks(env, [], 'ip_unlock'),
+  error => error?.status === 400,
+);
+const batchClaim = await claimAgentTask(env, 'vps-a');
+await completeAgentTask(jsonRequest({ status: 'failed', error: 'batch cleanup' }), env, batchClaim.task.id, 'vps-a');
+const batchClaimB = await claimAgentTask(env, 'vps-b');
+await completeAgentTask(jsonRequest({ status: 'failed', error: 'batch cleanup' }), env, batchClaimB.task.id, 'vps-b');
+
 const created = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'ip_unlock' }), env);
 assert.equal(created.task.status, 'queued');
 await assert.rejects(
@@ -131,7 +146,7 @@ await completeAgentTask(jsonRequest({
 const storedNq = sqlite.prepare(`SELECT nq_url, nq_report FROM targets WHERE id = ?`).get('vps-a');
 assert.equal(storedNq.nq_url, 'https://nodequality.com/r/example123');
 assert.deepEqual(JSON.parse(storedNq.nq_report).tabs.map((tab) => tab.id), ['basic', 'ip', 'network', 'route']);
-assert.equal((await listAgentTasks(env, new URL('https://example.test/api/agent-tasks?agent_id=vps-a'))).tasks.length, 2);
+assert.equal((await listAgentTasks(env, new URL('https://example.test/api/agent-tasks?agent_id=vps-a'))).tasks.length, 3);
 const failedTask = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'ip_unlock' }), env);
 await claimAgentTask(env, 'vps-a');
 const failed = await completeAgentTask(jsonRequest({ status: 'failed', error: 'script failed' }), env, failedTask.task.id, 'vps-a');

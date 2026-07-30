@@ -1,10 +1,10 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.42",
-  "agent_version": "v1.0.42",
-  "source_ref": "app-v1.0.42",
+  "version": "1.0.43",
+  "agent_version": "v1.0.43",
+  "source_ref": "app-v1.0.43",
   "published_at": "2026-07-31T00:00:00Z",
-  "title": "NIE-SLA 1.0.42",
+  "title": "NIE-SLA 1.0.43",
   "changelog": [
     "TCP Ping 恢复默认 20 秒和 5-300 秒配置范围，旧 1 秒配置自动回退",
     "Agent 保留 TCP 与 HTTP/HTTPS 探测，移除 ICMP 及 Linux CAP_NET_RAW 权限",

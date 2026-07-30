@@ -963,17 +963,25 @@ function targetBulkBarHtml(vpsCount) {
   if (!targetAdminLoaded || !vpsCount) return "";
   return `<div class="target-bulk-bar">
     <div><strong>批量管理</strong><span class="target-bulk-count">可一次修改多台 VPS 的商家、到期时间、费用、流量与报警设置</span></div>
-    <div class="target-bulk-actions"><button type="button" class="btn btn-sm btn-primary" id="editBulkTargets">批量设置</button></div>
+    <div class="target-bulk-actions"><button type="button" class="btn btn-sm btn-primary" id="editBulkTargets">批量设置</button><button type="button" class="btn btn-sm" id="runBulkNq">批量运行 NQ</button><button type="button" class="btn btn-sm" id="runBulkUnlock">批量 IP 解锁</button></div>
   </div>`;
 }
 
 function bindTargetBulkControls() {
   if (byId("editBulkTargets")) byId("editBulkTargets").onclick = () => openBulkTargetPicker();
+  if (byId("runBulkNq")) byId("runBulkNq").onclick = () => openBulkTargetPicker(false, () => bulkTaskModal("nodequality"), 50);
+  if (byId("runBulkUnlock")) byId("runBulkUnlock").onclick = () => openBulkTargetPicker(false, () => bulkTaskModal("ip_unlock"), 50);
+}
+
+function bulkTargetSelectionLimit() {
+  const limit = Number(byId("modal")?.dataset.bulkSelectionLimit || 0);
+  return Number.isInteger(limit) && limit > 0 ? limit : Infinity;
 }
 
 function refreshBulkTargetPicker() {
   const boxes = [...byId("modal").querySelectorAll("[data-bulk-target]")];
   const selectedCount = selectedTargetIds.size;
+  const selectionLimit = bulkTargetSelectionLimit();
   const visible = boxes.filter(box => !box.closest(".bulk-target-option")?.hidden);
   const selectAll = byId("bulkPickerSelectAll");
   if (selectAll) {
@@ -981,15 +989,16 @@ function refreshBulkTargetPicker() {
     selectAll.checked = visible.length > 0 && selectedVisible === visible.length;
     selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visible.length;
   }
-  if (byId("bulkPickerCount")) byId("bulkPickerCount").textContent = `已选 ${selectedCount} 台`;
+  if (byId("bulkPickerCount")) byId("bulkPickerCount").textContent = `已选 ${selectedCount}${Number.isFinite(selectionLimit) ? ` / ${selectionLimit}` : ""} 台`;
   if (byId("nextBulkTargets")) byId("nextBulkTargets").disabled = selectedCount === 0;
 }
 
-function openBulkTargetPicker(preserveSelection = false) {
+function openBulkTargetPicker(preserveSelection = false, next = bulkTargetModal, selectionLimit = Infinity) {
   const vpsTargets = targets.filter(target => target.type === "tcp");
   if (!preserveSelection) selectedTargetIds = new Set();
   pendingBulkUpdate = null;
   byId("modal").className = "modal bulk-target-picker-modal";
+  byId("modal").dataset.bulkSelectionLimit = Number.isFinite(selectionLimit) ? String(selectionLimit) : "";
   byId("modal").innerHTML = `
     <h3>选择 VPS</h3>
     <div class="bulk-picker-tools"><input id="bulkTargetSearch" type="search" placeholder="搜索名称、ID、商家或地区" autocomplete="off"><label class="target-select-all"><input type="checkbox" id="bulkPickerSelectAll"><span>选择当前结果</span></label></div>
@@ -997,7 +1006,10 @@ function openBulkTargetPicker(preserveSelection = false) {
     <div class="ma"><span class="bulk-picker-count" id="bulkPickerCount">已选 0 台</span><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="nextBulkTargets" disabled>下一步</button></div>`;
   const boxes = [...byId("modal").querySelectorAll("[data-bulk-target]")];
   for (const box of boxes) box.onchange = () => {
-    if (box.checked) selectedTargetIds.add(box.dataset.bulkTarget);
+    if (box.checked && !selectedTargetIds.has(box.dataset.bulkTarget) && selectedTargetIds.size >= bulkTargetSelectionLimit()) {
+      box.checked = false;
+      toast(`一次最多选择 ${bulkTargetSelectionLimit()} 台 VPS`, "err");
+    } else if (box.checked) selectedTargetIds.add(box.dataset.bulkTarget);
     else selectedTargetIds.delete(box.dataset.bulkTarget);
     refreshBulkTargetPicker();
   };
@@ -1009,15 +1021,41 @@ function openBulkTargetPicker(preserveSelection = false) {
   byId("bulkPickerSelectAll").onchange = event => {
     for (const box of boxes) {
       if (box.closest(".bulk-target-option")?.hidden) continue;
+      if (event.target.checked && !box.checked && selectedTargetIds.size >= bulkTargetSelectionLimit()) continue;
       box.checked = event.target.checked;
       if (box.checked) selectedTargetIds.add(box.dataset.bulkTarget);
       else selectedTargetIds.delete(box.dataset.bulkTarget);
     }
     refreshBulkTargetPicker();
   };
-  byId("nextBulkTargets").onclick = bulkTargetModal;
+  byId("nextBulkTargets").onclick = next;
   refreshBulkTargetPicker();
   openModal();
+}
+
+function bulkTaskModal(action) {
+  const selected = targets.filter((target) => target.type === "tcp" && selectedTargetIds.has(target.id));
+  if (!selected.length) return toast("请选择至少一台 VPS", "err");
+  const label = action === "nodequality" ? "NodeQuality" : "IP 解锁";
+  byId("modal").className = "modal bulk-confirm-modal";
+  byId("modal").innerHTML = `<h3>批量运行 ${escapeHtml(label)}</h3><p>将向 <strong>${selected.length}</strong> 台在线 VPS 排队提交任务；离线、能力不匹配或已有任务的 VPS 会单独返回原因。</p><div class="bulk-confirm-targets">${selected.slice(0, 14).map((target) => `<span>${escapeHtml(target.name)}</span>`).join("")}${selected.length > 14 ? `<span>另 ${selected.length - 14} 台</span>` : ""}</div><div class="bulk-target-warning">每台 VPS 仍保持单任务互斥，任务会在各 Agent 独立执行。</div><div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="confirmBulkTask">确认排队</button></div>`;
+  byId("confirmBulkTask").onclick = () => queueBulkAgentTasks(selected.map((target) => target.id), action, label);
+}
+
+async function queueBulkAgentTasks(ids, action, label) {
+  const button = byId("confirmBulkTask");
+  if (button) { button.disabled = true; button.textContent = "提交中..."; }
+  try {
+    const result = await api("/api/agent-tasks", { method: "POST", body: JSON.stringify({ agent_ids: ids, action }) });
+    selectedTargetIds.clear();
+    closeModal();
+    const rejected = Array.isArray(result.rejected) ? result.rejected.length : 0;
+    toast(`已排队 ${result.created?.length || 0} 台${rejected ? `，${rejected} 台未提交` : ""}`, rejected && !result.created?.length ? "err" : "ok");
+    await loadAgentTasks();
+  } catch (error) {
+    toast(error.message, "err");
+    if (button && document.body.contains(button)) { button.disabled = false; button.textContent = "确认排队"; }
+  }
 }
 
 function bindAdminGroupBy() {

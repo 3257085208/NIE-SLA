@@ -1582,6 +1582,25 @@ body.nq-modal-open { overflow: hidden; }
 .nq-route-location { grid-area: location; color: #cbd5e1; overflow-wrap: anywhere; }
 .nq-route-note { padding: 4px 6px; color: #cbd5e1; font-size: 10px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
 .nq-route-raw { max-width: 100%; overflow-x: auto; padding: 5px 0; -webkit-overflow-scrolling: touch; }
+.nq-tabs,
+.nq-panels,
+.nq-ansi-panel,
+.nq-image-panel.active,
+.nq-ansi,
+.nq-media-scroll,
+.nq-network-scroll,
+.nq-route-raw {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.nq-tabs::-webkit-scrollbar,
+.nq-panels::-webkit-scrollbar,
+.nq-ansi-panel::-webkit-scrollbar,
+.nq-image-panel.active::-webkit-scrollbar,
+.nq-ansi::-webkit-scrollbar,
+.nq-media-scroll::-webkit-scrollbar,
+.nq-network-scroll::-webkit-scrollbar,
+.nq-route-raw::-webkit-scrollbar { display: none; }
 .nq-empty, .nq-loading { padding: 42px 18px; color: #64748b; background: #fff; text-align: center; }
 
 @media (max-width: 760px) {
