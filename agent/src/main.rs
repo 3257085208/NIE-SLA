@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::fs;
 use std::io::Read;
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{
@@ -65,6 +65,8 @@ struct Config {
 struct HttpClient {
     ipv4: ureq::Agent,
     ipv6: ureq::Agent,
+    probe_ipv4: ureq::Agent,
+    probe_ipv6: ureq::Agent,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -243,6 +245,14 @@ struct PingTarget {
     id: String,
     target: String,
     enabled: bool,
+    protocol: PingProtocol,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PingProtocol {
+    Tcp,
+    Http,
+    Icmp,
 }
 
 #[derive(Clone, Debug)]
@@ -847,7 +857,7 @@ fn submit(cfg: &Config, http: &HttpClient, metrics: Metrics) -> Result<Option<u6
 
 fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
     let url = format!(
-        "{}/api/agent/ping-targets?agent_id={}",
+        "{}/api/agent/ping-targets?agent_id={}&probe_protocols=tcp%2Chttp%2Cicmp",
         cfg.api.trim_end_matches('/'),
         percent_encode_query(&cfg.agent_id)
     );
@@ -871,10 +881,12 @@ fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
                 .get("enabled")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
+            let protocol = ping_protocol(item.get("protocol").and_then(|v| v.as_str()), &target);
             Some(PingTarget {
                 id,
                 target,
                 enabled,
+                protocol,
             })
         })
         .filter(|t| t.enabled)
@@ -1088,6 +1100,8 @@ impl HttpClient {
         Self {
             ipv4: build_http_agent(IpFamily::Ipv4Only),
             ipv6: build_http_agent(IpFamily::Ipv6Only),
+            probe_ipv4: build_probe_http_agent(IpFamily::Ipv4Only),
+            probe_ipv6: build_probe_http_agent(IpFamily::Ipv6Only),
         }
     }
 
@@ -1161,6 +1175,20 @@ impl HttpClient {
         }
         Ok(bytes)
     }
+
+    fn probe(&self, url: &str) -> Option<u128> {
+        let started = Instant::now();
+        let response = match self.probe_ipv4.get(url).call() {
+            Err(err) if should_try_other_ip_family(&err) => self.probe_ipv6.get(url).call(),
+            result => result,
+        };
+        response.ok().and_then(|value| {
+            let status = value.status().as_u16();
+            (200..400)
+                .contains(&status)
+                .then(|| started.elapsed().as_millis())
+        })
+    }
 }
 
 fn build_http_agent(ip_family: IpFamily) -> ureq::Agent {
@@ -1171,6 +1199,18 @@ fn build_http_agent(ip_family: IpFamily) -> ureq::Agent {
         .timeout_send_request(Some(Duration::from_secs(10)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
         .timeout_recv_body(Some(Duration::from_secs(30)))
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
+fn build_probe_http_agent(ip_family: IpFamily) -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .user_agent(format!("NIE-SLA-Agent/{}", AGENT_VERSION))
+        .ip_family(ip_family)
+        .timeout_connect(Some(TCP_PING_TIMEOUT))
+        .timeout_send_request(Some(TCP_PING_TIMEOUT))
+        .timeout_recv_response(Some(TCP_PING_TIMEOUT))
+        .timeout_recv_body(Some(TCP_PING_TIMEOUT))
         .build();
     ureq::Agent::new_with_config(config)
 }
@@ -1200,6 +1240,12 @@ fn spawn_ping_worker(
 ) -> mpsc::Receiver<PingBatch> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
+        let icmp_runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .ok()
+            .map(Arc::new);
         let mut targets = Vec::new();
         let refresh_period = Duration::from_secs(cfg.ping_target_refresh_sec);
         let mut last_refresh = Instant::now() - refresh_period;
@@ -1216,7 +1262,12 @@ fn spawn_ping_worker(
             if last_ping.elapsed() >= Duration::from_secs(interval) {
                 if tx
                     .send(PingBatch {
-                        results: run_pings(&targets, &cfg.ping_targets),
+                        results: run_pings(
+                            &targets,
+                            &cfg.ping_targets,
+                            &http,
+                            icmp_runtime.as_ref(),
+                        ),
                         interval_sec: interval,
                     })
                     .is_err()
@@ -1258,7 +1309,12 @@ fn next_ping_worker_sleep(
         .max(Duration::from_millis(50))
 }
 
-fn run_pings(targets: &[PingTarget], selector: &str) -> Vec<PingResult> {
+fn run_pings(
+    targets: &[PingTarget],
+    selector: &str,
+    http: &HttpClient,
+    icmp_runtime: Option<&Arc<tokio::runtime::Runtime>>,
+) -> Vec<PingResult> {
     let selected: Vec<_> = targets
         .iter()
         .filter(|target| ping_target_selected(&target.id, selector))
@@ -1269,7 +1325,11 @@ fn run_pings(targets: &[PingTarget], selector: &str) -> Vec<PingResult> {
         let handles: Vec<_> = batch
             .iter()
             .cloned()
-            .map(|target| thread::spawn(move || ping_target(&target)))
+            .map(|target| {
+                let http = http.clone();
+                let icmp_runtime = icmp_runtime.cloned();
+                thread::spawn(move || ping_target(&target, &http, icmp_runtime.as_ref()))
+            })
             .collect();
         results.extend(handles.into_iter().filter_map(|handle| handle.join().ok()));
     }
@@ -1286,10 +1346,59 @@ fn ping_target_selected(id: &str, selector: &str) -> bool {
             .any(|candidate| !candidate.is_empty() && candidate == id)
 }
 
-fn ping_target(target: &PingTarget) -> PingResult {
+fn ping_target(
+    target: &PingTarget,
+    http: &HttpClient,
+    icmp_runtime: Option<&Arc<tokio::runtime::Runtime>>,
+) -> PingResult {
     let ts = now_sec();
-    let addresses = target
-        .target
+    let latency_ms = match target.protocol {
+        PingProtocol::Tcp => tcp_ping_target(&target.target),
+        PingProtocol::Http => http.probe(&target.target),
+        PingProtocol::Icmp => icmp_ping_target(&target.target, icmp_runtime),
+    };
+    PingResult {
+        target_id: target.id.clone(),
+        ts,
+        latency_ms,
+        ok: latency_ms.is_some(),
+    }
+}
+
+fn ping_protocol(value: Option<&str>, target: &str) -> PingProtocol {
+    let normalized_target = target.to_ascii_lowercase();
+    match value
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "http" => PingProtocol::Http,
+        "icmp" => PingProtocol::Icmp,
+        "tcp" => PingProtocol::Tcp,
+        _ if normalized_target.starts_with("http://")
+            || normalized_target.starts_with("https://") =>
+        {
+            PingProtocol::Http
+        }
+        _ if normalized_target.starts_with("icmp://") => PingProtocol::Icmp,
+        _ => PingProtocol::Tcp,
+    }
+}
+
+fn tcp_ping_target(target: &str) -> Option<u128> {
+    let authority = strip_ascii_case_prefix(target, "tcp://").unwrap_or(target);
+    let addresses = resolve_socket_addresses(authority);
+    ping_resolved_addresses(&addresses, TCP_PING_TIMEOUT, |address, timeout| {
+        let started = Instant::now();
+        TcpStream::connect_timeout(&address, timeout)
+            .ok()
+            .map(|_| started.elapsed().as_millis())
+    })
+}
+
+fn resolve_socket_addresses(authority: &str) -> Vec<SocketAddr> {
+    authority
         .to_socket_addrs()
         .map(|resolved| {
             let mut unique = Vec::new();
@@ -1303,19 +1412,58 @@ fn ping_target(target: &PingTarget) -> PingResult {
             }
             unique
         })
+        .unwrap_or_default()
+}
+
+fn icmp_ping_target(target: &str, runtime: Option<&Arc<tokio::runtime::Runtime>>) -> Option<u128> {
+    let runtime = runtime?;
+    let raw_host = strip_ascii_case_prefix(target, "icmp://").unwrap_or(target);
+    let host = raw_host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(raw_host);
+    let addresses = (host, 0)
+        .to_socket_addrs()
+        .map(|resolved| {
+            resolved
+                .take(MAX_PING_RESOLVED_ADDRESSES)
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
-    let latency_ms = ping_resolved_addresses(&addresses, TCP_PING_TIMEOUT, |address, timeout| {
-        let started = Instant::now();
-        TcpStream::connect_timeout(&address, timeout)
-            .ok()
-            .map(|_| started.elapsed().as_millis())
-    });
-    PingResult {
-        target_id: target.id.clone(),
-        ts,
-        latency_ms,
-        ok: latency_ms.is_some(),
+    for address in addresses {
+        let result = runtime.block_on(async move {
+            let kind = if address.is_ipv6() {
+                surge_ping::ICMP::V6
+            } else {
+                surge_ping::ICMP::V4
+            };
+            let config = surge_ping::Config::builder().kind(kind).build();
+            let client = surge_ping::Client::new(&config).ok()?;
+            let identifier = surge_ping::PingIdentifier((std::process::id() & 0xffff) as u16);
+            let mut pinger = client.pinger(address.ip(), identifier).await;
+            if let SocketAddr::V6(ipv6) = address {
+                pinger.scope_id(ipv6.scope_id());
+            }
+            pinger.timeout(TCP_PING_TIMEOUT);
+            let sequence = surge_ping::PingSequence((now_sec() & 0xffff) as u16);
+            pinger
+                .ping(sequence, &[0; 16])
+                .await
+                .ok()
+                .map(|(_, elapsed)| elapsed.as_millis())
+        });
+        if result.is_some() {
+            return result;
+        }
     }
+    None
+}
+
+fn strip_ascii_case_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    value
+        .get(..prefix.len())
+        .filter(|head| head.eq_ignore_ascii_case(prefix))
+        .map(|_| &value[prefix.len()..])
 }
 
 fn ping_resolved_addresses<F>(
@@ -1560,6 +1708,39 @@ mod tests {
         assert!(ping_target_selected("alpha", "beta, alpha, gamma"));
         assert!(!ping_target_selected("alpha", "beta,gamma"));
         assert!(!ping_target_selected("alpha", "alphabet"));
+    }
+
+    #[test]
+    fn ping_protocols_are_backward_compatible_and_scheme_aware() {
+        assert_eq!(
+            ping_protocol(Some("tcp"), "example.com:443"),
+            PingProtocol::Tcp
+        );
+        assert_eq!(
+            ping_protocol(Some("http"), "https://example.com/health"),
+            PingProtocol::Http
+        );
+        assert_eq!(
+            ping_protocol(Some("icmp"), "icmp://example.com"),
+            PingProtocol::Icmp
+        );
+        assert_eq!(
+            ping_protocol(None, "https://example.com/health"),
+            PingProtocol::Http
+        );
+        assert_eq!(
+            ping_protocol(None, "icmp://example.com"),
+            PingProtocol::Icmp
+        );
+        assert_eq!(ping_protocol(None, "example.com:443"), PingProtocol::Tcp);
+        assert_eq!(
+            ping_protocol(None, "HTTPS://example.com"),
+            PingProtocol::Http
+        );
+        assert_eq!(
+            strip_ascii_case_prefix("TCP://example.com:443", "tcp://"),
+            Some("example.com:443")
+        );
     }
 
     #[test]

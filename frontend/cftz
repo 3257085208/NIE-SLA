@@ -127,12 +127,24 @@ secure_install_permissions() {
     if [[ -f "${WORK_DIR}/${BIN_NAME}" ]]; then
         chown root:root "${WORK_DIR}/${BIN_NAME}"
         chmod 0755 "${WORK_DIR}/${BIN_NAME}"
+        apply_ping_capability "${WORK_DIR}/${BIN_NAME}"
     fi
     chown -R "${AGENT_USER}:${agent_group}" "$STATE_DIR"
     chmod 0750 "$STATE_DIR"
     if [[ -f "${INSTALL_DIR}/cftz" ]]; then
         chown root:root "${INSTALL_DIR}/cftz"
         chmod 0755 "${INSTALL_DIR}/cftz"
+    fi
+}
+
+apply_ping_capability() {
+    local binary="$1"
+    if ! command -v setcap >/dev/null 2>&1; then
+        warn "未找到 setcap；ICMP 将尝试使用系统 ping socket"
+        return 0
+    fi
+    if ! setcap cap_net_raw=ep "$binary" 2>/dev/null; then
+        warn "当前文件系统不支持 CAP_NET_RAW；ICMP 将尝试使用系统 ping socket"
     fi
 }
 
@@ -309,6 +321,8 @@ Restart=always
 RestartSec=15
 User=${AGENT_USER}
 NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true

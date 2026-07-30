@@ -1,9 +1,11 @@
 import { nowSec, sanitizeAgentId } from './utils.js';
+import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
 
 const HOUR_SEC = 3600;
 const CHUNK_SEC = 300;
 const CHUNK_PREFIX = 'chunk:';
 const LEGACY_BUFFER_PREFIX = 'hour:';
+const EXPORT_PREFIX = 'export:';
 const FLUSH_GRACE_SEC = 600;
 
 export class TelemetryBuffer {
@@ -94,14 +96,58 @@ export class TelemetryBuffer {
         let merged = emptyBuffer(item.buffers[0]?.agent_id, hour);
         for (const value of item.buffers) merged = mergeBuffer(merged, value, value?.agent_id, hour, HOUR_SEC);
         await flushHour(this.env, merged);
+        await this.queueExport(merged.agent_id, hour);
         for (const key of item.keys) await this.state.storage.delete(key);
       } catch (error) {
         retry = true;
         console.error('telemetry buffer flush failed:', String(error?.message || error));
       }
     }
+    await this.flushPendingExports(currentAt);
     if (retry) await this.state.storage.setAlarm(Date.now() + 5 * 60 * 1000);
     else if ((await this.bufferRows(1)).size) await this.scheduleFlush();
+  }
+
+  async queueExport(agentId, hour) {
+    if (!timeseriesExportEnabled(this.env)) return;
+    const key = `${EXPORT_PREFIX}${hourStart(hour)}`;
+    const current = normalizeExportAttempt(await this.state.storage.get(key));
+    await this.state.storage.put(key, { agent_id: sanitizeAgentId(agentId), hour: hourStart(hour), ...current });
+  }
+
+  async flushPendingExports(currentAt) {
+    if (!timeseriesExportEnabled(this.env)) return;
+    const rows = await this.state.storage.list({ prefix: EXPORT_PREFIX });
+    let retry = false;
+    for (const [key, value] of rows) {
+      const hour = hourStart(value?.hour || String(key).slice(EXPORT_PREFIX.length));
+      const nextAt = Number(value?.next_at || 0);
+      if (nextAt > currentAt) { retry = true; continue; }
+      try {
+        const object = await readR2Object(this.env.ARCHIVE, telemetryKey(this.env, sanitizeAgentId(value?.agent_id), hour));
+        if (!object) { await this.state.storage.delete(key); continue; }
+        await exportTelemetryHour(this.env, value.agent_id, hour, pingsFromPayload(object?.pings));
+        await this.state.storage.delete(key);
+      } catch (error) {
+        const attempt = normalizeExportAttempt(value);
+        const attempts = attempt.attempts + 1;
+        if (attempts >= maxExportAttempts) {
+          console.error('time-series export dropped after retry limit:', String(error?.message || error));
+          await this.state.storage.delete(key);
+          continue;
+        }
+        const delay = Math.min(3600, 300 * (2 ** Math.min(attempts - 1, 3)));
+        await this.state.storage.put(key, {
+          agent_id: value.agent_id,
+          hour,
+          attempts,
+          last_error: normalizeExportAttempt({ last_error: error?.message || error }).last_error,
+          next_at: currentAt + delay,
+        });
+        retry = true;
+      }
+    }
+    if (retry) await this.state.storage.setAlarm(Date.now() + 5 * 60 * 1000);
   }
 
   async scheduleFlush() {

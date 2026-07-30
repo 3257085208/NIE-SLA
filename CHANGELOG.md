@@ -2,6 +2,14 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.0.40 - 2026-07-30
+
+- 保持现有目标字段与前端布局不变，通过 `tcp://`、`http://`、`https://` 和 `icmp://` scheme 增加 Agent 侧 TCP、HTTP 与 ICMP 探测；无 scheme 的 `主机:端口` 继续按 TCP 处理。
+- Agent 在请求目标时声明协议能力，旧 Agent 仍只会收到 TCP 目标，支持滚动升级；Linux 安装、更新和回滚为 ICMP 设置受限 `CAP_NET_RAW`，不修改全局 `ping_group_range`。
+- `/api/v1/pings` 增加可选 `include_loss=1`，以紧凑 runs 无损返回所有原始丢包时间；现有降采样曲线、统计字段和前端控件保持兼容，连续一秒丢包直接绘制为时间区间。
+- 增加默认关闭的 Worker 侧 VictoriaMetrics 与 InfluxDB 小时批量导出。R2 继续作为权威默认存储，导出地址和 Token 仅由 Worker Secret 提供，远端故障不会阻塞 Agent 上报或 R2 归档。
+- Rust Agent 更新至 `v1.0.40`，五种 Linux 静态架构产物、SHA-256 校验和及完整安装引导哈希链均在本地生成并验证。
+
 ## 1.0.39 - 2026-07-30
 
 - Ping 管理支持 1-300 秒全局采样间隔，Agent 在运行期间自动应用后台配置。

@@ -78,6 +78,29 @@ await append(crossBuffer, {
 await crossBuffer.flushCompletedHours(currentHour + 3600);
 assert.equal(crossArchive.puts, 2, 'cross-hour input flushes into separate hourly objects');
 
+const exportStorage = memoryStorage();
+const exportArchive = memoryR2();
+const exportBuffer = new TelemetryBuffer({ storage: exportStorage }, {
+  ARCHIVE: exportArchive,
+  TIMESERIES_EXPORT_URL: 'https://metrics.example.com/import',
+  TIMESERIES_EXPORT_TOKEN: 'test-token-never-log',
+});
+await append(exportBuffer, {
+  agent_id: 'vps-export',
+  points: [],
+  pings: [{ target_id: 'edge', ts: currentHour + 10, latency_ms: null, ok: 0 }],
+});
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async () => { throw new Error('export temporarily unavailable'); };
+await exportBuffer.flushCompletedHours(currentHour + 4600);
+globalThis.fetch = originalFetch;
+assert.equal(exportArchive.puts, 1, 'R2 remains authoritative when optional export fails');
+assert.equal((await exportStorage.list({ prefix: 'chunk:' })).size, 0, 'export failure must not retain acknowledged ingest chunks');
+const exportRetries = await exportStorage.list({ prefix: 'export:' });
+assert.equal(exportRetries.size, 1, 'export failure retains an independent retry marker');
+assert.equal([...exportRetries.values()][0].attempts, 1);
+assert.doesNotMatch([...exportRetries.values()][0].last_error, /metrics\.example|test-token/, 'retry metadata must not expose endpoint or token');
+
 const deleteStorage = memoryStorage();
 const deleteBuffer = new TelemetryBuffer({ storage: deleteStorage }, { ARCHIVE: archive });
 await append(deleteBuffer, { agent_id: 'vps-delete', points: [{ ts: currentHour + 30, cpu: 30 }], pings: [] });

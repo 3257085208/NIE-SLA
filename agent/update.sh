@@ -86,6 +86,11 @@ BACKUP_PATH="${BINARY_PATH}.bak"
 secure_binary_permissions() {
     chown root:root "$BINARY_PATH"
     chmod 0755 "$BINARY_PATH"
+    if ! command -v setcap >/dev/null 2>&1; then
+        info "警告：未找到 setcap；ICMP 将尝试使用系统 ping socket"
+    elif ! setcap cap_net_raw=ep "$BINARY_PATH" 2>/dev/null; then
+        info "警告：当前文件系统不支持 CAP_NET_RAW；ICMP 将尝试使用系统 ping socket"
+    fi
 }
 
 restart_service() {

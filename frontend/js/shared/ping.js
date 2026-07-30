@@ -74,6 +74,59 @@ export function failedPingTargetsNear(points, timestamp, windowSec = pingSampleW
     .sort((a, b) => a.localeCompare(b));
 }
 
+export function normalizePingLossSeries(seriesList) {
+  const out = [];
+  for (const series of seriesList || []) {
+    const targetId = String(series?.target_id || '');
+    const t0 = Math.floor(Number(series?.t0));
+    if (!targetId || !Number.isFinite(t0) || t0 <= 0 || !Array.isArray(series?.runs)) continue;
+    const runs = series.runs.map(run => {
+      if (!Array.isArray(run) || run.length < 3) return null;
+      const start = Math.floor(Number(run[0]));
+      const step = Math.floor(Number(run[1]));
+      const count = Math.floor(Number(run[2]));
+      if (!Number.isFinite(start) || !Number.isFinite(step) || !Number.isFinite(count) || start < 0 || step < 0 || count < 1) return null;
+      return [start, step, count];
+    }).filter(Boolean);
+    if (runs.length) out.push({ target_id: targetId, t0, runs });
+  }
+  return out;
+}
+
+export function failedPingTargetsNearRuns(seriesList, timestamp, windowSec = 1, targetIds = null) {
+  const targetTs = Number(timestamp);
+  const window = Math.max(0, Number(windowSec) || 0);
+  if (!Number.isFinite(targetTs)) return [];
+  const visible = targetIds == null ? null : new Set((targetIds || []).map(String));
+  const failed = [];
+  for (const series of normalizePingLossSeries(seriesList)) {
+    if (visible && !visible.has(series.target_id)) continue;
+    let matched = false;
+    for (const [delta, step, count] of series.runs) {
+      const start = series.t0 + delta;
+      const index = step > 0 ? Math.max(0, Math.min(count - 1, Math.round((targetTs - start) / step))) : 0;
+      if (Math.abs(start + index * step - targetTs) <= window) { matched = true; break; }
+    }
+    if (matched) failed.push(series.target_id);
+  }
+  return failed.sort((a, b) => a.localeCompare(b));
+}
+
+export function pingLossSeriesBounds(seriesList, targetIds = null) {
+  const visible = targetIds == null ? null : new Set((targetIds || []).map(String));
+  let min = Infinity;
+  let max = -Infinity;
+  for (const series of normalizePingLossSeries(seriesList)) {
+    if (visible && !visible.has(series.target_id)) continue;
+    for (const [delta, step, count] of series.runs) {
+      const start = series.t0 + delta;
+      min = Math.min(min, start);
+      max = Math.max(max, start + step * (count - 1));
+    }
+  }
+  return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
+}
+
 export function pingLossSeries(points, targetIds = []) {
   const ids = new Set((targetIds || []).map(String).filter(Boolean));
   const normalized = (points || []).map(normalizedPing)

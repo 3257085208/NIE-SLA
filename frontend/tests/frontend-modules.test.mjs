@@ -37,7 +37,7 @@ import {
 import { DEFAULT_APPEARANCE, normalizeAppearance } from '../js/shared/appearance.js';
 import { unlockState } from '../js/shared/unlock.js';
 import { dailyFleetSlaSeries, targetSlaPercentage } from '../js/shared/sla.js';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from '../js/shared/ping.js';
+import { failedPingTargetsNear, failedPingTargetsNearRuns, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, normalizePingLossSeries, pingLossSeries, pingLossSeriesBounds, pingSampleWindowSec } from '../js/shared/ping.js';
 import { onRequest as routeAdminPage } from '../functions/[[path]].js';
 import { onRequestOptions as apiProxyOptions } from '../functions/api/[[path]].js';
 
@@ -252,6 +252,12 @@ assert.deepEqual(failedPingTargetsNear(pingSamples, 132), ['a']);
 assert.deepEqual(failedPingTargetsNear(pingSamples, 170), []);
 assert.deepEqual(pingLossSeries(pingSamples, ['a', 'b']), [{ x: 100, y: 0 }, { x: 130, y: 0.5 }]);
 assert.deepEqual(pingLossSeries(pingSamples, ['b']), [{ x: 100, y: 0 }, { x: 130, y: 0 }]);
+const lossRuns = normalizePingLossSeries([{ target_id: 'a', t0: 100, runs: [[0, 1, 5], [30, 0, 1]] }]);
+assert.deepEqual(lossRuns, [{ target_id: 'a', t0: 100, runs: [[0, 1, 5], [30, 0, 1]] }]);
+assert.deepEqual(failedPingTargetsNearRuns(lossRuns, 103.4, 0.5), ['a']);
+assert.deepEqual(failedPingTargetsNearRuns(lossRuns, 120, 0.5), []);
+assert.deepEqual(pingLossSeriesBounds(lossRuns), { min: 100, max: 130 });
+assert.equal(pingLossSeriesBounds(lossRuns, ['b']), null);
 assert.deepEqual([...nextPingTargetSelection(null, 'a', ['a', 'b', 'c'])], ['a']);
 assert.deepEqual([...nextPingTargetSelection(new Set(['a']), 'b', ['a', 'b', 'c'])], ['a', 'b']);
 assert.equal(nextPingTargetSelection(new Set(['a', 'b']), 'c', ['a', 'b', 'c']), null);

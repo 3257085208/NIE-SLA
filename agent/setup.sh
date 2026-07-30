@@ -4,7 +4,7 @@ set -euo pipefail
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 CFTZ_URL_BASE="${CFTZ_URL_BASE:-$DOWNLOAD_BASE}"
 DEFAULT_SHA256SUMS_SHA256=""
-DEFAULT_CFTZ_SHA256="a65e790a8d125aa1a4b68015e24f985ea52c2a456e1232e98637c64b1a8b8758"
+DEFAULT_CFTZ_SHA256="8f027ec78ac80e74567803566aafca4748161f4fe775adedefdc722fbce2341d"
 DEFAULT_EXPECTED_VERSION=""
 BIN_NAME="nstatus-metrics"
 SERVICE_NAME="nstatus-metrics"
@@ -155,6 +155,19 @@ secure_install_permissions() {
     chown root:root "$CFTZ_BIN"
     chmod 0755 "$CFTZ_BIN"
   fi
+  apply_ping_capability "${WORK_DIR}/${BIN_NAME}"
+}
+
+apply_ping_capability() {
+  local binary="$1"
+  if [[ ! -f "$binary" ]]; then return 0; fi
+  if ! command -v setcap >/dev/null 2>&1; then
+    warn "未找到 setcap；ICMP 将尝试使用系统 ping socket"
+    return 0
+  fi
+  if ! setcap cap_net_raw=ep "$binary" 2>/dev/null; then
+    warn "当前文件系统不支持 CAP_NET_RAW；ICMP 将尝试使用系统 ping socket"
+  fi
 }
 
 write_env_file() {
@@ -191,6 +204,8 @@ Restart=always
 RestartSec=15
 User=${AGENT_USER}
 NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true

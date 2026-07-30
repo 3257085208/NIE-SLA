@@ -20,7 +20,7 @@ Agent tokens are generated automatically. TOTP is disabled by default.
 
 - Cloudflare HTTP/TCP availability and SLA history;
 - Rust Agent CPU, memory, disk, load, IO, network, process, uptime, and temperature telemetry;
-- Cloudflare latency, Agent TCP Ping, and external Latency Agents;
+- Cloudflare latency, Agent TCP/HTTP/ICMP probes, and external Latency Agents;
 - provider/custom provider, machine type, pricing, expiry, and independent traffic reset day;
 - Agent-side IPv4/IPv6 GeoIP through selectable providers;
 - Telegram and email alerts with templates;

@@ -1,9 +1,10 @@
 // Admin sub-module: ping target CRUD and agent TCP ping operations.
 import { nowSec, clamp, parseBoolean, sanitizeAgentId, retentionSeconds } from '../utils.js';
 import { safeJson, requireAgentForId, ApiError } from '../auth.js';
-import { writeAgentTelemetryR2History, compactPingPointsByTarget, loadAgentPingsR2History, pingPointsToSeries, summarizePingPointsByTarget } from '../metrics.js';
+import { writeAgentTelemetryR2History, compactPingPointsByTarget, loadAgentPingsR2History, pingLossPointsToRuns, pingPointsToSeries, summarizePingPointsByTarget } from '../metrics.js';
 import { rateLimitByIp } from '../ratelimit.js';
 import { getPingIntervalSec, ONE_SECOND_MAX_TARGETS, pingConfigPayload } from '../ping-config.js';
+import { normalizePingTarget, normalizeProbeProtocols, pingTargetProtocol } from '../ping-target-protocol.js';
 
 function normalizeOkInt(value) {
   if (value === true || value === 1) return 1;
@@ -16,18 +17,23 @@ function normalizeOkInt(value) {
 
 export async function getPingTargets(env, options = {}) {
   const enabledOnly = options.enabledOnly !== false;
+  const protocols = normalizeProbeProtocols(options.protocols);
   const [rows, interval] = await Promise.all([
     env.DB.prepare(`SELECT * FROM ping_targets ${enabledOnly ? 'WHERE enabled = 1 ' : ''}ORDER BY name`).all(),
     getPingIntervalSec(env),
   ]);
-  return { ok: true, targets: rows.results || [], ...pingConfigPayload(interval) };
+  const targets = (rows.results || [])
+    .map(row => ({ ...row, protocol: pingTargetProtocol(row.target) }))
+    .filter(row => !protocols.length || protocols.includes(row.protocol));
+  return { ok: true, targets, ...pingConfigPayload(interval) };
 }
 
 export async function createPingTarget(request, env) {
   const body = await safeJson(request);
   const name = String(body?.name || '').trim();
-  const target = String(body?.target || '').trim();
-  if (!name || !target) return { ok: false, error: '名称和目标（主机:端口）不能为空' };
+  const rawTarget = String(body?.target || '').trim();
+  if (!name || !rawTarget) return { ok: false, error: '名称和目标不能为空' };
+  const { target } = normalizePingTarget(rawTarget);
   const id = sanitizeAgentId(body?.id || name);
   const color = normalizeChartColor(body?.color, '#159754');
   if (body?.color !== undefined && !/^#[0-9a-f]{6}$/i.test(String(body.color).trim())) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
@@ -43,7 +49,8 @@ export async function updatePingTarget(id, request, env) {
   if (!existing) return { ok: false, error: 'Ping target not found' };
   const body = await safeJson(request);
   const name = body?.name !== undefined ? String(body.name || '').trim() : existing.name;
-  const target = body?.target !== undefined ? String(body.target || '').trim() : existing.target;
+  const rawTarget = body?.target !== undefined ? String(body.target || '').trim() : existing.target;
+  const { target } = normalizePingTarget(rawTarget);
   const color = body?.color !== undefined ? normalizeChartColor(body.color, '') : normalizeChartColor(existing.color, '#159754');
   if (!color) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
   const enabled = body?.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled;
@@ -118,6 +125,7 @@ export async function getAgentPings(env, url, ctx = null) {
   if (!Number.isFinite(maxPerTargetRaw) || maxPerTargetRaw <= 0) maxPerTargetRaw = defaultMax;
   const maxPerTarget = clamp(Math.floor(maxPerTargetRaw), 30, hardMax);
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
+  const includeLoss = parseBoolean(url.searchParams.get('include_loss'), false);
   const requestedUntil = nowSec();
   const since = requestedUntil - hours * 3600;
   let until = requestedUntil;
@@ -144,16 +152,23 @@ export async function getAgentPings(env, url, ctx = null) {
   } catch (_) {}
   const rawPings = [...byKey.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
   const pings = compactPingPointsByTarget(rawPings, maxPerTarget);
+  const pingStats = summarizePingPointsByTarget(rawPings);
+  const pingIntervalSec = await getPingIntervalSec(env);
   const payload = {
     ok: true,
     targets: targets.results || [],
     pings: responseFormat === 'series' ? [] : pings,
-    ping_stats: summarizePingPointsByTarget(rawPings),
+    ping_stats: pingStats,
     pings_raw_count: rawPings.length,
     pings_downsampled: rawPings.length > pings.length,
+    ping_interval_sec: pingIntervalSec,
     source: r2.loaded ? 'r2+d1-fallback' : 'd1',
   };
   if (responseFormat === 'series') payload.series = pingPointsToSeries(pings);
+  if (includeLoss) {
+    payload.loss_series = pingLossPointsToRuns(rawPings);
+    payload.loss_events_raw_count = pingStats.reduce((sum, item) => sum + Number(item.lost || 0), 0);
+  }
   return payload;
 }
 

@@ -1068,6 +1068,60 @@ export function summarizePingPointsByTarget(pings) {
   }));
 }
 
+export function pingLossPointsToRuns(pings) {
+  const grouped = new Map();
+  for (const ping of pings || []) {
+    const point = normalizePingPoint(ping);
+    if (!point.target_id || !point.ts || Number(point.ok) === 1) continue;
+    const timestamps = grouped.get(point.target_id) || [];
+    timestamps.push(point.ts);
+    grouped.set(point.target_id, timestamps);
+  }
+  return [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([targetId, timestamps]) => {
+    timestamps.sort((a, b) => a - b);
+    let uniqueLength = 0;
+    for (const timestamp of timestamps) {
+      if (uniqueLength === 0 || timestamp !== timestamps[uniqueLength - 1]) timestamps[uniqueLength++] = timestamp;
+    }
+    timestamps.length = uniqueLength;
+    const t0 = timestamps[0];
+    const runs = [];
+    for (let index = 0; index < timestamps.length;) {
+      const start = timestamps[index];
+      if (index + 1 >= timestamps.length) {
+        runs.push([start - t0, 0, 1]);
+        break;
+      }
+      const step = timestamps[index + 1] - start;
+      let count = 2;
+      while (index + count < timestamps.length && timestamps[index + count] - timestamps[index + count - 1] === step) count += 1;
+      runs.push([start - t0, step, count]);
+      index += count;
+    }
+    return { target_id: targetId, t0, runs };
+  });
+}
+
+export function pingLossRunsToPoints(seriesList) {
+  const out = [];
+  for (const series of seriesList || []) {
+    const targetId = String(series?.target_id || '').trim();
+    const t0 = Math.floor(Number(series?.t0 || 0));
+    if (!targetId || !Number.isFinite(t0) || t0 <= 0 || !Array.isArray(series?.runs)) continue;
+    for (const run of series.runs) {
+      if (!Array.isArray(run) || run.length < 3) continue;
+      const start = Math.floor(Number(run[0]));
+      const step = Math.floor(Number(run[1]));
+      const count = Math.floor(Number(run[2]));
+      if (!Number.isFinite(start) || !Number.isFinite(step) || !Number.isFinite(count) || start < 0 || step < 0 || count < 1) continue;
+      for (let index = 0; index < count; index += 1) {
+        out.push({ target_id: targetId, ts: t0 + start + step * index, latency_ms: null, ok: 0 });
+      }
+    }
+  }
+  return out.sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
+}
+
 export function pingPointsToSeries(pings) {
   const grouped = new Map();
   for (const ping of pings || []) {

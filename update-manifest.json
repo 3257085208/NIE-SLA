@@ -1,14 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.39",
-  "agent_version": "v1.0.39",
-  "source_ref": "app-v1.0.39",
+  "version": "1.0.40",
+  "agent_version": "v1.0.40",
+  "source_ref": "app-v1.0.40",
   "published_at": "2026-07-30T00:00:00Z",
-  "title": "NIE-SLA 1.0.39",
+  "title": "NIE-SLA 1.0.40",
   "changelog": [
-    "Ping 管理支持在后台设置 1-300 秒采样间隔，Agent 无需重启即可自动应用；1 秒模式最多启用 5 个目标",
-    "Agent 使用紧凑 Ping 序列分批上报，Worker 使用 5 分钟 Durable Object 分块并按小时合并归档，保持现有公开 API 与图表兼容",
-    "Rust Agent 更新至 v1.0.39，并在本地生成五种 Linux 架构产物、SHA-256 校验和与完整安装引导哈希链"
+    "现有 Ping 目标字段兼容 TCP、HTTP/HTTPS 与 ICMP scheme；旧 Agent 继续只接收 TCP 目标",
+    "公开 Ping API 可选返回全部原始丢包事件的紧凑无损 runs，前端在原图表内绘制单点和连续丢包区间",
+    "增加默认关闭的 VictoriaMetrics/InfluxDB 小时批量导出，并为 Linux ICMP 安装最小 CAP_NET_RAW 权限"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
