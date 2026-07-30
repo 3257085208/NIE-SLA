@@ -2,7 +2,7 @@ import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValida
 import { requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
-import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup } from './admin.js';
+import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
 import { VERSION } from './version.js';
@@ -142,6 +142,7 @@ const ROUTES = [
   // Stats & maintenance
   { method: 'GET', path: '/api/stats', rl: 'write' },
   { method: 'GET', path: '/api/agent/install-command', rl: 'write' },
+  { method: 'GET', path: '/api/agent/install-script', rl: 'write' },
   { method: 'GET', path: '/api/latency-agent/install-command', rl: 'write' },
   { method: 'POST', path: '/api/maintenance/cleanup', rl: 'write' },
   { method: 'GET', path: '/api/themes/manage', rl: 'write' },
@@ -159,6 +160,7 @@ const ROUTES = [
   { method: 'POST', path: '/api/archive', rl: 'write' },
   { method: 'POST', path: '/api/ping-targets', rl: 'write' },
   { method: 'GET', path: '/api/ping-targets', rl: 'write' },
+  { method: 'PATCH', path: '/api/ping-config', rl: 'write' },
   { method: 'GET', path: '/api/latency-agents', rl: 'write' },
   { method: 'POST', path: '/api/latency-agents', rl: 'write' },
 ];
@@ -269,6 +271,11 @@ async function dispatchStatic(env, url, request, ctx) {
     }
   }
 
+  if (path === '/api/agent/install-script' && m === 'GET') {
+    await ensureV6Schema(env);
+    return getAgentInstallScript(env, request);
+  }
+
   // Agent
   if (path === '/api/agent/targets' && m === 'GET') {
     requireProbeAgent(request, env);
@@ -350,6 +357,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/archive' && m === 'POST') { await withAdmin(request, env); return json(await archiveDay(env, (await safeJson(request))?.day || archiveYesterdayLocal(env)), 200, env); }
   if (path === '/api/ping-targets' && m === 'POST') { await withAdmin(request, env); return json(await createPingTarget(request, env), 201, env); }
   if (path === '/api/ping-targets' && m === 'GET') { await withAdmin(request, env); return json(await getPingTargets(env, { enabledOnly: false }), 200, env); }
+  if (path === '/api/ping-config' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updatePingConfig(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agents' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listLatencyAgents(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agents' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await createLatencyAgent(request, env), 201, env, { 'cache-control': 'no-store' }); }
 

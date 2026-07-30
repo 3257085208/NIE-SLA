@@ -28,8 +28,9 @@ await ensureV6Schema({ DB: d1(database) });
 
 assert.ok(database.prepare(`PRAGMA table_info(ping_targets)`).all().some(column => column.name === 'color'));
 assert.ok(database.prepare(`PRAGMA table_info(latency_agents)`).all().some(column => column.name === 'color'));
+assert.ok(database.prepare(`PRAGMA table_info(agent_install_tickets)`).all().some(column => column.name === 'expires_at'));
 assert.equal(
-  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v19-20260728-latency-r2'`).get()?.value,
+  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v20-20260730-agent-install-tickets'`).get()?.value,
   '1',
 );
 

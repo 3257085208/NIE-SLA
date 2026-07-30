@@ -16,6 +16,7 @@ export { submitAgentResults } from './admin/agent-results.js';
 
 // Ping targets
 export { getPingTargets, createPingTarget, updatePingTarget, deletePingTarget, submitAgentPings, getAgentPings } from './admin/ping-targets.js';
+export { updatePingConfig } from './ping-config.js';
 
 // Sync
 export { syncEnvTargets, syncEnvTargetsMaybe } from './admin/sync.js';
@@ -27,7 +28,7 @@ export { archiveDay, archiveYesterdayOncePerLocalDay, getRecentIncidents, getSta
 export { upsertLatestStatus, writeIncidentEvent, touchActiveIncident, upsertTargetLastCheckedAt, upsertCheckBucket, readCheckBuckets, readCheckBucketDaySummary, getCheckBucketSummaries, checkBucketSummaryQueryPlan, applyProbeWriteBatch, cleanupOldCheckBuckets, cleanupVolatileHistory } from './admin/check-buckets.js';
 
 // Install command
-export { getAgentInstallCommand } from './admin/install-command.js';
+export { getAgentInstallCommand, getAgentInstallScript } from './admin/install-command.js';
 
 // Diagnostics
 export { getLatencyHealth } from './admin/latency-health.js';

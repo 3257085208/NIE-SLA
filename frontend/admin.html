@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./admin.css?v=20260730-v1038" />
+    <link rel="stylesheet" href="./admin.css?v=20260730-v1039-ping1" />
   </head>
   <body>
     <div class="login-bg" id="loginPage">
@@ -143,7 +143,14 @@
               <h2>Ping 管理</h2>
               <p>管理 Agent 侧网络质量检测目标。</p>
             </div>
-            <button class="btn btn-primary" id="addPingBtn">+ 新增</button>
+            <div class="ping-admin-actions">
+              <div class="ping-interval-row">
+                <label class="ping-interval-control" for="pingIntervalSec"><span>间隔</span><input id="pingIntervalSec" type="number" min="1" max="300" step="1" value="20"><span>秒</span></label>
+                <button class="btn" id="savePingInterval" type="button">保存</button>
+                <button class="btn btn-primary" id="addPingBtn" type="button">+ 新增</button>
+              </div>
+              <span class="ping-limit-note">1 秒时最多启用 5 个目标</span>
+            </div>
           </div>
           <div id="pTable"><div class="loading">加载中...</div></div>
         </section>
@@ -262,7 +269,7 @@
 
     <script
       type="module"
-      src="./js/admin.js?v=20260730-v1038"
+      src="./js/admin.js?v=20260730-v1039-install1"
     ></script>
   </body>
 </html>

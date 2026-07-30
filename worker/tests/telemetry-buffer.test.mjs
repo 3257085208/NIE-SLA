@@ -1,44 +1,90 @@
 import assert from 'node:assert/strict';
 import { TelemetryBuffer } from '../src/telemetry-buffer.js';
 
-const hour = Math.floor(Date.now() / 3_600_000) * 3600;
+const currentHour = Math.floor(Date.now() / 3_600_000) * 3600;
+const completedHour = currentHour - 7200;
 const storage = memoryStorage();
 const archive = memoryR2();
 const buffer = new TelemetryBuffer({ storage }, { ARCHIVE: archive });
 
 await append(buffer, {
   agent_id: 'vps-a',
-  points: [{ ts: hour + 10, cpu: 10 }],
-  pings: [{ target_id: 'cn', ts: hour + 10, latency_ms: 20, ok: 1 }],
+  points: [{ ts: currentHour + 10, cpu: 10 }],
+  pings: [{ target_id: 'cn', ts: currentHour + 10, latency_ms: null, ok: 0 }],
 });
 await append(buffer, {
   agent_id: 'vps-a',
-  points: [{ ts: hour + 20, cpu: 20 }],
-  pings: [{ target_id: 'cn', ts: hour + 20, latency_ms: 30, ok: 1 }],
+  points: [{ ts: currentHour + 10, cpu: 11 }, { ts: currentHour + 310, cpu: 20 }],
+  pings: [
+    { target_id: 'cn', ts: currentHour + 10, latency_ms: null, ok: 0 },
+    { target_id: 'cn', ts: currentHour + 310, latency_ms: 30, ok: 1 },
+  ],
 });
 
-assert.equal(archive.puts, 0, 'the active hour must stay in durable storage');
-const live = await buffer.read(hour, hour + 3599);
-assert.deepEqual(live.points.map(point => point.cpu), [10, 20]);
-assert.deepEqual(live.pings.map(point => point.latency_ms), [20, 30]);
+assert.equal((await storage.list({ prefix: 'chunk:' })).size, 2, 'active data uses fixed five-minute chunks');
+const live = await buffer.read(currentHour, currentHour + 3599);
+assert.deepEqual(live.points.map(point => point.cpu), [11, 20], 'same-chunk retries are idempotent');
+assert.deepEqual(live.pings.map(point => point.latency_ms), [null, 30], 'loss samples retain null latency');
+
+await buffer.flushCompletedHours(currentHour + 4600);
+assert.equal(archive.puts, 1, 'multiple chunks in one completed hour use one R2 write');
+assert.equal((await storage.list({ prefix: 'chunk:' })).size, 0);
+const payload = JSON.parse([...archive.objects.values()][0]);
+assert.equal(payload.metrics.series.dt.length, 2);
+assert.equal(payload.pings.series[0].dt.length, 2);
+assert.deepEqual(payload.pings.series[0].latency_ms, [null, 30]);
+assert.deepEqual(payload.pings.series[0].ok, [0, 1]);
+
+const capacityStorage = memoryStorage();
+const capacityBuffer = new TelemetryBuffer({ storage: capacityStorage }, { ARCHIVE: memoryR2() });
+await append(capacityBuffer, {
+  agent_id: 'vps-capacity',
+  points: Array.from({ length: 300 }, (_, index) => ({ ts: currentHour + index, cpu: index % 100, mem: 50 })),
+  pings: Array.from({ length: 5 }, (_, target) => Array.from({ length: 300 }, (_, index) => ({
+    target_id: `target-${target}`,
+    ts: currentHour + index,
+    latency_ms: index % 19 === 0 ? null : 20 + index % 10,
+    ok: index % 19 === 0 ? 0 : 1,
+  }))).flat(),
+});
+const storedChunks = await capacityStorage.list({ prefix: 'chunk:' });
+assert.equal(storedChunks.size, 1);
+assert.ok(Math.max(...[...storedChunks.values()].map(value => JSON.stringify(value).length)) < 128 * 1024,
+  'a full 1-second five-target chunk must stay below the Durable Object value limit');
+
+const legacyStorage = memoryStorage();
+await legacyStorage.put(`hour:${completedHour + 3600}`, {
+  schema: 'nie-sla-telemetry-buffer-v1',
+  agent_id: 'vps-legacy',
+  hour: completedHour + 3600,
+  points: [{ ts: completedHour + 3610, cpu: 40 }],
+  pings: [{ target_id: 'legacy', ts: completedHour + 3610, latency_ms: 50, ok: 1 }],
+});
+const legacyArchive = memoryR2();
+const legacyBuffer = new TelemetryBuffer({ storage: legacyStorage }, { ARCHIVE: legacyArchive });
+assert.equal((await legacyBuffer.read(completedHour + 3600, completedHour + 7199)).points.length, 1, 'legacy hour buffers remain readable');
+await legacyBuffer.flushCompletedHours(currentHour + 3600);
+assert.equal(legacyArchive.puts, 1, 'legacy hour buffers migrate to compact R2');
+assert.equal((await legacyStorage.list({ prefix: 'hour:' })).size, 0);
+
+const crossStorage = memoryStorage();
+const crossArchive = memoryR2();
+const crossBuffer = new TelemetryBuffer({ storage: crossStorage }, { ARCHIVE: crossArchive });
+await append(crossBuffer, {
+  agent_id: 'vps-cross',
+  points: [{ ts: completedHour + 3599, cpu: 1 }, { ts: completedHour + 3601, cpu: 2 }],
+  pings: [],
+});
+await crossBuffer.flushCompletedHours(currentHour + 3600);
+assert.equal(crossArchive.puts, 2, 'cross-hour input flushes into separate hourly objects');
 
 const deleteStorage = memoryStorage();
 const deleteBuffer = new TelemetryBuffer({ storage: deleteStorage }, { ARCHIVE: archive });
-await append(deleteBuffer, {
-  agent_id: 'vps-delete',
-  points: [{ ts: hour + 30, cpu: 30 }],
-  pings: [],
-});
+await append(deleteBuffer, { agent_id: 'vps-delete', points: [{ ts: currentHour + 30, cpu: 30 }], pings: [] });
+await deleteStorage.put(`hour:${completedHour}`, { agent_id: 'vps-delete', hour: completedHour, points: [], pings: [] });
 const deleted = await deleteBuffer.fetch(new Request('https://nie-sla.internal/delete', { method: 'POST' }));
 assert.equal(deleted.ok, true);
-assert.equal((await deleteStorage.list({ prefix: 'hour:' })).size, 0, 'deleting an Agent must clear its unflushed telemetry');
-
-await buffer.flushCompletedHours(hour + 3600 + 600);
-assert.equal(archive.puts, 1, 'one completed Agent hour must use one R2 write');
-assert.equal((await storage.list({ prefix: 'hour:' })).size, 0);
-const payload = JSON.parse([...archive.objects.values()][0]);
-assert.equal(payload.metrics.points.length, 2);
-assert.equal(payload.pings.pings.length, 2);
+assert.equal((await deleteStorage.list()).size, 0, 'deleting an Agent clears new and legacy telemetry');
 
 console.log('durable telemetry buffer tests passed');
 

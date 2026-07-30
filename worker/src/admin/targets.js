@@ -240,6 +240,7 @@ export async function deleteTarget(id, env) {
     env.DB.prepare(`DELETE FROM incident_events WHERE target_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM alert_state WHERE target_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM agent_credentials WHERE subject_type = 'agent' AND subject_id = ?`).bind(sanitizeAgentId(id)),
+    env.DB.prepare(`DELETE FROM agent_install_tickets WHERE target_id = ?`).bind(sanitizeAgentId(id)),
     env.DB.prepare(`DELETE FROM agent_tasks WHERE agent_id = ?`).bind(sanitizeAgentId(id)),
     env.DB.prepare(`DELETE FROM checks WHERE legacy_target_id = ? OR node_id = ?`).bind(id, id),
     env.DB.prepare(`DELETE FROM nodes WHERE legacy_target_id = ? OR id = ?`).bind(id, id),

@@ -892,6 +892,45 @@ body.admin-modal-open { overflow: hidden; }
   align-items: center;
   gap: 8px;
 }
+.ping-admin-actions {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+}
+.ping-interval-row,
+.ping-interval-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ping-interval-control {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ping-interval-control input {
+  width: 72px;
+  height: 30px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  background: #fff;
+  font: inherit;
+}
+.ping-interval-control > span {
+  white-space: nowrap;
+}
+.ping-limit-note {
+  color: var(--muted);
+  font-size: 12px;
+}
 @media (max-width: 720px) {
   .f input,
   .f select,
@@ -899,6 +938,25 @@ body.admin-modal-open { overflow: hidden; }
   .appearance-form input,
   .appearance-form select {
     font-size: 16px;
+  }
+  .ping-admin-actions,
+  .ping-interval-row {
+    width: 100%;
+  }
+  .ping-interval-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+  .ping-interval-control {
+    min-width: 0;
+  }
+  .ping-interval-control input {
+    min-width: 0;
+    width: 72px;
+    font-size: 16px;
+  }
+  .ping-limit-note {
+    justify-self: start;
   }
   .wrap {
     padding: 0 12px;

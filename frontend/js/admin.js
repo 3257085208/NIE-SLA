@@ -1,7 +1,7 @@
-import { copyText } from "./install-command.js";
-import { createAdminClient } from "./admin/api.js?v=20260730-v1038";
+import { agentInstallCommandFromPayload, copyText } from "./install-command.js?v=20260730-install1";
+import { createAdminClient } from "./admin/api.js?v=20260730-v1039";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260730-v1038";
+import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260730-v1039";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -12,8 +12,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260730-v1038";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260730-v1038";
+} from "./shared/grouping.js?v=20260730-v1039";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260730-v1039";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -75,6 +75,7 @@ let targets = [],
   pingAdminLoaded = false,
   targetAdminFailed = false,
   pingAdminFailed = false,
+  pingIntervalSec = 20,
   targetOrderSaving = false,
   selectedTargetIds = new Set();
 let pendingBulkUpdate = null;
@@ -1666,49 +1667,6 @@ async function deleteTarget(t) {
     toast(e.message, "err");
   }
 }
-function showInstallCommands(t, data) {
-  const linuxCommand = data.linux_command || data.command || "";
-  byId("modal").innerHTML = `
-    <h3>部署 Agent · ${escapeHtml(t.name || t.id)}</h3>
-    <div class="install-command-block">
-      <div class="install-command-head"><strong>Linux</strong><button class="btn btn-sm btn-blue" type="button" data-copy-install="linux">复制 Linux 命令</button></div>
-      <pre class="code">${escapeHtml(linuxCommand)}</pre>
-    </div>
-    <div class="ma"><button class="btn" type="button" data-close>关闭</button></div>`;
-  byId("modal").querySelectorAll("[data-copy-install]").forEach((button) => {
-    button.onclick = async () => {
-      const command = linuxCommand;
-      try {
-        await copyText(command);
-        toast("已复制 Linux 安装命令", "ok");
-      } catch (error) {
-        toast(error?.message || "复制失败，请手动选择命令", "err");
-      }
-    };
-  });
-  openModal();
-}
-
-function showInstallProgress(t) {
-  byId("modal").innerHTML = `
-    <h3>部署 Agent · ${escapeHtml(t.name || t.id)}</h3>
-    <div class="install-progress" role="status">
-      <span class="install-spinner" aria-hidden="true"></span>
-      <div><strong>正在生成安装命令</strong><p>正在校验管理会话并向 Worker 请求专用 Token...</p></div>
-    </div>
-    <div class="ma"><button class="btn" type="button" data-close>取消</button></div>`;
-  openModal();
-}
-
-function showInstallError(t, error) {
-  byId("modal").innerHTML = `
-    <h3>部署 Agent · ${escapeHtml(t.name || t.id)}</h3>
-    <div class="install-error" role="alert"><strong>安装命令生成失败</strong><p>${escapeHtml(error?.message || "未知错误")}</p></div>
-    <div class="ma"><button class="btn" type="button" data-close>关闭</button><button class="btn btn-primary" type="button" data-retry-install>重试</button></div>`;
-  byId("modal").querySelector("[data-retry-install]").onclick = () => deploy(t);
-  openModal();
-}
-
 async function deploy(t, trigger = null) {
   if (!t?.id) {
     toast("无法识别当前探针，请刷新后台后重试", "err");
@@ -1719,7 +1677,6 @@ async function deploy(t, trigger = null) {
     trigger.disabled = true;
     trigger.textContent = "生成中...";
   }
-  showInstallProgress(t);
   toast("正在生成安装命令...", "info");
   try {
     const d = await apiAdmin(
@@ -1727,19 +1684,11 @@ async function deploy(t, trigger = null) {
       {},
       20000,
     );
-    const cmd = d.linux_command || d.command;
-    if (!cmd)
-      throw new Error(d.error || "Worker 未返回安装命令");
-    showInstallCommands(t, d);
-    try {
-      await copyText(cmd);
-      toast("已生成并复制“" + (t.name || t.id) + "”的 Linux 安装命令", "ok");
-    } catch (_) {
-      toast("命令已生成；浏览器未允许自动复制，请在窗口中手动复制", "info");
-    }
+    const cmd = agentInstallCommandFromPayload(d, t.id);
+    await copyText(cmd);
+    toast("已复制“" + (t.name || t.id) + "”的 Agent 安装命令（含一次性凭据，10 分钟内有效）", "ok");
   } catch (e) {
-    showInstallError(t, e);
-    toast("生成安装命令失败：" + (e?.message || "未知错误"), "err");
+    toast("安装命令复制失败：" + (e?.message || "未知错误"), "err");
   } finally {
     if (trigger && document.body.contains(trigger)) {
       trigger.disabled = false;
@@ -1889,6 +1838,8 @@ async function loadPings() {
   try {
     const d = await apiAdmin("/api/ping-targets", {}, 30000);
     pingTargets = d.targets || pingTargets;
+    pingIntervalSec = Number(d.ping_interval_sec || 20);
+    if (byId("pingIntervalSec")) byId("pingIntervalSec").value = String(pingIntervalSec);
     pingAdminLoaded = true;
     renderPings();
   } catch (e) {
@@ -1902,6 +1853,30 @@ async function loadPings() {
         "info",
       );
     }
+  }
+}
+
+async function savePingInterval() {
+  const input = byId("pingIntervalSec");
+  const interval = Number(input?.value);
+  if (!Number.isInteger(interval) || interval < 1 || interval > 300) {
+    return toast("Ping 间隔必须是 1-300 秒之间的整数", "err");
+  }
+  const button = byId("savePingInterval");
+  button.disabled = true;
+  try {
+    const result = await apiAdmin("/api/ping-config", {
+      method: "PATCH",
+      body: JSON.stringify({ ping_interval_sec: interval }),
+    });
+    pingIntervalSec = Number(result.ping_interval_sec || interval);
+    input.value = String(pingIntervalSec);
+    toast(`Ping 间隔已更新为 ${pingIntervalSec} 秒，Agent 将自动应用`, "ok");
+    await loadPings();
+  } catch (error) {
+    toast(error.message, "err");
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -2891,6 +2866,7 @@ byId("pTable").onclick = (e) => {
   if (b.dataset.a === "delete") deletePing(p);
   if (b.dataset.a === "reload") loadPings();
 };
+byId("savePingInterval").onclick = savePingInterval;
 byId("latencyTable").onclick = (e) => {
   const button = e.target.closest("button[data-a]");
   if (!button) return;

@@ -1,6 +1,6 @@
 {
   "name": "nie-sla-cloudflare",
-  "version": "1.0.38",
+  "version": "1.0.39",
   "private": true,
   "type": "module",
   "description": "NIE-SLA Cloudflare 一键部署",

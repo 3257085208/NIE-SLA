@@ -7,6 +7,7 @@ const RUNTIME_TABLES = [
   'latest_status', 'check_buckets', 'incident_events', 'alert_state',
   'agent_metrics_state', 'agent_metrics_history', 'agent_daily_availability',
   'agent_traffic_monthly', 'agent_traffic_daily', 'ping_history', 'agent_tasks',
+  'agent_install_tickets',
 ];
 const SENSITIVE_META_KEYS = new Set([
   'admin_credentials_v1',

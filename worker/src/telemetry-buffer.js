@@ -1,7 +1,9 @@
 import { nowSec, sanitizeAgentId } from './utils.js';
 
 const HOUR_SEC = 3600;
-const BUFFER_PREFIX = 'hour:';
+const CHUNK_SEC = 300;
+const CHUNK_PREFIX = 'chunk:';
+const LEGACY_BUFFER_PREFIX = 'hour:';
 const FLUSH_GRACE_SEC = 600;
 
 export class TelemetryBuffer {
@@ -36,64 +38,85 @@ export class TelemetryBuffer {
   async append(body) {
     const agentId = sanitizeAgentId(body?.agent_id);
     if (!agentId) throw new Error('Agent ID 无效');
-    const grouped = groupByHour(body?.points, body?.pings);
+    const grouped = groupByChunk(body?.points, body?.pings);
     if (!grouped.size) return { ok: true, skipped: true };
 
     await this.state.storage.transaction(async (txn) => {
-      for (const [hour, incoming] of grouped) {
-        const key = bufferKey(hour);
-        const existing = await txn.get(key) || emptyBuffer(agentId, hour);
-        await txn.put(key, mergeBuffer(existing, incoming, agentId, hour));
+      for (const [chunk, incoming] of grouped) {
+        const key = chunkKey(chunk);
+        const existing = await txn.get(key) || emptyBuffer(agentId, chunk);
+        await txn.put(key, compactBuffer(mergeBuffer(existing, incoming, agentId, chunk, CHUNK_SEC)));
       }
     });
 
     await this.scheduleFlush();
     await this.flushCompletedHours(nowSec());
-    return { ok: true, hours: grouped.size };
+    return { ok: true, chunks: grouped.size };
   }
 
   async read(since, until) {
     const start = Number.isFinite(since) ? Math.floor(since) : 0;
     const end = Number.isFinite(until) ? Math.floor(until) : nowSec();
-    const rows = await this.state.storage.list({ prefix: BUFFER_PREFIX });
+    const rows = await this.bufferRows();
     const points = [];
     const pings = [];
     for (const value of rows.values()) {
-      for (const point of value?.points || []) {
+      for (const point of bufferPoints(value)) {
         const ts = Number(point?.ts || 0);
         if (ts >= start && ts <= end) points.push(point);
       }
-      for (const ping of value?.pings || []) {
+      for (const ping of bufferPings(value)) {
         const ts = Number(ping?.ts || 0);
         if (ts >= start && ts <= end) pings.push(ping);
       }
     }
+    points.sort((a, b) => Number(a.ts) - Number(b.ts));
+    pings.sort((a, b) => Number(a.ts) - Number(b.ts) || String(a.target_id).localeCompare(String(b.target_id)));
     return { ok: true, points, pings };
   }
 
   async flushCompletedHours(currentAt) {
     const flushBefore = Number(currentAt) - FLUSH_GRACE_SEC;
-    const rows = await this.state.storage.list({ prefix: BUFFER_PREFIX });
-    let retry = false;
+    const rows = await this.bufferRows();
+    const completed = new Map();
     for (const [key, value] of rows) {
-      const hour = Number(String(key).slice(BUFFER_PREFIX.length));
-      if (!Number.isFinite(hour) || hour + HOUR_SEC > flushBefore) continue;
+      const start = bufferedStart(key);
+      const hour = hourStart(start);
+      if (!Number.isFinite(start) || hour + HOUR_SEC > flushBefore) continue;
+      const item = completed.get(hour) || { keys: [], buffers: [] };
+      item.keys.push(key);
+      item.buffers.push(value);
+      completed.set(hour, item);
+    }
+    let retry = false;
+    for (const [hour, item] of completed) {
       try {
-        await flushHour(this.env, value);
-        await this.state.storage.delete(key);
+        let merged = emptyBuffer(item.buffers[0]?.agent_id, hour);
+        for (const value of item.buffers) merged = mergeBuffer(merged, value, value?.agent_id, hour, HOUR_SEC);
+        await flushHour(this.env, merged);
+        for (const key of item.keys) await this.state.storage.delete(key);
       } catch (error) {
         retry = true;
         console.error('telemetry buffer flush failed:', String(error?.message || error));
       }
     }
     if (retry) await this.state.storage.setAlarm(Date.now() + 5 * 60 * 1000);
-    else if ((await this.state.storage.list({ prefix: BUFFER_PREFIX, limit: 1 })).size) await this.scheduleFlush();
+    else if ((await this.bufferRows(1)).size) await this.scheduleFlush();
   }
 
   async scheduleFlush() {
     const alarmAt = (hourStart(nowSec()) + HOUR_SEC + FLUSH_GRACE_SEC + 30) * 1000;
     const current = await this.state.storage.getAlarm();
     if (current == null || current > alarmAt) await this.state.storage.setAlarm(alarmAt);
+  }
+
+  async bufferRows(limit = null) {
+    const chunks = await this.state.storage.list(limit == null ? { prefix: CHUNK_PREFIX } : { prefix: CHUNK_PREFIX, limit });
+    if (limit != null && chunks.size >= limit) return chunks;
+    const legacy = await this.state.storage.list(limit == null
+      ? { prefix: LEGACY_BUFFER_PREFIX }
+      : { prefix: LEGACY_BUFFER_PREFIX, limit: limit - chunks.size });
+    return new Map([...chunks, ...legacy]);
   }
 }
 
@@ -136,12 +159,12 @@ export async function deleteBufferedAgentTelemetry(env, agentId) {
   return response.json();
 }
 
-function groupByHour(points, pings) {
+function groupByChunk(points, pings) {
   const grouped = new Map();
   const bucket = (ts) => {
-    const hour = hourStart(ts);
-    const value = grouped.get(hour) || { points: [], pings: [] };
-    grouped.set(hour, value);
+    const chunk = chunkStart(ts);
+    const value = grouped.get(chunk) || { points: [], pings: [] };
+    grouped.set(chunk, value);
     return value;
   };
   for (const point of Array.isArray(points) ? points : []) {
@@ -155,22 +178,23 @@ function groupByHour(points, pings) {
   return grouped;
 }
 
-function mergeBuffer(existing, incoming, agentId, hour) {
+function mergeBuffer(existing, incoming, agentId, start, duration) {
   const byPoint = new Map();
-  for (const point of [...(existing?.points || []), ...(incoming?.points || [])]) {
+  for (const point of [...bufferPoints(existing), ...bufferPoints(incoming)]) {
     const ts = Number(point?.ts || 0);
-    if (ts >= hour && ts < hour + HOUR_SEC) byPoint.set(ts, point);
+    if (ts >= start && ts < start + duration) byPoint.set(ts, point);
   }
   const byPing = new Map();
-  for (const ping of [...(existing?.pings || []), ...(incoming?.pings || [])]) {
+  for (const ping of [...bufferPings(existing), ...bufferPings(incoming)]) {
     const ts = Number(ping?.ts || 0);
     const targetId = String(ping?.target_id || '');
-    if (targetId && ts >= hour && ts < hour + HOUR_SEC) byPing.set(`${targetId}:${ts}`, ping);
+    if (targetId && ts >= start && ts < start + duration) byPing.set(`${targetId}:${ts}`, ping);
   }
   return {
-    schema: 'nie-sla-telemetry-buffer-v1',
+    schema: duration === CHUNK_SEC ? 'nie-sla-telemetry-buffer-v2' : 'nie-sla-telemetry-buffer-v1',
     agent_id: agentId,
-    hour,
+    chunk: start,
+    hour: hourStart(start),
     points: [...byPoint.values()].sort((a, b) => Number(a.ts) - Number(b.ts)),
     pings: [...byPing.values()].sort((a, b) => Number(a.ts) - Number(b.ts) || String(a.target_id).localeCompare(String(b.target_id))),
   };
@@ -185,7 +209,7 @@ async function flushHour(env, buffered) {
   const merged = mergeBuffer({
     points: metricsFromPayload(existing?.metrics),
     pings: pingsFromPayload(existing?.pings),
-  }, buffered, agentId, hour);
+  }, buffered, agentId, hour, HOUR_SEC);
   const dayHour = utcDayHour(hour);
   await env.ARCHIVE.put(key, JSON.stringify({
     schema: 'nstatus-agent-telemetry-hour-v1',
@@ -193,8 +217,8 @@ async function flushHour(env, buffered) {
     day: dayHour.day,
     hour: dayHour.hour,
     updated_at: new Date().toISOString(),
-    metrics: { schema: 'nstatus-agent-metrics-hour-v2', points: merged.points },
-    pings: { schema: 'nstatus-agent-pings-hour-v2', pings: merged.pings },
+    metrics: { schema: 'nstatus-agent-metrics-hour-v2', series: metricPointsToColumns(merged.points) },
+    pings: { schema: 'nstatus-agent-pings-hour-v2', series: pingPointsToSeries(merged.pings) },
   }), {
     httpMetadata: { contentType: 'application/json; charset=utf-8' },
     customMetadata: { schema: 'nstatus-agent-telemetry-hour-v1', agent_id: agentId, day: dayHour.day, hour: dayHour.hour },
@@ -242,16 +266,83 @@ function telemetryKey(env, agentId, hour) {
   return `${prefix}/${agentId}/${dayHour.day}/${dayHour.hour}/telemetry.json`;
 }
 
-function emptyBuffer(agentId, hour) {
-  return { agent_id: agentId, hour, points: [], pings: [] };
+function emptyBuffer(agentId, start) {
+  return { agent_id: agentId, chunk: start, hour: hourStart(start), points: [], pings: [] };
 }
 
-function bufferKey(hour) {
-  return `${BUFFER_PREFIX}${hourStart(hour)}`;
+function compactBuffer(buffer) {
+  return {
+    schema: 'nie-sla-telemetry-buffer-v2',
+    agent_id: buffer.agent_id,
+    chunk: buffer.chunk,
+    hour: buffer.hour,
+    metric_series: metricPointsToColumns(buffer.points),
+    ping_series: pingPointsToSeries(buffer.pings),
+  };
+}
+
+function bufferPoints(value) {
+  if (Array.isArray(value?.points)) return value.points;
+  return metricsFromPayload({ series: value?.metric_series });
+}
+
+function bufferPings(value) {
+  if (Array.isArray(value?.pings)) return value.pings;
+  return pingsFromPayload({ series: value?.ping_series });
+}
+
+function chunkKey(chunk) {
+  return `${CHUNK_PREFIX}${chunkStart(chunk)}`;
+}
+
+function bufferedStart(key) {
+  const text = String(key);
+  if (text.startsWith(CHUNK_PREFIX)) return Number(text.slice(CHUNK_PREFIX.length));
+  if (text.startsWith(LEGACY_BUFFER_PREFIX)) return Number(text.slice(LEGACY_BUFFER_PREFIX.length));
+  return NaN;
 }
 
 function hourStart(value) {
   return Math.floor(Number(value || 0) / HOUR_SEC) * HOUR_SEC;
+}
+
+function chunkStart(value) {
+  return Math.floor(Number(value || 0) / CHUNK_SEC) * CHUNK_SEC;
+}
+
+function metricPointsToColumns(points) {
+  const list = [...(points || [])].sort((a, b) => Number(a.ts) - Number(b.ts));
+  const fields = [...new Set(list.flatMap(point => Object.keys(point).filter(key => key !== 'ts')))];
+  const t0 = Number(list[0]?.ts || 0);
+  const values = Object.fromEntries(fields.map(field => [field, []]));
+  const dt = [];
+  for (const point of list) {
+    dt.push(Number(point.ts) - t0);
+    for (const field of fields) values[field].push(Number(point[field] || 0));
+  }
+  return { t0, dt, fields, values };
+}
+
+function pingPointsToSeries(pings) {
+  const grouped = new Map();
+  for (const ping of pings || []) {
+    const targetId = String(ping?.target_id || '');
+    if (!targetId) continue;
+    const list = grouped.get(targetId) || [];
+    list.push(ping);
+    grouped.set(targetId, list);
+  }
+  return [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([targetId, list]) => {
+    list.sort((a, b) => Number(a.ts) - Number(b.ts));
+    const t0 = Number(list[0]?.ts || 0);
+    return {
+      target_id: targetId,
+      t0,
+      dt: list.map(point => Number(point.ts) - t0),
+      latency_ms: list.map(point => point.latency_ms == null ? null : Number(point.latency_ms)),
+      ok: list.map(point => Number(point.ok || 0)),
+    };
+  });
 }
 
 function utcDayHour(ts) {

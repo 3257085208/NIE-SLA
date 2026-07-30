@@ -1,12 +1,15 @@
 use anyhow::{anyhow, Context, Result};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::fs;
 use std::io::Read;
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    mpsc, Arc,
+};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, System};
@@ -31,6 +34,7 @@ const DEFAULT_PING_TARGET_REFRESH_SEC: u64 = 600;
 const DEFAULT_UPDATE_CHECK_SEC: u64 = 3600;
 const INITIAL_UPDATE_CHECK_SEC: u64 = 60;
 const REPORT_MAX_SAMPLES: usize = 300;
+const REPORT_MAX_PINGS: usize = 5_000;
 const DEFAULT_QUEUE_MAX_SAMPLES: usize = 86_400;
 const QUEUE_FLUSH_SEC: u64 = 10;
 const MIN_PING_QUEUE_CAPACITY: usize = 200;
@@ -195,9 +199,8 @@ struct Metrics {
 
 #[derive(Debug)]
 struct UploadResult {
-    result: Result<()>,
+    result: Result<Option<u64>>,
     last_sample_ts: i64,
-    last_ping_ts: i64,
     sample_count: usize,
     ping_count: usize,
 }
@@ -248,6 +251,18 @@ struct PingResult {
     ts: i64,
     latency_ms: Option<u128>,
     ok: bool,
+}
+
+#[derive(Debug)]
+struct PingPlan {
+    targets: Vec<PingTarget>,
+    interval_sec: u64,
+}
+
+#[derive(Debug)]
+struct PingBatch {
+    results: Vec<PingResult>,
+    interval_sec: u64,
 }
 
 #[derive(Default)]
@@ -318,7 +333,8 @@ fn run() -> Result<()> {
         samples.clone(),
         cfg.queue_max_samples,
     );
-    let ping_rx = spawn_ping_worker(cfg.clone(), http.clone());
+    let ping_interval_sec = Arc::new(AtomicU64::new(cfg.ping_sec));
+    let ping_rx = spawn_ping_worker(cfg.clone(), http.clone(), ping_interval_sec.clone());
     let update_rx = if cfg.once {
         None
     } else {
@@ -352,11 +368,14 @@ fn run() -> Result<()> {
         while let Ok(result) = upload_rx.try_recv() {
             uploading = false;
             match result.result {
-                Ok(()) => {
+                Ok(next_ping_interval) => {
+                    if let Some(interval) = next_ping_interval {
+                        apply_ping_interval(&ping_interval_sec, interval);
+                    }
                     last_upload_failed = false;
                     drop_samples_through(&mut samples, result.last_sample_ts);
                     let _ = queue_tx.send(QueueCommand::Acknowledge(result.last_sample_ts));
-                    drop_pings_through(&mut pings, result.last_ping_ts);
+                    drop_ping_prefix(&mut pings, result.ping_count);
                     println!(
                         "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
                         now_sec(),
@@ -374,12 +393,15 @@ fn run() -> Result<()> {
             }
         }
 
-        while let Ok(results) = ping_rx.try_recv() {
-            let expected_cycles = cfg.report_sec.div_ceil(cfg.ping_sec).saturating_add(2) as usize;
+        while let Ok(batch) = ping_rx.try_recv() {
+            let expected_cycles = cfg
+                .report_sec
+                .div_ceil(batch.interval_sec)
+                .saturating_add(2) as usize;
             ping_queue_capacity = ping_queue_capacity
-                .max(expected_cycles.saturating_mul(results.len()))
+                .max(expected_cycles.saturating_mul(batch.results.len()))
                 .min(MAX_PING_QUEUE_CAPACITY);
-            pings.extend(results);
+            pings.extend(batch.results);
         }
         if pings.len() > ping_queue_capacity {
             let keep_from = pings.len().saturating_sub(ping_queue_capacity);
@@ -433,14 +455,18 @@ fn run() -> Result<()> {
         );
         if !uploading && report_due {
             let upload_samples: Vec<_> = samples.iter().take(REPORT_MAX_SAMPLES).cloned().collect();
-            let mut metrics =
-                collector.metrics(&hostname, Some(vps_info.clone()), &upload_samples, &pings);
+            let upload_pings = ping_upload_batch(&pings);
+            let mut metrics = collector.metrics(
+                &hostname,
+                Some(vps_info.clone()),
+                &upload_samples,
+                &upload_pings,
+            );
             metrics.samples = upload_samples.clone();
             metrics.stats = Some(aggregate(&upload_samples));
             let last_sample_ts = upload_samples.last().map(|s| s.ts).unwrap_or(0);
-            let last_ping_ts = pings.last().map(|p| p.ts).unwrap_or(0);
             let sample_count = upload_samples.len();
-            let ping_count = pings.len();
+            let ping_count = upload_pings.len();
             let cfg_for_upload = cfg.clone();
             let http_for_upload = http.clone();
             let tx = upload_tx.clone();
@@ -452,26 +478,24 @@ fn run() -> Result<()> {
                 let _ = tx.send(UploadResult {
                     result,
                     last_sample_ts,
-                    last_ping_ts,
                     sample_count,
                     ping_count,
                 });
             });
             if cfg.once {
                 if let Ok(result) = upload_rx.recv() {
-                    match result.result {
-                        Ok(()) => {
-                            let _ = queue_tx.send(QueueCommand::Acknowledge(result.last_sample_ts));
-                            flush_sample_queue(&queue_tx)?;
-                            println!(
-                                "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
-                                now_sec(),
-                                result.sample_count,
-                                result.ping_count
-                            );
-                        }
-                        Err(err) => return Err(err),
+                    let next_ping_interval = result.result?;
+                    if let Some(interval) = next_ping_interval {
+                        apply_ping_interval(&ping_interval_sec, interval);
                     }
+                    let _ = queue_tx.send(QueueCommand::Acknowledge(result.last_sample_ts));
+                    flush_sample_queue(&queue_tx)?;
+                    println!(
+                        "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
+                        now_sec(),
+                        result.sample_count,
+                        result.ping_count
+                    );
                 }
                 break;
             }
@@ -549,7 +573,7 @@ impl Config {
 
         cfg.sample_sec = cfg.sample_sec.clamp(1, 3600);
         cfg.report_sec = cfg.report_sec.clamp(30, 3600);
-        cfg.ping_sec = cfg.ping_sec.clamp(5, 600);
+        cfg.ping_sec = cfg.ping_sec.clamp(1, 300);
         cfg.ping_target_refresh_sec =
             normalize_ping_target_refresh_sec(cfg.ping_target_refresh_sec);
         cfg.queue_max_samples = cfg.queue_max_samples.clamp(REPORT_MAX_SAMPLES, 604_800);
@@ -796,7 +820,7 @@ fn disk_info(total: u64, avail: u64) -> DiskInfo {
     }
 }
 
-fn submit(cfg: &Config, http: &HttpClient, metrics: Metrics) -> Result<()> {
+fn submit(cfg: &Config, http: &HttpClient, metrics: Metrics) -> Result<Option<u64>> {
     let payload = serde_json::json!({
         "agent_id": cfg.agent_id,
         "agent_label": cfg.agent_label,
@@ -806,13 +830,22 @@ fn submit(cfg: &Config, http: &HttpClient, metrics: Metrics) -> Result<()> {
     });
     let url = format!("{}/api/agent/metrics", cfg.api.trim_end_matches('/'));
     let body = payload.to_string();
-    http.post_json(&url, &cfg.token, &body)
+    let response = http
+        .post_json(&url, &cfg.token, &body)
         .map_err(|err| anyhow!("submit failed for {}: {}", url, err))?;
+    let ping_interval = serde_json::from_str::<serde_json::Value>(&response)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("ping_interval_sec")
+                .and_then(|item| item.as_u64())
+        })
+        .filter(|value| (1..=300).contains(value));
     println!("{{\"ok\":true,\"submitted_at\":{}}}", now_sec());
-    Ok(())
+    Ok(ping_interval)
 }
 
-fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<Vec<PingTarget>> {
+fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
     let url = format!(
         "{}/api/agent/ping-targets?agent_id={}",
         cfg.api.trim_end_matches('/'),
@@ -821,9 +854,12 @@ fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<Vec<PingTarget>
     let text = http.get(&url, &cfg.token)?;
     let value: serde_json::Value = serde_json::from_str(&text)?;
     if !value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
-        return Ok(Vec::new());
+        return Ok(PingPlan {
+            targets: Vec::new(),
+            interval_sec: cfg.ping_sec,
+        });
     }
-    let targets = value
+    let targets: Vec<PingTarget> = value
         .get("targets")
         .and_then(|v| v.as_array())
         .into_iter()
@@ -843,7 +879,15 @@ fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<Vec<PingTarget>
         })
         .filter(|t| t.enabled)
         .collect();
-    Ok(targets)
+    let interval_sec = value
+        .get("ping_interval_sec")
+        .and_then(|item| item.as_u64())
+        .filter(|interval| (1..=300).contains(interval))
+        .unwrap_or(cfg.ping_sec);
+    Ok(PingPlan {
+        targets,
+        interval_sec,
+    })
 }
 
 fn percent_encode_query(value: &str) -> String {
@@ -893,10 +937,7 @@ fn metrics_json(m: &Metrics) -> serde_json::Value {
         obj.insert("vps_info".to_string(), vps_info_json(info));
     }
     if !m.pings.is_empty() {
-        obj.insert(
-            "pings".to_string(),
-            serde_json::Value::Array(m.pings.iter().map(ping_json).collect()),
-        );
+        obj.insert("ping_series".to_string(), ping_series_json(&m.pings));
     }
     value
 }
@@ -1019,8 +1060,27 @@ fn vps_info_json(v: &VpsInfo) -> serde_json::Value {
     value
 }
 
-fn ping_json(p: &PingResult) -> serde_json::Value {
-    serde_json::json!({ "target_id": p.target_id, "ts": p.ts, "latency_ms": p.latency_ms, "ok": p.ok })
+fn ping_series_json(pings: &[PingResult]) -> serde_json::Value {
+    let mut grouped: BTreeMap<&str, Vec<&PingResult>> = BTreeMap::new();
+    for ping in pings {
+        grouped.entry(&ping.target_id).or_default().push(ping);
+    }
+    serde_json::Value::Array(
+        grouped
+            .into_iter()
+            .map(|(target_id, mut points)| {
+                points.sort_by_key(|point| point.ts);
+                let t0 = points.first().map(|point| point.ts).unwrap_or(0);
+                serde_json::json!({
+                    "target_id": target_id,
+                    "t0": t0,
+                    "dt": points.iter().map(|point| point.ts - t0).collect::<Vec<_>>(),
+                    "latency_ms": points.iter().map(|point| point.latency_ms).collect::<Vec<_>>(),
+                    "ok": points.iter().map(|point| u8::from(point.ok)).collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
 }
 
 impl HttpClient {
@@ -1133,7 +1193,11 @@ fn http_error(method: &str, url: &str, err: ureq::Error) -> anyhow::Error {
     anyhow!("HTTP {} failed for {}: {}", method, url, err)
 }
 
-fn spawn_ping_worker(cfg: Config, http: HttpClient) -> mpsc::Receiver<Vec<PingResult>> {
+fn spawn_ping_worker(
+    cfg: Config,
+    http: HttpClient,
+    ping_interval_sec: Arc<AtomicU64>,
+) -> mpsc::Receiver<PingBatch> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let mut targets = Vec::new();
@@ -1142,13 +1206,21 @@ fn spawn_ping_worker(cfg: Config, http: HttpClient) -> mpsc::Receiver<Vec<PingRe
         let mut last_ping = Instant::now() - Duration::from_secs(cfg.ping_sec);
         loop {
             if last_refresh.elapsed() >= refresh_period {
-                if let Ok(next) = fetch_ping_targets(&cfg, &http) {
-                    targets = next;
+                if let Ok(plan) = fetch_ping_targets(&cfg, &http) {
+                    apply_ping_interval(&ping_interval_sec, plan.interval_sec);
+                    targets = plan.targets;
                 }
                 last_refresh = Instant::now();
             }
-            if last_ping.elapsed() >= Duration::from_secs(cfg.ping_sec) {
-                if tx.send(run_pings(&targets, &cfg.ping_targets)).is_err() {
+            let interval = current_ping_interval(&ping_interval_sec);
+            if last_ping.elapsed() >= Duration::from_secs(interval) {
+                if tx
+                    .send(PingBatch {
+                        results: run_pings(&targets, &cfg.ping_targets),
+                        interval_sec: interval,
+                    })
+                    .is_err()
+                {
                     break;
                 }
                 last_ping = Instant::now();
@@ -1157,11 +1229,21 @@ fn spawn_ping_worker(cfg: Config, http: HttpClient) -> mpsc::Receiver<Vec<PingRe
                 last_refresh.elapsed(),
                 refresh_period,
                 last_ping.elapsed(),
-                Duration::from_secs(cfg.ping_sec),
+                Duration::from_secs(current_ping_interval(&ping_interval_sec)),
             ));
         }
     });
     rx
+}
+
+fn current_ping_interval(interval: &AtomicU64) -> u64 {
+    interval.load(Ordering::Relaxed).clamp(1, 300)
+}
+
+fn apply_ping_interval(interval: &AtomicU64, value: u64) {
+    if (1..=300).contains(&value) {
+        interval.store(value, Ordering::Relaxed);
+    }
 }
 
 fn next_ping_worker_sleep(
@@ -1283,11 +1365,12 @@ fn drop_samples_through(samples: &mut VecDeque<SamplePoint>, ts: i64) {
     samples.retain(|sample| sample.ts > ts);
 }
 
-fn drop_pings_through(pings: &mut Vec<PingResult>, ts: i64) {
-    if ts <= 0 {
-        return;
-    }
-    pings.retain(|ping| ping.ts > ts);
+fn drop_ping_prefix(pings: &mut Vec<PingResult>, count: usize) {
+    pings.drain(0..count.min(pings.len()));
+}
+
+fn ping_upload_batch(pings: &[PingResult]) -> Vec<PingResult> {
+    pings.iter().take(REPORT_MAX_PINGS).cloned().collect()
 }
 
 fn advance_sample_deadline(previous_deadline: Instant, now: Instant, period: Duration) -> Instant {
@@ -1388,6 +1471,64 @@ mod tests {
         assert_eq!(normalize_ping_target_refresh_sec(600), 600);
         assert_eq!(normalize_ping_target_refresh_sec(86_400), 3_600);
         assert_eq!(DEFAULT_PING_SEC, 20);
+    }
+
+    #[test]
+    fn worker_ping_interval_updates_are_hot_and_strictly_bounded() {
+        let interval = AtomicU64::new(20);
+        apply_ping_interval(&interval, 1);
+        assert_eq!(current_ping_interval(&interval), 1);
+        apply_ping_interval(&interval, 300);
+        assert_eq!(current_ping_interval(&interval), 300);
+        apply_ping_interval(&interval, 0);
+        assert_eq!(current_ping_interval(&interval), 300);
+        apply_ping_interval(&interval, 301);
+        assert_eq!(current_ping_interval(&interval), 300);
+    }
+
+    #[test]
+    fn ping_upload_is_compact_loss_aware_and_bounded_to_worker_limit() {
+        let pings: Vec<_> = (0..=REPORT_MAX_PINGS)
+            .map(|index| PingResult {
+                target_id: if index % 2 == 0 { "a" } else { "b" }.to_string(),
+                ts: 1_700_000_000 + index as i64,
+                latency_ms: (index % 17 != 0).then_some(20 + (index % 10) as u128),
+                ok: index % 17 != 0,
+            })
+            .collect();
+        let batch = ping_upload_batch(&pings);
+        assert_eq!(batch.len(), REPORT_MAX_PINGS);
+        assert_eq!(batch.last().unwrap().ts, pings[REPORT_MAX_PINGS - 1].ts);
+
+        let series = ping_series_json(&batch);
+        let groups = series.as_array().unwrap();
+        assert_eq!(groups.len(), 2);
+        assert!(groups.iter().all(|group| {
+            let len = group["dt"].as_array().unwrap().len();
+            group["latency_ms"].as_array().unwrap().len() == len
+                && group["ok"].as_array().unwrap().len() == len
+        }));
+        assert!(groups.iter().any(|group| group["latency_ms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(serde_json::Value::is_null)));
+        assert!(series.to_string().len() < 200_000);
+
+        let same_second = PingResult {
+            target_id: "same-second".to_string(),
+            ts: batch.last().unwrap().ts,
+            latency_ms: Some(25),
+            ok: true,
+        };
+        let mut queued = batch.clone();
+        queued.push(same_second);
+        drop_ping_prefix(&mut queued, REPORT_MAX_PINGS);
+        assert_eq!(
+            queued.len(),
+            1,
+            "acknowledgement must not drop unsent points sharing a timestamp"
+        );
     }
 
     #[test]

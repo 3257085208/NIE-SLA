@@ -4,7 +4,7 @@ import { dayFromSec, nowSec, parseBoolean, timezoneOffsetMin } from '../utils.js
 let schemaEnsured = false;
 let schemaPromise = null;
 // Bump this marker whenever an existing installation needs new D1 objects.
-const SCHEMA_MARKER = 'schema:worker-v19-20260728-latency-r2';
+const SCHEMA_MARKER = 'schema:worker-v20-20260730-agent-install-tickets';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -219,6 +219,20 @@ export async function ensureV6Schema(env) {
     PRIMARY KEY (subject_type, subject_id)
   )`).run();
   await env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_credentials_hash ON agent_credentials(token_hash)`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_install_tickets (
+    token_hash TEXT PRIMARY KEY,
+    target_id TEXT NOT NULL,
+    install_base TEXT NOT NULL,
+    api_base TEXT NOT NULL,
+    target_label TEXT NOT NULL,
+    ping_sec INTEGER NOT NULL,
+    manifest_sha256 TEXT NOT NULL,
+    expected_version TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at INTEGER
+  )`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_install_tickets_expiry ON agent_install_tickets(expires_at, used_at)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS latency_results (
     node_id TEXT NOT NULL,
     target_id TEXT NOT NULL,

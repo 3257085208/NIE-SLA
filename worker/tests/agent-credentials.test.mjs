@@ -3,7 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { getOrCreateAgentToken, legacyScopedToken } from '../src/agent-credentials.js';
 import { requireAgentForId, requireAnyAgent, requireLatencyAgentForId } from '../src/auth.js';
-import { getAgentInstallCommand } from '../src/admin/install-command.js';
+import { getAgentInstallCommand, getAgentInstallScript } from '../src/admin/install-command.js';
 import { getLatencyAgentInstallCommand } from '../src/admin/latency-agents.js';
 import { ensureV6Schema } from '../src/admin/schema.js';
 
@@ -65,7 +65,48 @@ try {
     request,
   );
   assert.equal(agentCommand.ok, true);
-  assert.match(agentCommand.linux_command, new RegExp(`NSTATUS_AGENT_TOKEN='${token}'`));
+  assert.equal(agentCommand.credential_bound, true);
+  assert.equal(agentCommand.credential_type, 'one_time_install_token');
+  assert.ok(agentCommand.linux_command.length < 360, `short install command is ${agentCommand.linux_command.length} characters`);
+  assert.match(agentCommand.linux_command, /Authorization: Bearer nsi_[a-f0-9]{48}/);
+  assert.match(agentCommand.linux_command, /\/api\/agent\/install-script' -o "\$t" && sh "\$t"\)$/);
+  assert.doesNotMatch(agentCommand.linux_command, /NSTATUS_AGENT_TOKEN|\bnst_[a-f0-9]{32,}\b/);
+
+  const installTicket = agentCommand.linux_command.match(/Bearer (nsi_[a-f0-9]{48})/)?.[1];
+  assert.ok(installTicket);
+  const storedTicket = database.prepare(`SELECT token_hash, used_at FROM agent_install_tickets WHERE target_id = 'vps-a' ORDER BY created_at DESC LIMIT 1`).get();
+  assert.equal(storedTicket.token_hash.length, 64);
+  assert.notEqual(storedTicket.token_hash, installTicket);
+  assert.equal(storedTicket.used_at, null);
+
+  const scriptResponse = await getAgentInstallScript(commandEnv, agentRequest(installTicket));
+  assert.equal(scriptResponse.status, 200);
+  assert.equal(scriptResponse.headers.get('cache-control'), 'no-store, max-age=0');
+  const installScript = await scriptResponse.text();
+  assert.match(installScript, new RegExp(`NSTATUS_AGENT_TOKEN='${token}'`));
+  assert.match(installScript, /NSTATUS_AGENT_LABEL='VPS A'/);
+  assert.match(installScript, /NSTATUS_EXPECTED_VERSION='v1\.2\.3'/);
+  assert.match(installScript, /NSTATUS_INSTALLER_SHA256='[a-f0-9]{64}'/);
+  assert.match(installScript, /NSTATUS_SETUP_SHA256='[a-f0-9]{64}'/);
+  assert.match(installScript, /NSTATUS_CFTZ_SHA256='[a-f0-9]{64}'/);
+  assert.match(installScript, /\[ "\$actual" = "\$NSTATUS_INSTALLER_SHA256" \]/);
+  await assert.rejects(
+    () => getAgentInstallScript(commandEnv, agentRequest(installTicket)),
+    error => error?.status === 401 && /已过期或已使用/.test(error.message),
+  );
+
+  const expiringCommand = await getAgentInstallCommand(
+    commandEnv,
+    new URL('https://api.example.test/api/agent/install-command?target_id=vps-a'),
+    request,
+  );
+  const expiringTicket = expiringCommand.linux_command.match(/Bearer (nsi_[a-f0-9]{48})/)?.[1];
+  database.prepare(`UPDATE agent_install_tickets SET expires_at = ? WHERE used_at IS NULL`).run(now - 1);
+  await assert.rejects(
+    () => getAgentInstallScript(commandEnv, agentRequest(expiringTicket)),
+    error => error?.status === 401 && /已过期或已使用/.test(error.message),
+  );
+
   const latencyCommand = await getLatencyAgentInstallCommand(
     commandEnv,
     new URL('https://api.example.test/api/latency-agent/install-command?node_id=latency-tokyo'),

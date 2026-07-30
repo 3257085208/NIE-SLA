@@ -3,6 +3,7 @@ import { nowSec, clamp, parseBoolean, sanitizeAgentId, retentionSeconds } from '
 import { safeJson, requireAgentForId, ApiError } from '../auth.js';
 import { writeAgentTelemetryR2History, compactPingPointsByTarget, loadAgentPingsR2History, pingPointsToSeries, summarizePingPointsByTarget } from '../metrics.js';
 import { rateLimitByIp } from '../ratelimit.js';
+import { getPingIntervalSec, ONE_SECOND_MAX_TARGETS, pingConfigPayload } from '../ping-config.js';
 
 function normalizeOkInt(value) {
   if (value === true || value === 1) return 1;
@@ -15,8 +16,11 @@ function normalizeOkInt(value) {
 
 export async function getPingTargets(env, options = {}) {
   const enabledOnly = options.enabledOnly !== false;
-  const rows = await env.DB.prepare(`SELECT * FROM ping_targets ${enabledOnly ? 'WHERE enabled = 1 ' : ''}ORDER BY name`).all();
-  return { ok: true, targets: rows.results || [] };
+  const [rows, interval] = await Promise.all([
+    env.DB.prepare(`SELECT * FROM ping_targets ${enabledOnly ? 'WHERE enabled = 1 ' : ''}ORDER BY name`).all(),
+    getPingIntervalSec(env),
+  ]);
+  return { ok: true, targets: rows.results || [], ...pingConfigPayload(interval) };
 }
 
 export async function createPingTarget(request, env) {
@@ -27,6 +31,8 @@ export async function createPingTarget(request, env) {
   const id = sanitizeAgentId(body?.id || name);
   const color = normalizeChartColor(body?.color, '#159754');
   if (body?.color !== undefined && !/^#[0-9a-f]{6}$/i.test(String(body.color).trim())) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
+  const existing = await env.DB.prepare(`SELECT enabled FROM ping_targets WHERE id = ?`).bind(id).first();
+  if (!existing && await getPingIntervalSec(env) === 1) await assertOneSecondTargetCapacity(env);
   const now = nowSec();
   await env.DB.prepare(`INSERT INTO ping_targets (id, name, target, color, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, target=excluded.target, color=excluded.color, updated_at=excluded.updated_at`).bind(id, name, target, color, now, now).run();
   return { ok: true, id };
@@ -41,6 +47,9 @@ export async function updatePingTarget(id, request, env) {
   const color = body?.color !== undefined ? normalizeChartColor(body.color, '') : normalizeChartColor(existing.color, '#159754');
   if (!color) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
   const enabled = body?.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled;
+  if (enabled === 1 && Number(existing.enabled || 0) !== 1 && await getPingIntervalSec(env) === 1) {
+    await assertOneSecondTargetCapacity(env);
+  }
   await env.DB.prepare(`UPDATE ping_targets SET name = ?, target = ?, color = ?, enabled = ?, updated_at = ? WHERE id = ?`).bind(name, target, color, enabled, nowSec(), id).run();
   return { ok: true, id };
 }
@@ -146,6 +155,13 @@ export async function getAgentPings(env, url, ctx = null) {
   };
   if (responseFormat === 'series') payload.series = pingPointsToSeries(pings);
   return payload;
+}
+
+async function assertOneSecondTargetCapacity(env) {
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS count FROM ping_targets WHERE enabled = 1`).first();
+  if (Number(row?.count || 0) >= ONE_SECOND_MAX_TARGETS) {
+    throw new ApiError(400, `1 秒 Ping 最多允许启用 ${ONE_SECOND_MAX_TARGETS} 个目标`);
+  }
 }
 
 function normalizeChartColor(value, fallback) {

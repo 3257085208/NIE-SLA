@@ -10,6 +10,7 @@ import {
   trimEmptyPointEdges,
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
+import { agentInstallCommandFromPayload } from '../js/install-command.js';
 import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, normalizeGroupByMode, priceBandKey } from '../js/shared/grouping.js';
 import { readStorage, removeStorage, writeStorage } from '../js/shared/storage.js';
 import { canShowTemperature, hasGpuData, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
@@ -89,6 +90,23 @@ const installResponse = await client.apiAdmin('/api/agent/install-command?target
 assert.equal(installResponse.ok, true);
 assert.match(lastRequest.url, /\/api\/agent\/install-command\?target_id=vps-a$/);
 assert.equal(lastRequest.options.headers['x-admin-session'], 'session');
+
+const oneTimeTicket = `nsi_${'a'.repeat(48)}`;
+const shortInstallCommand = `(t=$(mktemp) && trap 'rm -f "$t"' EXIT INT TERM && chmod 0600 "$t" && curl -fsSL -H 'Authorization: Bearer ${oneTimeTicket}' 'https://api.example/api/agent/install-script' -o "$t" && sh "$t")`;
+const validInstallPayload = {
+  ok: true,
+  target_id: 'vps-a',
+  api_base: 'https://api.example',
+  credential_bound: true,
+  credential_type: 'one_time_install_token',
+  linux_command: shortInstallCommand,
+};
+assert.equal(agentInstallCommandFromPayload(validInstallPayload, 'vps-a'), shortInstallCommand);
+assert.throws(() => agentInstallCommandFromPayload({ ...validInstallPayload, target_id: 'vps-b' }, 'vps-a'), /不匹配/);
+assert.throws(() => agentInstallCommandFromPayload({ ...validInstallPayload, credential_bound: false }, 'vps-a'), /未绑定/);
+assert.throws(() => agentInstallCommandFromPayload({ ...validInstallPayload, linux_command: "curl -fsSL 'https://api.example/api/agent/install-script' | sh" }, 'vps-a'), /缺少有效/);
+const fakeLongLivedAgentToken = 'nst_' + 'a'.repeat(48);
+assert.throws(() => agentInstallCommandFromPayload({ ...validInstallPayload, linux_command: `NSTATUS_AGENT_TOKEN='${fakeLongLivedAgentToken}' sh install.sh` }, 'vps-a'), /缺少有效|长期节点凭据/);
 
 const targets = [
   { name: 'a', group_name: 'G1', provider: 'DMIT', location: 'HK', line_type: '落地鸡', price: 8 },

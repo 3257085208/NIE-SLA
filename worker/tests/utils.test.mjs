@@ -182,7 +182,10 @@ const installCommand = await getAgentInstallCommand(
       prepare() {
         return {
           bind() {
-            return { first: async () => ({ id: 'vps-a', name: 'VPS A' }) };
+            return {
+              first: async () => ({ id: 'vps-a', name: 'VPS A' }),
+              run: async () => ({ meta: { changes: 1 } }),
+            };
           },
         };
       },
@@ -195,14 +198,13 @@ const installCommand = await getAgentInstallCommand(
 );
 assert.equal(installCommand.ok, true);
 assert.equal(installCommand.install_base, 'https://status.example.test');
-assert.match(installCommand.linux_command, /NSTATUS_AGENT_TOKEN='nst_[a-f0-9]{48}'/);
-assert.match(installCommand.linux_command, /NSTATUS_AGENT_LABEL='VPS A'/);
+assert.equal(installCommand.credential_bound, true);
+assert.equal(installCommand.credential_type, 'one_time_install_token');
+assert.match(installCommand.linux_command, /Authorization: Bearer nsi_[a-f0-9]{48}/);
+assert.match(installCommand.linux_command, /https:\/\/api\.example\.test\/api\/agent\/install-script/);
+assert.doesNotMatch(installCommand.linux_command, /NSTATUS_AGENT_TOKEN|\bnst_[a-f0-9]{32,}\b/);
+assert.ok(installCommand.linux_command.length < 360);
 assert.equal('windows_command' in installCommand, false);
-assert.match(installCommand.linux_command, /NSTATUS_EXPECTED_VERSION='v9\.8\.7'/);
-assert.match(installCommand.linux_command, /NSTATUS_INSTALLER_SHA256='[a-f0-9]{64}'/);
-assert.match(installCommand.linux_command, /NSTATUS_SETUP_SHA256='[a-f0-9]{64}'/);
-assert.match(installCommand.linux_command, /NSTATUS_CFTZ_SHA256='[a-f0-9]{64}'/);
-assert.match(installCommand.linux_command, /\[ "\$actual" = "\$NSTATUS_INSTALLER_SHA256" \]/);
 
 const installCommandWithoutSourceHeaders = await getAgentInstallCommand(
   {
@@ -213,7 +215,10 @@ const installCommandWithoutSourceHeaders = await getAgentInstallCommand(
       prepare() {
         return {
           bind() {
-            return { first: async () => ({ id: 'vps-a', name: 'VPS A' }) };
+            return {
+              first: async () => ({ id: 'vps-a', name: 'VPS A' }),
+              run: async () => ({ meta: { changes: 1 } }),
+            };
           },
         };
       },
@@ -224,7 +229,7 @@ const installCommandWithoutSourceHeaders = await getAgentInstallCommand(
 );
 assert.equal(installCommandWithoutSourceHeaders.ok, true);
 assert.equal(installCommandWithoutSourceHeaders.install_base, 'https://status.example.test');
-assert.match(installCommandWithoutSourceHeaders.linux_command, /https:\/\/status\.example\.test\/install\.sh/);
+assert.match(installCommandWithoutSourceHeaders.linux_command, /https:\/\/api\.example\.test\/api\/agent\/install-script/);
 const latencyInstallCommand = await getLatencyAgentInstallCommand(
   {
     AGENT_TOKEN: 'global-agent-secret',

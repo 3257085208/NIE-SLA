@@ -1,14 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.38",
-  "agent_version": "v1.0.38",
-  "source_ref": "app-v1.0.38",
-  "published_at": "2026-07-29T19:42:27Z",
-  "title": "NIE-SLA 1.0.38",
+  "version": "1.0.39",
+  "agent_version": "v1.0.39",
+  "source_ref": "app-v1.0.39",
+  "published_at": "2026-07-30T00:00:00Z",
+  "title": "NIE-SLA 1.0.39",
   "changelog": [
-    "系统更新检查增加六小时缓存、并发请求合并和失败退避；官方清单遇到 HTTP 429、5xx 或超时时回退到随部署打包的可信版本清单，不再让系统更新卡片整体失败",
-    "应用、Worker 与 Rust Agent 结束独立 Beta 编号，统一使用 1.0.38；以后每次正常迭代共同增加 0.0.1",
-    "Rust Agent 更新至 v1.0.38，并在本地生成五种 Linux 架构产物、SHA-256 校验和与完整安装引导哈希链"
+    "Ping 管理支持在后台设置 1-300 秒采样间隔，Agent 无需重启即可自动应用；1 秒模式最多启用 5 个目标",
+    "Agent 使用紧凑 Ping 序列分批上报，Worker 使用 5 分钟 Durable Object 分块并按小时合并归档，保持现有公开 API 与图表兼容",
+    "Rust Agent 更新至 v1.0.39，并在本地生成五种 Linux 架构产物、SHA-256 校验和与完整安装引导哈希链"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

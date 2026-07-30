@@ -76,6 +76,8 @@ run_check "email alert tests" node "$ROOT/worker/tests/alerts.test.mjs"
 run_check "admin reset tool" node --check "$ROOT/worker/scripts/reset-admin.mjs"
 run_check "external Latency agent tests" node "$ROOT/worker/tests/latency-agents.test.mjs"
 run_check "Ping target color tests" node "$ROOT/worker/tests/ping-target-colors.test.mjs"
+run_check "Ping configuration tests" node "$ROOT/worker/tests/ping-config.test.mjs"
+run_check "compact Ping series tests" node "$ROOT/worker/tests/ping-series.test.mjs"
 run_check "legacy chart color schema migration" node "$ROOT/worker/tests/schema-color-migration.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
   run_check "public export tool" node --check "$ROOT/scripts/export-public.mjs"

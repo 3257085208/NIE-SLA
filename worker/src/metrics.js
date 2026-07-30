@@ -6,6 +6,7 @@ import { rateLimitByIp } from './ratelimit.js';
 import { recordAgentAvailability } from './agent-availability.js';
 import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn } from './admin/schema.js';
 import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry } from './telemetry-buffer.js';
+import { getPingIntervalSec } from './ping-config.js';
 
 const MAX_AGENT_SAMPLES_PER_REPORT = 310;
 const MAX_AGENT_PINGS_PER_REPORT = 5_000;
@@ -190,7 +191,10 @@ export async function submitAgentMetrics(request, env, ctx = null) {
   const state = normalizeAgentMetricState(metrics);
 
   const vpsInfo = normalizeAgentVpsInfo(metrics.vps_info);
-  const pings = Array.isArray(metrics.pings) ? metrics.pings : [];
+  const legacyPings = Array.isArray(metrics.pings) ? metrics.pings : [];
+  const decodedSeries = pingSeriesToPoints(metrics.ping_series);
+  if (decodedSeries.error) return json({ ok: false, error: decodedSeries.error }, 400, env);
+  const pings = legacyPings.concat(decodedSeries.pings);
   const telemetryError = validateTelemetryBatch(rawSamples, pings, ts);
   if (telemetryError) return json({ ok: false, error: telemetryError }, 400, env);
 
@@ -209,7 +213,46 @@ export async function submitAgentMetrics(request, env, ctx = null) {
   return json({
     ok: true,
     agent_id: agentId,
+    ping_interval_sec: await getPingIntervalSec(env),
   }, 200, env, { 'cache-control': 'no-store' });
+}
+
+export function pingSeriesToPoints(seriesList) {
+  if (seriesList == null) return { pings: [], error: '' };
+  if (!Array.isArray(seriesList)) return { pings: [], error: 'ping_series must be an array' };
+  const pings = [];
+  for (const series of seriesList) {
+    if (!series || typeof series !== 'object' || Array.isArray(series)) {
+      return { pings: [], error: 'ping_series item must be an object' };
+    }
+    const targetId = String(series.target_id || '').trim();
+    const t0 = Number(series.t0);
+    const dt = series.dt;
+    const latency = series.latency_ms;
+    const ok = series.ok;
+    if (!targetId || targetId.length > 128 || !Number.isInteger(t0) || t0 <= 0) {
+      return { pings: [], error: 'ping_series has an invalid target_id or t0' };
+    }
+    if (!Array.isArray(dt) || !Array.isArray(latency) || !Array.isArray(ok)
+      || dt.length !== latency.length || dt.length !== ok.length) {
+      return { pings: [], error: 'ping_series arrays must have matching lengths' };
+    }
+    if (pings.length + dt.length > MAX_AGENT_PINGS_PER_REPORT) {
+      return { pings: [], error: `too many pings; max ${MAX_AGENT_PINGS_PER_REPORT}` };
+    }
+    for (let index = 0; index < dt.length; index++) {
+      const delta = Number(dt[index]);
+      const latencyMs = latency[index] == null ? null : Number(latency[index]);
+      const okValue = ok[index];
+      if (!Number.isInteger(delta) || delta < 0
+        || (latencyMs != null && (!Number.isFinite(latencyMs) || latencyMs < 0 || latencyMs > 1000))
+        || ![0, 1, false, true].includes(okValue)) {
+        return { pings: [], error: 'ping_series contains an invalid sample' };
+      }
+      pings.push({ target_id: targetId, ts: t0 + delta, latency_ms: latencyMs, ok: okValue });
+    }
+  }
+  return { pings, error: '' };
 }
 
 export async function getAgentMetrics(env, url, ctx = null) {
@@ -1049,11 +1092,11 @@ export function pingPointsToSeries(pings) {
 
 export function pingPointsFromPayload(payload) {
   if (!payload) return [];
-  if (Array.isArray(payload.series)) return pingSeriesToPoints(payload.series);
+  if (Array.isArray(payload.series)) return decodeStoredPingSeries(payload.series);
   return (Array.isArray(payload.pings) ? payload.pings : []).map(ping => normalizePingPoint(ping));
 }
 
-function pingSeriesToPoints(seriesList) {
+function decodeStoredPingSeries(seriesList) {
   const out = [];
   for (const series of seriesList || []) {
     const targetId = String(series?.target_id || '').trim();
