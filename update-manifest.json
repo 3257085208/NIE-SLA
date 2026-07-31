@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.47",
-  "agent_version": "v1.0.47",
-  "source_ref": "app-v1.0.47",
+  "version": "1.0.48",
+  "agent_version": "v1.0.48",
+  "source_ref": "app-v1.0.48",
   "published_at": "2026-07-31T00:00:00Z",
-  "title": "NIE-SLA 1.0.47",
+  "title": "NIE-SLA 1.0.48",
   "changelog": [
-    "修复一键部署同源 Worker 无来源请求头时无法生成 Agent 安装命令",
-    "安全回退到当前公开 HTTPS Worker Origin，并保留自定义域名优先级",
-    "增加与生产绑定形态一致的安装命令回归测试",
-    "Agent、Worker、前端与公开发布版本同步至 1.0.47"
+    "修复恢复数据中含大写或特殊字符的目标 ID 无法生成 Agent 安装命令",
+    "部署票据绑定原始目标，Agent 运行身份使用安全规范化 ID",
+    "检测规范化 Agent ID 冲突并明确拒绝，避免凭据或数据串号",
+    "Agent、Worker、前端与公开发布版本同步至 1.0.48"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

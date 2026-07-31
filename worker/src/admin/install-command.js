@@ -5,8 +5,8 @@ import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
 
-const INSTALLER_SHA256 = 'dd24c1e2245be7c1e7d36f02a348bf17ee0be913c09ec150cf78b5c3bfc6596e';
-const SETUP_SHA256 = '4fdba609743ce5efd96a9114b415ba9fac8e399bcbe1bf9a40a93d640c524392';
+const INSTALLER_SHA256 = '5a86ff338ecb17636b4808894fb8dd96c00ba14849ae334a3671655351e799c6';
+const SETUP_SHA256 = 'de118479b9c3222fbcbf20be3112bdd43e86586a39a446c9f6e605b1da002f42';
 const CFTZ_SHA256 = 'a65e790a8d125aa1a4b68015e24f985ea52c2a456e1232e98637c64b1a8b8758';
 const INSTALL_TICKET_PREFIX = 'nsi_';
 const INSTALL_TICKET_BYTES = 24;
@@ -14,13 +14,17 @@ const INSTALL_TICKET_TTL_SEC = 600;
 const INSTALL_SCRIPT_PATH = '/api/agent/install-script';
 
 export async function getAgentInstallCommand(env, url, request = null) {
-  const targetId = sanitizeAgentId(url.searchParams.get('target_id') || '');
-  if (!targetId) return { ok: false, error: '必须提供 target_id' };
+  const targetId = String(url.searchParams.get('target_id') || '').trim();
+  const agentId = sanitizeAgentId(targetId);
+  if (!targetId || !agentId) return { ok: false, error: '必须提供有效的 target_id' };
 
   const target = await env.DB.prepare(`SELECT id, name FROM targets WHERE id = ?`).bind(targetId).first().catch(() => null);
   if (!target) return { ok: false, error: 'Agent 目标不存在' };
+  if (await hasAgentIdCollision(env, targetId, agentId)) {
+    return { ok: false, error: '该目标 ID 与其他目标生成了相同的 Agent ID，请先修改其中一个目标 ID' };
+  }
   const label = String(target?.name || targetId).trim() || targetId;
-  const agentToken = await getOrCreateAgentToken(env, 'agent', targetId);
+  const agentToken = await getOrCreateAgentToken(env, 'agent', agentId);
   if (!agentToken) return { ok: false, error: '生成 Agent 专用 Token 失败' };
   const installBase = await agentInstallBase(env, request);
   if (!installBase) return { ok: false, error: 'Agent 安装地址不可用。请从公开前端域名打开管理后台，或配置 PUBLIC_AGENT_INSTALL_BASE。' };
@@ -72,20 +76,24 @@ export async function getAgentInstallScript(env, request) {
     .catch(() => null);
   if (!row?.target_id) throw new ApiError(401, '安装凭据无效、已过期或已使用');
 
-  const targetId = sanitizeAgentId(row.target_id);
-  const target = targetId
+  const targetId = String(row.target_id || '').trim();
+  const agentId = sanitizeAgentId(targetId);
+  const target = targetId && agentId
     ? await env.DB.prepare(`SELECT id FROM targets WHERE id = ?`).bind(targetId).first().catch(() => null)
     : null;
   if (!target) throw new ApiError(410, 'Agent 目标已不存在，请重新生成安装命令');
+  if (await hasAgentIdCollision(env, targetId, agentId)) {
+    throw new ApiError(409, '该目标 ID 与其他目标生成了相同的 Agent ID，请先修改其中一个目标 ID');
+  }
 
-  const agentToken = await getOrCreateAgentToken(env, 'agent', targetId);
+  const agentToken = await getOrCreateAgentToken(env, 'agent', agentId);
   if (!agentToken) throw new ApiError(500, '无法读取 Agent 专用 Token');
 
   const script = buildAgentInstallScript({
     installBase: row.install_base,
     apiBase: row.api_base,
     agentToken,
-    targetId,
+    targetId: agentId,
     label: row.target_label,
     pingSec: row.ping_sec,
     sha256SumsSha256: row.manifest_sha256,
@@ -100,6 +108,11 @@ export async function getAgentInstallScript(env, request) {
       'x-content-type-options': 'nosniff',
     },
   });
+}
+
+async function hasAgentIdCollision(env, targetId, agentId) {
+  const rows = await env.DB.prepare(`SELECT id FROM targets`).all();
+  return (rows.results || []).some(row => String(row.id || '') !== targetId && sanitizeAgentId(row.id) === agentId);
 }
 
 function buildAgentInstallScript(config) {

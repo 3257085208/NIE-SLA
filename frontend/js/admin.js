@@ -1,7 +1,7 @@
-import { agentInstallCommandFromPayload, copyText } from "./install-command.js?v=20260731-v1047";
-import { createAdminClient } from "./admin/api.js?v=20260731-v1047";
+import { agentInstallCommandFromPayload, copyText } from "./install-command.js?v=20260731-v1048";
+import { createAdminClient } from "./admin/api.js?v=20260731-v1048";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1047";
+import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1048";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -12,8 +12,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260731-v1047";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260731-v1047";
+} from "./shared/grouping.js?v=20260731-v1048";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260731-v1048";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(

@@ -25,6 +25,15 @@ database.prepare(`INSERT INTO targets
   (id, name, group_name, type, target_host, target_port, timeout_ms, interval_sec, probe_region, enabled, created_at, updated_at)
   VALUES (?, ?, 'VPS', 'tcp', '203.0.113.11', 443, 5000, 300, 'auto', 1, ?, ?)`)
   .run('vps-b', 'VPS B', now, now);
+for (const [id, name] of [
+  ['Hytron-hk-status', 'HK Status'],
+  ['bitsflowcloud-lax-9929&cmin2', 'LAX 9929&CMIN2'],
+]) {
+  database.prepare(`INSERT INTO targets
+    (id, name, group_name, type, target_host, target_port, timeout_ms, interval_sec, probe_region, enabled, created_at, updated_at)
+    VALUES (?, ?, 'VPS', 'tcp', '203.0.113.12', 443, 5000, 300, 'auto', 1, ?, ?)`)
+    .run(id, name, now, now);
+}
 database.prepare(`INSERT INTO latency_agents (id, name, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`)
   .run('latency-tokyo', 'Tokyo', now, now);
 
@@ -106,6 +115,39 @@ try {
     () => getAgentInstallScript(commandEnv, agentRequest(expiringTicket)),
     error => error?.status === 401 && /已过期或已使用/.test(error.message),
   );
+
+  for (const [rawTargetId, canonicalAgentId] of [
+    ['Hytron-hk-status', 'hytron-hk-status'],
+    ['bitsflowcloud-lax-9929&cmin2', 'bitsflowcloud-lax-9929-cmin2'],
+  ]) {
+    const legacyIdCommand = await getAgentInstallCommand(
+      commandEnv,
+      new URL(`https://api.example.test/api/agent/install-command?target_id=${encodeURIComponent(rawTargetId)}`),
+      request,
+    );
+    assert.equal(legacyIdCommand.ok, true);
+    assert.equal(legacyIdCommand.target_id, rawTargetId, 'the admin response must stay bound to the selected target');
+    const legacyIdTicket = legacyIdCommand.linux_command.match(/Bearer (nsi_[a-f0-9]{48})/)?.[1];
+    assert.ok(legacyIdTicket);
+    assert.ok(database.prepare(`SELECT token_hash FROM agent_install_tickets WHERE target_id = ? AND used_at IS NULL`).get(rawTargetId));
+    const legacyIdScript = await (await getAgentInstallScript(commandEnv, agentRequest(legacyIdTicket))).text();
+    assert.match(legacyIdScript, new RegExp(`NSTATUS_AGENT_ID='${canonicalAgentId}'`));
+    assert.ok(database.prepare(`SELECT token_hash FROM agent_credentials WHERE subject_type = 'agent' AND subject_id = ?`).get(canonicalAgentId));
+  }
+
+  for (const id of ['collision&target', 'collision-target']) {
+    database.prepare(`INSERT INTO targets
+      (id, name, group_name, type, target_host, target_port, timeout_ms, interval_sec, probe_region, enabled, created_at, updated_at)
+      VALUES (?, ?, 'VPS', 'tcp', '203.0.113.13', 443, 5000, 300, 'auto', 1, ?, ?)`)
+      .run(id, id, now, now);
+  }
+  const collisionCommand = await getAgentInstallCommand(
+    commandEnv,
+    new URL('https://api.example.test/api/agent/install-command?target_id=collision%26target'),
+    request,
+  );
+  assert.equal(collisionCommand.ok, false);
+  assert.match(collisionCommand.error, /相同的 Agent ID/);
 
   const latencyCommand = await getLatencyAgentInstallCommand(
     commandEnv,

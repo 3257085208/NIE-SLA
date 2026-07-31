@@ -181,6 +181,7 @@ const installCommand = await getAgentInstallCommand(
     DB: {
       prepare() {
         return {
+          all: async () => ({ results: [{ id: 'vps-a' }] }),
           bind() {
             return {
               first: async () => ({ id: 'vps-a', name: 'VPS A' }),
@@ -214,6 +215,7 @@ const installCommandWithoutSourceHeaders = await getAgentInstallCommand(
     DB: {
       prepare() {
         return {
+          all: async () => ({ results: [{ id: 'vps-a' }] }),
           bind() {
             return {
               first: async () => ({ id: 'vps-a', name: 'VPS A' }),
@@ -235,6 +237,7 @@ const integratedWorkerCommand = await getAgentInstallCommand(
     DB: {
       prepare() {
         return {
+          all: async () => ({ results: [{ id: 'vps-a' }] }),
           bind() {
             return {
               first: async () => ({ id: 'vps-a', name: 'VPS A' }),
