@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.46",
-  "agent_version": "v1.0.46",
-  "source_ref": "app-v1.0.46",
+  "version": "1.0.47",
+  "agent_version": "v1.0.47",
+  "source_ref": "app-v1.0.47",
   "published_at": "2026-07-31T00:00:00Z",
-  "title": "NIE-SLA 1.0.46",
+  "title": "NIE-SLA 1.0.47",
   "changelog": [
-    "修复 macOS 浏览器剪贴板无响应导致 Agent 部署按钮永久停留在生成中",
-    "受保护备份可在新部署密钥下恢复并重新封装每节点 Agent Token",
-    "后台支持统一设置 Agent 安装、API 与自动更新使用的自定义 HTTPS 域名",
-    "Agent、Worker、前端与公开发布版本同步至 1.0.46"
+    "修复一键部署同源 Worker 无来源请求头时无法生成 Agent 安装命令",
+    "安全回退到当前公开 HTTPS Worker Origin，并保留自定义域名优先级",
+    "增加与生产绑定形态一致的安装命令回归测试",
+    "Agent、Worker、前端与公开发布版本同步至 1.0.47"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

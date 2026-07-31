@@ -5,8 +5,8 @@ import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
 
-const INSTALLER_SHA256 = 'fc67fb3d1a9004935a96485f3933c4fb2590da879dd44cdf517afb7f31ba80f7';
-const SETUP_SHA256 = '06f37d5a0af46321f9b199adc819612d2268edf0cbd82078e5a4a78f012dc163';
+const INSTALLER_SHA256 = 'dd24c1e2245be7c1e7d36f02a348bf17ee0be913c09ec150cf78b5c3bfc6596e';
+const SETUP_SHA256 = '4fdba609743ce5efd96a9114b415ba9fac8e399bcbe1bf9a40a93d640c524392';
 const CFTZ_SHA256 = 'a65e790a8d125aa1a4b68015e24f985ea52c2a456e1232e98637c64b1a8b8758';
 const INSTALL_TICKET_PREFIX = 'nsi_';
 const INSTALL_TICKET_BYTES = 24;
@@ -189,8 +189,14 @@ export async function agentInstallBase(env, request = null) {
   const siteOrigin = String(env.PUBLIC_SITE_ORIGIN || '').trim();
   if (siteOrigin) return siteOrigin.replace(/\/+$/, '');
 
-  const origin = publicRequestOrigin(request);
-  return origin ? origin.replace(/\/+$/, '') : '';
+  const publicOrigin = publicRequestOrigin(request);
+  if (publicOrigin) return publicOrigin.replace(/\/+$/, '');
+
+  // Integrated one-click deployments serve Admin and Agent assets from the
+  // same Worker. Their no-referrer policy leaves same-origin GETs without
+  // Origin or Referer headers, so the request URL is the only public base.
+  const workerOrigin = requestUrlOrigin(request);
+  return workerOrigin ? workerOrigin.replace(/\/+$/, '') : '';
 }
 
 function publicRequestOrigin(request = null) {
@@ -205,6 +211,15 @@ function publicRequestOrigin(request = null) {
   } catch (_) {}
 
   return '';
+}
+
+function requestUrlOrigin(request = null) {
+  try {
+    const origin = new URL(String(request?.url || '')).origin;
+    return isPublicHttpOrigin(origin) ? origin : '';
+  } catch (_) {
+    return '';
+  }
 }
 
 function isPublicHttpOrigin(value) {

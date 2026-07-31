@@ -228,6 +228,30 @@ const installCommandWithoutSourceHeaders = await getAgentInstallCommand(
   new Request('https://api.example.test/api/agent/install-command?target_id=vps-a'),
 );
 assert.equal(installCommandWithoutSourceHeaders.ok, true);
+
+const integratedWorkerCommand = await getAgentInstallCommand(
+  {
+    AGENT_TOKEN: 'global-agent-secret',
+    DB: {
+      prepare() {
+        return {
+          bind() {
+            return {
+              first: async () => ({ id: 'vps-a', name: 'VPS A' }),
+              run: async () => ({ meta: { changes: 1 } }),
+            };
+          },
+        };
+      },
+    },
+  },
+  new URL('https://generated-name.workers.dev/api/agent/install-command?target_id=vps-a'),
+  new Request('https://generated-name.workers.dev/api/agent/install-command?target_id=vps-a'),
+);
+assert.equal(integratedWorkerCommand.ok, true);
+assert.equal(integratedWorkerCommand.install_base, 'https://generated-name.workers.dev');
+assert.equal(integratedWorkerCommand.api_base, 'https://generated-name.workers.dev');
+assert.match(integratedWorkerCommand.linux_command, /https:\/\/generated-name\.workers\.dev\/api\/agent\/install-script/);
 assert.equal(installCommandWithoutSourceHeaders.install_base, 'https://status.example.test');
 assert.match(installCommandWithoutSourceHeaders.linux_command, /https:\/\/api\.example\.test\/api\/agent\/install-script/);
 const latencyInstallCommand = await getLatencyAgentInstallCommand(
