@@ -1,4 +1,4 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1050";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1051";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
 import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1049";
