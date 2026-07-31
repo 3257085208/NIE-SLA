@@ -10,7 +10,7 @@ import {
   trimEmptyPointEdges,
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
-import { agentInstallCommandFromPayload } from '../js/install-command.js';
+import { agentInstallCommandFromPayload, copyText } from '../js/install-command.js';
 import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, normalizeGroupByMode, priceBandKey } from '../js/shared/grouping.js';
 import { readStorage, removeStorage, writeStorage } from '../js/shared/storage.js';
 import { canShowTemperature, hasGpuData, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
@@ -107,6 +107,55 @@ assert.throws(() => agentInstallCommandFromPayload({ ...validInstallPayload, cre
 assert.throws(() => agentInstallCommandFromPayload({ ...validInstallPayload, linux_command: "curl -fsSL 'https://api.example/api/agent/install-script' | sh" }, 'vps-a'), /缺少有效/);
 const fakeLongLivedAgentToken = 'nst_' + 'a'.repeat(48);
 assert.throws(() => agentInstallCommandFromPayload({ ...validInstallPayload, linux_command: `NSTATUS_AGENT_TOKEN='${fakeLongLivedAgentToken}' sh install.sh` }, 'vps-a'), /缺少有效|长期节点凭据/);
+
+const originalBrowserGlobals = new Map(['navigator', 'window', 'document'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+let clipboardWrites = 0;
+let fallbackCopies = 0;
+const installClipboardGlobals = (writeText, fallbackResult = true) => {
+  const textarea = {
+    value: '',
+    style: {},
+    setAttribute() {},
+    select() {},
+    remove() {},
+  };
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: { writeText } } });
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { isSecureContext: true } });
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: {
+      body: { appendChild() {} },
+      createElement() { return textarea; },
+      execCommand(command) {
+        assert.equal(command, 'copy');
+        fallbackCopies++;
+        return fallbackResult;
+      },
+    },
+  });
+};
+try {
+  installClipboardGlobals(async value => { clipboardWrites++; assert.equal(value, shortInstallCommand); });
+  await copyText(shortInstallCommand, { timeoutMs: 100 });
+  assert.equal(clipboardWrites, 1);
+  assert.equal(fallbackCopies, 0);
+
+  installClipboardGlobals(async () => { clipboardWrites++; throw new DOMException('blocked', 'NotAllowedError'); });
+  await copyText(shortInstallCommand, { timeoutMs: 100 });
+  assert.equal(fallbackCopies, 1, 'rejected Clipboard API must use the fallback');
+
+  installClipboardGlobals(() => new Promise(() => {}));
+  await copyText(shortInstallCommand, { timeoutMs: 100 });
+  assert.equal(fallbackCopies, 2, 'pending Clipboard API must time out and use the fallback');
+
+  installClipboardGlobals(async () => { throw new DOMException('blocked', 'NotAllowedError'); }, false);
+  await assert.rejects(() => copyText(shortInstallCommand, { timeoutMs: 100 }), /剪贴板权限/);
+} finally {
+  for (const [key, descriptor] of originalBrowserGlobals) {
+    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+    else delete globalThis[key];
+  }
+}
 
 const targets = [
   { name: 'a', group_name: 'G1', provider: 'DMIT', location: 'HK', line_type: '落地鸡', price: 8 },

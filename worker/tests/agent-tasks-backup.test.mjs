@@ -5,6 +5,7 @@ import { ensureV6Schema } from '../src/admin/schema.js';
 import { createAgentTask, createAgentTasks, claimAgentTask, completeAgentTask, listAgentTasks, normalizeTaskResult } from '../src/admin/agent-tasks.js';
 import { getGeoIpSettings, submitAgentLocation, updateGeoIpSettings, validateCustomGeoIpUrl } from '../src/admin/agent-location.js';
 import { exportBackup, previewBackup, restoreBackup } from '../src/admin/backup.js';
+import { getOrCreateAgentToken, verifyAgentCredential } from '../src/agent-credentials.js';
 import { normalizeAgentCapabilities } from '../src/metrics.js';
 
 globalThis.crypto ||= webcrypto;
@@ -186,8 +187,7 @@ assert.equal(location.city, 'Los Angeles');
 assert.equal(location.location_source, 'ipip_net');
 assert.equal(sqlite.prepare(`SELECT country_code FROM nodes WHERE id = ?`).get('vps-a').country_code, 'US');
 
-sqlite.prepare(`INSERT INTO agent_credentials (subject_type, subject_id, token_hash, token_ciphertext, created_at, updated_at)
-  VALUES ('agent', 'vps-a', 'hash', 'ciphertext', ?, ?)`).run(now, now);
+const originalAgentToken = await getOrCreateAgentToken(env, 'agent', 'vps-a');
 sqlite.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?), (?, ?, ?)`)
   .run(
     'nq_image_host_settings', JSON.stringify({ endpoint: 'https://private-image-host.example/upload', upload_channel: 'cfr2', folder: 'legacy/path' }), now,
@@ -233,7 +233,9 @@ assert.equal(protectedBackup.backup.sensitive.iterations, 100_000);
 assert.equal(JSON.stringify(protectedBackup.backup).includes('private-image-host.example'), false);
 const preview = await previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'Backup-password-123!' }));
 assert.equal(preview.preview.counts.targets, 2);
-assert.equal(preview.preview.sensitive_counts.agent_credentials, 1);
+assert.equal(preview.preview.sensitive_counts.agent_tokens, 1);
+assert.equal(preview.preview.sensitive_counts.agent_credentials, 0);
+assert.equal(preview.preview.agent_connections_preserved, true);
 assert.equal(preview.preview.sensitive_counts.app_meta, 2);
 await assert.rejects(
   () => previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'wrong-password' })),
@@ -246,17 +248,22 @@ await assert.rejects(
   error => error?.status === 400 && /PBKDF2|Cloudflare/.test(error.message),
 );
 sqlite.prepare(`UPDATE targets SET name = 'Changed' WHERE id = 'vps-a'`).run();
+sqlite.prepare(`DELETE FROM agent_credentials`).run();
 sqlite.prepare(`DELETE FROM app_meta WHERE key LIKE 'nq_image_host_%'`).run();
+const restoredEnv = { ...env, TOTP_ENCRYPTION_KEY: 'new-deployment-key-that-is-long-enough' };
 const restored = await restoreBackup(jsonRequest({
   backup: protectedBackup.backup,
   password: 'Backup-password-123!',
   mode: 'merge',
   confirm: 'RESTORE',
-}), env);
+}), restoredEnv);
 assert.equal(restored.ok, true);
 assert.equal(sqlite.prepare(`SELECT name FROM targets WHERE id = 'vps-a'`).get().name, 'VPS A');
 assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM nodes WHERE id = 'vps-a'`).get().count, 1);
 assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM app_meta WHERE key LIKE 'nq_image_host_%'`).get().count, 2);
+assert.equal(restored.restored.agent_tokens, 1);
+assert.equal(await getOrCreateAgentToken(restoredEnv, 'agent', 'vps-a'), originalAgentToken);
+assert.equal(await verifyAgentCredential(restoredEnv, 'agent', 'vps-a', originalAgentToken), true);
 assert.equal(restored.restore_snapshot.stored, true);
 assert.equal(env.ARCHIVE.objects.size, 1);
 const internalSnapshot = JSON.parse([...env.ARCHIVE.objects.values()][0]);
@@ -271,7 +278,7 @@ const replaced = await restoreBackup(jsonRequest({
   password: 'Backup-password-123!',
   mode: 'replace',
   confirm: 'RESTORE',
-}), env);
+}), restoredEnv);
 assert.deepEqual(replaced.runtime_cleanup, { d1_cleared: true, r2_cleared: true, warnings: [] });
 
 console.log('Agent task, GeoIP, and backup tests passed');

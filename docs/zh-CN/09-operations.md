@@ -20,7 +20,7 @@ curl -fsSL https://你的域名/bin/SHA256SUMS
 - 更新大版本；
 - 更换 Cloudflare 账号。
 
-敏感备份密码与文件分开保存。备份不包含完整 R2 历史。
+受保护备份默认包含每节点 Agent Token。Token 只存在于备份密码加密的数据包内，并在恢复时使用新部署的加密材料重新封装，因此跨账号或重建 D1 后不需要逐台重装 Agent。取消“保留凭据”后生成的普通备份不含 Token。备份密码与文件分开保存，任何 JSON 备份都不包含完整 R2 历史。
 
 ## 恢复
 
@@ -39,7 +39,9 @@ curl -fsSL https://你的域名/bin/SHA256SUMS
 
 优先把原 D1、R2 直接绑定到单 Worker，并保持 Agent API 域名。这样 Agent 无需更新配置，高频历史也继续存在。
 
-若跨账号迁移，先部署空控制面，再恢复加密备份，然后单独迁移 R2。完成前保留旧部署。
+若跨账号迁移，先部署空控制面，再恢复受保护备份，然后单独迁移 R2。恢复确认中应显示可迁移 Agent Token 数量；完成前保留旧部署。
+
+在后台“设置 → Agent → Agent 连接域名”填写已经路由到新 Worker 的公网 HTTPS Origin，可让安装、API 与更新避开默认 `workers.dev`。地址不能包含路径、查询参数或账号密码，并且必须同时提供 `/api`、`/install.sh` 和 `/bin`。
 
 ## Beta 任务排障
 
@@ -79,4 +81,4 @@ NQ 失败可能来自系统权限、缺少依赖、脚本超时或上游不可�
 | Agent 在线但 CF Latency 无数据 | 公网端口、DNS-only AAAA、Cloudflare TCP 限制 |
 | 外部 Latency 只有一个点 | 服务重复、旧进程、Token、上报日志 |
 | 城市为空 | GeoIP 服务商能力、IPv4/IPv6 出口、Agent 日志 |
-| 恢复后 Agent 离线 | 是否恢复敏感凭据、ID/API 域名是否保持 |
+| 恢复后 Agent 离线 | 是否恢复受保护凭据、Token 数量是否正确、ID/API 域名是否保持 |

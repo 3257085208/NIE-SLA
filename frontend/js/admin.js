@@ -1,7 +1,7 @@
-import { agentInstallCommandFromPayload, copyText } from "./install-command.js?v=20260730-install1";
-import { createAdminClient } from "./admin/api.js?v=20260731-v1045";
+import { agentInstallCommandFromPayload, copyText } from "./install-command.js?v=20260731-v1046";
+import { createAdminClient } from "./admin/api.js?v=20260731-v1046";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1045";
+import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1046";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -12,8 +12,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260731-v1045";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260731-v1045";
+} from "./shared/grouping.js?v=20260731-v1046";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260731-v1046";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -83,6 +83,7 @@ let managedThemes = [];
 let toastTimer = 0;
 let vpsSlaChart = null;
 let modalReturnFocus = null;
+let modalCancelHandler = null;
 function toast(m, t = "info") {
   const e = byId("toast");
   clearTimeout(toastTimer);
@@ -2047,6 +2048,7 @@ async function loadSettings() {
   loadAdminPath();
   loadGeoIp();
   loadBackup();
+  loadAgentOrigin();
   loadAgentUpdate();
   loadTraffic();
   loadAlerts();
@@ -2093,10 +2095,11 @@ function loadBackup() {
   const box = byId("sBackup");
   if (!box) return;
   box.innerHTML = `
-    <p class="hint">普通备份包含节点、检测、商家、机器类型、账单、通知非秘密配置和外观。历史数据不塞进 JSON；从 Pages + Worker 切换到单 Worker 时，优先复用原 D1、R2 和加密密钥，现有 Agent 无需改地址。</p>
-    <label class="switch-line"><input id="backupSecrets" type="checkbox"><span>同时导出 Agent/TOTP/通知凭据（密码加密）</span></label>
-    <p class="hint backup-warning">敏感备份恢复后仍需使用原 <code>TOTP_ENCRYPTION_KEY</code>；未保留时，已安装 Agent 和加密通知凭据将无法读取。</p>
-    <div class="backup-actions"><button class="btn btn-blue btn-sm" id="exportBackup">导出备份</button><button class="btn btn-sm" id="chooseRestoreBackup">恢复备份</button></div>`;
+    <p class="hint">便携备份包含节点、检测、账单、外观和 Agent 连接域名，不包含 D1/R2 历史。建议保留下方受保护凭据，迁移到全新 Worker 与 D1 后，已安装 Agent 可继续连接。</p>
+    <label class="switch-line"><input id="backupSecrets" type="checkbox" checked><span>保留 Agent/TOTP/通知凭据（推荐，密码加密）</span></label>
+    <p class="hint backup-warning">Agent Token 只会出现在备份密码加密的数据包内，恢复时自动使用新部署密钥重新封装。TOTP 和通知的旧密文仍建议配合原 <code>TOTP_ENCRYPTION_KEY</code> 迁移。</p>
+    <div class="backup-actions"><button class="btn btn-blue btn-sm" id="exportBackup">导出备份</button><button class="btn btn-sm" id="chooseRestoreBackup">恢复备份</button></div>
+    <p class="backup-status" id="backupStatus" role="status" aria-live="polite" hidden></p>`;
   byId("exportBackup").onclick = downloadBackup;
   byId("chooseRestoreBackup").onclick = () => byId("restoreBackupFile").click();
   byId("restoreBackupFile").onchange = restoreBackupFile;
@@ -2106,29 +2109,97 @@ async function downloadBackup() {
   const includeSecrets = !!byId("backupSecrets")?.checked;
   let password = "";
   if (includeSecrets) {
-    password = prompt("为敏感备份设置至少 10 位密码。此密码无法找回：") || "";
+    password = await requestBackupPassword();
     if (!password) return;
   }
   const button = byId("exportBackup");
-  if (button) button.disabled = true;
+  const oldText = button?.textContent || "导出备份";
+  if (button) {
+    button.disabled = true;
+    button.textContent = includeSecrets ? "正在加密..." : "正在生成...";
+    button.setAttribute("aria-busy", "true");
+  }
+  setBackupStatus(includeSecrets ? "正在加密 Agent Token 与敏感设置，请不要关闭页面..." : "正在生成普通备份...", "info");
   try {
-    const data = await api("/api/backup/export", {
+    const data = await apiAdmin("/api/backup/export", {
       method: "POST",
       body: JSON.stringify({ include_secrets: includeSecrets, password }),
-    });
+    }, 60000);
     const blob = new globalThis.Blob([JSON.stringify(data.backup, null, 2)], { type: "application/json" });
     const href = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = href;
     link.download = `nie-sla-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.hidden = true;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(href);
-    toast("备份已导出", "ok");
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 1000);
+    setBackupStatus(includeSecrets ? "受保护备份已生成并开始下载。" : "普通备份已生成并开始下载。", "ok");
+    toast("备份已导出并开始下载", "ok");
   } catch (error) {
-    toast(error.message, "err");
+    const message = error?.message || "未知错误";
+    setBackupStatus(`备份导出失败：${message}`, "err");
+    toast(`备份导出失败：${message}`, "err");
   } finally {
-    if (button) button.disabled = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+      button.removeAttribute("aria-busy");
+    }
   }
+}
+
+function requestBackupPassword({ restore = false } = {}) {
+  return new Promise((resolve) => {
+    const modal = byId("modal");
+    let settled = false;
+    modal.className = "modal backup-password-modal";
+    modal.innerHTML = `
+      <h3>${restore ? "解锁受保护备份" : "加密受保护备份"}</h3>
+      <p class="hint">${restore ? "输入导出时设置的备份密码，验证通过后才能预览并恢复敏感凭据。" : "设置至少 10 位密码，用于加密 Agent Token、TOTP 与通知凭据。此密码无法找回。"}</p>
+      <div class="f"><label for="backupPassword">备份密码</label><input id="backupPassword" type="password" minlength="10" autocomplete="${restore ? "current-password" : "new-password"}" spellcheck="false"></div>
+      <div class="error" id="backupPasswordError" role="alert" hidden></div>
+      <div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="confirmBackupPassword">${restore ? "解锁并预览" : "继续加密"}</button></div>`;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      modalCancelHandler = null;
+      closeModal();
+      resolve(value);
+    };
+    modalCancelHandler = () => {
+      if (settled) return;
+      settled = true;
+      resolve("");
+    };
+    byId("confirmBackupPassword").onclick = () => {
+      const input = byId("backupPassword");
+      const error = byId("backupPasswordError");
+      const value = input.value;
+      if (value.length < 10) {
+        error.textContent = "密码至少需要 10 位，尚未开始处理备份。";
+        error.hidden = false;
+        input.focus();
+        return;
+      }
+      finish(value);
+    };
+    byId("backupPassword").onkeydown = (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      byId("confirmBackupPassword").click();
+    };
+    openModal();
+  });
+}
+
+function setBackupStatus(message, type = "info") {
+  const status = byId("backupStatus");
+  if (!status) return;
+  status.hidden = !message;
+  status.textContent = message || "";
+  status.className = `backup-status ${type}`;
 }
 
 async function restoreBackupFile(event) {
@@ -2138,13 +2209,22 @@ async function restoreBackupFile(event) {
   if (file.size > 2 * 1024 * 1024) return toast("备份文件不能超过 2 MB", "err");
   try {
     const backup = JSON.parse(await file.text());
-    const password = backup.sensitive ? (prompt("请输入敏感备份密码：") || "") : "";
+    const password = backup.sensitive ? await requestBackupPassword({ restore: true }) : "";
+    if (backup.sensitive && !password) return;
     const preview = await api("/api/backup/preview", {
       method: "POST",
       body: JSON.stringify({ backup, password }),
     });
     const counts = preview.preview?.counts || {};
-    const secretWarning = backup.sensitive ? "\n\n此文件包含敏感密文。请先确认新部署使用原 TOTP_ENCRYPTION_KEY，否则现有 Agent 凭据无法读取。" : "";
+    const tokenCount = Number(preview.preview?.sensitive_counts?.agent_tokens || 0);
+    const legacyCredentialCount = Number(preview.preview?.sensitive_counts?.agent_credentials || 0);
+    const secretWarning = backup.sensitive
+      ? tokenCount > 0
+        ? `\n\n受保护数据包含 ${tokenCount} 个可迁移 Agent Token；恢复时会使用当前部署密钥重新封装。`
+        : legacyCredentialCount > 0
+          ? `\n\n这是旧格式受保护备份，包含 ${legacyCredentialCount} 个 Agent 凭据。原节点可继续认证，但读取或重新生成命令可能仍需原加密密钥。`
+          : "\n\n此文件包含受密码保护的敏感配置，但没有 Agent Token。"
+      : "\n\n此普通备份不含 Agent 凭据；恢复到新 D1 后，原 VPS Agent 无法自动重新认证。";
     if (!confirm(`将恢复 ${counts.targets || 0} 个目标、${counts.ping_targets || 0} 个 Ping 目标和 ${counts.latency_agents || 0} 个 Latency Agent。\n\n默认采用合并模式；恢复前会自动在 R2 创建快照。${secretWarning}\n\n继续？`)) return;
     await api("/api/backup/restore", {
       method: "POST",
@@ -2331,6 +2411,37 @@ async function saveAppearance(reset) {
     toast(reset ? '已恢复默认外观' : '外观设置已保存', 'ok');
     loadAppearance();
   } catch (e) { toast(e.message, 'err'); }
+}
+async function loadAgentOrigin() {
+  const box = byId("sAgentOrigin");
+  if (!box) return;
+  try {
+    const d = await api("/api/settings");
+    box.innerHTML = `
+      <div class="f"><label for="agentPublicBase">自定义 HTTPS 域名</label><input id="agentPublicBase" type="url" inputmode="url" autocomplete="url" value="${escapeHtml(d.agent_public_base || "")}" placeholder="https://agent.example.com"></div>
+      <p class="hint">该域名必须已路由到当前 Worker，并能访问 <code>/api</code>、<code>/install.sh</code> 与 <code>/bin</code>。保存后，新生成的 Agent/Latency 安装命令及自动更新都会使用它；留空恢复自动选择。</p>
+      <button class="btn btn-primary btn-sm" id="saveAgentOrigin">保存连接域名</button>`;
+    byId("saveAgentOrigin").onclick = saveAgentOrigin;
+  } catch (e) {
+    errBox("sAgentOrigin", e);
+  }
+}
+async function saveAgentOrigin() {
+  const input = byId("agentPublicBase");
+  const button = byId("saveAgentOrigin");
+  if (button) button.disabled = true;
+  try {
+    const d = await api("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ agent_public_base: input?.value.trim() || "" }),
+    });
+    if (input) input.value = d.agent_public_base || "";
+    toast(d.agent_public_base ? "Agent 连接域名已保存" : "已恢复自动选择 Agent 连接域名", "ok");
+  } catch (e) {
+    toast(e.message, "err");
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 async function loadAgentUpdate() {
   try {
@@ -2778,6 +2889,8 @@ function openModal() {
 function closeModal() {
   const overlay = byId("overlay");
   const modal = byId("modal");
+  const cancelHandler = modalCancelHandler;
+  modalCancelHandler = null;
   const returnFocus = modalReturnFocus;
   const wasOpen = overlay.classList.contains("on");
   overlay.classList.remove("on");
@@ -2791,6 +2904,7 @@ function closeModal() {
   document.body.classList.remove("admin-modal-open");
   modalReturnFocus = null;
   if (wasOpen && returnFocus?.isConnected && typeof returnFocus.focus === "function") returnFocus.focus();
+  if (cancelHandler) cancelHandler();
 }
 byId("loginBtn").onclick = login;
 byId("loginUsername").onkeydown = (e) => {

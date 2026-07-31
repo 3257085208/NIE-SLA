@@ -5,7 +5,7 @@ import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAg
 import { rateLimitD1 } from '../src/ratelimit.js';
 import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, normalizeAgentMetricState, normalizeAgentVpsInfo, pingLossPointsToRuns, pingLossRunsToPoints, pingPointsFromPayload, pingPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
-import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
+import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeAgentPublicBase, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
 import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates } from '../src/storage.js';
 import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
@@ -276,6 +276,12 @@ assert.deepEqual(await requireLatencyAgentForId(agentRequest(latencyToken), late
 const settingsEnv = fakeD1Env();
 assert.equal((await getPublicSettings(settingsEnv)).agent_auto_update, true);
 assert.equal('themes' in (await getPublicSettings(settingsEnv)), false);
+assert.equal(normalizeAgentPublicBase('https://Agent.Example.com/'), 'https://agent.example.com');
+assert.throws(() => normalizeAgentPublicBase('http://agent.example.com'), /HTTPS/);
+assert.throws(() => normalizeAgentPublicBase('https://user:pass@agent.example.com'), /账号密码/);
+assert.throws(() => normalizeAgentPublicBase('https://agent.example.com/api'), /路径/);
+assert.throws(() => normalizeAgentPublicBase('https://agent.example.com/?from=admin'), /参数/);
+assert.throws(() => normalizeAgentPublicBase('https://127.0.0.1'), /私有|内部/);
 await updatePublicSettings(new Request('https://example.com', { method: 'PATCH', body: JSON.stringify({ frontend_theme: 'cards' }) }), settingsEnv);
 assert.equal((await getPublicSettings(settingsEnv)).frontend_theme, 'classic');
 assert.equal(normalizeFrontendAppearance({ site_name: ' Demo ', brand_logo_url: 'javascript:bad', accent_color: 'red' }).site_name, 'Demo');
@@ -342,6 +348,29 @@ assert.equal(sameOriginPolicy.download_base, 'https://one-click.example');
 assert.equal(sameOriginPolicy.release_ready, true);
 assert.equal(sameOriginPolicy.latest_version, 'v1.0.21');
 assert.deepEqual(assetRequests.sort(), ['/bin/SHA256SUMS', '/bin/VERSION']);
+await updatePublicSettings(new Request('https://example.com', {
+  method: 'PATCH',
+  body: JSON.stringify({ agent_public_base: 'https://agent.example.com/' }),
+}), settingsEnv);
+assert.equal((await getPublicSettings(settingsEnv)).agent_public_base, undefined);
+assert.equal((await getPublicSettings(settingsEnv, { includeAdmin: true })).agent_public_base, 'https://agent.example.com');
+const customOriginPolicy = await getAgentUpdatePolicy({
+  ...settingsEnv,
+  ASSETS: {
+    async fetch(request) {
+      return request.url.endsWith('/bin/VERSION')
+        ? new Response('v1.0.22\n')
+        : new Response('def  nstatus-metrics-linux-amd64\n');
+    },
+  },
+}, new Request('https://generated-name.workers.dev/api/agent/update-policy?agent_id=vps-a'));
+assert.equal(customOriginPolicy.download_base, 'https://agent.example.com');
+assert.equal(customOriginPolicy.latest_version, 'v1.0.22');
+await updatePublicSettings(new Request('https://example.com', {
+  method: 'PATCH',
+  body: JSON.stringify({ agent_public_base: '' }),
+}), settingsEnv);
+assert.equal((await getPublicSettings(settingsEnv, { includeAdmin: true })).agent_public_base, '');
 globalThis.fetch = originalFetch;
 
 const reordered = normalizeTargetOrder(['web-c', 'vps-a'], ['vps-a', 'vps-b', 'web-c']);
@@ -715,6 +744,9 @@ function fakeStatement(sql, tables) {
         const row = tables.app_meta.find(item => item.key === key);
         if (row) Object.assign(row, { value, updated_at: updatedAt });
         else tables.app_meta.push({ key, value, updated_at: updatedAt });
+      } else if (sql.includes('DELETE FROM app_meta')) {
+        const index = tables.app_meta.findIndex(item => item.key === params[0]);
+        if (index >= 0) tables.app_meta.splice(index, 1);
       }
       return { success: true, meta: { changes: 1 } };
     },

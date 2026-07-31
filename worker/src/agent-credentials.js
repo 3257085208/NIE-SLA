@@ -59,6 +59,54 @@ export async function findAgentCredential(env, token) {
   return { agent_id: String(row.subject_id) };
 }
 
+export async function exportAgentTokens(env) {
+  if (!env.DB) throw new Error('导出节点凭据需要 D1 数据库');
+  const result = await env.DB.prepare(`SELECT subject_type, subject_id, token_hash, token_ciphertext
+    FROM agent_credentials ORDER BY subject_type, subject_id`).all();
+  const tokens = [];
+  for (const row of result.results || []) {
+    const subject = normalizeSubject(row.subject_type, row.subject_id);
+    const token = await decryptCredential(row, env, subject);
+    tokens.push({ subject_type: subject.type, subject_id: subject.id, token });
+  }
+  return tokens;
+}
+
+export async function restoreAgentTokens(env, rows) {
+  if (!Array.isArray(rows) || !rows.length) return 0;
+  if (!env.DB) throw new Error('恢复节点凭据需要 D1 数据库');
+  const statements = [];
+  const seen = new Set();
+  const now = nowSec();
+  for (const row of rows.slice(0, 10_000)) {
+    const subject = normalizeSubject(row?.subject_type, row?.subject_id);
+    const token = String(row?.token || '').trim();
+    if (!/^nst_[a-f0-9]{48}(?:[a-f0-9]{16})?$/.test(token)) throw new Error(`节点 ${subject.id} 的备份 Token 格式无效`);
+    const key = `${subject.type}:${subject.id}`;
+    if (seen.has(key)) throw new Error(`节点 ${subject.id} 的备份凭据重复`);
+    seen.add(key);
+    statements.push(env.DB.prepare(`INSERT INTO agent_credentials
+      (subject_type, subject_id, token_hash, token_ciphertext, created_at, updated_at, last_used_at)
+      VALUES (?, ?, ?, ?, ?, ?, NULL)
+      ON CONFLICT(subject_type, subject_id) DO UPDATE SET
+        token_hash = excluded.token_hash,
+        token_ciphertext = excluded.token_ciphertext,
+        updated_at = excluded.updated_at`)
+      .bind(
+        subject.type,
+        subject.id,
+        await sha256Hex(token),
+        await encryptToken(token, env, subject),
+        now,
+        now,
+      ));
+  }
+  for (let offset = 0; offset < statements.length; offset += 50) {
+    await env.DB.batch(statements.slice(offset, offset + 50));
+  }
+  return statements.length;
+}
+
 export async function legacyScopedToken(env, subjectType, subjectId) {
   const configured = String(env.AGENT_TOKEN || '').trim();
   if (!configured) return '';

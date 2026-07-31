@@ -43,4 +43,4 @@ IPv4 解锁报告中的国家/地区字段按上游原值保存；颜色根据�
 
 ## 网络
 
-Agent 只需要出站 HTTPS。不要开放额外管理端口。若 `workers.dev` 在 VPS 网络不可达，使用具有可用 A/AAAA 的自定义 Worker 域名。
+Agent 只需要出站 HTTPS。不要开放额外管理端口。若 `workers.dev` 在 VPS 网络不可达，把具有可用 A/AAAA 且已路由到 Worker 的自定义域名填入后台“设置 → Agent → Agent 连接域名”；随后生成的安装命令和更新策略会统一使用该地址。

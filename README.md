@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.0.45**
+**Stable · 1.0.46**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -74,7 +74,9 @@ VPS 上的 Agent 安装和后续更新从该用户自己的 Worker/站点 `/bin`
 
 优先复用原 D1、R2、Agent API 域名和加密密钥。这样已有 Agent ID 与 Token 不变，VPS 无需逐台重装。
 
-后台提供便携备份与密码保护敏感备份用于兜底。高频历史不写入 JSON，复用原 R2 才能完整保留。
+无法复用原 D1 时，在旧后台导出默认勾选的密码保护备份。新格式会在恢复时使用新部署的加密材料重新封装每节点 Token，原 VPS 无需重新安装；取消勾选后得到的普通可分享备份不含凭据。高频历史不写入 JSON，复用原 R2 才能完整保留。
+
+如果 `workers.dev` 在节点网络中不可达，可在“设置 → Agent → Agent 连接域名”填写已路由到当前 Worker 的自定义公网 HTTPS Origin。新安装命令、Latency Agent 与自动更新会统一使用该地址。
 
 ## 安全边界
 

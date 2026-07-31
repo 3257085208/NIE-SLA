@@ -17,6 +17,6 @@ The Worker can render the Network Quality and Return Route sections as self-cont
 
 The endpoint, API token, and optional S3 channel name stay in Worker Secrets and are never returned to an Agent or browser. Only an administrator-created NQ task completed by the authenticated matching Agent can trigger an upload. Public reports expose a same-origin NIE-SLA image proxy instead of the upstream image URL. Upload failures keep the NQ task successful and the UI falls back to the stored text report.
 
-Telegram and email, appearance settings, updates, and backup/restore remain available.
+Telegram and email, appearance settings, updates, and backup/restore remain available. Protected backup is selected by default and re-wraps per-node Agent tokens under the destination deployment key. The Agent panel also accepts one public HTTPS Worker origin for installer, API, Latency Agent, and update URLs.
 
 The **Themes** page accepts `nie-sla-theme-v1` ZIP packages. New and replacement uploads remain disabled until explicitly enabled. CSS themes style the built-in public page without JavaScript. Canvas themes own the full public layout but run in an iframe without same-origin privileges and receive only redacted read-only data. ZIP SHA-256 is verified by both browser and Worker. Plugins and arbitrary extension runtimes remain unavailable. See [Third-Party Theme Specification](13-third-party-themes.md).

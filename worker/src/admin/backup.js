@@ -1,4 +1,5 @@
 import { ApiError, safeJson } from '../auth.js';
+import { exportAgentTokens, restoreAgentTokens } from '../agent-credentials.js';
 
 const BACKUP_SCHEMA = 'nie-sla-backup-v1';
 const D1_BATCH_SIZE = 50;
@@ -47,11 +48,10 @@ export async function exportBackup(request, env) {
     },
   };
   if (includeSecrets) {
-    const sensitive = {};
-    for (const table of SENSITIVE_TABLES) sensitive[table] = await tableRows(env, table);
+    const sensitive = { agent_tokens: await exportAgentTokens(env) };
     sensitive.app_meta = metaRows.filter(row => SENSITIVE_META_KEYS.has(String(row.key || '')));
     archive.sensitive = await encryptJson(sensitive, password);
-    archive.sensitive.compatibility = '恢复后必须保留原 TOTP_ENCRYPTION_KEY，或原 ADMIN_PASSWORD/ADMIN_TOKEN 加密材料。';
+    archive.sensitive.compatibility = 'Agent Token 会在恢复时使用新部署的加密材料重新封装；旧格式受保护备份仍可能需要原加密材料。';
   }
   return { ok: true, backup: archive };
 }
@@ -81,6 +81,7 @@ export async function restoreBackup(request, env) {
       const keys = (archive.portable?.app_meta || []).map(row => String(row.key || '')).filter(isPortableMetaKey);
       await runD1Batches(env, [
         ...[...PORTABLE_TABLES].reverse().map(table => env.DB.prepare(`DELETE FROM ${table}`)),
+        ...(sensitive ? SENSITIVE_TABLES.map(table => env.DB.prepare(`DELETE FROM ${table}`)) : []),
         ...keys.map(key => env.DB.prepare(`DELETE FROM app_meta WHERE key = ?`).bind(key)),
       ]);
     }
@@ -88,6 +89,7 @@ export async function restoreBackup(request, env) {
     restored.app_meta = await restoreRows(env, 'app_meta', (archive.portable?.app_meta || []).filter(row => isPortableMetaKey(row.key)));
     if (sensitive) {
       for (const table of SENSITIVE_TABLES) restored[table] = await restoreRows(env, table, sensitive?.[table]);
+      restored.agent_tokens = await restoreAgentTokens(env, sensitive?.agent_tokens);
       restored.sensitive_meta = await restoreRows(env, 'app_meta', (sensitive?.app_meta || []).filter(row => SENSITIVE_META_KEYS.has(String(row.key || ''))));
     }
     await rebuildCompatibilityTables(env);
@@ -203,12 +205,16 @@ function backupPreview(archive, sensitive) {
   for (const table of [...PORTABLE_TABLES, 'app_meta']) counts[table] = Array.isArray(archive.portable?.[table]) ? archive.portable[table].length : 0;
   const sensitiveCounts = {};
   if (sensitive) for (const table of [...SENSITIVE_TABLES, 'app_meta']) sensitiveCounts[table] = Array.isArray(sensitive?.[table]) ? sensitive[table].length : 0;
+  if (sensitive) sensitiveCounts.agent_tokens = Array.isArray(sensitive?.agent_tokens) ? sensitive.agent_tokens.length : 0;
   return {
     schema: archive.schema,
     created_at: archive.created_at || null,
     counts,
     sensitive: Boolean(archive.sensitive),
     sensitive_counts: sensitiveCounts,
+    agent_connections_preserved: Boolean(
+      sensitive && ((sensitiveCounts.agent_tokens || 0) + (sensitiveCounts.agent_credentials || 0) > 0),
+    ),
     history_included: false,
   };
 }

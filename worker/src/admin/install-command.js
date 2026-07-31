@@ -2,11 +2,11 @@
 import { ApiError } from '../auth.js';
 import { clamp, sanitizeAgentId, sha256Hex } from '../utils.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
-import { loadAgentRelease } from './settings.js';
+import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
 
-const INSTALLER_SHA256 = 'd3b942854bfec98e1984d9e4fc6b3c9b360c2417ba434b94888416799eb64a24';
-const SETUP_SHA256 = '76423c3385a3512fbb503f06dbb42fff0faed60bc8984cb01dadb4e8669189fd';
+const INSTALLER_SHA256 = 'fc67fb3d1a9004935a96485f3933c4fb2590da879dd44cdf517afb7f31ba80f7';
+const SETUP_SHA256 = '06f37d5a0af46321f9b199adc819612d2268edf0cbd82078e5a4a78f012dc163';
 const CFTZ_SHA256 = 'a65e790a8d125aa1a4b68015e24f985ea52c2a456e1232e98637c64b1a8b8758';
 const INSTALL_TICKET_PREFIX = 'nsi_';
 const INSTALL_TICKET_BYTES = 24;
@@ -22,9 +22,9 @@ export async function getAgentInstallCommand(env, url, request = null) {
   const label = String(target?.name || targetId).trim() || targetId;
   const agentToken = await getOrCreateAgentToken(env, 'agent', targetId);
   if (!agentToken) return { ok: false, error: '生成 Agent 专用 Token 失败' };
-  const installBase = agentInstallBase(env, request);
+  const installBase = await agentInstallBase(env, request);
   if (!installBase) return { ok: false, error: 'Agent 安装地址不可用。请从公开前端域名打开管理后台，或配置 PUBLIC_AGENT_INSTALL_BASE。' };
-  const apiBase = agentApiBase(env, request, url, installBase);
+  const apiBase = await agentApiBase(env, request, url, installBase);
   const pingSec = String(await getPingIntervalSec(env));
   const release = await loadAgentRelease(env, request).catch(() => null);
   const sha256SumsSha256 = String(env.NSTATUS_SHA256SUMS_SHA256 || '').trim() || String(release?.manifest_sha256 || '').trim();
@@ -158,9 +158,12 @@ function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
 
-export function agentApiBase(env, request = null, url = null, installBase = '') {
+export async function agentApiBase(env, request = null, url = null, installBase = '') {
   const explicit = String(env.PUBLIC_AGENT_API_BASE || env.AGENT_API_BASE || env.PUBLIC_API_BASE || '').trim();
   if (explicit) return explicit.replace(/\/+$/, '');
+
+  const stored = await getAgentPublicBase(env);
+  if (stored) return stored;
 
   const publicOrigin = publicRequestOrigin(request);
   if (publicOrigin) return publicOrigin.replace(/\/+$/, '');
@@ -172,14 +175,19 @@ export function agentApiBase(env, request = null, url = null, installBase = '') 
   return String(url ? `${url.protocol}//${url.host}` : '').replace(/\/+$/, '');
 }
 
-export function agentInstallBase(env, request = null) {
+export async function agentInstallBase(env, request = null) {
   const explicit = String(
     env.PUBLIC_AGENT_INSTALL_BASE
       || env.AGENT_INSTALL_BASE
-      || env.PUBLIC_SITE_ORIGIN
       || '',
   ).trim();
   if (explicit) return explicit.replace(/\/+$/, '');
+
+  const stored = await getAgentPublicBase(env);
+  if (stored) return stored;
+
+  const siteOrigin = String(env.PUBLIC_SITE_ORIGIN || '').trim();
+  if (siteOrigin) return siteOrigin.replace(/\/+$/, '');
 
   const origin = publicRequestOrigin(request);
   return origin ? origin.replace(/\/+$/, '') : '';

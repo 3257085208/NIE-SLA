@@ -1945,3 +1945,6 @@ tr.group-sep td{background:rgba(127,127,127,.12);font-size:13px;padding:8px 10px
 #mProviderCustom { margin-top: 7px; }
 .backup-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .backup-warning { color: #9a5b18; }
+.backup-status { margin: 12px 0 0; padding: 9px 11px; border-left: 3px solid #2e7dd7; background: #eef6ff; color: #24445f; font-size: 12px; line-height: 1.55; }
+.backup-status.ok { border-color: #159754; background: #edf9f3; color: #17633f; }
+.backup-status.err { border-color: #d93b3b; background: #fff1f1; color: #8f2525; }

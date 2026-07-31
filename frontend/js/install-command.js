@@ -28,24 +28,43 @@ export function agentInstallCommandFromPayload(payload, expectedTargetId) {
   return command;
 }
 
-export async function copyText(text) {
+export async function copyText(text, { timeoutMs = 2500 } = {}) {
   const value = String(text || '');
   if (!value) throw new Error('没有可复制的内容');
 
-  if (navigator.clipboard?.writeText && window.isSecureContext) {
-    await navigator.clipboard.writeText(value);
-    return;
+  const clipboard = globalThis.navigator?.clipboard;
+  if (clipboard?.writeText && globalThis.window?.isSecureContext) {
+    let timer = null;
+    try {
+      await Promise.race([
+        clipboard.writeText(value),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('浏览器剪贴板响应超时')), Math.max(100, Number(timeoutMs) || 2500));
+        }),
+      ]);
+      return;
+    } catch (_) {
+      // Safari may reject or leave the Clipboard API pending; use the synchronous fallback.
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
-  const textarea = document.createElement('textarea');
+  const doc = globalThis.document;
+  if (!doc?.body || typeof doc.createElement !== 'function' || typeof doc.execCommand !== 'function') {
+    throw new Error('复制失败，请检查浏览器剪贴板权限');
+  }
+  const textarea = doc.createElement('textarea');
   textarea.value = value;
   textarea.setAttribute('readonly', '');
   textarea.style.position = 'fixed';
   textarea.style.left = '-9999px';
   textarea.style.top = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  const ok = document.execCommand('copy');
-  textarea.remove();
-  if (!ok) throw new Error('复制失败，请检查浏览器剪贴板权限');
+  doc.body.appendChild(textarea);
+  try {
+    textarea.select();
+    if (!doc.execCommand('copy')) throw new Error('复制失败，请检查浏览器剪贴板权限');
+  } finally {
+    textarea.remove();
+  }
 }

@@ -60,9 +60,9 @@ export async function getLatencyAgentInstallCommand(env, url, request = null) {
   if (!node) return { ok: false, error: 'Latency 节点不存在' };
   const token = await getOrCreateAgentToken(env, 'latency', nodeId);
   if (!token) return { ok: false, error: '生成 Latency 节点专用 Token 失败' };
-  const installBase = agentInstallBase(env, request);
+  const installBase = await agentInstallBase(env, request);
   if (!installBase) return { ok: false, error: 'Latency 安装地址不可用，请配置 PUBLIC_AGENT_INSTALL_BASE' };
-  const apiBase = agentApiBase(env, request, url, installBase);
+  const apiBase = await agentApiBase(env, request, url, installBase);
   const intervalSec = String(clamp(Number(env.LATENCY_AGENT_INTERVAL_SEC || 60), 30, 600));
   const envNames = ['NSTATUS_LATENCY_INSTALL_BASE', 'NSTATUS_LATENCY_API_BASE', 'NSTATUS_LATENCY_TOKEN', 'NSTATUS_LATENCY_NODE_ID', 'NSTATUS_LATENCY_INTERVAL_SEC', 'NSTATUS_LATENCY_SCRIPT_SHA256'];
   const envValues = [

@@ -63,8 +63,9 @@ assert.match(adminSource, /if \(t\.type === "http"\) return '<span class="hint">
 assert.match(adminSource, /const agentTag = isWeb\s+\? notApplicable/);
 if (adminSource.includes('btn-deploy')) {
   assert.match(adminSource, /class="btn btn-xs btn-deploy" data-a="deploy" data-target-id=/);
-  assert.match(adminSource, /showInstallProgress\(t\);[\s\S]*apiAdmin\(/);
-  assert.match(adminSource, /data-retry-install/);
+  assert.match(adminSource, /toast\("正在生成安装命令\.\.\."[\s\S]*apiAdmin\([\s\S]*"\/api\/agent\/install-command\?target_id="[\s\S]*20000[\s\S]*await copyText\(cmd\)/);
+  assert.match(adminSource, /finally \{[\s\S]*trigger\.disabled = false;[\s\S]*trigger\.textContent = oldText;/);
+  assert.doesNotMatch(adminSource, /showInstallProgress\(/);
 } else {
   assert.match(adminSource, /isWeb \? "" : '<button class="btn btn-xs" data-a="deploy">部署 Agent<\/button>'/);
 }

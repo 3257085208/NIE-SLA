@@ -1,6 +1,6 @@
 // Admin sub-module: settings, meta, and exchange rates.
-import { nowSec, clamp, parseBoolean, sha256Hex } from '../utils.js';
-import { safeJson } from '../auth.js';
+import { nowSec, clamp, parseBoolean, sha256Hex, assertPublicHttpUrl } from '../utils.js';
+import { ApiError, safeJson } from '../auth.js';
 import { getAdminPath, setAdminPath } from '../admin-path.js';
 
 const EXCHANGE_RATE_TTL_SEC = 86400;
@@ -20,6 +20,10 @@ export async function getMeta(env, key) {
 
 export async function setMeta(env, key, value) {
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(key, String(value), nowSec()).run();
+}
+
+async function deleteMeta(env, key) {
+  await env.DB.prepare(`DELETE FROM app_meta WHERE key = ?`).bind(key).run();
 }
 
 // ── Exchange rates ─────────────────────────────────────────────────────────
@@ -205,6 +209,27 @@ export function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj || {}, key);
 }
 
+export function normalizeAgentPublicBase(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const url = assertPublicHttpUrl(raw);
+  if (url.protocol !== 'https:' || url.username || url.password) {
+    throw new Error('Agent 连接域名必须使用无账号密码的 HTTPS');
+  }
+  if (url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('Agent 连接域名只能填写域名 Origin，不能包含路径、参数或片段');
+  }
+  return url.origin;
+}
+
+export async function getAgentPublicBase(env) {
+  try {
+    return normalizeAgentPublicBase(await getMeta(env, 'agent_public_base'));
+  } catch (_) {
+    return '';
+  }
+}
+
 export async function getPublicSettings(env, { includeAdmin = false } = {}) {
   let autoUpdate = null;
   let appearanceSaved = null;
@@ -220,7 +245,10 @@ export async function getPublicSettings(env, { includeAdmin = false } = {}) {
     appearance: normalizeFrontendAppearance(parsedAppearance, env),
     traffic: trafficPeriod(env),
   };
-  if (includeAdmin) settings.admin_path = await getAdminPath(env);
+  if (includeAdmin) {
+    settings.admin_path = await getAdminPath(env);
+    settings.agent_public_base = await getAgentPublicBase(env);
+  }
   return settings;
 }
 
@@ -228,6 +256,16 @@ export async function updatePublicSettings(request, env) {
   const body = await safeJson(request);
   if (hasOwn(body, 'agent_auto_update')) {
     await setMeta(env, 'agent_auto_update', parseBoolean(body.agent_auto_update, false) ? 'true' : 'false');
+  }
+  if (hasOwn(body, 'agent_public_base')) {
+    let agentPublicBase = '';
+    try {
+      agentPublicBase = normalizeAgentPublicBase(body.agent_public_base);
+    } catch (error) {
+      throw new ApiError(400, String(error?.message || error));
+    }
+    if (agentPublicBase) await setMeta(env, 'agent_public_base', agentPublicBase);
+    else await deleteMeta(env, 'agent_public_base');
   }
   if (hasOwn(body, 'appearance') || hasOwn(body, 'frontend_appearance')) {
     const appearance = normalizeFrontendAppearance(body.appearance ?? body.frontend_appearance, env);
@@ -255,7 +293,8 @@ export async function getAgentUpdatePolicy(env, request = null) {
 export async function loadAgentRelease(env, request = null) {
   const requestOrigin = request ? new URL(request.url).origin : '';
   const configuredDownloadBase = String(env.AGENT_DOWNLOAD_BASE || '').trim();
-  const downloadBase = String(configuredDownloadBase || requestOrigin || 'https://status.example.com').trim().replace(/\/+$/, '');
+  const storedDownloadBase = await getAgentPublicBase(env);
+  const downloadBase = String(configuredDownloadBase || storedDownloadBase || requestOrigin || 'https://status.example.com').trim().replace(/\/+$/, '');
   if (!downloadBase.startsWith('https://')) throw new Error('AGENT_DOWNLOAD_BASE must use HTTPS');
   const fetchMetadata = !configuredDownloadBase && typeof env.ASSETS?.fetch === 'function'
     ? (url) => env.ASSETS.fetch(new Request(url))

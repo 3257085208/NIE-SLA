@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.45",
-  "agent_version": "v1.0.45",
-  "source_ref": "app-v1.0.45",
+  "version": "1.0.46",
+  "agent_version": "v1.0.46",
+  "source_ref": "app-v1.0.46",
   "published_at": "2026-07-31T00:00:00Z",
-  "title": "NIE-SLA 1.0.45",
+  "title": "NIE-SLA 1.0.46",
   "changelog": [
-    "修复 Cloudflare WebCrypto PBKDF2 上限导致备份恢复失败的问题",
-    "D1 replace 恢复改为不超过 50 条的批量写入",
-    "Static Assets 未知路径启用品牌 404 页面",
-    "Agent、Worker、前端与公开发布版本同步至 1.0.45"
+    "修复 macOS 浏览器剪贴板无响应导致 Agent 部署按钮永久停留在生成中",
+    "受保护备份可在新部署密钥下恢复并重新封装每节点 Agent Token",
+    "后台支持统一设置 Agent 安装、API 与自动更新使用的自定义 HTTPS 域名",
+    "Agent、Worker、前端与公开发布版本同步至 1.0.46"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

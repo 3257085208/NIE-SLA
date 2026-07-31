@@ -102,7 +102,7 @@ export async function createTarget(request, env) {
   const id = customId ? sanitizeId(customId) : crypto.randomUUID();
   const normalized = normalizeTarget(body);
   const now = nowSec();
-  const expiresAt = normalizeExpiresAt(body?.expires_at, env);
+  const expiresAt = normalizeExpiresAt(body?.expires_at, env) ?? null;
   const price = normalizePrice(body?.price);
   const billingCycle = String(body?.billing_cycle || '').trim() || null;
   const tags = String(body?.tags || '').trim() || null;
