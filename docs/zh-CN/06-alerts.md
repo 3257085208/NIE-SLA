@@ -24,7 +24,7 @@ Worker 每分钟计算一次报警规则。Telegram 与电子邮件共用相同�
 6. 开启 Telegram，填写 Token 和 Chat ID。
 7. 保存后点击“测试 Telegram”。
 
-Bot Token 可以保存在 Worker secret `TELEGRAM_BOT_TOKEN`，也可以在后台填写。后台保存时优先使用 `ALERT_ENCRYPTION_KEY` 或 `TOTP_ENCRYPTION_KEY` 加密；两者均未配置时使用部署时的 `ADMIN_PASSWORD`。
+Bot Token 可以保存在 Worker secret `TELEGRAM_BOT_TOKEN`，也可以在后台填写。后台保存时使用长期 `ALERT_ENCRYPTION_KEY`，未单独配置时使用 `TOTP_ENCRYPTION_KEY`。管理员密码只用于读取旧版本密文；读取成功后系统会用当前长期密钥重新封装。
 
 Telegram 支持纯文本、HTML、MarkdownV2 三种格式，还可以设置群组 Topic / Thread ID、静默发送、链接预览和独立消息模板。
 

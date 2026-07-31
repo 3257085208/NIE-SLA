@@ -7,9 +7,13 @@ use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 pub(crate) const TASK_POLL_SEC: u64 = 300;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
@@ -23,6 +27,12 @@ const OPTIONAL_NSLOOKUP_HELPER: &[u8] =
     b"#!/bin/sh\nexec \"$NSTATUS_DNS_COMPAT_EXECUTABLE\" --dns-compat nslookup \"$@\"\n";
 const JQ_RELEASE_BASE: &str = "https://github.com/jqlang/jq/releases/download/jq-1.8.1";
 const MAX_JQ_BYTES: usize = 4 * 1024 * 1024;
+#[cfg(target_os = "linux")]
+const TASK_USER: &str = "nstatus-task";
+const NODEQUALITY_SCRIPT_SHA256: &str =
+    "4e1b25894cadf908ef61fb0d9ce874a75524c6dafc2ea26f0477107288e0c018";
+const IP_UNLOCK_SCRIPT_SHA256: &str =
+    "69e7a8d0b9018a508fa7a54a3f7e98c9fa8c19eeb6995d60675070361cb76c03";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct JqAsset {
@@ -30,46 +40,16 @@ struct JqAsset {
     sha256: &'static str,
 }
 
-pub(crate) fn spawn_ip_unlock_fallback(cfg: Config, http: HttpClient) {
-    if !cfg!(target_os = "linux") {
-        return;
-    }
-    thread::spawn(move || {
-        run_ip_unlock_fallback_loop(&cfg, &http);
-    });
-}
-
 pub(crate) fn poll_once_manager(cfg: &Config, http: &HttpClient) -> Result<()> {
-    poll_once(cfg, http, None)
+    poll_once(cfg, http)
 }
 
-fn run_ip_unlock_fallback_loop(cfg: &Config, http: &HttpClient) {
-    loop {
-        if dedicated_task_runner_is_recent(cfg) {
-            thread::sleep(Duration::from_secs(TASK_POLL_SEC));
-            continue;
-        }
-        if let Err(error) = poll_once(cfg, http, Some("ip_unlock")) {
-            eprintln!(
-                "{{\"ok\":false,\"task_error\":{}}}",
-                serde_json::to_string(&error.to_string())
-                    .unwrap_or_else(|_| "\"task failed\"".into())
-            );
-        }
-        thread::sleep(Duration::from_secs(TASK_POLL_SEC));
-    }
-}
-
-fn poll_once(cfg: &Config, http: &HttpClient, allowed_actions: Option<&str>) -> Result<()> {
-    let mut url = format!(
+fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
+    let url = format!(
         "{}/api/agent/tasks?agent_id={}",
         cfg.api.trim_end_matches('/'),
         percent_encode_query(&cfg.agent_id)
     );
-    if let Some(actions) = allowed_actions {
-        url.push_str("&actions=");
-        url.push_str(&percent_encode_query(actions));
-    }
     let response: Value = serde_json::from_str(&http.get(&url, &cfg.token)?)?;
     let Some(task) = response.get("task").filter(|value| !value.is_null()) else {
         return Ok(());
@@ -110,10 +90,6 @@ fn poll_once(cfg: &Config, http: &HttpClient, allowed_actions: Option<&str>) -> 
     );
     http.post_json(&result_url, &cfg.token, &payload.to_string())?;
     Ok(())
-}
-
-fn dedicated_task_runner_is_recent(cfg: &Config) -> bool {
-    crate::manager::is_active(cfg)
 }
 
 struct TaskOutput {
@@ -288,9 +264,18 @@ fn run_fixed_remote_script(
     let script_path = task_dir.join("task.sh");
     let agent_executable =
         env::current_exe().context("locate Agent DNS compatibility executable")?;
-    let mut script = http.get_public_bytes_limited(url, 2 * 1024 * 1024)?;
+    let mirrored_url = fixed_script_asset_url(&cfg.api, url)?;
+    let mut script = http.get_public_bytes_limited(&mirrored_url, 2 * 1024 * 1024)?;
     if script.is_empty() {
         return Err(anyhow!("fixed Beta task download is empty"));
+    }
+    let expected_script_sha256 = fixed_script_sha256(url)?;
+    let actual_script_sha256 = sha256_hex(&script);
+    if actual_script_sha256 != expected_script_sha256 {
+        return Err(anyhow!(
+            "fixed task source changed; refusing unreviewed script {}",
+            url
+        ));
     }
     let nodequality_result_dir = if url == "https://run.NodeQuality.com" {
         let path = task_dir.join("nodequality-result");
@@ -312,9 +297,32 @@ fn run_fixed_remote_script(
         .context("write fixed Beta task file")?;
     drop(script_file);
     let task_path = prepare_fixed_task_path(&task_dir, url, SYSTEM_TASK_PATH, http, &cfg.api)?;
+    let identity = task_sandbox_identity()?;
+    prepare_task_sandbox_ownership(&task_dir, identity)?;
 
-    let mut command = Command::new("timeout");
+    let mut command = Command::new("setpriv");
     command
+        .arg("--reuid")
+        .arg(identity.uid.to_string())
+        .arg("--regid")
+        .arg(identity.gid.to_string())
+        .arg("--clear-groups")
+        .arg("--no-new-privs")
+        .arg("unshare")
+        .args([
+            "--user",
+            "--map-root-user",
+            "--mount",
+            "--pid",
+            "--fork",
+            "--mount-proc",
+            "--ipc",
+            "--uts",
+            "--",
+            "timeout",
+            "-k",
+            "5s",
+        ])
         .arg(format!("{}s", timeout_sec))
         .arg("bash")
         .arg(&script_path)
@@ -343,14 +351,7 @@ fn run_fixed_remote_script(
     }
     let stdout = child.stdout.take().context("capture fixed task stdout")?;
     let stderr = child.stderr.take().context("capture fixed task stderr")?;
-    // Reports are printed at the end; progress animations can otherwise fill a
-    // head-only buffer before the report URL is emitted.
-    let stdout_reader = thread::spawn(move || read_tail_capped(stdout, MAX_OUTPUT_BYTES / 2));
-    let stderr_reader = thread::spawn(move || read_tail_capped(stderr, MAX_OUTPUT_BYTES / 2));
-    let status = child.wait().context("failed to wait for fixed Beta task")?;
-    let mut bytes = stdout_reader.join().unwrap_or_default();
-    bytes.push(b'\n');
-    bytes.extend(stderr_reader.join().unwrap_or_default());
+    let (status, bytes) = collect_task_output(&mut child, stdout, stderr, timeout_sec)?;
     let text = String::from_utf8_lossy(&bytes).to_string();
     let nodequality = nodequality_result_dir
         .as_deref()
@@ -361,6 +362,155 @@ fn run_fixed_remote_script(
         status,
         nodequality,
     })
+}
+
+fn fixed_script_sha256(url: &str) -> Result<&'static str> {
+    match url {
+        "https://run.NodeQuality.com" => Ok(NODEQUALITY_SCRIPT_SHA256),
+        "https://IP.Check.Place" => Ok(IP_UNLOCK_SCRIPT_SHA256),
+        _ => Err(anyhow!("unsupported fixed task source")),
+    }
+}
+
+fn fixed_script_asset_url(api_base: &str, url: &str) -> Result<String> {
+    let asset = match url {
+        "https://run.NodeQuality.com" => "nodequality.sh",
+        "https://IP.Check.Place" => "ip-check.sh",
+        _ => return Err(anyhow!("unsupported fixed task source")),
+    };
+    Ok(format!(
+        "{}/vendor/tasks/{}",
+        api_base.trim_end_matches('/'),
+        asset
+    ))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TaskSandboxIdentity {
+    uid: u32,
+    gid: u32,
+}
+
+#[cfg(target_os = "linux")]
+fn task_sandbox_identity() -> Result<TaskSandboxIdentity> {
+    if !task_command_exists(SYSTEM_TASK_PATH, "setpriv")
+        || !task_command_exists(SYSTEM_TASK_PATH, "unshare")
+    {
+        return Err(anyhow!(
+            "fixed tasks require setpriv and unshare for host isolation"
+        ));
+    }
+    let passwd = fs::read_to_string("/etc/passwd").context("read isolated task identity")?;
+    passwd
+        .lines()
+        .find_map(|line| {
+            let mut fields = line.split(':');
+            let name = fields.next()?;
+            fields.next()?;
+            let uid = fields.next()?.parse().ok()?;
+            let gid = fields.next()?.parse().ok()?;
+            (name == TASK_USER).then_some(TaskSandboxIdentity { uid, gid })
+        })
+        .ok_or_else(|| anyhow!("isolated task user is missing"))
+        .and_then(|identity| {
+            if identity.uid == 0 || identity.gid == 0 {
+                Err(anyhow!(
+                    "isolated task identity must not use root uid or gid"
+                ))
+            } else {
+                Ok(identity)
+            }
+        })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn task_sandbox_identity() -> Result<TaskSandboxIdentity> {
+    Err(anyhow!("fixed task isolation currently requires Linux"))
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_task_sandbox_ownership(path: &Path, identity: TaskSandboxIdentity) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    reject_task_symlinks(path)?;
+    let owner = format!("{}:{}", identity.uid, identity.gid);
+    let status = Command::new("chown")
+        .args(["-R", &owner])
+        .arg(path)
+        .status()
+        .context("assign isolated task directory")?;
+    if !status.success() {
+        return Err(anyhow!("failed to assign isolated task directory"));
+    }
+    let metadata = fs::symlink_metadata(path).context("verify isolated task directory owner")?;
+    if metadata.uid() != identity.uid || metadata.gid() != identity.gid {
+        return Err(anyhow!("isolated task directory owner mismatch"));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn reject_task_symlinks(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).context("inspect task sandbox path")?;
+    if metadata.file_type().is_symlink() {
+        return Err(anyhow!("task sandbox must not contain symbolic links"));
+    }
+    if metadata.is_dir() {
+        for entry in fs::read_dir(path).context("inspect task sandbox directory")? {
+            reject_task_symlinks(&entry?.path())?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn prepare_task_sandbox_ownership(_path: &Path, _identity: TaskSandboxIdentity) -> Result<()> {
+    Err(anyhow!("fixed task isolation currently requires Linux"))
+}
+
+#[cfg(unix)]
+fn collect_task_output(
+    child: &mut Child,
+    stdout: ChildStdout,
+    stderr: ChildStderr,
+    timeout_sec: u64,
+) -> Result<(ExitStatus, Vec<u8>)> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let hard_deadline = Instant::now() + Duration::from_secs(timeout_sec.saturating_add(5));
+    let stdout_stop = Arc::clone(&stop);
+    let stderr_stop = Arc::clone(&stop);
+    let stdout_reader = thread::spawn(move || {
+        read_pipe_tail_bounded(stdout, MAX_OUTPUT_BYTES / 2, stdout_stop, hard_deadline)
+    });
+    let stderr_reader = thread::spawn(move || {
+        read_pipe_tail_bounded(stderr, MAX_OUTPUT_BYTES / 2, stderr_stop, hard_deadline)
+    });
+    let status = child.wait().context("failed to wait for fixed Beta task")?;
+    stop.store(true, Ordering::Release);
+    let mut bytes = stdout_reader.join().unwrap_or_default();
+    bytes.push(b'\n');
+    bytes.extend(stderr_reader.join().unwrap_or_default());
+    Ok((status, bytes))
+}
+
+#[cfg(not(unix))]
+fn collect_task_output(
+    child: &mut Child,
+    stdout: ChildStdout,
+    stderr: ChildStderr,
+    _timeout_sec: u64,
+) -> Result<(ExitStatus, Vec<u8>)> {
+    let stdout_reader = thread::spawn(move || read_tail_capped(stdout, MAX_OUTPUT_BYTES / 2));
+    let stderr_reader = thread::spawn(move || read_tail_capped(stderr, MAX_OUTPUT_BYTES / 2));
+    let status = child.wait().context("failed to wait for fixed Beta task")?;
+    let mut bytes = stdout_reader.join().unwrap_or_default();
+    bytes.push(b'\n');
+    bytes.extend(stderr_reader.join().unwrap_or_default());
+    Ok((status, bytes))
 }
 
 fn inject_nodequality_capture(script: &[u8]) -> Result<Vec<u8>> {
@@ -669,6 +819,7 @@ fn task_runtime_directory(queue_file: &Path, uid: u32) -> PathBuf {
         .join("tasks")
 }
 
+#[cfg(any(test, not(unix)))]
 fn read_tail_capped<R: Read>(mut reader: R, limit: usize) -> Vec<u8> {
     let mut kept = Vec::with_capacity(limit.min(64 * 1024));
     let mut buffer = [0u8; 8192];
@@ -688,6 +839,67 @@ fn read_tail_capped<R: Read>(mut reader: R, limit: usize) -> Vec<u8> {
         kept.extend_from_slice(&buffer[..count]);
     }
     kept
+}
+
+#[cfg(unix)]
+fn read_pipe_tail_bounded<R>(
+    mut reader: R,
+    limit: usize,
+    stop: Arc<AtomicBool>,
+    hard_deadline: Instant,
+) -> Vec<u8>
+where
+    R: Read + std::os::fd::AsRawFd,
+{
+    use std::io::ErrorKind;
+    let fd = reader.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Vec::new();
+    }
+
+    let mut kept = Vec::with_capacity(limit.min(64 * 1024));
+    let mut buffer = [0u8; 8192];
+    let mut stop_deadline = None;
+    loop {
+        let now = Instant::now();
+        if stop.load(Ordering::Acquire) && stop_deadline.is_none() {
+            stop_deadline = Some(now + Duration::from_millis(100));
+        }
+        if now >= hard_deadline || stop_deadline.is_some_and(|deadline| now >= deadline) {
+            break;
+        }
+        match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => append_tail(&mut kept, &buffer[..count], limit),
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                let mut poll_fd = libc::pollfd {
+                    fd,
+                    events: libc::POLLIN | libc::POLLHUP,
+                    revents: 0,
+                };
+                unsafe {
+                    libc::poll(&mut poll_fd, 1, 25);
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    kept
+}
+
+fn append_tail(kept: &mut Vec<u8>, bytes: &[u8], limit: usize) {
+    if bytes.len() >= limit {
+        kept.clear();
+        kept.extend_from_slice(&bytes[bytes.len() - limit..]);
+        return;
+    }
+    let overflow = kept.len().saturating_add(bytes.len()).saturating_sub(limit);
+    if overflow > 0 {
+        kept.drain(..overflow);
+    }
+    kept.extend_from_slice(bytes);
 }
 
 fn extract_report_url(output: &str) -> Option<String> {
@@ -963,6 +1175,35 @@ mod tests {
         assert_eq!(output, b"456789");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn task_output_reader_stops_when_a_descendant_keeps_the_pipe_open() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+        use std::sync::mpsc;
+
+        let (reader, mut inherited_writer) = UnixStream::pair().unwrap();
+        inherited_writer.write_all(b"task output").unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let reader_stop = Arc::clone(&stop);
+        let (result_tx, result_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let output = read_pipe_tail_bounded(
+                reader,
+                1024,
+                reader_stop,
+                Instant::now() + Duration::from_secs(5),
+            );
+            result_tx.send(output).unwrap();
+        });
+
+        stop.store(true, Ordering::Release);
+        let output = result_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("reader must not wait for an inherited writer to close");
+        assert_eq!(output, b"task output");
+    }
+
     #[test]
     fn parses_only_unlock_grid() {
         let output = "纯净度： 99\n服务商： TikTok Disney+ Netflix Youtube AmazonPV Reddit ChatGPT\n状态： 解锁 失败 解锁 解锁 解锁 解锁 解锁\n地区： [US] [] [US] [US] [US] [US] [US]\n方式： 原生 DNS 原生 原生 原生 原生 原生";
@@ -1011,7 +1252,29 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_tasks_use_the_unprivileged_agent_state_directory() {
+    fn privileged_remote_task_entrypoints_are_checksum_pinned() {
+        for (url, expected) in [
+            ("https://run.NodeQuality.com", NODEQUALITY_SCRIPT_SHA256),
+            ("https://IP.Check.Place", IP_UNLOCK_SCRIPT_SHA256),
+        ] {
+            assert_eq!(fixed_script_sha256(url).unwrap(), expected);
+            assert_eq!(expected.len(), 64);
+            assert!(expected.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        }
+        assert!(fixed_script_sha256("https://example.com/task.sh").is_err());
+        assert_eq!(
+            fixed_script_asset_url("https://status.example.com/", "https://run.NodeQuality.com")
+                .unwrap(),
+            "https://status.example.com/vendor/tasks/nodequality.sh"
+        );
+        assert_eq!(
+            fixed_script_asset_url("https://status.example.com", "https://IP.Check.Place").unwrap(),
+            "https://status.example.com/vendor/tasks/ip-check.sh"
+        );
+    }
+
+    #[test]
+    fn task_runtime_directory_separates_manager_and_telemetry_state() {
         let queue = Path::new("/var/lib/nstatus-metrics/samples-queue.json");
         assert_eq!(
             task_runtime_directory(queue, 1000),

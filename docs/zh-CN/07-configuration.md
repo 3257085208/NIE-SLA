@@ -61,9 +61,10 @@
 | 名称 | 必需 | 用途 |
 | --- | --- | --- |
 | `ADMIN_PASSWORD` | 新部署必需 | 后台密码；旧部署可暂时回退 `ADMIN_TOKEN` |
-| `TOTP_ENCRYPTION_KEY` | 可选 | TOTP 与每节点 Token 的专用加密密钥；未配置时使用部署时的 `ADMIN_PASSWORD` |
+| `TOTP_ENCRYPTION_KEY` | 新部署必需 | TOTP、可恢复每节点Token及默认通知密钥的长期加密材料；至少32位且不得随管理员密码轮换 |
+| `PREVIOUS_ENCRYPTION_KEY` | 仅轮换期可选 | 上一把长期密钥；在后台“安全→数据加密密钥”迁移成功后移除 |
 | `AGENT_TOKEN` | 仅旧部署兼容 | 旧版全局及派生 scoped Token；新部署不要配置 |
-| `ALERT_ENCRYPTION_KEY` | 可选 | 告警 secret 的专用加密密钥；依次回退 TOTP 密钥和部署时的管理员密码 |
+| `ALERT_ENCRYPTION_KEY` | 可选 | 告警secret的独立长期密钥；未配置时使用`TOTP_ENCRYPTION_KEY`，管理员密码仅用于读取并迁移旧密文 |
 | `TELEGRAM_BOT_TOKEN` | 可选 | 环境配置 TG Bot |
 | `RESEND_API_KEY` | 可选 | 环境配置 Resend 邮件 API |
 | `GITHUB_OAUTH_CLIENT_SECRET` | 可选 | GitHub OAuth App secret |
@@ -76,6 +77,7 @@
 
 ```bash
 npx wrangler secret put ADMIN_PASSWORD
+npx wrangler secret put TOTP_ENCRYPTION_KEY
 npx wrangler secret put NQ_IMGBED_URL
 npx wrangler secret put NQ_IMGBED_TOKEN
 ```

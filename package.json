@@ -1,6 +1,6 @@
 {
   "name": "nie-sla-cloudflare",
-  "version": "1.0.48",
+  "version": "1.0.49",
   "private": true,
   "type": "module",
   "description": "NIE-SLA Cloudflare 一键部署",
@@ -35,7 +35,8 @@
       "TELEMETRY_BUFFER": { "description": "合并 Agent 高频历史数据的 Durable Object；Cloudflare 会自动配置，无需填写。" },
       "ADMIN_USERNAME": { "description": "必填：后台管理员账号，使用 3-64 位字母、数字或 . _ @ -。" },
       "ADMIN_PASSWORD": { "description": "必填：至少 9 位，并同时包含大写字母、小写字母、数字和特殊符号；请勿与其他服务复用。" },
-      "ADMIN_PATH": { "description": "必填：后台入口路径，使用 3-64 位字母、数字、连字符或下划线，例如 /console-7f3a。" }
+      "ADMIN_PATH": { "description": "必填：后台入口路径，使用 3-64 位字母、数字、连字符或下划线，例如 /console-7f3a。" },
+      "TOTP_ENCRYPTION_KEY": { "description": "必填：独立长期加密密钥，至少 32 位随机字符；不要与管理员密码相同，后续修改密码时保持不变。" }
     }
   }
 }

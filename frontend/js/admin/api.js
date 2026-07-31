@@ -1,9 +1,9 @@
-import { readStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260731-v1048";
+import { readStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260731-v1049";
 
 const SESSION_KEY = "nstatus_admin_session";
 const SESSION_EXP_KEY = "nstatus_admin_session_exp";
 
-export function createAdminClient({ apiBase, onUnauthorized }) {
+export function createAdminClient({ apiBase, onUnauthorized, defaultTimeoutMs = 12_000 }) {
   for (const name of ["sessionStorage", "localStorage"]) {
     removeStorage(name, "nstatus_admin_t");
     removeStorage(name, "nstatus_admin_ts");
@@ -43,6 +43,11 @@ export function createAdminClient({ apiBase, onUnauthorized }) {
   }
 
   async function api(path, options = {}) {
+    if (!options.signal) {
+      return withTimeout(defaultTimeoutMs, "API 请求超时，请检查 Worker/CORS", (signal) =>
+        api(path, { ...options, signal }),
+      );
+    }
     const noAuthReset = Boolean(options.noAuthReset);
     const config = { ...options };
     delete config.noAuthReset;

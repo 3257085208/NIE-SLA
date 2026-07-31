@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { adminAuthConfig, completeGitHubOAuth, createAdminCredentialRecord, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from '../src/admin-auth.js';
-import { checkTOTP, disableTOTP, setupTOTP, validateAdminSession } from '../src/totp.js';
+import { checkTOTP, disableTOTP, migrateTOTPEncryption, setupTOTP, validateAdminSession } from '../src/totp.js';
 
 function memoryDb() {
   const meta = new Map();
@@ -35,6 +35,23 @@ function jsonRequest(url, body) {
   });
 }
 
+async function encryptLegacySecret(secret, material) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  const key = await crypto.subtle.importKey('raw', digest, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(secret),
+  ));
+  const combined = new Uint8Array(iv.length + encrypted.length);
+  combined.set(iv);
+  combined.set(encrypted, iv.length);
+  let binary = '';
+  for (const byte of combined) binary += String.fromCharCode(byte);
+  return `enc:v1:${btoa(binary)}`;
+}
+
 {
   const env = { DB: memoryDb(), ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
   assert.deepEqual(await checkTOTP(env), { ok: true, totp_enabled: false });
@@ -57,11 +74,38 @@ function jsonRequest(url, body) {
 }
 
 {
-  const env = { DB: memoryDb(), ADMIN_PASSWORD: 'Admin-fallback1!' };
+  const env = {
+    DB: memoryDb(),
+    ADMIN_PASSWORD: 'Admin-fallback1!',
+    TOTP_ENCRYPTION_KEY: 'stable-test-key-with-at-least-32-characters',
+  };
   const response = await setupTOTP(env);
   assert.equal(response.status, 200);
   assert.match(env.DB.meta.get('totp_pending_secret'), /^enc:v1:/);
   assert.deepEqual(await checkTOTP(env), { ok: true, totp_enabled: false }, 'TOTP remains disabled until the first code is verified');
+}
+
+{
+  const env = { DB: memoryDb(), ADMIN_PASSWORD: 'Admin-fallback1!' };
+  await assert.rejects(
+    setupTOTP(env),
+    /TOTP_ENCRYPTION_KEY/,
+    'new TOTP setup must require a dedicated long-term key',
+  );
+}
+
+{
+  const legacyPassword = 'Legacy-admin-password1!';
+  const db = memoryDb();
+  db.meta.set('totp_secret', await encryptLegacySecret('JBSWY3DPEHPK3PXP', legacyPassword));
+  const rotatingEnv = {
+    DB: db,
+    ADMIN_PASSWORD: legacyPassword,
+    TOTP_ENCRYPTION_KEY: 'new-totp-encryption-key-with-at-least-32-chars',
+  };
+  assert.deepEqual(await migrateTOTPEncryption(rotatingEnv), { total: 1, migrated: 1 });
+  delete rotatingEnv.ADMIN_PASSWORD;
+  assert.deepEqual(await migrateTOTPEncryption(rotatingEnv), { total: 1, migrated: 0 });
 }
 
 {

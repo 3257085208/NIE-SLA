@@ -23,7 +23,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260731-v1048';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260731-v1049';
 import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
@@ -35,13 +35,13 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260731-v1048';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260731-v1049';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
 import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
 import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260729-beta23';
-import { readStorage, writeStorage } from './js/shared/storage.js?v=20260731-v1048';
+import { readStorage, writeStorage } from './js/shared/storage.js?v=20260731-v1049';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -269,6 +269,19 @@ setInterval(loadStatus, 60_000);
 
 function api(path) {
   return `${state.apiBase}${path}`;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 15_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error(`请求超过 ${Math.round(timeoutMs / 1000)} 秒`);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function loadStatus() {
@@ -825,7 +838,7 @@ async function openNodeQualityReport(targetId, targetName = '', returnTarget = n
   bindNodeQualityModal(root);
   const load = async () => {
     try {
-      const response = await fetch(api(`/api/nq/${encodeURIComponent(targetId)}`), { cache: 'no-store' });
+      const response = await fetchWithTimeout(api(`/api/nq/${encodeURIComponent(targetId)}`), { cache: 'no-store' });
       const report = await response.json();
       if (!response.ok || !report.ok) throw new Error(report.error || `HTTP ${response.status}`);
       report.name ||= targetName;
@@ -906,7 +919,7 @@ function renderBars(targetId, days, summaries, count = 30) {
     const s = summaries.get(`${targetId}:${day}`);
 
     if (!s || !s.total) {
-    return `<span class="daybar none" style="--i:${index}" title="${day}：无数据"></span>`;
+    return `<span class="daybar none" style="--i:${index}" title="${escapeAttr(`${day}：无数据`)}"></span>`;
     }
 
     const pct = Number(s.ok_count || 0) / Number(s.total || 1) * 100;
@@ -916,7 +929,7 @@ function renderBars(targetId, days, summaries, count = 30) {
       ? `${day}：Agent 在线率 ${pct.toFixed(2)}% · 在线 ${formatDuration(Number(s.ok_count || 0))} / 已记录 ${formatDuration(Number(s.total || 0))}${todaySuffix}`
       : `${day}: ${pct.toFixed(2)}% (${s.ok_count}/${s.total})${todaySuffix}`;
 
-    return `<span class="daybar ${cls}" style="--i:${index}" title="${title}"></span>`;
+    return `<span class="daybar ${cls}" style="--i:${index}" title="${escapeAttr(title)}"></span>`;
   }).join('');
 }
 
@@ -1041,8 +1054,8 @@ async function loadChecks(id, name, target = null, options = {}) {
     const checksLimit = Math.min(20000, Math.max(864, Math.ceil((checksHours * 3600) / intervalSec) + 120));
 
     const [checksRes, latencyRes] = await Promise.all([
-      fetch(api(`/api/checks?target_id=${encodeURIComponent(id)}&limit=${encodeURIComponent(checksLimit)}&hours=${encodeURIComponent(checksHours)}`), { cache: 'no-store' }),
-      fetch(api(`/api/latency?target_id=${encodeURIComponent(id)}&hours=${encodeURIComponent(Math.min(168, checksHours))}`), { cache: 'no-store' }).catch(() => null),
+      fetchWithTimeout(api(`/api/checks?target_id=${encodeURIComponent(id)}&limit=${encodeURIComponent(checksLimit)}&hours=${encodeURIComponent(checksHours)}`), { cache: 'no-store' }),
+      fetchWithTimeout(api(`/api/latency?target_id=${encodeURIComponent(id)}&hours=${encodeURIComponent(Math.min(168, checksHours))}`), { cache: 'no-store' }).catch(() => null),
     ]);
 
     const [data, latencyData] = await Promise.all([
@@ -1129,7 +1142,7 @@ async function ensureTargetMetricsLoaded() {
     } else {
       params.set('history', '0');
     }
-    const res = await fetch(api(`/api/agent/metrics?${params}`), { cache: 'no-store' });
+    const res = await fetchWithTimeout(api(`/api/agent/metrics?${params}`), { cache: 'no-store' });
     if (state.selectedId !== id) return;
     const data = await res.json().catch(() => null);
     state.targetMetrics = res.ok && data?.ok ? normalizeAgentMetricsPayload(data) : null;
@@ -1333,7 +1346,7 @@ async function updatePingChart() {
         format: 'series',
         max_points_per_target: String(({ '1h': 360, '6h': 360, '24h': 480 }[range] || 360)),
       });
-      const res = await fetch(api(`/api/agent/pings?${params}`), { cache: 'no-store' });
+      const res = await fetchWithTimeout(api(`/api/agent/pings?${params}`), { cache: 'no-store' });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Ping 数据加载失败');
       state.pingData = normalizePingPayload(data);
@@ -1540,10 +1553,10 @@ function renderChecksPage() {
 
   els.checks.innerHTML = pageRows.map((c, index) => `
     <div class="check-card" style="--delay:${Math.min(index * 35, 220)}ms">
-      <div>${fmtTime(c.checked_at)}</div>
+      <div>${escapeHtml(fmtTime(c.checked_at))}</div>
       <div class="${checkStatusClass(c)}">${checkStatusLabel(c)}</div>
-      <div>${c.latency_ms == null ? '-' : c.latency_ms + ' ms'}</div>
-      <div>${c.status_code || '-'}</div>
+      <div>${escapeHtml(c.latency_ms == null ? '-' : `${c.latency_ms} ms`)}</div>
+      <div>${escapeHtml(c.status_code || '-')}</div>
       <div class="small check-extra">${formatCheckExtraHtml(c)}</div>
     </div>
   `).join('') || `<div class="empty">${escapeHtml(state.appearance.checks_no_records)}</div>`;

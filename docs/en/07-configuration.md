@@ -43,12 +43,13 @@ The `TELEMETRY_BUFFER` Durable Object binding is required by the default free-ti
 | Secret | Purpose |
 | --- | --- |
 | `ADMIN_PASSWORD` | Admin password; existing deployments temporarily fall back to `ADMIN_TOKEN` |
-| `TOTP_ENCRYPTION_KEY` | Optional dedicated encryption key for TOTP and recoverable per-node Agent tokens; falls back to deployment `ADMIN_PASSWORD` |
+| `TOTP_ENCRYPTION_KEY` | Required for new deployments; stable long-term key for TOTP, recoverable per-node Agent tokens, and default Admin-stored secrets |
+| `PREVIOUS_ENCRYPTION_KEY` | Optional only during key rotation; remove it after the Admin migration check succeeds |
 | `AGENT_TOKEN` | Legacy global/scoped Agent authentication compatibility; omit on new deployments |
 | `TELEGRAM_BOT_TOKEN` | Optional Telegram bot token |
 | `RESEND_API_KEY` | Optional Resend email API key |
 | `GITHUB_OAUTH_CLIENT_SECRET` | Optional GitHub OAuth secret |
-| `ALERT_ENCRYPTION_KEY` | Optional alert secret encryption key for D1 storage; falls back to `TOTP_ENCRYPTION_KEY`, then deployment `ADMIN_PASSWORD` |
+| `ALERT_ENCRYPTION_KEY` | Optional independent alert key; falls back to `TOTP_ENCRYPTION_KEY`; the Admin password is read-only legacy migration material |
 | `NQ_IMGBED_URL` | Optional public HTTPS image-host endpoint ending in `/upload`; store it as a secret to hide the host |
 | `NQ_IMGBED_TOKEN` | Optional image-host API token with the `upload` permission; Worker-only |
 | `NQ_IMGBED_CHANNEL_NAME` | Optional fixed S3 channel name when the host has several S3 channels; store it as a secret |

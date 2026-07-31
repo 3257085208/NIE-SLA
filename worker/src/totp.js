@@ -42,7 +42,7 @@ export async function verifyTOTP(request, env) {
     const valid = await verifyCode(secret, code);
     if (!valid) return json({ ok: false, error: 'TOTP 验证码无效' }, 401, env);
 
-    if (pendingStored || stored.needsMigration) {
+    if (pendingStored || (stored.needsMigration && hasPrimaryEncryptionKey(env))) {
       await setMeta(env, ACTIVE_SECRET_KEY, await encryptSecret(secret, env));
       await deleteMeta(env, PENDING_SECRET_KEY);
     }
@@ -146,10 +146,26 @@ export async function verifyActiveTOTP(env, code) {
   const storedSecret = await getMeta(env, ACTIVE_SECRET_KEY);
   if (!storedSecret) return false;
   const stored = await readStoredSecret(storedSecret, env);
-  if (stored.needsMigration) {
+  if (stored.needsMigration && hasPrimaryEncryptionKey(env)) {
     await setMeta(env, ACTIVE_SECRET_KEY, await encryptSecret(stored.secret, env));
   }
   return verifyCode(stored.secret, normalized);
+}
+
+export async function migrateTOTPEncryption(env) {
+  if (!hasPrimaryEncryptionKey(env)) throw new Error('缺少 TOTP_ENCRYPTION_KEY');
+  let total = 0;
+  let migrated = 0;
+  for (const key of [ACTIVE_SECRET_KEY, PENDING_SECRET_KEY]) {
+    const value = await getMeta(env, key);
+    if (!value) continue;
+    total += 1;
+    const stored = await readStoredSecret(value, env);
+    if (!stored.needsMigration) continue;
+    await setMeta(env, key, await encryptSecret(stored.secret, env));
+    migrated += 1;
+  }
+  return { total, migrated };
 }
 
 async function readCode(request) {
@@ -228,13 +244,7 @@ async function encryptionKey(material, usages) {
 function primaryEncryptionMaterial(env) {
   const dedicated = String(env.TOTP_ENCRYPTION_KEY || '').trim();
   if (dedicated) return { material: dedicated, source: 'primary' };
-  const adminPassword = String(env.ADMIN_PASSWORD || '').trim();
-  if (adminPassword) return { material: adminPassword, source: 'primary' };
-  if (allowAdminTokenTotpKey(env)) {
-    const legacy = String(env.ADMIN_TOKEN || '').trim();
-    if (legacy) return { material: legacy, source: 'primary' };
-  }
-  throw new Error('启用 TOTP 需要配置 ADMIN_PASSWORD 或 TOTP_ENCRYPTION_KEY');
+  throw new Error('启用或更新 TOTP 需要配置长期 TOTP_ENCRYPTION_KEY');
 }
 
 function encryptionKeyMaterials(env) {
@@ -243,20 +253,19 @@ function encryptionKeyMaterials(env) {
   try { primary = primaryEncryptionMaterial(env); } catch (_) {}
   if (primary) out.push(primary);
   for (const candidate of [
-    String(env.TOTP_ENCRYPTION_KEY || '').trim(),
-    String(env.ADMIN_PASSWORD || '').trim(),
-    String(env.ADMIN_TOKEN || '').trim(),
+    { material: String(env.PREVIOUS_ENCRYPTION_KEY || '').trim(), source: 'previous' },
+    { material: String(env.ADMIN_PASSWORD || '').trim(), source: 'legacy_admin_password' },
+    { material: String(env.ADMIN_TOKEN || '').trim(), source: 'legacy_admin_token' },
   ]) {
-    if (candidate && !out.some((entry) => entry.material === candidate)) {
-      out.push({ material: candidate, source: 'legacy' });
+    if (candidate.material && !out.some((entry) => entry.material === candidate.material)) {
+      out.push(candidate);
     }
   }
   return out;
 }
 
-function allowAdminTokenTotpKey(env) {
-  const value = String(env.ALLOW_ADMIN_TOKEN_TOTP_KEY || '').trim().toLowerCase();
-  return value === '1' || value === 'true';
+function hasPrimaryEncryptionKey(env) {
+  return Boolean(String(env.TOTP_ENCRYPTION_KEY || '').trim());
 }
 
 async function verifyCode(secret, code) {

@@ -218,6 +218,7 @@ enum UpdateOutcome {
     Current(String),
     AvailableManual(String),
     Managed(String),
+    PrivilegedRecovery(String),
     Installed {
         version: String,
         executable: PathBuf,
@@ -354,9 +355,6 @@ fn run() -> Result<()> {
         ))
     };
     geoip::spawn_geoip_worker(cfg.clone(), http.clone());
-    if !cfg.once {
-        tasks::spawn_ip_unlock_fallback(cfg.clone(), http.clone());
-    }
     let mut last_report = Instant::now();
     let mut first_report = true;
     let mut uploading = false;
@@ -430,6 +428,10 @@ fn run() -> Result<()> {
                     ),
                     Ok(UpdateOutcome::Managed(version)) => println!(
                         "{{\"ok\":true,\"update\":\"managed\",\"version\":{}}}",
+                        json_string(&version)
+                    ),
+                    Ok(UpdateOutcome::PrivilegedRecovery(version)) => println!(
+                        "{{\"ok\":true,\"update\":\"awaiting_privileged_recovery\",\"version\":{}}}",
                         json_string(&version)
                     ),
                     Ok(UpdateOutcome::Installed {
@@ -842,16 +844,28 @@ fn submit(cfg: &Config, http: &HttpClient, metrics: Metrics) -> Result<Option<u6
     let response = http
         .post_json(&url, &cfg.token, &body)
         .map_err(|err| anyhow!("submit failed for {}: {}", url, err))?;
-    let ping_interval = serde_json::from_str::<serde_json::Value>(&response)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("ping_interval_sec")
-                .and_then(|item| item.as_u64())
-        })
-        .filter(|value| (5..=300).contains(value));
+    let ping_interval = parse_submit_response(&response)?;
     println!("{{\"ok\":true,\"submitted_at\":{}}}", now_sec());
     Ok(ping_interval)
+}
+
+fn parse_submit_response(response: &str) -> Result<Option<u64>> {
+    let value: serde_json::Value =
+        serde_json::from_str(response).context("parse metrics response JSON")?;
+    if value.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+        let message = value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Worker rejected the metrics batch")
+            .chars()
+            .take(200)
+            .collect::<String>();
+        return Err(anyhow!(message));
+    }
+    Ok(value
+        .get("ping_interval_sec")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|value| (5..=300).contains(value)))
 }
 
 fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
@@ -1567,6 +1581,22 @@ mod tests {
         assert_eq!(current_ping_interval(&interval), 300);
         apply_ping_interval(&interval, 301);
         assert_eq!(current_ping_interval(&interval), 300);
+    }
+
+    #[test]
+    fn metrics_ack_requires_an_explicit_success_contract() {
+        assert_eq!(
+            parse_submit_response(r#"{"ok":true,"ping_interval_sec":20}"#).unwrap(),
+            Some(20)
+        );
+        assert_eq!(parse_submit_response(r#"{"ok":true}"#).unwrap(), None);
+        assert!(
+            parse_submit_response(r#"{"ok":false,"error":"D1 unavailable"}"#)
+                .unwrap_err()
+                .to_string()
+                .contains("D1 unavailable")
+        );
+        assert!(parse_submit_response("not-json").is_err());
     }
 
     #[test]

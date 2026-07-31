@@ -4,7 +4,7 @@ set -euo pipefail
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 CFTZ_URL_BASE="${CFTZ_URL_BASE:-$DOWNLOAD_BASE}"
 DEFAULT_SHA256SUMS_SHA256=""
-DEFAULT_CFTZ_SHA256="a65e790a8d125aa1a4b68015e24f985ea52c2a456e1232e98637c64b1a8b8758"
+DEFAULT_CFTZ_SHA256="d0d41f0f87d59c0507c3cfa9087d29b239d7c9bd014ceccec94090c747964efd"
 DEFAULT_EXPECTED_VERSION=""
 BIN_NAME="nstatus-metrics"
 SERVICE_NAME="nstatus-metrics"
@@ -15,6 +15,7 @@ STATE_DIR="/var/lib/nstatus-metrics"
 ENV_FILE="$WORK_DIR/nstatus-metrics.env"
 CFTZ_BIN="$INSTALL_DIR/cftz"
 AGENT_USER="nstatus"
+TASK_USER="nstatus-task"
 CACHE_KEY="$(printf '%s' "${NSTATUS_SHA256SUMS_SHA256:-$(date +%s)}" | tr -cd 'A-Za-z0-9._-')"
 [[ -n "$CACHE_KEY" ]] || CACHE_KEY="$(date +%s)"
 INSTALL_STARTED_AT="$(date +%s)"
@@ -119,13 +120,33 @@ stop_existing_agent() {
   fi
 }
 
-create_user() {
-  if id -u "$AGENT_USER" >/dev/null 2>&1; then return 0; fi
-  if command -v useradd >/dev/null 2>&1; then
-    useradd --system --no-create-home --shell /usr/sbin/nologin "$AGENT_USER" 2>/dev/null || useradd -r -s /usr/sbin/nologin "$AGENT_USER" 2>/dev/null || true
-  elif command -v adduser >/dev/null 2>&1; then
-    adduser -S -D -H -s /sbin/nologin "$AGENT_USER" 2>/dev/null || adduser -D -H -s /sbin/nologin "$AGENT_USER" 2>/dev/null || true
+create_system_user() {
+  local user="$1" shell_path uid gid
+  if ! id -u "$user" >/dev/null 2>&1; then
+    shell_path="$(command -v nologin 2>/dev/null || true)"
+    [[ -x "$shell_path" ]] || shell_path="/bin/false"
+    if command -v useradd >/dev/null 2>&1; then
+      useradd --system --no-create-home --shell "$shell_path" "$user" 2>/dev/null \
+        || useradd -r -M -s "$shell_path" "$user" 2>/dev/null \
+        || true
+    elif command -v adduser >/dev/null 2>&1; then
+      adduser --system --no-create-home --shell "$shell_path" "$user" 2>/dev/null \
+        || adduser -S -D -H -s "$shell_path" "$user" 2>/dev/null \
+        || adduser -D -H -s "$shell_path" "$user" 2>/dev/null \
+        || true
+    fi
   fi
+  uid="$(id -u "$user" 2>/dev/null || true)"
+  gid="$(id -g "$user" 2>/dev/null || true)"
+  if [[ ! "$uid" =~ ^[0-9]+$ || "$uid" == "0" || ! "$gid" =~ ^[0-9]+$ || "$gid" == "0" ]]; then
+    err "无法创建非 root 系统用户: $user"
+    exit 1
+  fi
+}
+
+create_users() {
+  create_system_user "$AGENT_USER"
+  create_system_user "$TASK_USER"
 }
 
 assert_safe_install_paths() {
@@ -227,16 +248,17 @@ WantedBy=multi-user.target
 EOF
   cat > "/etc/systemd/system/${SERVICE_NAME}-update.service" <<EOF
 [Unit]
-Description=聶.NET Agent verified update check
+Description=聶.NET Agent privileged recovery update
 After=network-online.target
 
 [Service]
 Type=oneshot
+ExecCondition=/bin/sh -c '! systemctl is-active --quiet ${TASK_SERVICE_NAME}'
 ExecStart=${CFTZ_BIN} update --automatic
 EOF
   cat > "/etc/systemd/system/${SERVICE_NAME}-update.timer" <<EOF
 [Unit]
-Description=Check for 聶.NET Agent updates
+Description=Recover 聶.NET Agent manager and verified updates
 
 [Timer]
 OnBootSec=5min
@@ -327,6 +349,9 @@ install_openrc_update_job() {
   fi
   cat > "${job_dir}/${SERVICE_NAME}-update" <<EOF
 #!/bin/sh
+if rc-service ${TASK_SERVICE_NAME} status >/dev/null 2>&1; then
+  exit 0
+fi
 exec ${CFTZ_BIN} update --automatic >>/var/log/${SERVICE_NAME}-update.log 2>&1
 EOF
   chmod 0755 "${job_dir}/${SERVICE_NAME}-update"
@@ -423,6 +448,7 @@ do_uninstall() {
   rm -rf "$WORK_DIR" "$STATE_DIR"
   rm -rf "/var/lib/nstatus-manager"
   userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
+  userdel "$TASK_USER" 2>/dev/null || deluser "$TASK_USER" 2>/dev/null || true
   ok "已卸载"
 }
 
@@ -482,7 +508,7 @@ verify_binary_checksum "$TMPBIN" "${BIN_NAME}-linux-${ARCH}" "$TMPSUMS"
 chmod +x "$TMPBIN"
 verify_agent_version "$TMPBIN"
 stop_existing_agent
-create_user
+create_users
 assert_safe_install_paths
 mkdir -p "$WORK_DIR" "$INSTALL_DIR"
 install -m 0755 "$TMPBIN" "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || { cp "$TMPBIN" "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"; }

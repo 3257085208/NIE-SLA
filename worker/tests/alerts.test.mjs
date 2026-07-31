@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { getAlertSettings, renderNotificationTemplate, runAlertChecks, sendTestAlert, updateAlertSettings } from '../src/alerts.js';
+import { getAlertSettings, migrateAlertEncryption, renderNotificationTemplate, runAlertChecks, sendTestAlert, updateAlertSettings } from '../src/alerts.js';
 
 function memoryDb() {
   const meta = new Map();
   return {
+    meta,
     prepare(sql) {
       return {
         values: [],
@@ -117,6 +118,34 @@ await assert.rejects(
   updateAlertSettings(jsonRequest({ email_template: '<p>{{title}}</p>' }), env),
   /必须包含 \{\{message\}\}/,
 );
+
+const noDedicatedKeyEnv = { DB: memoryDb(), ADMIN_PASSWORD: 'legacy-admin-password' };
+await assert.rejects(
+  updateAlertSettings(jsonRequest({ telegram_bot_token: '123:legacy' }), noDedicatedKeyEnv),
+  /ALERT_ENCRYPTION_KEY|TOTP_ENCRYPTION_KEY/,
+);
+
+const alertRotationDb = memoryDb();
+const alertOldEnv = {
+  DB: alertRotationDb,
+  TOTP_ENCRYPTION_KEY: 'old-alert-encryption-key-with-at-least-32-chars',
+};
+await updateAlertSettings(jsonRequest({
+  telegram_bot_token: '123:rotation-test',
+  resend_api_key: 're_rotation_test',
+}), alertOldEnv);
+const alertRotation = await migrateAlertEncryption({
+  DB: alertRotationDb,
+  TOTP_ENCRYPTION_KEY: 'new-alert-encryption-key-with-at-least-32-chars',
+  PREVIOUS_ENCRYPTION_KEY: alertOldEnv.TOTP_ENCRYPTION_KEY,
+});
+assert.deepEqual(alertRotation, { total: 2, migrated: 2 });
+const rotatedAlertSettings = await getAlertSettings({
+  DB: alertRotationDb,
+  TOTP_ENCRYPTION_KEY: 'new-alert-encryption-key-with-at-least-32-chars',
+});
+assert.equal(rotatedAlertSettings.telegram_bot_token_set, true);
+assert.equal(rotatedAlertSettings.resend_api_key_set, true);
 
 const failedReadEnv = {
   TELEGRAM_BOT_TOKEN: '123:test',

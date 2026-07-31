@@ -2,6 +2,15 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.0.49 - 2026-07-31
+
+- 修复 `cftz` 把 Agent Bearer Token 错发为后台 Session 的问题；Agent 更新与 Ping 目标使用 Bearer，后台操作继续使用短期 `x-admin-session`，并加入真实 HTTP 握手回归测试。
+- Manager 任务输出与脚本进程均有强制期限；systemd/OpenRC 在 Manager 不活跃时恢复校验更新通道，指标只有收到 Worker 明确 `ok: true` 才会从本地队列确认删除。
+- NodeQuality 与 IP 解锁入口使用随站点发布的已审计快照和固定 SHA-256，并在宿主 `nstatus-task` 低权限身份与独立 user/mount/pid/ipc/uts namespace 中执行；隔离能力缺失时拒绝执行。
+- TOTP、可恢复 Agent Token、通知凭据和恢复快照改用长期独立加密材料；后台新增只显示配置状态的迁移检查，支持 `PREVIOUS_ENCRYPTION_KEY` 轮换且不改变在线 Agent 的 `token_hash`。
+- 公共与后台请求增加默认超时，动态数值输出补充转义；Linux 网络统计排除容器 bridge/veth 等虚拟接口，保留物理、OpenVZ 与 VPN 接口。
+- 应用、Worker 与 Rust Agent 版本同步至 `1.0.49` / `v1.0.49`。
+
 ## 1.0.48 - 2026-07-31
 
 - 修复从旧备份恢复后，包含大写字母或 `&` 等特殊字符的历史 VPS ID 无法生成 Agent 部署命令的问题。

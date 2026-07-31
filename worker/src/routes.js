@@ -14,6 +14,7 @@ import { nodeQualityImageSource, publicNodeQualityReport } from './nodequality.j
 import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from './admin-auth.js';
 import { getAppUpdateInfo } from './app-update.js';
 import { deleteTheme, getPublicTheme, getThemeFile, listManagedThemes, updateTheme, uploadTheme } from './themes.js';
+import { encryptionKeyStatus, migrateEncryptionMaterials } from './encryption-maintenance.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
@@ -130,6 +131,8 @@ const ROUTES = [
   { method: 'POST', path: '/api/alerts/test', rl: 'write' },
   { method: 'POST', path: '/api/alerts/check', rl: 'write' },
   { method: 'GET', path: '/api/system/update', rl: 'write' },
+  { method: 'GET', path: '/api/security/encryption', rl: 'write' },
+  { method: 'POST', path: '/api/security/encryption/migrate', rl: 'write' },
   { method: 'GET', path: '/api/settings/geoip', rl: 'write' },
   { method: 'PATCH', path: '/api/settings/geoip', rl: 'write' },
   { method: 'GET', path: '/api/agent-tasks', rl: 'write' },
@@ -323,6 +326,8 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/settings' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getPublicSettings(env, { includeAdmin: true }), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/settings' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updatePublicSettings(request, env); clearStatusCaches(url, env).catch(() => {}); return json(result, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/system/update' && m === 'GET') { await withAdmin(request, env); return json(await getAppUpdateInfo(env, { force: url.searchParams.get('refresh') === '1' }), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/security/encryption' && m === 'GET') { await withAdmin(request, env); return json(encryptionKeyStatus(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/security/encryption/migrate' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await migrateEncryptionMaterials(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/settings/geoip' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json({ ok: true, ...(await getGeoIpSettings(env, { includeAdmin: true })) }, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/settings/geoip' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateGeoIpSettings(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent-tasks' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listAgentTasks(env, url), 200, env, { 'cache-control': 'no-store' }); }

@@ -107,6 +107,20 @@ export async function restoreAgentTokens(env, rows) {
   return statements.length;
 }
 
+export async function migrateAgentCredentialEncryption(env) {
+  if (!primaryEncryptionMaterial(env)) throw new Error('缺少 TOTP_ENCRYPTION_KEY');
+  if (!env.DB) throw new Error('迁移节点凭据需要 D1 数据库');
+  const result = await env.DB.prepare(`SELECT subject_type, subject_id, token_hash, token_ciphertext
+    FROM agent_credentials ORDER BY subject_type, subject_id`).all();
+  let migrated = 0;
+  for (const row of result.results || []) {
+    const subject = normalizeSubject(row.subject_type, row.subject_id);
+    const decrypted = await decryptCredentialValue(row, env, subject);
+    if (decrypted.migrated) migrated += 1;
+  }
+  return { total: (result.results || []).length, migrated };
+}
+
 export async function legacyScopedToken(env, subjectType, subjectId) {
   const configured = String(env.AGENT_TOKEN || '').trim();
   if (!configured) return '';
@@ -125,12 +139,28 @@ async function readCredential(env, subjectType, subjectId) {
 
 async function decryptCredential(row, env, subject) {
   try {
-    const token = await decryptToken(row.token_ciphertext, env, subject);
-    const hash = await sha256Hex(token);
-    if (!constantTimeEqual(hash, row.token_hash)) throw new Error('节点 Token 完整性校验失败');
-    return token;
+    return (await decryptCredentialValue(row, env, subject)).token;
   } catch (err) {
     throw new Error(`无法读取现有节点 Token，请检查节点凭据加密密钥或管理员密码；为避免在线节点失效，系统未自动轮换 Token。${err?.message ? ` ${err.message}` : ''}`);
+  }
+}
+
+async function decryptCredentialValue(row, env, subject) {
+  try {
+    const decrypted = await decryptToken(row.token_ciphertext, env, subject);
+    const hash = await sha256Hex(decrypted.token);
+    if (!constantTimeEqual(hash, row.token_hash)) throw new Error('节点 Token 完整性校验失败');
+    let migrated = false;
+    if (decrypted.needsMigration && primaryEncryptionMaterial(env)) {
+      await env.DB.prepare(`UPDATE agent_credentials SET token_ciphertext = ?, updated_at = ?
+        WHERE subject_type = ? AND subject_id = ?`)
+        .bind(await encryptToken(decrypted.token, env, subject), nowSec(), subject.type, subject.id)
+        .run();
+      migrated = true;
+    }
+    return { token: decrypted.token, migrated };
+  } catch (err) {
+    throw err;
   }
 }
 
@@ -138,7 +168,7 @@ async function encryptToken(token, env, subject) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = new Uint8Array(await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv, additionalData: subjectBytes(subject) },
-    await encryptionKey(encryptionMaterial(env), ['encrypt']),
+    await encryptionKey(requirePrimaryEncryptionMaterial(env), ['encrypt']),
     new TextEncoder().encode(token),
   ));
   const combined = new Uint8Array(iv.length + encrypted.length);
@@ -153,14 +183,17 @@ async function decryptToken(value, env, subject) {
   const combined = base64ToBytes(stored.slice(CIPHERTEXT_PREFIX.length));
   if (combined.length <= 12) throw new Error('节点 Token 密文无效');
   let lastError = null;
-  for (const material of encryptionMaterials(env)) {
+  for (const candidate of encryptionMaterials(env)) {
     try {
       const decrypted = await crypto.subtle.decrypt(
         { name: 'AES-GCM', iv: combined.slice(0, 12), additionalData: subjectBytes(subject) },
-        await encryptionKey(material, ['decrypt']),
+        await encryptionKey(candidate.material, ['decrypt']),
         combined.slice(12),
       );
-      return new TextDecoder().decode(decrypted);
+      return {
+        token: new TextDecoder().decode(decrypted),
+        needsMigration: candidate.source !== 'primary',
+      };
     } catch (error) {
       lastError = error;
     }
@@ -168,18 +201,25 @@ async function decryptToken(value, env, subject) {
   throw lastError || new Error('没有可用的节点凭据加密材料');
 }
 
-function encryptionMaterial(env) {
-  const material = encryptionMaterials(env)[0];
-  if (!material) throw new Error('需要配置 ADMIN_PASSWORD 或 TOTP_ENCRYPTION_KEY');
+function primaryEncryptionMaterial(env) {
+  return String(env.TOTP_ENCRYPTION_KEY || '').trim();
+}
+
+function requirePrimaryEncryptionMaterial(env) {
+  const material = primaryEncryptionMaterial(env);
+  if (!material) throw new Error('生成或更新节点 Token 需要配置长期 TOTP_ENCRYPTION_KEY');
   return material;
 }
 
 function encryptionMaterials(env) {
-  return [...new Set([
-    String(env.TOTP_ENCRYPTION_KEY || '').trim(),
-    String(env.ADMIN_PASSWORD || '').trim(),
-    String(env.ADMIN_TOKEN || '').trim(),
-  ].filter(Boolean))];
+  const candidates = [
+    { material: primaryEncryptionMaterial(env), source: 'primary' },
+    { material: String(env.PREVIOUS_ENCRYPTION_KEY || '').trim(), source: 'previous' },
+    { material: String(env.ADMIN_PASSWORD || '').trim(), source: 'legacy_admin_password' },
+    { material: String(env.ADMIN_TOKEN || '').trim(), source: 'legacy_admin_token' },
+  ];
+  return candidates.filter((candidate, index) => candidate.material
+    && candidates.findIndex((entry) => entry.material === candidate.material) === index);
 }
 
 async function encryptionKey(material, usages) {

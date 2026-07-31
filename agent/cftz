@@ -13,6 +13,7 @@ STATE_DIR="/var/lib/nstatus-metrics"
 ENV_FILE="${WORK_DIR}/nstatus-metrics.env"
 BIN_NAME="nstatus-metrics"
 AGENT_USER="nstatus"
+TASK_USER="nstatus-task"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; RED='\033[0;31m'; BOLD='\033[1m'; NC='\033[0m'
 NL=$'\n'
@@ -28,13 +29,13 @@ curl_config_escape() {
     printf '%s' "$s"
 }
 
-curl_api() {
-    local session="$1" cfg rc
+curl_with_secret_header() {
+    local header_name="$1" credential="$2" cfg rc
     shift 2
     cfg=$(mktemp) || return 1
     chmod 0600 "$cfg" 2>/dev/null || true
     {
-        printf 'header = "x-admin-session: %s"\n' "$(curl_config_escape "$session")"
+        printf 'header = "%s: %s"\n' "$header_name" "$(curl_config_escape "$credential")"
     } > "$cfg"
     if curl --config "$cfg" "$@"; then
         rc=0
@@ -43,6 +44,44 @@ curl_api() {
     fi
     rm -f "$cfg"
     return $rc
+}
+
+curl_agent_api() {
+    local token="$1"
+    shift
+    curl_with_secret_header "Authorization" "Bearer ${token}" "$@"
+}
+
+curl_admin_api() {
+    local session="$1"
+    shift
+    curl_with_secret_header "x-admin-session" "$session" "$@"
+}
+
+create_system_user() {
+    local user="$1" shell_path uid gid
+    if id -u "$user" >/dev/null 2>&1; then
+        uid="$(id -u "$user")"
+    else
+        shell_path="$(command -v nologin 2>/dev/null || true)"
+        [[ -x "$shell_path" ]] || shell_path="/bin/false"
+        if command -v useradd >/dev/null 2>&1; then
+            useradd --system --no-create-home --shell "$shell_path" "$user" 2>/dev/null \
+                || useradd -r -M -s "$shell_path" "$user" 2>/dev/null \
+                || true
+        elif command -v adduser >/dev/null 2>&1; then
+            adduser --system --no-create-home --shell "$shell_path" "$user" 2>/dev/null \
+                || adduser -S -D -H -s "$shell_path" "$user" 2>/dev/null \
+                || adduser -D -H -s "$shell_path" "$user" 2>/dev/null \
+                || true
+        fi
+        uid="$(id -u "$user" 2>/dev/null || true)"
+    fi
+    gid="$(id -g "$user" 2>/dev/null || true)"
+    if [[ ! "$uid" =~ ^[0-9]+$ || "$uid" == "0" || ! "$gid" =~ ^[0-9]+$ || "$gid" == "0" ]]; then
+        err "无法创建非 root 系统用户: $user"
+        return 1
+    fi
 }
 
 json_escape() {
@@ -185,7 +224,7 @@ download_binary() {
     local api="$1" tok="$2" aid="$3" automatic="${4:-0}" arch binary_name policy download_base manifest_hash latest_version auto_update current_version
     arch="$(detect_arch)"
     binary_name="${BIN_NAME}-linux-${arch}"
-    policy="$(curl_api "$tok" "" -fsSL --get --data-urlencode "agent_id=${aid}" "${api%/}/api/agent/update-policy")" || {
+    policy="$(curl_agent_api "$tok" -fsSL --get --data-urlencode "agent_id=${aid}" "${api%/}/api/agent/update-policy")" || {
         err "unable to fetch trusted update policy"
         exit 1
     }
@@ -277,6 +316,9 @@ install_openrc_update_job() {
     fi
     cat > "${job_dir}/${SERVICE_NAME}-update" <<EOF
 #!/bin/sh
+if rc-service ${TASK_SERVICE_NAME} status >/dev/null 2>&1; then
+    exit 0
+fi
 exec ${INSTALL_DIR}/cftz update --automatic >>/var/log/${SERVICE_NAME}-update.log 2>&1
 EOF
     chmod 0755 "${job_dir}/${SERVICE_NAME}-update"
@@ -345,16 +387,17 @@ WantedBy=multi-user.target
 EOF
             cat > "/etc/systemd/system/${SERVICE_NAME}-update.service" <<EOF
 [Unit]
-Description=聶.NET Agent verified update check
+Description=聶.NET Agent privileged recovery update
 After=network-online.target
 
 [Service]
 Type=oneshot
+ExecCondition=/bin/sh -c '! systemctl is-active --quiet ${TASK_SERVICE_NAME}'
 ExecStart=${INSTALL_DIR}/cftz update --automatic
 EOF
             cat > "/etc/systemd/system/${SERVICE_NAME}-update.timer" <<EOF
 [Unit]
-Description=Check for 聶.NET Agent updates
+Description=Recover 聶.NET Agent manager and verified updates
 
 [Timer]
 OnBootSec=5min
@@ -493,16 +536,12 @@ do_install() {
     local tmpbin
     tmpbin="$(download_binary "$api" "$tok" "$aid")"
 
-    # 创建用户
-    if id -u "$AGENT_USER" &>/dev/null 2>&1; then
-        ok "用户已存在"
-    elif command -v useradd &>/dev/null; then
-        useradd --system --no-create-home --shell /usr/sbin/nologin "$AGENT_USER" 2>/dev/null || useradd -r -s /usr/sbin/nologin "$AGENT_USER"
-        ok "用户已创建"
-    elif command -v adduser &>/dev/null; then
-        adduser -S -D -H -s /sbin/nologin "$AGENT_USER" 2>/dev/null || adduser -D -H -s /sbin/nologin "$AGENT_USER"
-        ok "用户已创建"
-    fi
+    # 创建遥测与隔离任务用户
+    local user
+    for user in "$AGENT_USER" "$TASK_USER"; do
+        create_system_user "$user"
+        ok "用户已就绪: ${user}"
+    done
 
     assert_safe_install_paths
     mkdir -p "$WORK_DIR" "$STATE_DIR"
@@ -557,6 +596,7 @@ do_uninstall() {
     rm -rf "$WORK_DIR" "$STATE_DIR"
     rm -rf "/var/lib/nstatus-manager"
     userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
+    userdel "$TASK_USER" 2>/dev/null || deluser "$TASK_USER" 2>/dev/null || true
 
     ok "已完全移除"
 }
@@ -702,7 +742,7 @@ do_set() {
 do_set_target() {
     local api="$1" tok="$2" cur="$3"
     local list_json
-    list_json=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/agent/targets" \
+    list_json=$(curl_agent_api "$tok" -sL --max-time 10 "${api}/api/agent/targets" \
         -H "Accept: application/json" 2>/dev/null) || true
 
     if [[ -z "$list_json" ]]; then
@@ -766,7 +806,7 @@ do_set_target() {
 do_set_ping() {
     local api="$1" tok="$2" cur="$3"
     local pt_list=""
-    pt_list=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/agent/ping-targets" \
+    pt_list=$(curl_agent_api "$tok" -sL --max-time 10 "${api}/api/agent/ping-targets" \
         -H "Accept: application/json" 2>/dev/null) || true
 
     if [[ -z "$pt_list" ]] || echo "$pt_list" | grep -q '"Unauthorized"'; then
@@ -856,7 +896,7 @@ do_admin() {
     session=$(admin_login "$api" "$username" "$password" "$totp") || return 1
     password=""
     local check
-    check=$(curl_api "$session" "" -sS --max-time 10 "${api}/api/targets" -H "Accept: application/json" 2>&1) || true
+    check=$(curl_admin_api "$session" "" -sS --max-time 10 "${api}/api/targets" -H "Accept: application/json" 2>&1) || true
     if [[ -z "$check" ]]; then
         err "API 不可达: ${api}"
         return 1
@@ -888,11 +928,11 @@ do_admin_targets() {
     while true; do
         local list_json
         if [[ -n "$totp" ]]; then
-            list_json=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" \
+            list_json=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" \
                     -H "Accept: application/json" \
                     2>/dev/null) || true
         else
-            list_json=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" \
+            list_json=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" \
                     -H "Accept: application/json" 2>/dev/null) || true
         fi
 
@@ -943,7 +983,7 @@ do_admin_targets() {
                     read -rp "  区域 [auto]: " re </dev/tty
                     local body="{\"name\":\"$n\",\"group_name\":\"$gr\",\"type\":\"tcp\",\"target_host\":\"${ho:-0.0.0.0}\",\"target_port\":${po:-1},\"probe_region\":\"${re:-auto}\"}"
                 fi
-                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" -X POST \
+                local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" -X POST \
                     -H "Content-Type: application/json" \
                     -d "$body" 2>/dev/null)
                 echo "$result" | grep -q '"ok": true' && ok "添加成功" || err "失败: $result"
@@ -971,14 +1011,14 @@ do_admin_targets() {
                         body="$body,\"target_host\":\"$ho\",\"target_port\":$po"
                     fi
                     body="$body,\"type\":\"$tt\"}"
-                    curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/$tid" -X DELETE \
+                    curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/$tid" -X DELETE \
                     2>/dev/null
                     if [[ -n "$totp" ]]; then
-                        local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" -X POST \
+                        local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" -X POST \
                     -H "Content-Type: application/json" \
                              -d "$body" 2>/dev/null)
                     else
-                        local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" -X POST \
+                        local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" -X POST \
                     -H "Content-Type: application/json" \
                             -d "$body" 2>/dev/null)
                     fi
@@ -993,11 +1033,11 @@ do_admin_targets() {
                     fi
                     body="$body}"
                     if [[ -n "$totp" ]]; then
-                        local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/$tid" -X PATCH \
+                        local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/$tid" -X PATCH \
                     -H "Content-Type: application/json" \
                              -d "$body" 2>/dev/null)
                     else
-                        local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/$tid" -X PATCH \
+                        local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/$tid" -X PATCH \
                     -H "Content-Type: application/json" \
                             -d "$body" 2>/dev/null)
                     fi
@@ -1008,7 +1048,7 @@ do_admin_targets() {
                 read -rp "  删除编号: " num </dev/tty
                 [[ "$num" =~ ^[0-9]+$ && "$num" -ge 1 && "$num" -le $tc ]] || { warn "无效"; continue; }
                 local idx=$((num - 1))
-                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/${tids[$idx]}" -X DELETE \
+                local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/${tids[$idx]}" -X DELETE \
                     2>/dev/null)
                 echo "$result" | grep -q '"ok": true' && ok "已删除 ${tids[$idx]}" || err "失败"
                 ;;
@@ -1017,7 +1057,7 @@ do_admin_targets() {
                 [[ "$num" =~ ^[0-9]+$ && "$num" -ge 1 && "$num" -le $tc ]] || { warn "无效"; continue; }
                 local idx=$((num - 1)); local nv=1
                 [[ "${tenabled[$idx]}" == "1" ]] && nv=0
-                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/${tids[$idx]}" -X PATCH \
+                local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/${tids[$idx]}" -X PATCH \
                     -H "Content-Type: application/json" \
                     -d "{\"enabled\":$nv}" 2>/dev/null)
                 echo "$result" | grep -q '"ok": true' && ok "已切换 ${tids[$idx]}" || err "失败"
@@ -1032,11 +1072,11 @@ do_admin_pings() {
     while true; do
         local list_json
         if [[ -n "$totp" ]]; then
-            list_json=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets" \
+            list_json=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets" \
                     -H "Accept: application/json" \
                     2>/dev/null) || true
         else
-            list_json=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets" \
+            list_json=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets" \
                     -H "Accept: application/json" 2>/dev/null) || true
         fi
         local ol=$(echo "$list_json" | tr -d '\r\n\t ')
@@ -1069,7 +1109,7 @@ do_admin_pings() {
                 IFS= read -rp "  名称: " nname </dev/tty
                 IFS= read -rp "  目标 (主机:端口): " ntarget </dev/tty
                 [[ -z "$nname" || -z "$ntarget" ]] && { warn "名称和目标不能为空"; continue; }
-                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets" -X POST \
+                local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets" -X POST \
                     -H "Content-Type: application/json" \
                     -d "{\"id\":\"${nid:-$nname}\",\"name\":\"$nname\",\"target\":\"$ntarget\"}" 2>/dev/null)
                 echo "$result" | grep -q '"ok": true' && ok "添加成功" || err "失败"
@@ -1078,7 +1118,7 @@ do_admin_pings() {
                 read -rp "  删除编号: " num </dev/tty
                 [[ "$num" =~ ^[0-9]+$ && "$num" -ge 1 && "$num" -le $pc ]] || { warn "无效"; continue; }
                 local idx=$((num - 1))
-                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets/${pids[$idx]}" -X DELETE \
+                local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets/${pids[$idx]}" -X DELETE \
                     2>/dev/null)
                 echo "$result" | grep -q '"ok": true' && ok "已删除 ${pids[$idx]}" || err "失败"
                 ;;
@@ -1087,7 +1127,7 @@ do_admin_pings() {
                 [[ "$num" =~ ^[0-9]+$ && "$num" -ge 1 && "$num" -le $pc ]] || { warn "无效"; continue; }
                 local idx=$((num - 1)); local nv=1
                 [[ "${penabled[$idx]}" == "1" ]] && nv=0
-                local result=$(curl_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets/${pids[$idx]}" -X PATCH \
+                local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets/${pids[$idx]}" -X PATCH \
                     -H "Content-Type: application/json" \
                     -d "{\"enabled\":$nv}" 2>/dev/null)
                 echo "$result" | grep -q '"ok": true' && ok "已切换 ${pids[$idx]}" || err "失败"
@@ -1109,7 +1149,7 @@ do_totp_setup() {
     session=$(admin_login "$api" "$username" "$password" "") || return 1
     password=""
 
-    local result=$(curl_api "$session" "" -sS --max-time 10 "${api}/api/totp/setup" \
+    local result=$(curl_admin_api "$session" "" -sS --max-time 10 "${api}/api/totp/setup" \
         -X POST 2>&1) || true
 
     if ! echo "$result" | grep -q '"ok": true'; then
@@ -1134,7 +1174,7 @@ do_totp_setup() {
     read -rp "  输入当前验证码确认: " code </dev/tty
     [[ -z "$code" ]] && { err "验证码不能为空"; return 1; }
 
-    local verify=$(curl_api "$session" "" -sS --max-time 10 "${api}/api/totp/verify" \
+    local verify=$(curl_admin_api "$session" "" -sS --max-time 10 "${api}/api/totp/verify" \
         -X POST  \
         -H "Content-Type: application/json" \
         -d "{\"code\":\"$code\"}" 2>&1) || true

@@ -43,13 +43,18 @@ pub(super) fn net_bytes() -> (u64, u64) {
     let Ok(text) = std::fs::read_to_string("/proc/net/dev") else {
         return (0, 0);
     };
+    net_bytes_from_proc(&text)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn net_bytes_from_proc(text: &str) -> (u64, u64) {
     let mut rx = 0_u64;
     let mut tx = 0_u64;
     for line in text.lines().skip(2) {
         let Some((iface, data)) = line.split_once(':') else {
             continue;
         };
-        if iface.trim() == "lo" {
+        if !should_count_network_interface(iface.trim()) {
             continue;
         }
         let fields: Vec<&str> = data.split_whitespace().collect();
@@ -59,6 +64,18 @@ pub(super) fn net_bytes() -> (u64, u64) {
         }
     }
     (rx, tx)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn should_count_network_interface(name: &str) -> bool {
+    name != "lo"
+        && name != "docker0"
+        && name != "cni0"
+        && !name.starts_with("veth")
+        && !name.starts_with("br-")
+        && !name.starts_with("virbr")
+        && !name.starts_with("flannel.")
+        && !name.starts_with("cali")
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -889,6 +906,16 @@ mod tests {
         assert_eq!(normalize_virt_label("kvm"), "kvm");
         assert_eq!(normalize_virt_label("qemu"), "qemu");
         assert_eq!(normalize_virt_label("none"), "");
+    }
+
+    #[test]
+    fn network_totals_exclude_container_peer_and_bridge_interfaces() {
+        let proc_net_dev = "Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n  lo: 999 0 0 0 0 0 0 0 999 0 0 0 0 0 0 0\neth0: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\n wg0: 50 0 0 0 0 0 0 0 60 0 0 0 0 0 0 0\ndocker0: 1000 0 0 0 0 0 0 0 1000 0 0 0 0 0 0 0\nveth123: 1000 0 0 0 0 0 0 0 1000 0 0 0 0 0 0 0\nbr-abcd: 1000 0 0 0 0 0 0 0 1000 0 0 0 0 0 0 0\n";
+        assert_eq!(net_bytes_from_proc(proc_net_dev), (150, 260));
+        assert!(should_count_network_interface("venet0"));
+        assert!(should_count_network_interface("tun0"));
+        assert!(!should_count_network_interface("cni0"));
+        assert!(!should_count_network_interface("flannel.1"));
     }
 
     #[cfg(target_os = "linux")]

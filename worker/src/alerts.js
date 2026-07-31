@@ -674,7 +674,13 @@ async function telegramToken(env) {
   const stored = String(await getMeta(env, TG_TOKEN_KEY) || '').trim();
   if (!stored) return '';
   if (stored.startsWith(SECRET_PREFIX)) {
-    try { return await decryptSecret(stored.slice(SECRET_PREFIX.length), env); } catch (_) { return ''; }
+    try {
+      const decrypted = await decryptSecret(stored.slice(SECRET_PREFIX.length), env);
+      if (decrypted.needsMigration && primarySecretMaterial(env)) {
+        await setMeta(env, TG_TOKEN_KEY, await encryptSecret(decrypted.secret, env));
+      }
+      return decrypted.secret;
+    } catch (_) { return ''; }
   }
   try {
     await setMeta(env, TG_TOKEN_KEY, await encryptSecret(stored, env));
@@ -692,7 +698,13 @@ async function resendApiKey(env) {
   const stored = String(await getMeta(env, RESEND_KEY) || '').trim();
   if (!stored) return '';
   if (stored.startsWith(SECRET_PREFIX)) {
-    try { return await decryptSecret(stored.slice(SECRET_PREFIX.length), env); } catch (_) { return ''; }
+    try {
+      const decrypted = await decryptSecret(stored.slice(SECRET_PREFIX.length), env);
+      if (decrypted.needsMigration && primarySecretMaterial(env)) {
+        await setMeta(env, RESEND_KEY, await encryptSecret(decrypted.secret, env));
+      }
+      return decrypted.secret;
+    } catch (_) { return ''; }
   }
   try { await setMeta(env, RESEND_KEY, await encryptSecret(stored, env)); } catch (_) {}
   return stored;
@@ -1033,6 +1045,27 @@ async function setMeta(env, key, value) {
     .bind(key, String(value), nowSec()).run();
 }
 
+export async function migrateAlertEncryption(env) {
+  if (!primarySecretMaterial(env)) throw new Error('缺少 ALERT_ENCRYPTION_KEY 或 TOTP_ENCRYPTION_KEY');
+  let total = 0;
+  let migrated = 0;
+  for (const key of [TG_TOKEN_KEY, RESEND_KEY]) {
+    const stored = String(await getMeta(env, key) || '').trim();
+    if (!stored) continue;
+    total += 1;
+    if (!stored.startsWith(SECRET_PREFIX)) {
+      await setMeta(env, key, await encryptSecret(stored, env));
+      migrated += 1;
+      continue;
+    }
+    const decrypted = await decryptSecret(stored.slice(SECRET_PREFIX.length), env);
+    if (!decrypted.needsMigration) continue;
+    await setMeta(env, key, await encryptSecret(decrypted.secret, env));
+    migrated += 1;
+  }
+  return { total, migrated };
+}
+
 async function encryptSecret(secret, env) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = new Uint8Array(await crypto.subtle.encrypt(
@@ -1052,14 +1085,17 @@ async function decryptSecret(payload, env) {
   const iv = combined.slice(0, 12);
   const encrypted = combined.slice(12);
   let lastError = null;
-  for (const material of secretKeyMaterials(env)) {
+  for (const candidate of secretKeyMaterials(env)) {
     try {
       const decrypted = await crypto.subtle.decrypt(
         { name: 'AES-GCM', iv },
-        await importSecretKey(material, ['decrypt']),
+        await importSecretKey(candidate.material, ['decrypt']),
         encrypted,
       );
-      return new TextDecoder().decode(decrypted);
+      return {
+        secret: new TextDecoder().decode(decrypted),
+        needsMigration: candidate.source !== 'primary',
+      };
     } catch (error) {
       lastError = error;
     }
@@ -1068,18 +1104,26 @@ async function decryptSecret(payload, env) {
 }
 
 async function secretKey(env, usages) {
-  const material = secretKeyMaterials(env)[0];
-  if (!material) throw new Error('将告警密钥保存到 D1 需要配置 ADMIN_PASSWORD、ALERT_ENCRYPTION_KEY 或 TOTP_ENCRYPTION_KEY');
+  const material = primarySecretMaterial(env);
+  if (!material) throw new Error('将告警密钥保存到 D1 需要配置长期 ALERT_ENCRYPTION_KEY 或 TOTP_ENCRYPTION_KEY');
   return importSecretKey(material, usages);
 }
 
+function primarySecretMaterial(env) {
+  return String(env.ALERT_ENCRYPTION_KEY || env.TOTP_ENCRYPTION_KEY || '').trim();
+}
+
 function secretKeyMaterials(env) {
-  return [...new Set([
-    String(env.ALERT_ENCRYPTION_KEY || '').trim(),
-    String(env.TOTP_ENCRYPTION_KEY || '').trim(),
-    String(env.ADMIN_PASSWORD || '').trim(),
-    String(env.ADMIN_TOKEN || '').trim(),
-  ].filter(Boolean))];
+  const candidates = [
+    { material: primarySecretMaterial(env), source: 'primary' },
+    { material: String(env.PREVIOUS_ENCRYPTION_KEY || '').trim(), source: 'previous' },
+    { material: String(env.ALERT_ENCRYPTION_KEY || '').trim(), source: 'legacy_alert' },
+    { material: String(env.TOTP_ENCRYPTION_KEY || '').trim(), source: 'legacy_totp' },
+    { material: String(env.ADMIN_PASSWORD || '').trim(), source: 'legacy_admin_password' },
+    { material: String(env.ADMIN_TOKEN || '').trim(), source: 'legacy_admin_token' },
+  ];
+  return candidates.filter((candidate, index) => candidate.material
+    && candidates.findIndex((entry) => entry.material === candidate.material) === index);
 }
 
 async function importSecretKey(material, usages) {

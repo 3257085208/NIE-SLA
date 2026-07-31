@@ -1,0 +1,26 @@
+{
+  "schema": "nie-sla-reviewed-task-sources-v1",
+  "reviewed_at": "2026-07-31",
+  "assets": [
+    {
+      "id": "nodequality",
+      "file": "nodequality.sh",
+      "upstream_entrypoint": "https://run.NodeQuality.com",
+      "source_repository": "https://github.com/LloydAsp/NodeQuality",
+      "source_commit": "a92fca6c0067df29ddd03fdc2fee6f3000f64545",
+      "source_path": "NodeQuality.sh",
+      "sha256": "4e1b25894cadf908ef61fb0d9ce874a75524c6dafc2ea26f0477107288e0c018",
+      "license": "AGPL-3.0-only"
+    },
+    {
+      "id": "ip-check",
+      "file": "ip-check.sh",
+      "upstream_entrypoint": "https://IP.Check.Place",
+      "source_repository": "https://github.com/xykt/IPQuality",
+      "source_commit": "44a55baec6cdd166a68b37f9c07d62d9e0a04f23",
+      "source_path": "ip.sh",
+      "sha256": "69e7a8d0b9018a508fa7a54a3f7e98c9fa8c19eeb6995d60675070361cb76c03",
+      "license": "AGPL-3.0-only"
+    }
+  ]
+}

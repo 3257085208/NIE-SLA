@@ -4,7 +4,7 @@
 
 1. 点击公开仓库 README 顶部的 **Deploy to Cloudflare**。
 2. 完成 GitHub 与 Cloudflare 授权。
-3. 填写后台账号、后台密码和后台路径。
+3. 填写后台账号、后台密码、后台路径和独立长期加密密钥。
 4. 等待构建完成，打开 Worker 地址。
 5. 访问 `https://Worker地址/后台路径`。
 6. 登录后在“探针”新增 VPS，并运行该节点生成的 Agent 命令。
@@ -18,8 +18,9 @@
 | `ADMIN_USERNAME` | 3-64 位允许字符 |
 | `ADMIN_PASSWORD` | 至少 9 位，包含大小写字母、数字和特殊符号 |
 | `ADMIN_PATH` | 3-64 位字母、数字、连字符或下划线，可带前导斜杠 |
+| `TOTP_ENCRYPTION_KEY` | 至少 32 位独立随机值；修改管理员密码时不要同步更换 |
 
-Agent Token 由后台按节点自动生成。TOTP 默认关闭。其他性能、历史和限流参数使用安全默认值。
+Agent Token 由后台按节点自动生成。TOTP 默认关闭。长期密钥用于TOTP、可恢复Agent Token和通知凭据，不应与管理员密码复用。
 
 ## 自定义域名
 

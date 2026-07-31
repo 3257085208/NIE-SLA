@@ -1,7 +1,7 @@
-import { agentInstallCommandFromPayload, copyText } from "./install-command.js?v=20260731-v1048";
-import { createAdminClient } from "./admin/api.js?v=20260731-v1048";
+import { agentInstallCommandFromPayload, copyText } from "./install-command.js?v=20260731-v1049";
+import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1048";
+import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1049";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -12,8 +12,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260731-v1048";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260731-v1048";
+} from "./shared/grouping.js?v=20260731-v1049";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260731-v1049";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -609,8 +609,11 @@ function trafficCell(t, s = {}) {
   if (!tr.enabled) return '<span class="tag tag-off">未启用</span>';
   const quota = Number(tr.quota_bytes || 0),
     total = Number(tr.total_bytes || 0),
-    reset = tr.reset_day ? ` · ${tr.reset_day}日重置` : "";
-  return `<span class="tag tag-on">已启用</span><br><small class="hint">${formatBytes(total)}${quota ? " / " + formatBytes(quota) : ""}${tr.percent != null ? " · " + tr.percent + "%" : ""}${reset}</small>`;
+    percent = tr.percent == null ? null : Number(tr.percent),
+    resetDay = Number(tr.reset_day);
+  const percentText = percent != null && Number.isFinite(percent) ? ` · ${percent}%` : "";
+  const reset = Number.isInteger(resetDay) && resetDay >= 1 && resetDay <= 31 ? ` · ${resetDay}日重置` : "";
+  return `<span class="tag tag-on">已启用</span><br><small class="hint">${escapeHtml(formatBytes(total))}${quota ? " / " + escapeHtml(formatBytes(quota)) : ""}${escapeHtml(percentText)}${escapeHtml(reset)}</small>`;
 }
 async function loadTargets() {
   loading(
@@ -2044,6 +2047,7 @@ async function loadSettings() {
   loadSysInfo();
   loadAppUpdate();
   loadTotp();
+  loadEncryption();
   loadAccount();
   loadAdminPath();
   loadGeoIp();
@@ -2053,6 +2057,59 @@ async function loadSettings() {
   loadTraffic();
   loadAlerts();
   loadAppearance();
+}
+
+async function loadEncryption() {
+  const box = byId("sEncryption");
+  if (!box) return;
+  try {
+    const data = await apiAdmin("/api/security/encryption");
+    const primary = data.primary_configured
+      ? '<span class="tag tag-on">已配置</span>'
+      : '<span class="tag tag-warn">未配置</span>';
+    const previous = data.previous_configured
+      ? '<span class="tag tag-warn">轮换中</span>'
+      : '<span class="tag tag-off">未启用</span>';
+    box.innerHTML = `
+      <div class="security-key-status"><span>长期密钥</span>${primary}</div>
+      <div class="security-key-status"><span>上一把密钥</span>${previous}</div>
+      <p class="hint">迁移会用当前长期密钥重新封装 TOTP、Agent Token 与通知凭据，不会改变 Agent Token。</p>
+      <button type="button" class="btn btn-sm btn-blue" id="migrateEncryption"${data.primary_configured ? "" : " disabled"}>检查并迁移</button>
+      <p class="backup-status" id="encryptionStatus" role="status" aria-live="polite" hidden></p>`;
+    byId("migrateEncryption").onclick = migrateEncryption;
+  } catch (error) {
+    errBox("sEncryption", error);
+  }
+}
+
+async function migrateEncryption() {
+  const button = byId("migrateEncryption");
+  const status = byId("encryptionStatus");
+  if (button) button.disabled = true;
+  if (status) {
+    status.hidden = false;
+    status.className = "backup-status info";
+    status.textContent = "正在检查并重加密现有凭据...";
+  }
+  try {
+    const data = await apiAdmin("/api/security/encryption/migrate", { method: "POST" }, 60000);
+    const migrated = Object.values(data.results || {}).reduce((sum, item) => sum + Number(item?.migrated || 0), 0);
+    if (!data.ok) throw new Error((data.errors || []).map((item) => `${item.component}: ${item.error}`).join("；") || data.error || "迁移未完成");
+    if (status) {
+      status.className = "backup-status ok";
+      status.textContent = `密钥检查完成，已重加密 ${migrated} 条记录。`;
+    }
+    toast("加密材料检查完成", "ok");
+    setTimeout(loadEncryption, 800);
+  } catch (error) {
+    if (status) {
+      status.className = "backup-status err";
+      status.textContent = `迁移失败：${error.message}`;
+    }
+    toast(`密钥迁移失败：${error.message}`, "err");
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 async function loadGeoIp() {
@@ -2097,7 +2154,7 @@ function loadBackup() {
   box.innerHTML = `
     <p class="hint">便携备份包含节点、检测、账单、外观和 Agent 连接域名，不包含 D1/R2 历史。建议保留下方受保护凭据，迁移到全新 Worker 与 D1 后，已安装 Agent 可继续连接。</p>
     <label class="switch-line"><input id="backupSecrets" type="checkbox" checked><span>保留 Agent/TOTP/通知凭据（推荐，密码加密）</span></label>
-    <p class="hint backup-warning">Agent Token 只会出现在备份密码加密的数据包内，恢复时自动使用新部署密钥重新封装。TOTP 和通知的旧密文仍建议配合原 <code>TOTP_ENCRYPTION_KEY</code> 迁移。</p>
+    <p class="hint backup-warning">Agent Token 只会出现在备份密码加密的数据包内，恢复时自动使用新部署长期密钥重新封装。轮换密钥前请先在“安全 → 数据加密密钥”完成迁移检查。</p>
     <div class="backup-actions"><button class="btn btn-blue btn-sm" id="exportBackup">导出备份</button><button class="btn btn-sm" id="chooseRestoreBackup">恢复备份</button></div>
     <p class="backup-status" id="backupStatus" role="status" aria-live="polite" hidden></p>`;
   byId("exportBackup").onclick = downloadBackup;

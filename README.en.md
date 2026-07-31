@@ -10,11 +10,11 @@ New deployments use one Worker application for Static Assets, API, D1, R2, Durab
 
 1. Click **Deploy to Cloudflare**.
 2. Authorize GitHub and Cloudflare.
-3. Set the admin username, password, and path.
+3. Set the admin username, password, path, and an independent long-term encryption key.
 4. Open the deployed Worker and sign in.
 5. Add a VPS and run its generated per-node Agent command.
 
-Agent tokens are generated automatically. TOTP is disabled by default.
+Agent tokens are generated automatically. Keep `TOTP_ENCRYPTION_KEY` as an independent random value of at least 32 characters; changing the Admin password must not change it. TOTP is disabled by default.
 
 ## Agent Distribution
 
@@ -40,6 +40,8 @@ The admin panel can explicitly request NodeQuality or an IPv4 unlock check on Li
 
 The Worker can render selected NodeQuality sections as SVG and upload them through a fixed S3 channel with no folder. Image-host credentials remain in Worker Secrets, and public reports use the same-origin image proxy instead of exposing the upstream host.
 
+Both entry scripts are reviewed source snapshots served by the deployment and verified by SHA-256. Secondary downloads run under a dedicated no-login host account and Linux namespaces; failure to establish isolation aborts the task.
+
 ## Migration
 
 Existing Pages + Worker installations should reuse their D1, R2, Agent API hostname, Target IDs, scoped credentials, and encryption material. Existing Agents then continue reporting without reconfiguration. Portable backup is a migration fallback; full high-frequency history remains in R2.
@@ -53,6 +55,7 @@ Existing Pages + Worker installations should reuse their D1, R2, Agent API hostn
 - administrator-approved theme packages with no-same-origin Canvas isolation;
 - no plugin, admin-script, marketplace, or arbitrary extension runtime;
 - encrypted sensitive backups and public payload redaction.
+- dedicated long-term encryption material for TOTP, recoverable Agent tokens, and Admin-stored notification credentials.
 
 ## Validation
 

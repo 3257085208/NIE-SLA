@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { getOrCreateAgentToken, legacyScopedToken } from '../src/agent-credentials.js';
+import { getOrCreateAgentToken, legacyScopedToken, migrateAgentCredentialEncryption, verifyAgentCredential } from '../src/agent-credentials.js';
 import { requireAgentForId, requireAnyAgent, requireLatencyAgentForId } from '../src/auth.js';
 import { getAgentInstallCommand, getAgentInstallScript } from '../src/admin/install-command.js';
 import { getLatencyAgentInstallCommand } from '../src/admin/latency-agents.js';
@@ -185,14 +185,72 @@ await assert.rejects(() => getOrCreateAgentToken(wrongKeyEnv, 'agent', 'vps-a'),
 assert.deepEqual(await requireAgentForId(agentRequest(token), wrongKeyEnv, 'vps-a'), { type: 'scoped', agent_id: 'vps-a' }, 'authentication must only need the stored hash');
 assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM agent_credentials WHERE subject_type = 'agent' AND subject_id = 'vps-a'`).get().count, 1);
 
-const passwordFallbackEnv = { DB: env.DB, ADMIN_PASSWORD: 'Admin-fallback1!' };
-const passwordFallbackToken = await getOrCreateAgentToken(passwordFallbackEnv, 'agent', 'password-fallback');
-assert.match(passwordFallbackToken, /^nst_[a-f0-9]{64}$/);
-assert.equal(await getOrCreateAgentToken(passwordFallbackEnv, 'agent', 'password-fallback'), passwordFallbackToken);
-assert.equal(
-  await getOrCreateAgentToken({ ...passwordFallbackEnv, TOTP_ENCRYPTION_KEY: 'new-dedicated-key' }, 'agent', 'password-fallback'),
+const legacyPassword = 'Admin-fallback1!';
+const passwordFallbackToken = `nst_${'ab'.repeat(32)}`;
+const passwordFallbackHash = await sha256Hex(passwordFallbackToken);
+const passwordFallbackCiphertext = await encryptLegacyAgentToken(
   passwordFallbackToken,
-  'adding a dedicated key must not make ADMIN_PASSWORD-encrypted credentials unreadable',
+  legacyPassword,
+  { type: 'agent', id: 'password-fallback' },
+);
+database.prepare(`INSERT INTO agent_credentials
+  (subject_type, subject_id, token_hash, token_ciphertext, created_at, updated_at)
+  VALUES ('agent', 'password-fallback', ?, ?, ?, ?)`).run(
+  passwordFallbackHash,
+  passwordFallbackCiphertext,
+  now,
+  now,
+);
+const passwordFallbackEnv = {
+  DB: env.DB,
+  ADMIN_PASSWORD: legacyPassword,
+  TOTP_ENCRYPTION_KEY: 'new-dedicated-key-with-at-least-32-characters',
+};
+assert.equal(
+  await getOrCreateAgentToken(passwordFallbackEnv, 'agent', 'password-fallback'),
+  passwordFallbackToken,
+  'adding a dedicated key must decrypt and migrate ADMIN_PASSWORD-encrypted credentials',
+);
+const migratedFallback = database.prepare(`SELECT token_hash, token_ciphertext FROM agent_credentials
+  WHERE subject_type = 'agent' AND subject_id = 'password-fallback'`).get();
+assert.equal(migratedFallback.token_hash, passwordFallbackHash, 'lazy re-encryption must preserve online authentication hashes');
+assert.notEqual(migratedFallback.token_ciphertext, passwordFallbackCiphertext);
+assert.equal(
+  await getOrCreateAgentToken({ DB: env.DB, TOTP_ENCRYPTION_KEY: passwordFallbackEnv.TOTP_ENCRYPTION_KEY }, 'agent', 'password-fallback'),
+  passwordFallbackToken,
+  'the migrated credential must remain readable after the old Admin password is removed',
+);
+assert.equal(
+  await verifyAgentCredential({ DB: env.DB }, 'agent', 'password-fallback', passwordFallbackToken),
+  true,
+  'online Agent authentication remains hash-only after encryption migration',
+);
+
+const rotationDatabase = new DatabaseSync(':memory:');
+rotationDatabase.exec(`CREATE TABLE agent_credentials (
+  subject_type TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL,
+  token_ciphertext TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_used_at INTEGER,
+  PRIMARY KEY (subject_type, subject_id)
+)`);
+const rotationOldEnv = {
+  DB: d1(rotationDatabase),
+  TOTP_ENCRYPTION_KEY: env.TOTP_ENCRYPTION_KEY,
+};
+const rotationToken = await getOrCreateAgentToken(rotationOldEnv, 'agent', 'rotation-test');
+const rotation = await migrateAgentCredentialEncryption({
+  DB: rotationOldEnv.DB,
+  TOTP_ENCRYPTION_KEY: 'rotated-primary-key-with-at-least-32-characters',
+  PREVIOUS_ENCRYPTION_KEY: env.TOTP_ENCRYPTION_KEY,
+});
+assert.ok(rotation.migrated >= 1);
+assert.equal(
+  await getOrCreateAgentToken({ DB: rotationOldEnv.DB, TOTP_ENCRYPTION_KEY: 'rotated-primary-key-with-at-least-32-characters' }, 'agent', 'rotation-test'),
+  rotationToken,
 );
 
 const legacyEnv = { ...env, AGENT_TOKEN: 'legacy-global-secret' };
@@ -207,6 +265,29 @@ console.log('per-node Agent credential tests passed');
 
 function agentRequest(tokenValue) {
   return new Request('https://api.example.test', { headers: { authorization: `Bearer ${tokenValue}` } });
+}
+
+async function sha256Hex(value) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)));
+  return Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function encryptLegacyAgentToken(tokenValue, material, subject) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
+  const key = await crypto.subtle.importKey('raw', digest, { name: 'AES-GCM', length: 256 }, false, ['encrypt']);
+  const additionalData = new TextEncoder().encode(`nie-sla:${subject.type}:${subject.id}`);
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData },
+    key,
+    new TextEncoder().encode(tokenValue),
+  ));
+  const combined = new Uint8Array(iv.length + encrypted.length);
+  combined.set(iv);
+  combined.set(encrypted, iv.length);
+  let binary = '';
+  for (const byte of combined) binary += String.fromCharCode(byte);
+  return `enc:v1:${btoa(binary)}`;
 }
 
 function d1(db) {

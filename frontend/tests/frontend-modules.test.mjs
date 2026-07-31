@@ -91,6 +91,21 @@ assert.equal(installResponse.ok, true);
 assert.match(lastRequest.url, /\/api\/agent\/install-command\?target_id=vps-a$/);
 assert.equal(lastRequest.options.headers['x-admin-session'], 'session');
 
+let directApiAborted = false;
+globalThis.fetch = (_url, options) => new Promise((resolve, reject) => {
+  options.signal.addEventListener('abort', () => {
+    directApiAborted = true;
+    reject(new DOMException('aborted', 'AbortError'));
+  }, { once: true });
+});
+const timeoutClient = createAdminClient({ apiBase: 'https://api.example', defaultTimeoutMs: 25 });
+await assert.rejects(timeoutClient.api('/api/slow'), /API 请求超时/);
+assert.equal(directApiAborted, true, 'direct Admin API requests must have a default abort deadline');
+globalThis.fetch = async (url, options) => {
+  lastRequest = { url, options };
+  return Response.json({ ok: true });
+};
+
 const oneTimeTicket = `nsi_${'a'.repeat(48)}`;
 const shortInstallCommand = `(t=$(mktemp) && trap 'rm -f "$t"' EXIT INT TERM && chmod 0600 "$t" && curl -fsSL -H 'Authorization: Bearer ${oneTimeTicket}' 'https://api.example/api/agent/install-script' -o "$t" && sh "$t")`;
 const validInstallPayload = {

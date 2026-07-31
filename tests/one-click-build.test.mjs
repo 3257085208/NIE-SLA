@@ -75,18 +75,19 @@ assert.match(packageJson.cloudflare?.label || '', /\p{Script=Han}/u);
 assert.deepEqual(wrangler.vars || {}, {});
 assert.deepEqual(
   Object.keys(describedBindings).sort(),
-  ['ADMIN_PASSWORD', 'ADMIN_PATH', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'REGION_PROXY', 'TELEMETRY_BUFFER'].sort(),
+  ['ADMIN_PASSWORD', 'ADMIN_PATH', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'REGION_PROXY', 'TELEMETRY_BUFFER', 'TOTP_ENCRYPTION_KEY'].sort(),
 );
 for (const name of Object.keys(describedBindings)) assert.match(describedBindings[name]?.description || '', /\p{Script=Han}/u);
 assert.equal('AGENT_TOKEN' in describedBindings, false);
-assert.equal('TOTP_ENCRYPTION_KEY' in describedBindings, false);
+assert.match(describedBindings.TOTP_ENCRYPTION_KEY.description, /长期|32/);
 
 const pnpmWorkspace = await readFile(path.join(root, 'pnpm-workspace.yaml'), 'utf8');
 assert.match(pnpmWorkspace, /^packages:\s*\n\s+-\s+["']?\.["']?\s*$/m);
 const secretExample = await readFile(path.join(root, '.dev.vars.example'), 'utf8');
-for (const name of ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'ADMIN_PATH']) {
+for (const name of ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'ADMIN_PATH', 'TOTP_ENCRYPTION_KEY']) {
   assert.match(secretExample, new RegExp(`^${name}=\\s*(?:#.*)?$`, 'm'));
 }
-assert.doesNotMatch(secretExample, /^AGENT_TOKEN=|^TOTP_ENCRYPTION_KEY=/m);
+assert.doesNotMatch(secretExample, /^AGENT_TOKEN=/m);
+assert.match(secretExample, /^# PREVIOUS_ENCRYPTION_KEY=/m);
 
 console.log(`one-click build passed (${verified} verified release assets, ${version})`);

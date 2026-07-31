@@ -4,14 +4,14 @@
 
 1. Click **Deploy to Cloudflare** in the public repository.
 2. Authorize GitHub and Cloudflare.
-3. Set `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_PATH`.
+3. Set `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `ADMIN_PATH`, and a random `TOTP_ENCRYPTION_KEY` of at least 32 characters.
 4. Wait for the Worker build.
 5. Open `Worker URL + ADMIN_PATH`.
 6. Add a VPS and run its generated Agent command.
 
 The deployment includes Static Assets, D1, R2, Durable Objects, and Cron. No Pages project is required.
 
-Agent tokens are generated per node. TOTP is disabled by default.
+Agent tokens are generated per node. Keep the encryption key independent and stable when changing the Admin password. TOTP is disabled by default.
 
 ## Migration from Pages + Worker
 

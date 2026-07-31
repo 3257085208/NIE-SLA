@@ -4,3 +4,4 @@ cftz text eol=lf
 *.ps1 text eol=crlf
 bin/SHA256SUMS text eol=lf
 bin/VERSION text eol=lf
+vendor/tasks/*.sh whitespace=-trailing-space

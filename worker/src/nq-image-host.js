@@ -465,12 +465,51 @@ async function readStoredToken(env) {
   const raw = String(await getMeta(env, TOKEN_KEY).catch(() => '') || '').trim();
   if (!raw) return '';
   if (!raw.startsWith(SECRET_PREFIX)) return '';
-  try { return await decryptSecret(raw, env); } catch (_) { return ''; }
+  try {
+    const decrypted = await decryptSecret(raw, env);
+    if (decrypted.needsMigration && primarySecretMaterial(env)) {
+      await setMeta(env, TOKEN_KEY, await encryptSecret(decrypted.secret, env));
+    }
+    return decrypted.secret;
+  } catch (_) { return ''; }
 }
 
 async function getMeta(env, key) {
   const row = await env.DB.prepare('SELECT value FROM app_meta WHERE key = ?').bind(key).first();
   return row?.value ?? null;
+}
+
+async function setMeta(env, key, value) {
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
+    .bind(key, String(value), Math.floor(Date.now() / 1000)).run();
+}
+
+export async function migrateNqImageHostEncryption(env) {
+  if (!env.DB) return { total: 0, migrated: 0 };
+  if (!primarySecretMaterial(env)) throw new Error('缺少 NQ_IMGBED_ENCRYPTION_KEY、ALERT_ENCRYPTION_KEY 或 TOTP_ENCRYPTION_KEY');
+  const stored = String(await getMeta(env, TOKEN_KEY) || '').trim();
+  if (!stored) return { total: 0, migrated: 0 };
+  if (!stored.startsWith(SECRET_PREFIX)) throw new Error('旧版图床 Token 密文格式无效');
+  const decrypted = await decryptSecret(stored, env);
+  if (!decrypted.needsMigration) return { total: 1, migrated: 0 };
+  await setMeta(env, TOKEN_KEY, await encryptSecret(decrypted.secret, env));
+  return { total: 1, migrated: 1 };
+}
+
+async function encryptSecret(secret, env) {
+  const material = primarySecretMaterial(env);
+  if (!material) throw new Error('缺少长期图床 Token 加密材料');
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: SECRET_CONTEXT },
+    await importSecretKey(material, ['encrypt']),
+    new TextEncoder().encode(secret),
+  ));
+  const combined = new Uint8Array(iv.length + encrypted.length);
+  combined.set(iv);
+  combined.set(encrypted, iv.length);
+  return SECRET_PREFIX + bytesToBase64(combined);
 }
 
 async function decryptSecret(payload, env) {
@@ -479,29 +518,39 @@ async function decryptSecret(payload, env) {
   const iv = combined.slice(0, 12);
   const encrypted = combined.slice(12);
   let lastError;
-  for (const material of secretKeyMaterials(env, false)) {
+  for (const candidate of secretKeyMaterials(env, false)) {
     try {
       const plain = await crypto.subtle.decrypt(
         { name: 'AES-GCM', iv, additionalData: SECRET_CONTEXT },
-        await importSecretKey(material, ['decrypt']),
+        await importSecretKey(candidate.material, ['decrypt']),
         encrypted,
       );
-      return new TextDecoder().decode(plain);
+      return {
+        secret: new TextDecoder().decode(plain),
+        needsMigration: candidate.source !== 'primary',
+      };
     } catch (error) { lastError = error; }
   }
   throw lastError || new Error('无法解密图床 API Token');
 }
 
 function secretKeyMaterials(env, required = true) {
-  const values = [...new Set([
-    String(env.NQ_IMGBED_ENCRYPTION_KEY || '').trim(),
-    String(env.ALERT_ENCRYPTION_KEY || '').trim(),
-    String(env.TOTP_ENCRYPTION_KEY || '').trim(),
-    String(env.ADMIN_PASSWORD || '').trim(),
-    String(env.ADMIN_TOKEN || '').trim(),
-  ].filter(Boolean))];
-  if (required && !values.length) throw new ApiError(500, '缺少旧版图床 Token 的解密材料');
-  return values;
+  const candidates = [
+    { material: primarySecretMaterial(env), source: 'primary' },
+    { material: String(env.PREVIOUS_ENCRYPTION_KEY || '').trim(), source: 'previous' },
+    { material: String(env.NQ_IMGBED_ENCRYPTION_KEY || '').trim(), source: 'legacy_nq' },
+    { material: String(env.ALERT_ENCRYPTION_KEY || '').trim(), source: 'legacy_alert' },
+    { material: String(env.TOTP_ENCRYPTION_KEY || '').trim(), source: 'legacy_totp' },
+    { material: String(env.ADMIN_PASSWORD || '').trim(), source: 'legacy_admin_password' },
+    { material: String(env.ADMIN_TOKEN || '').trim(), source: 'legacy_admin_token' },
+  ].filter((candidate, index, all) => candidate.material
+    && all.findIndex((entry) => entry.material === candidate.material) === index);
+  if (required && !candidates.length) throw new ApiError(500, '缺少旧版图床 Token 的解密材料');
+  return candidates;
+}
+
+function primarySecretMaterial(env) {
+  return String(env.NQ_IMGBED_ENCRYPTION_KEY || env.ALERT_ENCRYPTION_KEY || env.TOTP_ENCRYPTION_KEY || '').trim();
 }
 
 async function importSecretKey(material, usages) {
@@ -513,4 +562,12 @@ async function importSecretKey(material, usages) {
 function base64ToBytes(value) {
   const binary = atob(value);
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary);
 }

@@ -191,7 +191,7 @@ async function clearRuntimeState(env) {
 }
 
 function restoreSnapshotMaterial(env) {
-  return String(env.BACKUP_SNAPSHOT_KEY || env.TOTP_ENCRYPTION_KEY || env.ADMIN_PASSWORD || env.ADMIN_TOKEN || '').trim();
+  return String(env.BACKUP_SNAPSHOT_KEY || env.TOTP_ENCRYPTION_KEY || '').trim();
 }
 
 function normalizeArchive(value) {

@@ -13,12 +13,15 @@ const HEARTBEAT_INTERVAL_SEC: u64 = 15;
 const TASK_POLL_SEC: u64 = crate::tasks::TASK_POLL_SEC;
 const SERVICE_RECONCILE_SEC: u64 = 3600;
 const AGENT_BINARY: &str = "/opt/nstatus-metrics/nstatus-metrics";
+const CFTZ_BINARY: &str = "/usr/local/bin/cftz";
 const ENV_FILE: &str = "/opt/nstatus-metrics/nstatus-metrics.env";
 const STATE_DIR: &str = "/var/lib/nstatus-metrics";
 const MANAGER_STATE_DIR: &str = "/var/lib/nstatus-manager";
 const MANAGER_HEARTBEAT: &str = "/var/lib/nstatus-manager/manager-heartbeat";
 const TELEMETRY_SERVICE: &str = "nstatus-metrics";
 const MANAGER_SERVICE: &str = "nstatus-metrics-tasks";
+const TASK_USER: &str = "nstatus-task";
+const UPDATE_TIMER: &str = "nstatus-metrics-update.timer";
 const UPDATE_BACKUP: &str = "/opt/nstatus-metrics/nstatus-metrics.bak";
 const UPDATE_FAILED: &str = "/opt/nstatus-metrics/nstatus-metrics.failed";
 const UPDATE_CONFIRMATION: &str = "/var/lib/nstatus-manager/update-confirmed";
@@ -36,9 +39,9 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
         return Err(anyhow!("the Agent manager must run as root"));
     }
 
+    ensure_task_user().context("prepare isolated task identity")?;
     reconcile_service_layout().context("reconcile Agent services")?;
     write_heartbeat(cfg, "current")?;
-    retire_legacy_update_job();
     spawn_heartbeat(cfg.clone());
     spawn_update_confirmation();
     let updates = spawn_manager_update_worker(cfg.clone(), http.clone());
@@ -67,6 +70,10 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
                 }
                 Ok(UpdateOutcome::AvailableManual(version)) => eprintln!(
                     "{{\"ok\":false,\"manager_update\":\"disabled\",\"version\":{}}}",
+                    serde_json::to_string(&version).unwrap_or_else(|_| "\"unknown\"".into())
+                ),
+                Ok(UpdateOutcome::PrivilegedRecovery(version)) => eprintln!(
+                    "{{\"ok\":false,\"manager_update\":\"recovery_pending\",\"version\":{}}}",
                     serde_json::to_string(&version).unwrap_or_else(|_| "\"unknown\"".into())
                 ),
                 Err(error) => eprintln!(
@@ -324,10 +331,10 @@ pub(crate) fn reported_capabilities(cfg: &Config) -> Value {
     }
     json!({
         "protocol": 1,
-        "mode": if cfg!(target_os = "linux") { "compatibility" } else { "telemetry_only" },
+        "mode": "telemetry_only",
         "manager_version": Value::Null,
         "privileged": false,
-        "actions": if cfg!(target_os = "linux") { vec!["ip_unlock"] } else { Vec::<&str>::new() },
+        "actions": Vec::<&str>::new(),
         "updated_at": now_sec(),
     })
 }
@@ -427,6 +434,78 @@ fn is_root() -> bool {
         == Some(0)
 }
 
+fn ensure_task_user() -> Result<()> {
+    if let Some((uid, gid)) = task_user_identity() {
+        if uid == 0 || gid == 0 {
+            return Err(anyhow!("isolated task user or group must not be root"));
+        }
+        return Ok(());
+    }
+    let shell = ["/usr/sbin/nologin", "/sbin/nologin"]
+        .into_iter()
+        .find(|path| Path::new(path).is_file())
+        .unwrap_or("/bin/false");
+    let mut created = false;
+    if command_exists("useradd") {
+        for args in [
+            vec!["--system", "--no-create-home", "--shell", shell, TASK_USER],
+            vec!["-r", "-M", "-s", shell, TASK_USER],
+        ] {
+            if Command::new("useradd")
+                .args(args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+            {
+                created = true;
+                break;
+            }
+        }
+    } else if command_exists("adduser") {
+        for args in [
+            vec!["--system", "--no-create-home", "--shell", shell, TASK_USER],
+            vec!["-S", "-D", "-H", "-s", shell, TASK_USER],
+            vec!["-D", "-H", "-s", shell, TASK_USER],
+        ] {
+            if Command::new("adduser")
+                .args(args)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+            {
+                created = true;
+                break;
+            }
+        }
+    } else {
+        return Err(anyhow!("useradd or adduser is required for task isolation"));
+    }
+    let Some((uid, gid)) = task_user_identity() else {
+        return Err(anyhow!("isolated task user was not created"));
+    };
+    if !created || uid == 0 || gid == 0 {
+        return Err(anyhow!("isolated task user is not safely configured"));
+    }
+    Ok(())
+}
+
+fn task_user_identity() -> Option<(u32, u32)> {
+    fn id_value(flag: &str) -> Option<u32> {
+        let output = Command::new("id")
+            .args([flag, TASK_USER])
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().parse().ok())?
+    }
+    Some((id_value("-u")?, id_value("-g")?))
+}
+
 fn reconcile_service_layout() -> Result<()> {
     if !Path::new(AGENT_BINARY).is_file() || !Path::new(ENV_FILE).is_file() {
         return Ok(());
@@ -438,18 +517,29 @@ fn reconcile_service_layout() -> Result<()> {
     if Path::new("/run/systemd/system").is_dir() && command_exists("systemctl") {
         let telemetry = systemd_telemetry_unit();
         let manager = systemd_manager_unit();
+        let recovery_service = systemd_recovery_update_service();
+        let recovery_timer = systemd_recovery_update_timer();
         let changed = write_if_changed(
             Path::new("/etc/systemd/system/nstatus-metrics.service"),
             telemetry.as_bytes(),
         )? | write_if_changed(
             Path::new("/etc/systemd/system/nstatus-metrics-tasks.service"),
             manager.as_bytes(),
+        )? | write_if_changed(
+            Path::new("/etc/systemd/system/nstatus-metrics-update.service"),
+            recovery_service.as_bytes(),
+        )? | write_if_changed(
+            Path::new("/etc/systemd/system/nstatus-metrics-update.timer"),
+            recovery_timer.as_bytes(),
         )?;
         if changed {
             run_checked(Command::new("systemctl").arg("daemon-reload"))?;
         }
         let _ = Command::new("systemctl")
             .args(["enable", TELEMETRY_SERVICE, MANAGER_SERVICE])
+            .status();
+        let _ = Command::new("systemctl")
+            .args(["enable", "--now", UPDATE_TIMER])
             .status();
     } else if Path::new("/etc/init.d").is_dir() && command_exists("rc-service") {
         write_if_changed(
@@ -468,6 +558,7 @@ fn reconcile_service_layout() -> Result<()> {
         let _ = Command::new("rc-update")
             .args(["add", MANAGER_SERVICE, "default"])
             .status();
+        install_openrc_recovery_job()?;
     }
     Ok(())
 }
@@ -479,23 +570,6 @@ fn clear_legacy_ping_capability() {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
-    }
-}
-
-fn retire_legacy_update_job() {
-    if Path::new("/run/systemd/system").is_dir() && command_exists("systemctl") {
-        let _ = Command::new("systemctl")
-            .args(["disable", "--now", "nstatus-metrics-update.timer"])
-            .status();
-    } else {
-        for path in [
-            "/etc/periodic/hourly/nstatus-metrics-update",
-            "/etc/cron.hourly/nstatus-metrics-update",
-        ] {
-            if Path::new(path).is_file() && !Path::new(path).is_symlink() {
-                let _ = fs::remove_file(path);
-            }
-        }
     }
 }
 
@@ -583,6 +657,16 @@ fn systemd_manager_unit() -> String {
     )
 }
 
+fn systemd_recovery_update_service() -> String {
+    format!(
+        "[Unit]\nDescription=NIE-SLA privileged Agent recovery update\nAfter=network-online.target\n\n[Service]\nType=oneshot\nExecCondition=/bin/sh -c '! systemctl is-active --quiet {MANAGER_SERVICE}'\nExecStart={CFTZ_BINARY} update --automatic\n"
+    )
+}
+
+fn systemd_recovery_update_timer() -> String {
+    "[Unit]\nDescription=Recover NIE-SLA Agent manager and verified updates\n\n[Timer]\nOnBootSec=5min\nOnUnitActiveSec=1h\nRandomizedDelaySec=5min\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n".to_string()
+}
+
 fn openrc_telemetry_service() -> String {
     format!(
         "#!/sbin/openrc-run\nname=\"{TELEMETRY_SERVICE}\"\ndescription=\"NIE-SLA VPS Metrics Agent\"\n\nstart() {{\n    ebegin \"Starting {TELEMETRY_SERVICE}\"\n    touch \"/var/log/{TELEMETRY_SERVICE}.log\"\n    chown nstatus \"/var/log/{TELEMETRY_SERVICE}.log\" 2>/dev/null || true\n    start-stop-daemon --start --background --make-pidfile \\\n        --pidfile /run/{TELEMETRY_SERVICE}.pid \\\n        --user nstatus \\\n        --exec /bin/sh -- \\\n        -c 'cd \"{STATE_DIR}\"; set -a; . \"{ENV_FILE}\"; set +a; exec \"{AGENT_BINARY}\" >>\"/var/log/{TELEMETRY_SERVICE}.log\" 2>&1'\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping {TELEMETRY_SERVICE}\"\n    start-stop-daemon --stop --pidfile /run/{TELEMETRY_SERVICE}.pid\n    eend $?\n}}\n\ndepend() {{ need net; }}\n"
@@ -592,6 +676,26 @@ fn openrc_telemetry_service() -> String {
 fn openrc_manager_service() -> String {
     format!(
         "#!/sbin/openrc-run\nname=\"{MANAGER_SERVICE}\"\ndescription=\"NIE-SLA privileged Agent manager\"\n\nstart() {{\n    ebegin \"Starting {MANAGER_SERVICE}\"\n    start-stop-daemon --start --background --make-pidfile \\\n        --pidfile /run/{MANAGER_SERVICE}.pid \\\n        --exec /bin/sh -- \\\n        -c 'cd \"{STATE_DIR}\"; set -a; . \"{ENV_FILE}\"; set +a; export NSTATUS_TASK_RUNNER_ONLY=1; exec \"{AGENT_BINARY}\" --task-runner-only >>\"/var/log/{MANAGER_SERVICE}.log\" 2>&1'\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping {MANAGER_SERVICE}\"\n    start-stop-daemon --stop --pidfile /run/{MANAGER_SERVICE}.pid\n    eend $?\n}}\n\ndepend() {{ need net; after {TELEMETRY_SERVICE}; }}\n"
+    )
+}
+
+fn install_openrc_recovery_job() -> Result<()> {
+    let path = [
+        Path::new("/etc/periodic/hourly/nstatus-metrics-update"),
+        Path::new("/etc/cron.hourly/nstatus-metrics-update"),
+    ]
+    .into_iter()
+    .find(|path| path.parent().is_some_and(Path::is_dir));
+    let Some(path) = path else {
+        return Ok(());
+    };
+    write_if_changed(path, openrc_recovery_update_job().as_bytes())?;
+    set_executable(path)
+}
+
+fn openrc_recovery_update_job() -> String {
+    format!(
+        "#!/bin/sh\nif rc-service {MANAGER_SERVICE} status >/dev/null 2>&1; then\n  exit 0\nfi\nexec {CFTZ_BINARY} update --automatic >>/var/log/nstatus-metrics-update.log 2>&1\n"
     )
 }
 
@@ -652,12 +756,8 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        let expected_mode = if cfg!(target_os = "linux") {
-            "compatibility"
-        } else {
-            "telemetry_only"
-        };
-        assert_eq!(reported_capabilities(&cfg)["mode"], expected_mode);
+        assert_eq!(reported_capabilities(&cfg)["mode"], "telemetry_only");
+        assert_eq!(reported_capabilities(&cfg)["actions"], json!([]));
         let _ = fs::remove_dir_all(base);
     }
 
@@ -681,6 +781,19 @@ mod tests {
         let status = Command::new("sh").arg("-n").arg(&path).status().unwrap();
         let _ = fs::remove_file(path);
         assert!(status.success());
+    }
+
+    #[test]
+    fn privileged_recovery_jobs_run_only_while_manager_is_down() {
+        let systemd = systemd_recovery_update_service();
+        assert!(systemd.contains(
+            "ExecCondition=/bin/sh -c '! systemctl is-active --quiet nstatus-metrics-tasks'"
+        ));
+        assert!(systemd.contains("ExecStart=/usr/local/bin/cftz update --automatic"));
+
+        let openrc = openrc_recovery_update_job();
+        assert!(openrc.contains("rc-service nstatus-metrics-tasks status"));
+        assert!(openrc.contains("exec /usr/local/bin/cftz update --automatic"));
     }
 
     #[test]

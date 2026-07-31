@@ -6,7 +6,7 @@ Supported rules include Agent offline/recovery, Cloudflare probe failure/recover
 
 ## Telegram
 
-Create a bot with `@BotFather`, obtain the token and chat ID, then configure Telegram under **Settings → Alerts**. Tokens saved in Admin are encrypted with `ALERT_ENCRYPTION_KEY` or `TOTP_ENCRYPTION_KEY`, falling back to the deployment `ADMIN_PASSWORD`. The `TELEGRAM_BOT_TOKEN` Worker secret is also supported.
+Create a bot with `@BotFather`, obtain the token and chat ID, then configure Telegram under **Settings → Alerts**. Tokens saved in Admin use the long-term `ALERT_ENCRYPTION_KEY` or `TOTP_ENCRYPTION_KEY`. The Admin password is accepted only to decrypt and migrate legacy ciphertext. The `TELEGRAM_BOT_TOKEN` Worker secret is also supported.
 
 ## Email
 

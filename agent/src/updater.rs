@@ -117,9 +117,21 @@ fn check_for_update(
     #[cfg(not(target_os = "linux"))]
     let privileged_updater = false;
 
-    if is_managed_by_privileged_service(policy.auto_update, privileged_updater, role) {
+    let manager_active = role != UpdateRole::Telemetry || crate::manager::is_active(cfg);
+    if is_managed_by_privileged_service(
+        policy.auto_update,
+        privileged_updater,
+        role,
+        manager_active,
+    ) {
         return Ok((
             UpdateOutcome::Managed(policy.latest_version),
+            policy.check_interval_sec,
+        ));
+    }
+    if policy.auto_update && privileged_updater && role == UpdateRole::Telemetry {
+        return Ok((
+            UpdateOutcome::PrivilegedRecovery(policy.latest_version),
             policy.check_interval_sec,
         ));
     }
@@ -144,8 +156,9 @@ fn is_managed_by_privileged_service(
     auto_update: bool,
     privileged_updater: bool,
     role: UpdateRole,
+    manager_active: bool,
 ) -> bool {
-    auto_update && privileged_updater && role == UpdateRole::Telemetry
+    auto_update && privileged_updater && role == UpdateRole::Telemetry && manager_active
 }
 
 pub(super) fn spawn_manager_update_worker(
@@ -352,17 +365,26 @@ mod tests {
         assert!(is_managed_by_privileged_service(
             true,
             true,
-            UpdateRole::Telemetry
+            UpdateRole::Telemetry,
+            true,
         ));
         assert!(!is_managed_by_privileged_service(
             true,
             true,
-            UpdateRole::PrivilegedManager
+            UpdateRole::PrivilegedManager,
+            true,
         ));
         assert!(!is_managed_by_privileged_service(
             false,
             true,
-            UpdateRole::Telemetry
+            UpdateRole::Telemetry,
+            true,
+        ));
+        assert!(!is_managed_by_privileged_service(
+            true,
+            true,
+            UpdateRole::Telemetry,
+            false,
         ));
     }
 

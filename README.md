@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.0.48**
+**Stable · 1.0.49**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -28,11 +28,11 @@ NIE-SLA 把 Cloudflare 公网探测、公开状态页和 VPS 系统数据放在�
 
 1. 点击上方 **Deploy to Cloudflare**。
 2. 登录并授权 GitHub、Cloudflare。
-3. 填写后台账号、后台密码和后台路径。
+3. 填写后台账号、后台密码、后台路径和独立长期加密密钥。
 4. 等待构建完成，打开 Worker 地址。
 5. 访问 `Worker 地址 + 后台路径`，登录后跟随 UI 添加 VPS。
 
-不需要填写 Agent Token。每台 VPS 的 Token 会在后台首次生成部署命令时随机创建。TOTP 默认关闭。
+不需要填写 Agent Token。每台 VPS 的 Token 会在后台首次生成部署命令时随机创建。`TOTP_ENCRYPTION_KEY` 应使用至少 32 位随机值并长期保持不变；TOTP 默认关闭。
 
 新部署使用一个 Worker 同时承载静态前端、管理后台、API、D1、R2、Durable Objects 与每分钟 Cron，不需要单独创建 Pages。
 
@@ -66,6 +66,7 @@ VPS 上的 Agent 安装和后续更新从该用户自己的 Worker/站点 `/bin`
 - Worker 可把网络质量与回程路由渲染成 SVG，通过固定 S3 渠道上传且目录留空；图床凭据只存在于 Worker Secret，上游图片地址由本站代理隐藏，失败时回退到文本报告。
 - IPv4 解锁使用 `IP.Check.Place` JSON 模式，只保存最终媒体解锁字段，不保存纯净度。
 - 缺少 `dig` 或 `nslookup` 时使用 Agent 内置受限解析器，不安装软件、不要求 root，并保留报告原始地区值。
+- 两个入口脚本使用随站点发布的已审计源码快照并校验 SHA-256；二次下载在专用无登录宿主账户与 Linux namespace 内执行，隔离失败即拒绝任务。
 - Linux 主遥测服务继续低权限运行，常驻 root Manager 只识别编译进 Agent 的动作，并负责校验更新、维护服务和上报能力。
 
 以后增删固定动作只更新同一 Agent 二进制，不再新增 VPS 服务。已有 Manager、root 更新任务或 root 主进程的旧安装会自动迁移；后台只会标出确实缺少 root 通道的极早期节点。
@@ -87,6 +88,7 @@ VPS 上的 Agent 安装和后续更新从该用户自己的 Worker/站点 `/bin`
 - 第三方主题上传后默认停用；Canvas 无同源权限且只有脱敏只读状态。
 - 插件、后台脚本、市场导入和任意扩展执行不开放。
 - 安装和更新校验版本、manifest 与二进制 SHA-256。
+- TOTP、可恢复 Agent Token 和后台保存的通知密钥使用独立长期密钥；管理员密码不再作为新密文的加密材料。
 - 敏感备份使用 PBKDF2-SHA256 与 AES-256-GCM。
 
 ## 本地验证

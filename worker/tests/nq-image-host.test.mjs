@@ -146,12 +146,14 @@ globalThis.fetch = originalFetch;
 
 const legacyToken = 'legacy_encrypted_imgbed_token_with_upload_permission';
 const legacyKey = 'legacy-nq-image-host-encryption-key';
+const legacyCiphertext = await encryptLegacyToken(legacyToken, legacyKey);
 const fallbackEnv = {
   DB: memoryDb({
     nq_image_host_settings: JSON.stringify(legacySettings),
-    nq_image_host_token: await encryptLegacyToken(legacyToken, legacyKey),
+    nq_image_host_token: legacyCiphertext,
   }),
-  TOTP_ENCRYPTION_KEY: legacyKey,
+  TOTP_ENCRYPTION_KEY: 'new-long-term-nq-encryption-key-with-32-chars',
+  PREVIOUS_ENCRYPTION_KEY: legacyKey,
 };
 let fallbackUpload = null;
 globalThis.fetch = async (url, options) => {
@@ -164,6 +166,12 @@ assert.equal(new URL(fallbackUpload.url).searchParams.get('uploadChannel'), 's3'
 assert.equal(new URL(fallbackUpload.url).searchParams.has('uploadFolder'), false);
 assert.equal(new URL(fallbackUpload.url).searchParams.has('channelName'), false, 'legacy browser settings must not control the fixed S3 channel');
 assert.equal(fallbackUpload.options.headers.authorization, `Bearer ${legacyToken}`);
+const migratedLegacyToken = fallbackEnv.DB.meta.get('nq_image_host_token');
+assert.match(migratedLegacyToken, /^enc:v1:/);
+assert.notEqual(migratedLegacyToken, legacyCiphertext);
+delete fallbackEnv.PREVIOUS_ENCRYPTION_KEY;
+const migratedFallback = await uploadNodeQualityReportImages(fallbackEnv, oneImageReport);
+assert.equal(migratedFallback.status.uploaded, 1, 'lazy migration must survive removal of the previous key');
 globalThis.fetch = originalFetch;
 
 let unexpectedFetch = false;
@@ -178,6 +186,7 @@ console.log('NQ image host tests passed');
 function memoryDb(initial = {}) {
   const meta = new Map(Object.entries(initial));
   return {
+    meta,
     prepare(sql) {
       return {
         values: [],
@@ -188,6 +197,10 @@ function memoryDb(initial = {}) {
             return value === undefined ? null : { value };
           }
           return null;
+        },
+        async run() {
+          if (/INSERT INTO app_meta/i.test(sql)) meta.set(String(this.values[0]), String(this.values[1]));
+          return { success: true };
         },
       };
     },
