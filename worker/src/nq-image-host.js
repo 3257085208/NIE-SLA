@@ -10,6 +10,10 @@ const MAX_RESPONSE_BYTES = 32 * 1024;
 const MAX_RENDER_LINES = 1400;
 const MAX_RENDER_COLUMNS = 240;
 const UPLOAD_TIMEOUT_MS = 30_000;
+const BROKER_TIMEOUT_MS = 35_000;
+const MAX_BROKER_CONTENT_CHARS = 60_000;
+const ALLOWED_BROKER_TABS = new Set(['network', 'route']);
+const PUBLIC_BROKER_URL = 'https://api-sla.niekaixiang.com/api/nq/image-broker';
 const DEFAULT_SETTINGS = Object.freeze({
   endpoint: '',
 });
@@ -22,12 +26,6 @@ const TERMINAL_THEME = Object.freeze({
   normal: ['#050404', '#bd0013', '#4ab118', '#e7741e', '#0f4ac6', '#665993', '#70a598', '#f8dcc0'],
   bright: ['#4e7cbf', '#fc5f5a', '#9eff6e', '#efc11a', '#1997c6', '#9b5953', '#c8faf4', '#f6f5fb'],
 });
-const TERMINAL_CELL_WIDTH = 8.45;
-const TERMINAL_LINE_HEIGHT = 17;
-const TERMINAL_FONT_SIZE = 14;
-const TERMINAL_PADDING = 20;
-const TERMINAL_SCALE = 2;
-
 async function resolveNodeQualityImageHost(env) {
   const endpointFromEnv = String(env.NQ_IMGBED_URL || '').trim();
   const tokenFromEnv = String(env.NQ_IMGBED_TOKEN || '').trim();
@@ -46,35 +44,39 @@ async function resolveNodeQualityImageHost(env) {
 
 export async function uploadNodeQualityReportImages(env, normalized, options = {}) {
   if (!normalized?.report) return { normalized, status: { enabled: false, uploaded: 0, skipped: true, reason: 'report_missing' } };
-  const settings = await resolveNodeQualityImageHost(env);
-  if (!settings.enabled) return { normalized, status: { enabled: false, uploaded: 0, skipped: true, reason: 'image_host_not_configured' } };
-  if (!settings.endpoint || !settings.api_token) {
-    return { normalized, status: { enabled: true, uploaded: 0, errors: ['图床地址或 API Token 未配置'] } };
-  }
-
   let report;
   try { report = JSON.parse(normalized.report); } catch (_) {
     return { normalized, status: { enabled: true, uploaded: 0, errors: ['NQ 报告结构无效'] } };
   }
   const tabs = Array.isArray(report.tabs) ? report.tabs : [];
   const candidates = tabs.filter((tab) => ['network', 'route'].includes(String(tab?.id || '')) && tab?.content);
-  if (!candidates.length) return { normalized, status: { enabled: true, uploaded: 0, skipped: true, reason: 'no_network_or_route_tabs' } };
+  if (!candidates.length) return { normalized, status: { enabled: false, uploaded: 0, skipped: true, reason: 'no_network_or_route_tabs' } };
 
   const agentId = safeFilePart(options.agentId || 'vps');
   const reportId = safeFilePart(extractReportId(report.link) || String(options.finishedAt || nowSec()));
-  const results = await Promise.all(candidates.map(async (tab) => {
-    try {
-      const svg = renderNodeQualitySvg(tab.content, {
-        title: tab.id === 'route' ? 'NodeQuality · 回程路由' : 'NodeQuality · 网络质量',
-        subtitle: String(options.targetName || options.agentId || '').trim(),
-      });
-      const filename = `${agentId}-${reportId}-${safeFilePart(tab.id)}.svg`;
-      const image = await uploadSvg(settings, svg, filename);
-      return { id: tab.id, image };
-    } catch (error) {
-      return { id: tab.id, error: safeUploadError(error) };
+  let results;
+  let channel;
+  if (isOfficialBrokerInstance(env)) {
+    const settings = await resolveNodeQualityImageHost(env);
+    if (!settings.enabled) {
+      return { normalized, status: { enabled: true, uploaded: 0, errors: ['官方 NQ 图片服务缺少服务端图床配置'] } };
     }
-  }));
+    channel = 'local';
+    results = await uploadTabsLocally(settings, candidates, {
+      agentId,
+      reportId,
+      targetName: options.targetName || options.agentId || '',
+    });
+  } else {
+    const broker = resolvePublicBroker();
+    if (!broker) return { normalized, status: { enabled: false, uploaded: 0, skipped: true, reason: 'image_service_unavailable' } };
+    channel = 'public_broker';
+    results = await uploadTabsThroughBroker(broker, candidates, {
+      agentId,
+      reportId,
+      targetName: options.targetName || options.agentId || '',
+    });
+  }
 
   const byId = new Map(results.filter((item) => item.image).map((item) => [item.id, item.image]));
   report.tabs = tabs.map((tab) => byId.has(tab.id)
@@ -85,11 +87,140 @@ export async function uploadNodeQualityReportImages(env, normalized, options = {
     normalized: updated,
     status: {
       enabled: true,
+      channel,
       uploaded: byId.size,
       images: results.filter((item) => item.image).map((item) => item.id),
       errors: results.filter((item) => item.error).map((item) => `${item.id}: ${item.error}`),
     },
   };
+}
+
+export async function createNodeQualityBrokerImages(env, input) {
+  if (!isOfficialBrokerInstance(env)) throw new ApiError(404, '未找到请求的资源');
+  const settings = await resolveNodeQualityImageHost(env);
+  if (!settings.enabled) throw new ApiError(503, 'NQ 图片服务暂时不可用');
+  const request = validateBrokerRequest(input);
+  const results = await uploadTabsLocally(settings, request.tabs, {
+    agentId: safeFilePart(request.agent_id),
+    reportId: safeFilePart(request.report_id),
+    targetName: request.target_name,
+  });
+  const errors = results.filter((item) => item.error);
+  if (errors.length) throw new ApiError(502, 'NQ 图片生成或上传失败，请稍后重试');
+  return {
+    ok: true,
+    images: results.map((item) => ({ id: item.id, url: item.image })),
+  };
+}
+
+function isOfficialBrokerInstance(env) {
+  const value = env?.NQ_PUBLIC_BROKER_ENABLED;
+  return value === true || ['1', 'true'].includes(String(value || '').trim().toLowerCase());
+}
+
+function resolvePublicBroker() {
+  let url;
+  try {
+    url = assertPublicHttpUrl(PUBLIC_BROKER_URL);
+  } catch (_) {
+    return null;
+  }
+  if (url.protocol !== 'https:' || url.username || url.password || url.port || url.search || url.hash
+    || url.pathname.replace(/\/+$/, '') !== '/api/nq/image-broker') return null;
+  url.pathname = '/api/nq/image-broker';
+  return url;
+}
+
+function validateBrokerRequest(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ApiError(400, 'NQ 图片请求格式无效');
+  const allowedKeys = new Set(['report_id', 'agent_id', 'target_name', 'tabs']);
+  if (Object.keys(input).some((key) => !allowedKeys.has(key))) throw new ApiError(400, 'NQ 图片请求包含不允许的字段');
+  if (typeof input.report_id !== 'string' || typeof input.agent_id !== 'string'
+    || (input.target_name !== undefined && typeof input.target_name !== 'string')) {
+    throw new ApiError(400, 'NQ 图片请求标识必须是字符串');
+  }
+  const reportId = String(input.report_id || '').trim();
+  const agentId = String(input.agent_id || '').trim();
+  const targetName = String(input.target_name || '').trim();
+  if (!reportId || reportId.length > 120 || !agentId || agentId.length > 120 || targetName.length > 160) {
+    throw new ApiError(400, 'NQ 图片请求标识无效');
+  }
+  if (!Array.isArray(input.tabs) || input.tabs.length < 1 || input.tabs.length > 2) throw new ApiError(400, 'NQ 图片请求必须包含一到两个受支持标签');
+  const seen = new Set();
+  const tabs = input.tabs.map((tab) => {
+    if (!tab || typeof tab !== 'object' || Array.isArray(tab)) throw new ApiError(400, 'NQ 标签格式无效');
+    if (Object.keys(tab).some((key) => !['id', 'content'].includes(key))) throw new ApiError(400, 'NQ 标签包含不允许的字段');
+    if (typeof tab.id !== 'string' || typeof tab.content !== 'string') throw new ApiError(400, 'NQ 标签字段必须是字符串');
+    const id = String(tab.id || '').trim();
+    const content = String(tab.content || '');
+    if (!ALLOWED_BROKER_TABS.has(id) || seen.has(id)) throw new ApiError(400, 'NQ 标签类型无效或重复');
+    if (!content.trim() || content.length > MAX_BROKER_CONTENT_CHARS) throw new ApiError(400, 'NQ 标签内容为空或超过限制');
+    seen.add(id);
+    return { id, content };
+  });
+  return { report_id: reportId, agent_id: agentId, target_name: targetName, tabs };
+}
+
+async function uploadTabsLocally(settings, tabs, options) {
+  return Promise.all(tabs.map(async (tab) => {
+    try {
+      const svg = renderNodeQualitySvg(tab.content, {
+        title: tab.id === 'route' ? 'NodeQuality · 回程路由' : 'NodeQuality · 网络质量',
+        subtitle: String(options.targetName || '').trim(),
+      });
+      const filename = `${safeFilePart(options.agentId)}-${safeFilePart(options.reportId)}-${safeFilePart(tab.id)}.svg`;
+      return { id: tab.id, image: await uploadSvg(settings, svg, filename) };
+    } catch (error) {
+      return { id: tab.id, error: safeUploadError(error) };
+    }
+  }));
+}
+
+async function uploadTabsThroughBroker(broker, tabs, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BROKER_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(broker, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        report_id: options.reportId,
+        agent_id: options.agentId,
+        target_name: String(options.targetName || '').slice(0, 160),
+        tabs: tabs.map((tab) => ({ id: tab.id, content: String(tab.content || '').slice(0, MAX_BROKER_CONTENT_CHARS) })),
+      }),
+      redirect: 'error',
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const message = controller.signal.aborted || error?.name === 'AbortError' ? '公益 NQ 图片服务请求超时' : '无法连接公益 NQ 图片服务';
+    return tabs.map((tab) => ({ id: tab.id, error: message }));
+  } finally {
+    clearTimeout(timer);
+  }
+  let data;
+  try { data = JSON.parse(await readResponseTextLimited(response, MAX_RESPONSE_BYTES)); } catch (_) {
+    return tabs.map((tab) => ({ id: tab.id, error: '公益 NQ 图片服务响应无效' }));
+  }
+  if (!response.ok || data?.ok !== true || !Array.isArray(data.images)) {
+    const message = response.status === 429 ? '公益 NQ 图片服务请求过于频繁，请稍后重试' : '公益 NQ 图片服务暂时不可用';
+    return tabs.map((tab) => ({ id: tab.id, error: message }));
+  }
+  const allowedIds = new Set(tabs.map((tab) => tab.id));
+  const images = new Map();
+  try {
+    for (const item of data.images) {
+      const id = String(item?.id || '');
+      if (!allowedIds.has(id) || images.has(id)) throw new Error('invalid broker image id');
+      images.set(id, validatePublicImageUrl(String(item?.url || '')));
+    }
+  } catch (_) {
+    return tabs.map((tab) => ({ id: tab.id, error: '公益 NQ 图片服务返回了不安全的图片地址' }));
+  }
+  return tabs.map((tab) => images.has(tab.id)
+    ? { id: tab.id, image: images.get(tab.id) }
+    : { id: tab.id, error: '公益 NQ 图片服务未返回图片' });
 }
 
 export function renderNodeQualitySvg(content, options = {}) {
@@ -126,96 +257,6 @@ export function renderNodeQualitySvg(content, options = {}) {
   </style>
   ${textLines}
 </svg>`;
-}
-
-function renderNodeQualitySvgLegacy(content) {
-  const source = sanitizeAnsiContent(String(content || '')).replace(/\t/g, '    ');
-  const originalLines = source.split('\n');
-  const truncated = originalLines.length > MAX_RENDER_LINES;
-  const lines = originalLines.slice(0, MAX_RENDER_LINES);
-  if (truncated) lines.push(`... 报告过长，已截取前 ${MAX_RENDER_LINES} 行`);
-  // NodeQuality resizes with spare cells, then crops them back to a symmetric
-  // 20px margin before uploading. Emit the already-cropped dimensions.
-  const columns = Math.min(MAX_RENDER_COLUMNS, Math.max(1, ...lines.map((line) => visibleColumns(stripAnsiSafe(line)))));
-  const rows = Math.max(1, lines.length);
-  const logicalWidth = columns * TERMINAL_CELL_WIDTH + TERMINAL_PADDING * 2;
-  const logicalHeight = rows * TERMINAL_LINE_HEIGHT + TERMINAL_PADDING * 2;
-  const width = Math.ceil(logicalWidth * TERMINAL_SCALE);
-  const height = Math.ceil(logicalHeight * TERMINAL_SCALE);
-  const state = defaultAnsiState();
-  const renderedLines = lines.map((line, row) => renderTerminalLine(line, row, state)).join('');
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="NodeQuality terminal report">
-  <rect width="100%" height="100%" fill="${TERMINAL_THEME.background}"/>
-  <style>
-    .cell { font-family:Consolas,"Noto Sans Mono CJK SC","Sarasa Mono SC","Courier New",monospace; font-size:${TERMINAL_FONT_SIZE}px; font-variant-ligatures:none; }
-  </style>
-  <g transform="scale(${TERMINAL_SCALE})">${renderedLines}</g>
-</svg>`;
-}
-
-function renderTerminalLine(line, row, state) {
-  const y = TERMINAL_PADDING + row * TERMINAL_LINE_HEIGHT;
-  return ansiSegments(line, state).map((segment) => {
-    const x = TERMINAL_PADDING + segment.column * TERMINAL_CELL_WIDTH;
-    const width = Math.max(0, segment.columns * TERMINAL_CELL_WIDTH);
-    const style = terminalSegmentStyle(segment);
-    const background = style.background === TERMINAL_THEME.background || width === 0
-      ? ''
-      : `<rect x="${formatNumber(x)}" y="${formatNumber(y)}" width="${formatNumber(width)}" height="${TERMINAL_LINE_HEIGHT}" fill="${style.background}"/>`;
-    const text = renderTerminalSegmentText(segment, x, y, style.foreground);
-    return background + text;
-  }).join('');
-}
-
-function renderTerminalSegmentText(segment, x, y, foreground) {
-  if (segment.hidden) return '';
-  const decorations = [segment.underline ? 'underline' : '', segment.strike ? 'line-through' : ''].filter(Boolean).join(' ');
-  const textAttributes = `${segment.bold ? ' font-weight="700"' : ''}${segment.italic ? ' font-style="italic"' : ''}${decorations ? ` text-decoration="${decorations}"` : ''}${segment.dim ? ' opacity="0.6"' : ''}`;
-  const textParts = [];
-  let plain = '';
-  let plainColumn = 0;
-  let column = 0;
-  let braillePath = '';
-  const flushPlain = () => {
-    if (!plain) return;
-    const textX = x + plainColumn * TERMINAL_CELL_WIDTH;
-    textParts.push(`<text class="cell" x="${formatNumber(textX)}" y="${formatNumber(y + 13.4)}" fill="${foreground}"${textAttributes} xml:space="preserve">${xmlEscape(plain)}</text>`);
-    plain = '';
-  };
-  for (const char of segment.text) {
-    const cp = char.codePointAt(0);
-    if (cp >= 0x2800 && cp <= 0x28ff) {
-      flushPlain();
-      braillePath += brailleSquarePath(cp - 0x2800, x + column * TERMINAL_CELL_WIDTH, y);
-    } else {
-      if (!plain) plainColumn = column;
-      plain += char;
-    }
-    column += isWide(cp) ? 2 : 1;
-  }
-  flushPlain();
-  if (braillePath) textParts.push(`<path data-nq-bar="square" fill="${foreground}"${segment.dim ? ' opacity="0.6"' : ''} d="${braillePath}"/>`);
-  return textParts.join('');
-}
-
-function brailleSquarePath(bits, x, y) {
-  const gap = 0.45;
-  const size = 3.45;
-  const left = x + 0.55;
-  const top = y + 0.9;
-  const positions = [
-    [0, 0], [0, 1], [0, 2], [1, 0],
-    [1, 1], [1, 2], [0, 3], [1, 3],
-  ];
-  let path = '';
-  positions.forEach(([column, row], bit) => {
-    if ((bits & (1 << bit)) === 0) return;
-    const px = formatNumber(left + column * (size + gap));
-    const py = formatNumber(top + row * (size + gap));
-    path += `M${px} ${py}h${size}v${size}h-${size}z`;
-  });
-  return path;
 }
 
 async function uploadSvg(settings, svg, filename) {
@@ -445,10 +486,6 @@ function ansi256Color(value) {
   const g = channel(Math.floor((cube % 36) / 6));
   const b = channel(cube % 6);
   return `rgb(${r},${g},${b})`;
-}
-
-function formatNumber(value) {
-  return Number(value.toFixed(2)).toString();
 }
 
 function xmlEscape(value) {

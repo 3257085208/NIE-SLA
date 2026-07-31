@@ -15,6 +15,7 @@ import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, getAdminAccoun
 import { getAppUpdateInfo } from './app-update.js';
 import { deleteTheme, getPublicTheme, getThemeFile, listManagedThemes, updateTheme, uploadTheme } from './themes.js';
 import { encryptionKeyStatus, migrateEncryptionMaterials } from './encryption-maintenance.js';
+import { createNodeQualityBrokerImages } from './nq-image-host.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
@@ -93,6 +94,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/themes', rl: 'public' },
   { method: 'GET', path: '/api/nq/:id', rl: 'public' },
   { method: 'GET', path: '/api/nq/:id/image/:tab', rl: 'public' },
+  { method: 'POST', path: '/api/nq/image-broker', rl: 'write' },
 
   // Agent endpoints
   { method: 'GET', path: '/api/agent/targets', rl: 'write' },
@@ -194,6 +196,25 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/v1/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(await getPublicLatencyCached(env, developerApiUrl(url, '/api/latency'), ctx), request, env); }
   if (path === '/api/themes' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny(); return json(await getPublicTheme(env), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  if (path === '/api/nq/image-broker' && m === 'POST') {
+    try {
+      if (!['1', 'true'].includes(String(env.NQ_PUBLIC_BROKER_ENABLED || '').trim().toLowerCase())) {
+        throw new ApiError(404, '未找到请求的资源');
+      }
+      const contentType = String(request.headers.get('content-type') || '').toLowerCase();
+      if (!contentType.startsWith('application/json')) throw new ApiError(415, 'NQ 图片服务只接受 JSON');
+      const sourceIp = String(request.headers.get('cf-connecting-ip') || 'unknown').slice(0, 80);
+      if (!await rateLimitD1(env, `nq-broker:ip:${sourceIp}`, 100, 3600)
+        || !await rateLimitD1(env, 'nq-broker:global', 100, 3600)) {
+        throw new ApiError(429, '请求过于频繁，请稍后重试。');
+      }
+      return json(await createNodeQualityBrokerImages(env, await safeJson(request, 128 * 1024)), 200, env, { 'cache-control': 'no-store' });
+    } catch (error) {
+      const status = error?.status || 500;
+      const message = status === 500 ? '服务器内部错误' : String(error?.message || '请求失败');
+      return json({ ok: false, error: message }, status, env, { 'cache-control': 'no-store' });
+    }
+  }
   const nqImageMatch = path.match(/^\/api\/(?:nq|nodequality)\/([^/]+)\/image\/([^/]+)$/);
   if (nqImageMatch && m === 'GET') {
     if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny();

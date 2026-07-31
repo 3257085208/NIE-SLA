@@ -3,6 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { nodeQualityImageSource, normalizeNodeQualityReport, publicNodeQualityReport } from '../src/nodequality.js';
 import {
+  createNodeQualityBrokerImages,
   renderNodeQualitySvg,
   uploadNodeQualityReportImages,
   validateUploadEndpoint,
@@ -14,6 +15,9 @@ const routesSource = await readFile(new URL('../src/routes.js', import.meta.url)
 assert.doesNotMatch(routesSource, /\/api\/settings\/nq-image-host/, 'image-host configuration must not be exposed through HTTP routes');
 assert.match(routesSource, /content-security-policy[^\n]+default-src 'none'[^\n]+sandbox/, 'proxied SVG reports need a sandboxed CSP');
 assert.match(routesSource, /nodeQualityImageSource\(target, tabId\)/, 'the image proxy must resolve the private upstream URL internally');
+assert.match(routesSource, /nq-broker:ip:[^\n]+100, 3600/, 'the public broker needs a durable per-source hourly cap');
+assert.match(routesSource, /nq-broker:global[^\n]+100, 3600/, 'the public broker needs a durable global hourly cap');
+assert.match(routesSource, /safeJson\(request, 128 \* 1024\)/, 'the public broker request body must be bounded');
 
 assert.equal(validateUploadEndpoint('https://img.example.com/upload').toString(), 'https://img.example.com/upload');
 assert.throws(() => validateUploadEndpoint('http://img.example.com/upload'), /HTTPS/);
@@ -45,6 +49,7 @@ const legacySettings = {
 };
 const env = {
   DB: memoryDb({ nq_image_host_settings: JSON.stringify(legacySettings) }),
+  NQ_PUBLIC_BROKER_ENABLED: 'true',
   NQ_IMGBED_URL: 'https://img.example.com/upload',
   NQ_IMGBED_TOKEN: 'server_only_imgbed_token_with_upload_permission',
   NQ_IMGBED_CHANNEL: 'telegram',
@@ -102,6 +107,55 @@ try {
   globalThis.fetch = originalFetch;
 }
 
+const brokerEnv = {
+  NQ_PUBLIC_BROKER_ENABLED: 'true',
+  NQ_IMGBED_URL: 'https://img.example.com/upload',
+  NQ_IMGBED_TOKEN: 'broker_server_only_token',
+};
+const brokerUploads = [];
+globalThis.fetch = async (url, options) => {
+  const file = options.body.get('file');
+  brokerUploads.push({ url: String(url), options, svg: await file.text() });
+  return Response.json([{ src: `/public/broker-${brokerUploads.length}.svg` }]);
+};
+try {
+  const brokerResult = await createNodeQualityBrokerImages(brokerEnv, {
+    report_id: 'report-a',
+    agent_id: 'vps-a',
+    target_name: 'VPS A <unsafe>',
+    tabs: [
+      { id: 'network', content: 'Network <script>alert(1)</script>' },
+      { id: 'route', content: 'Route OK' },
+    ],
+  });
+  assert.equal(brokerResult.ok, true);
+  assert.deepEqual(brokerResult.images.map((item) => item.id), ['network', 'route']);
+  assert.equal(brokerUploads.length, 2);
+  assert.ok(brokerUploads.every((item) => item.options.headers.authorization === `Bearer ${brokerEnv.NQ_IMGBED_TOKEN}`));
+  assert.ok(brokerUploads.every((item) => !item.url.includes(brokerEnv.NQ_IMGBED_TOKEN)));
+  assert.match(brokerUploads[0].svg, /#0f172a/);
+  assert.doesNotMatch(brokerUploads[0].svg, /<script>/);
+  assert.match(brokerUploads[0].svg, /&lt;script&gt;/);
+
+  for (const invalid of [
+    { report_id: 'r', agent_id: 'a', tabs: [{ id: 'basic', content: 'no' }] },
+    { report_id: 'r', agent_id: 'a', tabs: [{ id: 'network', content: 'one' }, { id: 'network', content: 'two' }] },
+    { report_id: 'r', agent_id: 'a', svg: '<svg/>', tabs: [{ id: 'network', content: 'no' }] },
+    { report_id: 'r', agent_id: 'a', tabs: [{ id: 'network', content: { svg: '<svg/>' } }] },
+    { report_id: 'r', agent_id: 'a', tabs: [{ id: 'network', content: 'x'.repeat(60_001) }] },
+  ]) {
+    await assert.rejects(() => createNodeQualityBrokerImages(brokerEnv, invalid), (error) => error?.status === 400);
+  }
+  await assert.rejects(
+    () => createNodeQualityBrokerImages({ ...brokerEnv, NQ_PUBLIC_BROKER_ENABLED: 'false' }, {
+      report_id: 'r', agent_id: 'a', tabs: [{ id: 'network', content: 'ok' }],
+    }),
+    (error) => error?.status === 404,
+  );
+} finally {
+  globalThis.fetch = originalFetch;
+}
+
 const oneImageReport = normalizeNodeQualityReport({
   link: 'https://nodequality.com/r/error-report',
   tabs: [{ id: 'network', title: '网络质量', content: 'Network: Test' }],
@@ -154,6 +208,7 @@ const fallbackEnv = {
     nq_image_host_settings: JSON.stringify(legacySettings),
     nq_image_host_token: legacyCiphertext,
   }),
+  NQ_PUBLIC_BROKER_ENABLED: 'true',
   TOTP_ENCRYPTION_KEY: 'new-long-term-nq-encryption-key-with-32-chars',
   PREVIOUS_ENCRYPTION_KEY: legacyKey,
 };
@@ -176,11 +231,36 @@ const migratedFallback = await uploadNodeQualityReportImages(fallbackEnv, oneIma
 assert.equal(migratedFallback.status.uploaded, 1, 'lazy migration must survive removal of the previous key');
 globalThis.fetch = originalFetch;
 
+let brokerRequest = null;
+globalThis.fetch = async (url, options) => {
+  brokerRequest = { url: String(url), options, body: JSON.parse(options.body) };
+  return Response.json({ ok: true, images: [{ id: 'network', url: 'https://img.example.com/public/from-broker.svg' }] });
+};
+const brokerFallback = await uploadNodeQualityReportImages({
+  DB: memoryDb(),
+  NQ_PUBLIC_BROKER_URL: 'https://must-be-ignored.example/api/nq/image-broker',
+  NQ_IMGBED_URL: 'https://must-be-ignored.example/upload',
+  NQ_IMGBED_TOKEN: 'must_be_ignored_for_non_official_instances',
+}, oneImageReport, { agentId: 'vps-a', targetName: 'VPS A' });
+assert.equal(brokerFallback.status.channel, 'public_broker');
+assert.equal(brokerFallback.status.uploaded, 1);
+assert.equal(brokerRequest.url, 'https://api-sla.niekaixiang.com/api/nq/image-broker');
+assert.equal(brokerRequest.options.headers.authorization, undefined, 'the shared image-host token must never be sent by user instances');
+assert.equal(brokerRequest.url.includes('must-be-ignored'), false, 'non-official instances must not override the fixed broker with local image-host settings');
+assert.equal(brokerRequest.options.redirect, 'error');
+assert.deepEqual(Object.keys(brokerRequest.body).sort(), ['agent_id', 'report_id', 'tabs', 'target_name']);
+assert.deepEqual(brokerRequest.body.tabs.map((tab) => Object.keys(tab).sort()), [['content', 'id']]);
+globalThis.fetch = originalFetch;
+
 let unexpectedFetch = false;
-globalThis.fetch = async () => { unexpectedFetch = true; throw new Error('must not upload'); };
-const disabled = await uploadNodeQualityReportImages({ DB: memoryDb() }, oneImageReport);
-assert.equal(disabled.status.enabled, false);
-assert.equal(disabled.status.reason, 'image_host_not_configured');
+globalThis.fetch = async () => { unexpectedFetch = true; throw new Error('official broker must not call itself'); };
+const noRecursion = await uploadNodeQualityReportImages({
+  DB: memoryDb(),
+  NQ_PUBLIC_BROKER_ENABLED: 'true',
+  NQ_PUBLIC_BROKER_URL: 'https://must-be-ignored.example/api/nq/image-broker',
+}, oneImageReport);
+assert.equal(noRecursion.status.uploaded, 0);
+assert.match(noRecursion.status.errors[0], /缺少服务端图床配置/);
 assert.equal(unexpectedFetch, false);
 globalThis.fetch = originalFetch;
 

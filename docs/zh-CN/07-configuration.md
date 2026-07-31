@@ -68,18 +68,20 @@
 | `TELEGRAM_BOT_TOKEN` | 可选 | 环境配置 TG Bot |
 | `RESEND_API_KEY` | 可选 | 环境配置 Resend 邮件 API |
 | `GITHUB_OAUTH_CLIENT_SECRET` | 可选 | GitHub OAuth App secret |
-| `NQ_IMGBED_URL` | 可选 | 图床完整上传地址，必须为公网 HTTPS 且以 `/upload` 结尾；作为 Secret 写入以隐藏地址 |
-| `NQ_IMGBED_TOKEN` | 可选 | 图床的 `upload` 权限 API Token，只允许由 Worker 读取 |
-| `NQ_IMGBED_CHANNEL_NAME` | 可选 | S3 配置存在多个同类渠道时使用的固定渠道名；也按 Secret 写入 |
+| `NQ_IMGBED_URL` | 仅官方服务 | 维护者图床完整上传地址，必须为公网 HTTPS 且以 `/upload` 结尾；普通部署设置后也不会覆盖固定公益服务 |
+| `NQ_IMGBED_TOKEN` | 仅官方服务 | 维护者图床的 `upload` 权限 API Token，只允许官方 Broker Worker 读取 |
+| `NQ_IMGBED_CHANNEL_NAME` | 仅官方服务可选 | 官方 S3 配置存在多个同类渠道时使用的固定渠道名 |
 | `NQ_IMGBED_ENCRYPTION_KEY` | 仅旧部署兼容 | 解密旧版 D1 图床 Token 的专用密钥；新部署直接使用 Worker Secret |
+| `NQ_PUBLIC_BROKER_ENABLED` | 仅官方服务 | 只在维护者的生产 Worker 开启公益上传端点，普通部署不要设置 |
 
 写入：
 
 ```bash
 npx wrangler secret put ADMIN_PASSWORD
 npx wrangler secret put TOTP_ENCRYPTION_KEY
-npx wrangler secret put NQ_IMGBED_URL
-npx wrangler secret put NQ_IMGBED_TOKEN
+# 以下两项只由官方公益服务维护者配置：
+# npx wrangler secret put NQ_IMGBED_URL
+# npx wrangler secret put NQ_IMGBED_TOKEN
 ```
 
 列出 secret 名称不会显示值：
@@ -104,7 +106,7 @@ npx wrangler secret list
 
 GitHub 登录必须同时配置 Client ID、Client Secret 和非空白名单，否则登录按钮不会显示。callback 默认使用发起登录请求的 API Origin；仅在反向代理无法保留公开 Origin 时设置 `GITHUB_OAUTH_CALLBACK_ORIGIN`。授权完成后再按 `PUBLIC_SITE_ORIGIN` 返回管理页。
 
-NQ 图片上传渠道在代码中固定为 `s3`，上传目录固定为空。`NQ_IMGBED_CHANNEL` 与 `NQ_IMGBED_FOLDER` 已废弃，设置它们不会改变上传请求。图床配置没有管理端 HTTP API；正式部署不得把真实地址或 Token 写进 `wrangler.toml`、GitHub 变量、前端配置、日志或教程。开源自部署如需此功能，应配置自己的图床凭据；官方共享凭据不随源码分发。旧版 D1 中已加密保存的地址和 Token 仅作为只读过渡回退。
+NQ 图片链路和公益 Broker 地址都固定在代码中，普通一键部署和手动部署无需填写，也不能通过 Worker变量、自己的图床地址或 Token 覆盖。公益端只接受 `network`/`route` 两类受限文本并在服务端生成 SVG，不能上传任意文件；官方端上传渠道固定为 `s3`、目录固定为空。`NQ_IMGBED_URL`、`NQ_IMGBED_TOKEN`、可选渠道名和旧版 D1 只读回退仅在设置了 `NQ_PUBLIC_BROKER_ENABLED=true` 的官方 Worker 生效。共享 Token 不随源码、备份、Fork 或 Broker 请求分发。
 
 ## Agent 环境变量
 

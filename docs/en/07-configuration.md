@@ -50,12 +50,13 @@ The `TELEMETRY_BUFFER` Durable Object binding is required by the default free-ti
 | `RESEND_API_KEY` | Optional Resend email API key |
 | `GITHUB_OAUTH_CLIENT_SECRET` | Optional GitHub OAuth secret |
 | `ALERT_ENCRYPTION_KEY` | Optional independent alert key; falls back to `TOTP_ENCRYPTION_KEY`; the Admin password is read-only legacy migration material |
-| `NQ_IMGBED_URL` | Optional public HTTPS image-host endpoint ending in `/upload`; store it as a secret to hide the host |
-| `NQ_IMGBED_TOKEN` | Optional image-host API token with the `upload` permission; Worker-only |
-| `NQ_IMGBED_CHANNEL_NAME` | Optional fixed S3 channel name when the host has several S3 channels; store it as a secret |
+| `NQ_IMGBED_URL` | Official service only: maintainer image-host endpoint ending in `/upload`; ordinary deployments cannot override the fixed broker with it |
+| `NQ_IMGBED_TOKEN` | Official service only: maintainer image-host API token with the `upload` permission |
+| `NQ_IMGBED_CHANNEL_NAME` | Optional only on the official service when its S3 configuration has several matching channels |
 | `NQ_IMGBED_ENCRYPTION_KEY` | Legacy-only key used to decrypt an existing D1 image-host token |
+| `NQ_PUBLIC_BROKER_ENABLED` | Official service only; enables the upload endpoint on the maintainer's Worker |
 
-NodeQuality image uploads always use the `s3` channel and send no upload-folder parameter. `NQ_IMGBED_CHANNEL` and `NQ_IMGBED_FOLDER` are obsolete and cannot override this policy. There is no browser-facing image-host configuration or test API: the endpoint, token, optional channel name, and upstream image URLs stay inside the Worker. Public reports expose only the same-origin NIE-SLA image proxy. Never place the real endpoint or token in `wrangler.toml`, frontend configuration, logs, tutorials, or the public repository. Open-source self-hosters must supply their own image-host credentials; official shared credentials are not distributed with the source. Existing encrypted D1 settings remain a read-only migration fallback.
+The NodeQuality image path and public-service broker address are compiled into the Worker for all ordinary one-click and manual deployments; users neither need nor can override them through a Worker variable, their own image-host URL or token. The broker accepts only constrained `network`/`route` text and renders SVG server-side, so it is not an arbitrary file-upload API. `NQ_IMGBED_URL`, `NQ_IMGBED_TOKEN`, the optional channel name and the legacy encrypted D1 fallback are honored only by the official Worker with `NQ_PUBLIC_BROKER_ENABLED=true`. That Worker always uploads through `s3` with no folder. Shared credentials are never distributed through source, backups, forks or broker requests.
 
 ## Agent Environment
 

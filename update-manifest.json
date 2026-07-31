@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.49",
-  "agent_version": "v1.0.49",
-  "source_ref": "app-v1.0.49",
-  "published_at": "2026-07-31T16:54:50Z",
-  "title": "NIE-SLA 1.0.49",
+  "version": "1.0.50",
+  "agent_version": "v1.0.50",
+  "source_ref": "app-v1.0.50",
+  "published_at": "2026-07-31T21:30:25Z",
+  "title": "NIE-SLA 1.0.50",
   "changelog": [
-    "修复 cftz Agent 与后台接口鉴权混用，并恢复 Manager 故障时的校验更新通道",
-    "NodeQuality 与 IP 解锁入口改为受控校验快照，并在独立低权限用户命名空间执行",
-    "TOTP、Agent Token 与通知凭据改用长期独立密钥，提供有界迁移检查",
-    "严格校验指标 ACK，补齐前端请求超时与容器虚拟网卡流量排除",
-    "Agent、Worker、前端与公开发布版本同步至 1.0.49"
+    "一键部署实例默认使用官方受限公益 Broker 生成 NodeQuality 网络与回程图片，无需填写图床地址或 Token",
+    "公益接口只接受有界 network/route 文本，由服务端重新渲染 SVG，并使用 D1 按来源和全局限流",
+    "官方图床凭据继续只保存在 Worker Secret，源码、前端、备份、Fork 与 Broker 请求均不携带共享 Token",
+    "非官方实例即使设置 NQ_IMGBED_URL 与 NQ_IMGBED_TOKEN 也不能覆盖固定公益链路",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.50"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

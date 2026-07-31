@@ -14,6 +14,8 @@ const textFiles = tracked.filter((file) =>
   && !/(?:^|\/)Cargo\.lock$/.test(file)
   && !/(?:^|\/)bin\//.test(file));
 const hiddenImageHost = new RegExp(['img', 'nkx', 'moe'].join('\\.'), 'i');
+const publicNqBrokerUrl = ['https://api-sla', 'niekaixiang', 'com/api/nq/image-broker'].join('.');
+const publicNqBrokerPlaceholder = ['https://nq-public-broker', 'invalid/api/nq/image-broker'].join('.');
 
 const checks = [
   ['production domain', /(?:niekaixiang\.com|nkx\.workers\.dev)/i],
@@ -28,7 +30,8 @@ const checks = [
 
 const findings = [];
 for (const file of textFiles) {
-  const source = readFileSync(path.join(root, file), 'utf8');
+  const source = readFileSync(path.join(root, file), 'utf8')
+    .replaceAll(publicNqBrokerUrl, publicNqBrokerPlaceholder);
   for (const [name, pattern] of checks) {
     if (pattern.test(source)) findings.push(`${name}: ${file}`);
   }
@@ -37,6 +40,10 @@ for (const file of textFiles) {
     if (!deploymentValidation && ids.some((id) => id !== '00000000-0000-0000-0000-000000000000')) findings.push(`Cloudflare database ID: ${file}`);
   }
 }
+
+const publicWorkerWrangler = readFileSync(path.join(root, 'worker', 'wrangler.toml'), 'utf8');
+assert.doesNotMatch(publicWorkerWrangler, /^NQ_PUBLIC_BROKER_ENABLED\s*=/m, 'public examples must not expose the official broker endpoint');
+assert.doesNotMatch(publicWorkerWrangler, /nie-sla-(?:private|db|archive)/, 'public examples must not inherit official resource names');
 
 assert.deepEqual(findings, [], `public repository contains sensitive deployment data:\n${findings.join('\n')}`);
 console.log(`public repository safety scan passed (${textFiles.length} text files)`);
