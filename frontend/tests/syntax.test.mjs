@@ -15,9 +15,10 @@ for (const file of files) {
   assert.equal(result.status, 0, `${path.relative(root, file)} syntax failed:\n${result.stderr}`);
 }
 
-const [appSource, adminSource, adminCss, adminHtml, indexHtml, apiProxySource, themeSource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
+const [appSource, adminSource, adminBootstrapSource, adminCss, adminHtml, indexHtml, apiProxySource, themeSource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
   readFile(path.join(root, 'app.js'), 'utf8'),
   readFile(path.join(root, 'js', 'admin.js'), 'utf8'),
+  readFile(path.join(root, 'js', 'admin-bootstrap.js'), 'utf8'),
   readFile(path.join(root, 'admin.css'), 'utf8'),
   readFile(path.join(root, 'admin.html'), 'utf8'),
   readFile(path.join(root, 'index.html'), 'utf8'),
@@ -66,8 +67,14 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /admin\.css\?v=20260731-v1043/, 'admin CSS cache key must publish the current release');
-assert.match(adminHtml, /js\/admin\.js\?v=20260731-v1043/, 'admin JS cache key must publish the credential-safe install flow');
+assert.match(adminHtml, /href="\/admin\.css\?v=20260731-v1044"/, 'custom admin paths must load CSS from the site root');
+assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
+assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
+assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260731-v1044"/, 'admin login must install a startup failure guard');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260731-v1044"/, 'custom admin paths must load the admin module from the site root');
+assert.match(adminBootstrapSource, /后台脚本加载失败，请刷新页面/, 'admin startup failures must be visible on the login form');
+assert.match(adminBootstrapSource, /loginButton\.onclick = \(event\)/, 'the admin module must replace the startup guard only after it loads');
+assert.match(adminSource, /window\.__NIE_ADMIN_READY__ = true;[\s\S]*nie-admin-ready/, 'the admin module must dismiss its startup guard after binding controls');
 assert.match(adminHtml, /id="pingIntervalSec"[^>]*type="number"[^>]*min="5"[^>]*max="300"[^>]*step="1"/, 'Ping settings must expose an integer interval from 5 to 300 seconds');
 assert.doesNotMatch(adminHtml, /1 秒时最多启用 5 个目标/, 'obsolete one-second target guidance must be removed');
 assert.match(adminSource, /apiAdmin\("\/api\/ping-config"[\s\S]*method:\s*"PATCH"[\s\S]*ping_interval_sec:\s*interval/, 'Ping interval changes must use the protected configuration endpoint');
@@ -101,8 +108,8 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260731-v1043/, 'frontend cache key must publish the current release');
-assert.match(indexHtml, /style\.css\?v=20260731-v1043/, 'frontend CSS cache key must publish the current release');
+assert.match(indexHtml, /app\.js\?v=20260731-v1044/, 'frontend cache key must publish the current release');
+assert.match(indexHtml, /style\.css\?v=20260731-v1044/, 'frontend CSS cache key must publish the current release');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /class="theme-pending"[\s\S]*id="themeBoot"[\s\S]*id="themeCanvas"/, 'theme runtime must wait behind a first-paint shell');

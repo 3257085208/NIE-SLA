@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.0.43**
+**Stable · 1.0.44**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -35,6 +35,12 @@ NIE-SLA 把 Cloudflare 公网探测、公开状态页和 VPS 系统数据放在�
 不需要填写 Agent Token。每台 VPS 的 Token 会在后台首次生成部署命令时随机创建。TOTP 默认关闭。
 
 新部署使用一个 Worker 同时承载静态前端、管理后台、API、D1、R2、Durable Objects 与每分钟 Cron，不需要单独创建 Pages。
+
+### Agent 下载链
+
+本仓库是开源用户唯一需要使用的公开分发入口。Cloudflare 构建按 `update-manifest.json` 固定的版本直接下载本仓库 Release 资产，校验 `VERSION` 与 `SHA256SUMS` 后打包到部署实例的 `/bin`。
+
+VPS 上的 Agent 安装和后续更新从该用户自己的 Worker/站点 `/bin` 下载，不会在每台 VPS 上查询 GitHub API。Release 因此负责公开分发，已部署站点负责实际 Agent 下载。
 
 ## 主要能力
 

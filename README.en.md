@@ -16,11 +16,17 @@ New deployments use one Worker application for Static Assets, API, D1, R2, Durab
 
 Agent tokens are generated automatically. TOTP is disabled by default.
 
+## Agent Distribution
+
+This repository is the only public distribution entry point required by self-hosters. Cloudflare builds download the release pinned by `update-manifest.json`, verify `VERSION` and `SHA256SUMS`, and bundle the assets under the deployment's `/bin` path.
+
+Installed Agents download both installation and update assets from their own deployed Worker/site. Individual VPS nodes do not query the GitHub API; GitHub Releases distribute assets to deployments, and each deployment serves its own Agents.
+
 ## Capabilities
 
 - Cloudflare HTTP/TCP availability and SLA history;
 - Rust Agent CPU, memory, disk, load, IO, network, process, uptime, and temperature telemetry;
-- Cloudflare latency, Agent TCP/HTTP/ICMP probes, and external Latency Agents;
+- Cloudflare latency, Agent TCP/HTTP probes, and external Latency Agents;
 - provider/custom provider, machine type, pricing, expiry, and independent traffic reset day;
 - Agent-side IPv4/IPv6 GeoIP through selectable providers;
 - Telegram and email alerts with templates;

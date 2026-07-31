@@ -28,16 +28,18 @@ console.log(`One-click assets prepared in ${path.relative(root, outputRoot)}`);
 async function prepareAgentRelease(binRoot) {
   const localReleaseDir = String(process.env.NSTATUS_AGENT_RELEASE_DIR || '').trim();
   if (localReleaseDir) return prepareLocalAgentRelease(binRoot, path.resolve(localReleaseDir));
+  const updateManifest = JSON.parse(await readFile(path.join(root, 'update-manifest.json'), 'utf8'));
   const requestedTag = String(process.env.NSTATUS_AGENT_RELEASE_TAG || '').trim();
-  const release = requestedTag
-    ? await fetchJson(`https://api.github.com/repos/${repository}/releases/tags/${encodeURIComponent(requestedTag)}`)
-    : await fetchLatestAgentRelease();
-  const assets = new Map((release.assets || []).map(asset => [String(asset.name), String(asset.browser_download_url)]));
-  const version = await downloadText(requiredAsset(assets, 'VERSION'));
-  const manifest = await downloadText(requiredAsset(assets, 'SHA256SUMS'));
+  const releaseTag = requestedTag || String(updateManifest.agent_version || '').trim();
+  if (!/^v\d+\.\d+\.\d+$/.test(releaseTag)) {
+    throw new Error(`Agent release tag is invalid: ${releaseTag || '(empty)'}`);
+  }
+  const releaseBase = `https://github.com/${repository}/releases/download/${encodeURIComponent(releaseTag)}`;
+  const version = await downloadText(`${releaseBase}/VERSION`);
+  const manifest = await downloadText(`${releaseBase}/SHA256SUMS`);
   const normalizedVersion = version.trim();
-  if (!/^v\d+\.\d+\.\d+$/.test(normalizedVersion) || normalizedVersion !== release.tag_name) {
-    throw new Error(`Release VERSION mismatch: ${normalizedVersion || '(empty)'} / ${release.tag_name || '(missing tag)'}`);
+  if (!/^v\d+\.\d+\.\d+$/.test(normalizedVersion) || normalizedVersion !== releaseTag) {
+    throw new Error(`Release VERSION mismatch: ${normalizedVersion || '(empty)'} / ${releaseTag}`);
   }
 
   const files = parseManifest(manifest);
@@ -52,7 +54,7 @@ async function prepareAgentRelease(binRoot) {
   await writeFile(path.join(binRoot, 'VERSION'), `${normalizedVersion}\n`);
   await writeFile(path.join(binRoot, 'SHA256SUMS'), manifest);
   for (const [name, expectedHash] of files) {
-    const bytes = await downloadBytes(requiredAsset(assets, name));
+    const bytes = await downloadBytes(`${releaseBase}/${encodeURIComponent(name)}`);
     const actualHash = createHash('sha256').update(bytes).digest('hex');
     if (actualHash !== expectedHash) throw new Error(`SHA-256 mismatch for ${name}`);
     await writeFile(path.join(binRoot, name), bytes, { mode: 0o755 });
@@ -82,23 +84,6 @@ async function prepareLocalAgentRelease(binRoot, releaseRoot) {
   }
 }
 
-async function fetchLatestAgentRelease() {
-  const releases = await fetchJson(`https://api.github.com/repos/${repository}/releases?per_page=30`);
-  if (!Array.isArray(releases)) throw new Error('GitHub release list is invalid');
-  const requiredAssets = [
-    'VERSION', 'SHA256SUMS',
-    'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64',
-    'jq-linux-amd64', 'jq-linux-arm64', 'jq-linux-i386', 'jq-linux-armhf', 'jq-linux-armel',
-  ];
-  const release = releases.find((candidate) => {
-    if (candidate?.draft || !/^v\d+\.\d+\.\d+$/.test(String(candidate?.tag_name || ''))) return false;
-    const names = new Set((candidate.assets || []).map(asset => String(asset.name || '')));
-    return requiredAssets.every(name => names.has(name));
-  });
-  if (!release) throw new Error('No complete Agent release was found');
-  return release;
-}
-
 function parseManifest(source) {
   const files = new Map();
   for (const line of String(source || '').split(/\r?\n/)) {
@@ -109,18 +94,6 @@ function parseManifest(source) {
   }
   if (!files.size) throw new Error('Release manifest contains no Agent binaries');
   return files;
-}
-
-function requiredAsset(assets, name) {
-  const url = assets.get(name);
-  if (!url) throw new Error(`Release asset is missing: ${name}`);
-  return url;
-}
-
-async function fetchJson(url) {
-  const response = await fetchWithRetry(url, { headers: { accept: 'application/vnd.github+json', 'user-agent': 'NIE-SLA-One-Click/1.0' } });
-  if (!response.ok) throw new Error(`GitHub release lookup failed: HTTP ${response.status}`);
-  return response.json();
 }
 
 async function downloadText(url) {

@@ -6,6 +6,11 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const output = path.join(root, 'dist-one-click');
 const deploymentValidation = process.env.NIE_SLA_DEPLOYMENT_VALIDATION === '1';
+const buildSource = await readFile(path.join(root, 'scripts', 'prepare-one-click.mjs'), 'utf8');
+
+assert.doesNotMatch(buildSource, /api\.github\.com/, 'one-click builds must not depend on the rate-limited GitHub API');
+assert.match(buildSource, /requestedTag \|\| String\(updateManifest\.agent_version/, 'the default Agent release must come from update-manifest.json');
+assert.match(buildSource, /releases\/download\/\$\{encodeURIComponent\(releaseTag\)\}/, 'release assets must use the manifest-pinned GitHub download URL');
 
 for (const relative of [
   'index.html', 'admin.html', 'config.js', 'js/theme-bootstrap.js', 'js/themes.js', 'update-manifest.json', 'bin/VERSION', 'bin/SHA256SUMS',
