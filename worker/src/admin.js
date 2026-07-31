@@ -34,7 +34,7 @@ export { getAgentInstallCommand, getAgentInstallScript } from './admin/install-c
 export { getLatencyHealth } from './admin/latency-health.js';
 
 // Independent external Latency nodes
-export { listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, getLatestExternalLatencyByTarget } from './admin/latency-agents.js';
+export { listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, getLatestExternalLatencyByTarget } from './admin/latency-agents.js';
 
 // Fixed Agent actions, automatic GeoIP, and migration backups.
 export { AGENT_TASK_ACTIONS, createAgentTask, createAgentTasks, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, normalizeTaskResult } from './admin/agent-tasks.js';

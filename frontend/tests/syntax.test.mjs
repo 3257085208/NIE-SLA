@@ -72,7 +72,7 @@ assert.match(adminHtml, /href="\/admin\.css\?v=20260731-v1049"/, 'custom admin p
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
 assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260731-v1049"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260731-v1049"/, 'custom admin paths must load the admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260801-v1050"/, 'custom admin paths must load the admin module from the site root');
 assert.match(adminBootstrapSource, /后台脚本加载失败，请刷新页面/, 'admin startup failures must be visible on the login form');
 assert.match(adminBootstrapSource, /loginButton\.onclick = \(event\)/, 'the admin module must replace the startup guard only after it loads');
 assert.match(adminSource, /window\.__NIE_ADMIN_READY__ = true;[\s\S]*nie-admin-ready/, 'the admin module must dismiss its startup guard after binding controls');
@@ -103,7 +103,10 @@ assert.match(adminSource, /apiAdmin\("\/api\/backup\/export"[\s\S]*60000\)/, 'pr
 assert.match(appSource, /fetchWithTimeout\(api\(`\/api\/nq\//, 'public NodeQuality reports must use a bounded request');
 assert.match(adminApiSource, /defaultTimeoutMs\s*=\s*12_000[\s\S]*if \(!options\.signal\)[\s\S]*withTimeout\(defaultTimeoutMs/, 'all direct Admin API calls need a default timeout');
 assert.match(adminSource, /id="backupStatus"[\s\S]*正在加密 Agent Token/, 'protected backup must expose persistent progress next to its controls');
-assert.match(adminSource, /install-command\.js\?v=20260731-v1049/, 'Agent install clipboard fixes must use the current cache key');
+assert.match(adminSource, /install-command\.js\?v=20260801-v1050/, 'Agent and Latency install clipboard fixes must use the current cache key');
+assert.match(adminSource, /latencyInstallCommandFromPayload\(data, node\.id\);\s*await copyText\(command\)/, 'Latency deploy must validate and copy the one-time command without opening a dialog');
+const latencyDeploySource = adminSource.slice(adminSource.indexOf('async function deployLatencyNode'), adminSource.indexOf('async function loadPings'));
+assert.doesNotMatch(latencyDeploySource, /openModal\(\)/, 'Latency deploy must not open an install-command dialog');
 assert.match(adminHtml, /id="sAppUpdate"/, 'admin settings must expose the application update center');
 assert.match(adminSource, /\/api\/system\/update\$\{refresh/, 'update center must check the Worker update API');
 assert.doesNotMatch(adminSource, /appUpdateToken|github_token|appUpdateRepository/, 'update center must not collect repositories or GitHub credentials');
@@ -226,9 +229,10 @@ assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-image\s*\{\
 assert.doesNotMatch(styleSource, /@media \(max-width: 420px\) \{[\s\S]*\.nq-image\s*\{\s*width:\s*88%/, 'compact iPhones must not waste NQ image width');
 assert.doesNotMatch(styleSource, /\.nq-modal-backdrop\s*\{\s*padding:\s*4px/, 'compact NQ dialogs must retain visible breathing room at the viewport edge');
 assert.match(styleSource, /\.nq-ansi-panel\s*\{[\s\S]*-webkit-overflow-scrolling:\s*touch/, 'ANSI reports must support touch scrolling on iPhone');
+assert.match(styleSource, /@media \(max-width: 560px\) \{[\s\S]*\.nq-ansi-panel \.nq-ansi[\s\S]*white-space:\s*pre-wrap[\s\S]*overflow-wrap:\s*anywhere/, 'mobile ANSI reports must wrap long lines inside the modal');
 assert.match(styleSource, /\.nq-panels\s*\{[^}]*flex:\s*1 1 auto[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*auto/, 'NQ report content must constrain horizontal scrolling to the active panel');
 assert.match(styleSource, /\.nq-ansi-panel\s*\{[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/, 'ANSI reports must own their horizontal scrolling region');
-assert.match(styleSource, /@media \(max-width: 560px\) \{\s*\.nq-ansi\s*\{\s*font-size:\s*10px/, 'phone-sized NQ terminals must remain readable while the ANSI panel owns overflow');
+assert.match(styleSource, /@media \(max-width: 560px\) \{[\s\S]*\.nq-ansi\s*\{\s*font-size:\s*10px/, 'phone-sized NQ terminals must remain readable while the ANSI panel owns overflow');
 assert.match(styleSource, /@media \(max-width: 420px\) \{[\s\S]*\.nq-ansi\s*\{\s*font-size:\s*10px/, 'compact iPhones must preserve the readable NQ terminal size');
 assert.match(styleSource, /@media \(max-width: 420px\) \{[\s\S]*\.nq-modal-backdrop\s*\{[\s\S]*safe-area-inset-bottom[\s\S]*\.nq-modal\s*\{[^}]*safe-area-inset-top/, 'compact iPhones must preserve NQ safe-area spacing');
 assert.match(nodeQualitySource, /panels\.scrollTop\s*=\s*0/, 'switching NQ tabs must reset vertical scroll');
@@ -242,6 +246,7 @@ assert.match(adminSource, /\/api\/agent-tasks/, 'Beta actions must use the fixed
 assert.match(adminSource, /task\.result\?\.report_saved[\s\S]*showSavedNodeQualityReport/, 'successful NQ tasks must open the saved report instead of raw task JSON');
 assert.match(adminSource, /apiPublic\(`\/api\/nq\/\$\{encodeURIComponent\(target\.id\)\}`\)[\s\S]*buildNqModalHtml\(report\)/, 'admin NQ details must load and render the public structured report');
 assert.match(adminCss, /\.nq-modal\s*\{[\s\S]*width:\s*min\(640px[\s\S]*\.nq-ansi-panel\s*\{[\s\S]*width:\s*100%[\s\S]*-webkit-overflow-scrolling:\s*touch[\s\S]*@media \(max-width: 420px\) \{[\s\S]*\.nq-ansi\s*\{\s*font-size:\s*10px/, 'admin must preserve the desktop and readable compact iPhone NQ report layout');
+assert.match(adminCss, /@media \(max-width: 560px\) \{[\s\S]*\.nq-ansi-panel \.nq-ansi[\s\S]*white-space:\s*pre-wrap[\s\S]*overflow-wrap:\s*anywhere/, 'admin mobile ANSI reports must wrap long lines inside the modal');
 assert.match(adminCss, /@media \(max-width: 420px\) \{[\s\S]*\.nq-modal-backdrop\s*\{[\s\S]*safe-area-inset-bottom[\s\S]*\.nq-modal\s*\{[^}]*safe-area-inset-top/, 'admin compact NQ dialog must preserve safe-area spacing');
 assert.doesNotMatch(adminSource, /mNqReport|id="m(?:Command|Script|Args|Stdin)"|body:\s*JSON\.stringify\(\{[^}]*\b(?:command|script|args|stdin)\b/, 'admin must not accept reports or arbitrary command input');
 assert.match(appSource, /Always keep explicit bounds/, 'chart zoom-out must keep explicit x bounds');

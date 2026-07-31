@@ -264,7 +264,7 @@ const latencyInstallCommand = await getLatencyAgentInstallCommand(
     PUBLIC_SITE_ORIGIN: 'https://status.example.test',
     DB: {
       prepare() {
-        return { bind() { return { first: async () => ({ id: 'latency-tokyo', name: '东京 IIJ' }) }; } };
+        return { bind() { return { first: async () => ({ id: 'latency-tokyo', name: '东京 IIJ' }), run: async () => ({ meta: { changes: 1 } }) }; } };
       },
     },
   },
@@ -272,8 +272,10 @@ const latencyInstallCommand = await getLatencyAgentInstallCommand(
   new Request('https://api.example.test/api/latency-agent/install-command?node_id=latency-tokyo'),
 );
 assert.equal(latencyInstallCommand.ok, true);
-assert.match(latencyInstallCommand.linux_command, /install-latency\.sh/);
-assert.match(latencyInstallCommand.linux_command, /install-latency\.sh\?v=6/);
+assert.match(latencyInstallCommand.linux_command, /\/api\/latency-agent\/install-script/);
+assert.match(latencyInstallCommand.linux_command, /Authorization: Bearer nsi_[a-f0-9]{48}/);
+assert.equal(latencyInstallCommand.credential_type, 'one_time_latency_install_token');
+assert.doesNotMatch(latencyInstallCommand.linux_command, /NSTATUS_LATENCY_TOKEN|\bnst_[a-f0-9]{32,}\b/);
 assert.doesNotMatch(latencyInstallCommand.linux_command, /NSTATUS_AGENT_ID=/);
 globalThis.fetch = originalFetch;
 assert.equal(isAgentApiPath('/api/login'), false);

@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { getOrCreateAgentToken, legacyScopedToken, migrateAgentCredentialEncryption, verifyAgentCredential } from '../src/agent-credentials.js';
 import { requireAgentForId, requireAnyAgent, requireLatencyAgentForId } from '../src/auth.js';
 import { getAgentInstallCommand, getAgentInstallScript } from '../src/admin/install-command.js';
-import { getLatencyAgentInstallCommand } from '../src/admin/latency-agents.js';
+import { getLatencyAgentInstallCommand, getLatencyAgentInstallScript } from '../src/admin/latency-agents.js';
 import { ensureV6Schema } from '../src/admin/schema.js';
 
 globalThis.crypto ||= webcrypto;
@@ -155,7 +155,14 @@ try {
     request,
   );
   assert.equal(latencyCommand.ok, true);
-  assert.match(latencyCommand.linux_command, new RegExp(`NSTATUS_LATENCY_TOKEN='${latencyToken}'`));
+  assert.equal(latencyCommand.credential_bound, true);
+  assert.equal(latencyCommand.credential_type, 'one_time_latency_install_token');
+  assert.doesNotMatch(latencyCommand.linux_command, /NSTATUS_LATENCY_TOKEN|\bnst_[a-f0-9]{32,}\b/);
+  const latencyInstallTicket = latencyCommand.linux_command.match(/Bearer (nsi_[a-f0-9]{48})/)?.[1];
+  assert.ok(latencyInstallTicket);
+  const latencyScript = await getLatencyAgentInstallScript(commandEnv, new Request('https://api.example.test/api/latency-agent/install-script', { headers: { authorization: `Bearer ${latencyInstallTicket}` } }));
+  assert.equal(latencyScript.status, 200);
+  assert.match(await latencyScript.text(), new RegExp(`NSTATUS_LATENCY_TOKEN='${latencyToken}'`));
 
   database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)

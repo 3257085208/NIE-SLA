@@ -1,6 +1,6 @@
 import { ApiError, safeJson } from '../auth.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
-import { clamp, nowSec, parseBoolean, sanitizeAgentId } from '../utils.js';
+import { clamp, nowSec, parseBoolean, sanitizeAgentId, sha256Hex } from '../utils.js';
 import { agentApiBase, agentInstallBase, shellQuote } from './install-command.js';
 import { getPublicSettings } from './settings.js';
 
@@ -11,6 +11,10 @@ const ARCHIVE_SCHEMA = 'nie-sla-latency-segment-v1';
 const LATENCY_SCRIPT_VERSION = 6;
 const LATENCY_SCRIPT_SHA256 = '572822759ae0e370f6ca916bf2cd0b866b77e93abb159b5fbf368c199d9cfa88';
 const LATENCY_INSTALLER_SHA256 = '3f5c6845d162f5bd817ff557d500d1f9e1606c382a397e326f6f06ca6e5f1fe8';
+const INSTALL_TICKET_PREFIX = 'nsi_';
+const INSTALL_TICKET_BYTES = 24;
+const INSTALL_TICKET_TTL_SEC = 600;
+const LATENCY_TICKET_PREFIX = 'latency:';
 
 export async function listLatencyAgents(env) {
   const rows = await env.DB.prepare(`SELECT id, name, color, enabled, last_seen_at, created_at, updated_at FROM latency_agents ORDER BY name COLLATE NOCASE`).all();
@@ -47,6 +51,7 @@ export async function deleteLatencyAgent(id, env) {
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM latency_results WHERE node_id = ?`).bind(cleanId),
     env.DB.prepare(`DELETE FROM agent_credentials WHERE subject_type = 'latency' AND subject_id = ?`).bind(cleanId),
+    env.DB.prepare(`DELETE FROM agent_install_tickets WHERE target_id = ?`).bind(`${LATENCY_TICKET_PREFIX}${cleanId}`),
     env.DB.prepare(`DELETE FROM latency_agents WHERE id = ?`).bind(cleanId),
   ]);
   await deleteLatencyArchive(env, cleanId);
@@ -58,31 +63,123 @@ export async function getLatencyAgentInstallCommand(env, url, request = null) {
   if (!nodeId) return { ok: false, error: '必须提供 node_id' };
   const node = await env.DB.prepare(`SELECT id, name FROM latency_agents WHERE id = ?`).bind(nodeId).first().catch(() => null);
   if (!node) return { ok: false, error: 'Latency 节点不存在' };
-  const token = await getOrCreateAgentToken(env, 'latency', nodeId);
-  if (!token) return { ok: false, error: '生成 Latency 节点专用 Token 失败' };
   const installBase = await agentInstallBase(env, request);
   if (!installBase) return { ok: false, error: 'Latency 安装地址不可用，请配置 PUBLIC_AGENT_INSTALL_BASE' };
   const apiBase = await agentApiBase(env, request, url, installBase);
   const intervalSec = String(clamp(Number(env.LATENCY_AGENT_INTERVAL_SEC || 60), 30, 600));
-  const envNames = ['NSTATUS_LATENCY_INSTALL_BASE', 'NSTATUS_LATENCY_API_BASE', 'NSTATUS_LATENCY_TOKEN', 'NSTATUS_LATENCY_NODE_ID', 'NSTATUS_LATENCY_INTERVAL_SEC', 'NSTATUS_LATENCY_SCRIPT_SHA256'];
+  const installTicket = randomInstallTicket();
+  const now = nowSec();
+  const expiresAt = now + INSTALL_TICKET_TTL_SEC;
+  await env.DB.prepare(`INSERT INTO agent_install_tickets
+    (token_hash, target_id, install_base, api_base, target_label, ping_sec, manifest_sha256, expected_version, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(
+      await sha256Hex(installTicket), `${LATENCY_TICKET_PREFIX}${nodeId}`, installBase, apiBase,
+      String(node.name || nodeId).trim() || nodeId, Number(intervalSec), LATENCY_SCRIPT_SHA256,
+      String(LATENCY_SCRIPT_VERSION), now, expiresAt,
+    )
+    .run();
+  await cleanupLatencyInstallTickets(env, now);
+
+  const linuxCommand = `(t=$(mktemp) && trap 'rm -f "$t"' EXIT INT TERM && chmod 0600 "$t" && curl -fsSL -H ${shellQuote(`Authorization: Bearer ${installTicket}`)} ${shellQuote(`${apiBase}/api/latency-agent/install-script`)} -o "$t" && sh "$t")`;
+  return {
+    ok: true,
+    node_id: nodeId,
+    node_name: node.name,
+    api_base: apiBase,
+    install_base: installBase,
+    credential_bound: true,
+    credential_type: 'one_time_latency_install_token',
+    install_token_expires_at: expiresAt,
+    linux_command: linuxCommand,
+  };
+}
+
+export async function getLatencyAgentInstallScript(env, request) {
+  const ticket = bearerToken(request);
+  if (!new RegExp(`^${INSTALL_TICKET_PREFIX}[a-f0-9]{${INSTALL_TICKET_BYTES * 2}}$`).test(ticket)) {
+    throw new ApiError(401, '安装凭据无效、已过期或已使用');
+  }
+
+  const now = nowSec();
+  const row = await env.DB.prepare(`UPDATE agent_install_tickets SET used_at = ?
+    WHERE token_hash = ? AND target_id LIKE ? AND used_at IS NULL AND expires_at >= ?
+    RETURNING target_id, install_base, api_base, target_label, ping_sec, manifest_sha256, expected_version`)
+    .bind(now, await sha256Hex(ticket), `${LATENCY_TICKET_PREFIX}%`, now)
+    .first()
+    .catch(() => null);
+  if (!row?.target_id) throw new ApiError(401, '安装凭据无效、已过期或已使用');
+
+  const nodeId = String(row.target_id).slice(LATENCY_TICKET_PREFIX.length);
+  if (!nodeId || sanitizeAgentId(nodeId) !== nodeId) throw new ApiError(410, 'Latency 节点凭据无效，请重新生成安装命令');
+  const node = await env.DB.prepare(`SELECT id FROM latency_agents WHERE id = ?`).bind(nodeId).first().catch(() => null);
+  if (!node) throw new ApiError(410, 'Latency 节点已不存在，请重新生成安装命令');
+  const token = await getOrCreateAgentToken(env, 'latency', nodeId);
+  if (!token) throw new ApiError(500, '无法读取 Latency 节点专用 Token');
+
+  const script = buildLatencyInstallScript({
+    installBase: row.install_base,
+    apiBase: row.api_base,
+    token,
+    nodeId,
+    intervalSec: row.ping_sec,
+    scriptSha256: row.manifest_sha256,
+    scriptVersion: row.expected_version,
+  });
+  return new Response(script, {
+    status: 200,
+    headers: {
+      'cache-control': 'no-store, max-age=0',
+      'content-type': 'text/x-shellscript; charset=utf-8',
+      'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff',
+    },
+  });
+}
+
+function buildLatencyInstallScript(config) {
   const envValues = [
-    ['NSTATUS_LATENCY_INSTALL_BASE', installBase],
-    ['NSTATUS_LATENCY_API_BASE', apiBase],
-    ['NSTATUS_LATENCY_TOKEN', token],
-    ['NSTATUS_LATENCY_NODE_ID', nodeId],
-    ['NSTATUS_LATENCY_INTERVAL_SEC', intervalSec],
-    ['NSTATUS_LATENCY_SCRIPT_SHA256', LATENCY_SCRIPT_SHA256],
+    ['NSTATUS_LATENCY_INSTALL_BASE', config.installBase],
+    ['NSTATUS_LATENCY_API_BASE', config.apiBase],
+    ['NSTATUS_LATENCY_TOKEN', config.token],
+    ['NSTATUS_LATENCY_NODE_ID', config.nodeId],
+    ['NSTATUS_LATENCY_INTERVAL_SEC', String(clamp(Number(config.intervalSec || 60), 30, 600))],
+    ['NSTATUS_LATENCY_SCRIPT_SHA256', config.scriptSha256],
   ];
-  const prefix = envValues.map(([key, value]) => `${key}=${shellQuote(value)}`).join(' ');
-  const command = [
-    `${prefix}; export ${envNames.join(' ')}`,
+  const envNames = envValues.map(([key]) => key);
+  const preserveEnv = envNames.join(',');
+  return [
+    '#!/bin/sh',
+    'set -eu',
+    ...envValues.map(([key, value]) => `${key}=${shellQuote(value)}`),
+    `export ${envNames.join(' ')}`,
     'tmp=$(mktemp)',
-    `trap 'rm -f "$tmp"' EXIT`,
-    `curl -fsSL ${shellQuote(`${installBase}/install-latency.sh?v=${LATENCY_SCRIPT_VERSION}`)} -o "$tmp"`,
-    `printf '%s  %s\n' ${shellQuote(LATENCY_INSTALLER_SHA256)} "$tmp" | sha256sum -c -`,
-    `(if [ "$(id -u)" -eq 0 ]; then sh "$tmp"; else sudo --preserve-env=${envNames.join(',')} sh "$tmp"; fi)`,
-  ].join(' && ');
-  return { ok: true, node_id: nodeId, node_name: node.name, api_base: apiBase, install_base: installBase, linux_command: command };
+    'chmod 0600 "$tmp"',
+    `trap 'rm -f "$tmp"' EXIT INT TERM`,
+    `curl -fsSL ${shellQuote(`${config.installBase}/install-latency.sh?v=${encodeURIComponent(String(config.scriptVersion || LATENCY_SCRIPT_VERSION))}`)} -o "$tmp"`,
+    `actual=$(if command -v sha256sum >/dev/null 2>&1; then sha256sum "$tmp" | awk '{print $1}'; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$tmp" | awk '{print $1}'; elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$tmp" | awk '{print $NF}'; else exit 127; fi)`,
+    `[ "$actual" = ${shellQuote(LATENCY_INSTALLER_SHA256)} ]`,
+    `if [ "$(id -u)" -eq 0 ]; then sh "$tmp"; else sudo --preserve-env=${preserveEnv} sh "$tmp"; fi`,
+    '',
+  ].join('\n');
+}
+
+async function cleanupLatencyInstallTickets(env, now) {
+  await env.DB.prepare(`DELETE FROM agent_install_tickets
+    WHERE target_id LIKE ? AND (expires_at < ? OR (used_at IS NOT NULL AND used_at < ?))`)
+    .bind(`${LATENCY_TICKET_PREFIX}%`, now - 3600, now - 3600)
+    .run()
+    .catch(() => {});
+}
+
+function randomInstallTicket() {
+  const bytes = crypto.getRandomValues(new Uint8Array(INSTALL_TICKET_BYTES));
+  return INSTALL_TICKET_PREFIX + Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+}
+
+function bearerToken(request) {
+  const match = String(request?.headers?.get?.('authorization') || '').match(/^Bearer\s+(.+)$/i);
+  return String(match?.[1] || '').trim();
 }
 
 export async function getLatencyAgentUpdatePolicy(env) {

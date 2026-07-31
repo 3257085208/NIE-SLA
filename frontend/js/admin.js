@@ -1,4 +1,4 @@
-import { agentInstallCommandFromPayload, copyText } from "./install-command.js?v=20260731-v1049";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1050";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
 import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1049";
@@ -754,6 +754,10 @@ function betaTaskControlsHtml(target) {
 
 function showAgentTaskDiagnostic(target, task, loadError = "") {
   const resultText = task.result ? JSON.stringify(task.result, null, 2) : "";
+  const imageUpload = task.action === "nodequality" ? task.result?.image_upload : null;
+  const imageUploadNotice = imageUpload && (!imageUpload.uploaded || imageUpload.errors?.length)
+    ? `<div class="task-detail-error">图床图片未完成上传：${escapeHtml(imageUpload.errors?.join("；") || (imageUpload.reason === "image_host_not_configured" ? "Worker 未配置图床地址或 Token；恢复备份不会包含这些敏感配置，请重新配置 Worker Secret。" : "没有生成网络质量/回程路由图片。"))}</div>`
+    : "";
   byId("modal").className = "modal task-details-modal";
   byId("modal").innerHTML = `
     <h3>${escapeHtml(task.action_label || "Agent 任务")}</h3>
@@ -764,6 +768,7 @@ function showAgentTaskDiagnostic(target, task, loadError = "") {
     </div>
     ${loadError ? `<div class="task-detail-error">报告加载失败：${escapeHtml(loadError)}</div>` : ""}
     ${task.error ? `<div class="task-detail-error">${escapeHtml(task.error)}</div>` : ""}
+    ${imageUploadNotice}
     ${task.output_excerpt ? `<h4>输出摘要</h4><pre class="task-detail-output">${escapeHtml(task.output_excerpt)}</pre>` : ""}
     ${resultText ? `<h4>任务结果</h4><pre class="task-detail-output">${escapeHtml(resultText)}</pre>` : ""}
     <div class="ma"><button type="button" class="btn" data-close>关闭</button></div>`;
@@ -1836,29 +1841,28 @@ async function deleteLatencyNode(node) {
 }
 
 async function deployLatencyNode(node, trigger = null) {
-  if (trigger) trigger.disabled = true;
-  byId("modal").innerHTML = `<h3>部署 Latency 节点 · ${escapeHtml(node.name)}</h3><div class="install-progress" role="status"><span class="install-spinner" aria-hidden="true"></span><div><strong>正在生成独立安装命令</strong><p>该命令不会安装 VPS 监控 Agent。</p></div></div>`;
-  openModal();
+  if (!node?.id) {
+    toast("无法识别当前 Latency 节点，请刷新后台后重试", "err");
+    return;
+  }
+  const oldText = trigger?.textContent || "部署";
+  if (trigger) {
+    trigger.disabled = true;
+    trigger.textContent = "生成中...";
+  }
+  toast("正在生成 Latency 安装命令...", "info");
   try {
     const data = await apiAdmin(`/api/latency-agent/install-command?node_id=${encodeURIComponent(node.id)}`, {}, 20000);
-    const command = data.linux_command || "";
-    if (!command) throw new Error(data.error || "Worker 未返回安装命令");
-    byId("modal").innerHTML = `
-      <h3>部署 Latency 节点 · ${escapeHtml(node.name)}</h3>
-      <p class="hint">独立 Latency 安装器，只执行 TCP 延迟测量，不采集 VPS 资源，也不属于 Ping。</p>
-      <div class="install-command-block"><div class="install-command-head"><strong>Linux</strong><button class="btn btn-sm btn-blue" id="copyLatencyInstall">复制安装命令</button></div><pre class="code">${escapeHtml(command)}</pre></div>
-      <div class="ma"><button class="btn" data-close>关闭</button></div>`;
-    byId("copyLatencyInstall").onclick = async () => {
-      try { await copyText(command); toast("已复制 Latency 节点安装命令", "ok"); }
-      catch (error) { toast(error.message || "复制失败", "err"); }
-    };
-    try { await copyText(command); toast("已生成并复制独立 Latency 安装命令", "ok"); }
-    catch (_) { toast("命令已生成，请在窗口中手动复制", "info"); }
+    const command = latencyInstallCommandFromPayload(data, node.id);
+    await copyText(command);
+    toast("已复制 Latency 节点安装命令（含一次性凭据，10 分钟内有效）", "ok");
   } catch (error) {
-    byId("modal").innerHTML = `<h3>部署 Latency 节点 · ${escapeHtml(node.name)}</h3><div class="install-error" role="alert"><strong>安装命令生成失败</strong><p>${escapeHtml(error.message || "未知错误")}</p></div><div class="ma"><button class="btn" data-close>关闭</button></div>`;
-    toast(error.message, "err");
+    toast("Latency 安装命令复制失败：" + (error?.message || "未知错误"), "err");
   } finally {
-    if (trigger && document.body.contains(trigger)) trigger.disabled = false;
+    if (trigger && document.body.contains(trigger)) {
+      trigger.disabled = false;
+      trigger.textContent = oldText;
+    }
   }
 }
 

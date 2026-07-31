@@ -69,7 +69,7 @@ export async function getAgentInstallScript(env, request) {
 
   const now = nowSec();
   const row = await env.DB.prepare(`UPDATE agent_install_tickets SET used_at = ?
-    WHERE token_hash = ? AND used_at IS NULL AND expires_at >= ?
+    WHERE token_hash = ? AND target_id NOT LIKE 'latency:%' AND used_at IS NULL AND expires_at >= ?
     RETURNING target_id, install_base, api_base, target_label, ping_sec, manifest_sha256, expected_version`)
     .bind(now, await sha256Hex(ticket), now)
     .first()

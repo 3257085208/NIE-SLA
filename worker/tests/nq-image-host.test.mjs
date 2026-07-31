@@ -23,19 +23,18 @@ assert.throws(() => validateUploadEndpoint('https://img.example.com/api'), /\/up
 const svg = renderNodeQualitySvg('\u001b[32m成功\u001b[0m <script>alert(1)</script>');
 assert.match(svg, /<svg/);
 assert.match(svg, /#4ab118/);
-assert.match(svg, /#1d1d1e/);
-assert.doesNotMatch(svg, /NodeQuality · 网络质量/);
+assert.match(svg, /#0f172a/);
+assert.match(renderNodeQualitySvg('网络质量', { title: 'NodeQuality · 网络质量', subtitle: 'VPS A' }), /NodeQuality · 网络质量/);
 assert.doesNotMatch(svg, /<script>/);
 assert.match(svg, /&lt;script&gt;/);
 
 const styledSvg = renderNodeQualitySvg('\u001b[1;37;44m标签\u001b[0m \u001b[3;4;31m强调\u001b[0m');
-assert.match(styledSvg, /fill="#0f4ac6"/);
 assert.match(styledSvg, /fill="#f6f5fb" font-weight="700"/);
+assert.match(styledSvg, /fill="#bd0013" font-style="italic"/);
 assert.match(styledSvg, /font-style="italic"/);
 assert.match(styledSvg, /text-decoration="underline"/);
 const squareBarSvg = renderNodeQualitySvg('⣿⣀');
-assert.match(squareBarSvg, /data-nq-bar="square"/);
-assert.doesNotMatch(squareBarSvg, /[⣿⣀]/);
+assert.match(squareBarSvg, /[⣿⣀]/);
 
 const legacySettings = {
   enabled: true,
@@ -85,6 +84,9 @@ try {
     assert.equal(upload.options.headers.authorization, `Bearer ${env.NQ_IMGBED_TOKEN}`);
     assert.equal(upload.options.redirect, 'manual');
     assert.equal(upload.file.type, 'image/svg+xml');
+    assert.match(upload.svg, /#0f172a/);
+    assert.match(upload.svg, /#162033/);
+    assert.match(upload.svg, /NodeQuality · (网络质量|回程路由)/);
   }
 
   const storedTarget = { id: 'vps-a', name: 'VPS A', nq_report: uploaded.normalized.report, nq_updated_at: 123 };
@@ -178,6 +180,7 @@ let unexpectedFetch = false;
 globalThis.fetch = async () => { unexpectedFetch = true; throw new Error('must not upload'); };
 const disabled = await uploadNodeQualityReportImages({ DB: memoryDb() }, oneImageReport);
 assert.equal(disabled.status.enabled, false);
+assert.equal(disabled.status.reason, 'image_host_not_configured');
 assert.equal(unexpectedFetch, false);
 globalThis.fetch = originalFetch;
 

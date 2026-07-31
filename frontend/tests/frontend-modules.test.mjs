@@ -10,7 +10,7 @@ import {
   trimEmptyPointEdges,
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
-import { agentInstallCommandFromPayload, copyText } from '../js/install-command.js';
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from '../js/install-command.js';
 import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, normalizeGroupByMode, priceBandKey } from '../js/shared/grouping.js';
 import { readStorage, removeStorage, writeStorage } from '../js/shared/storage.js';
 import { canShowTemperature, hasGpuData, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
@@ -122,6 +122,19 @@ assert.throws(() => agentInstallCommandFromPayload({ ...validInstallPayload, cre
 assert.throws(() => agentInstallCommandFromPayload({ ...validInstallPayload, linux_command: "curl -fsSL 'https://api.example/api/agent/install-script' | sh" }, 'vps-a'), /缺少有效/);
 const fakeLongLivedAgentToken = 'nst_' + 'a'.repeat(48);
 assert.throws(() => agentInstallCommandFromPayload({ ...validInstallPayload, linux_command: `NSTATUS_AGENT_TOKEN='${fakeLongLivedAgentToken}' sh install.sh` }, 'vps-a'), /缺少有效|长期节点凭据/);
+const latencyInstallCommand = shortInstallCommand.replace('/api/agent/install-script', '/api/latency-agent/install-script');
+const validLatencyInstallPayload = {
+  ok: true,
+  node_id: 'latency-tokyo',
+  api_base: 'https://api.example',
+  credential_bound: true,
+  credential_type: 'one_time_latency_install_token',
+  linux_command: latencyInstallCommand,
+};
+assert.equal(latencyInstallCommandFromPayload(validLatencyInstallPayload, 'latency-tokyo'), latencyInstallCommand);
+assert.throws(() => latencyInstallCommandFromPayload({ ...validLatencyInstallPayload, node_id: 'latency-osaka' }, 'latency-tokyo'), /不匹配/);
+assert.throws(() => latencyInstallCommandFromPayload({ ...validLatencyInstallPayload, credential_type: 'one_time_install_token' }, 'latency-tokyo'), /未绑定/);
+assert.throws(() => latencyInstallCommandFromPayload({ ...validLatencyInstallPayload, linux_command: `NSTATUS_LATENCY_TOKEN='${fakeLongLivedAgentToken}' sh install-latency.sh` }, 'latency-tokyo'), /缺少有效|长期节点凭据/);
 
 const originalBrowserGlobals = new Map(['navigator', 'window', 'document'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
 let clipboardWrites = 0;

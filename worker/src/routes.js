@@ -2,7 +2,7 @@ import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValida
 import { requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
-import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup } from './admin.js';
+import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
 import { VERSION } from './version.js';
@@ -147,6 +147,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/agent/install-command', rl: 'write' },
   { method: 'GET', path: '/api/agent/install-script', rl: 'write' },
   { method: 'GET', path: '/api/latency-agent/install-command', rl: 'write' },
+  { method: 'GET', path: '/api/latency-agent/install-script', rl: 'write' },
   { method: 'POST', path: '/api/maintenance/cleanup', rl: 'write' },
   { method: 'GET', path: '/api/themes/manage', rl: 'write' },
   { method: 'POST', path: '/api/themes/upload', rl: 'write' },
@@ -277,6 +278,10 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/agent/install-script' && m === 'GET') {
     await ensureV6Schema(env);
     return getAgentInstallScript(env, request);
+  }
+  if (path === '/api/latency-agent/install-script' && m === 'GET') {
+    await ensureV6Schema(env);
+    return getLatencyAgentInstallScript(env, request);
   }
 
   // Agent

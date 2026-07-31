@@ -39,15 +39,25 @@ NodeQuality 与 IP.Check.Place 动作仍会下载并执行对应服务当前提�
 - 凭据活跃时间最多每 6 小时写一次，状态快照每 5 分钟写一次 R2；
 - 公共接口限制历史范围和最大采样点。
 
-按 100 台 VPS、全部开启流量统计、2 个 External Latency Agent、Agent 每 5 分钟上传、当前状态每分钟刷新估算：
+按 100 台 VPS、全部开启流量统计、2 个 External Latency Agent、Agent 每 5 分钟上传、当前状态每分钟刷新估算（这是服务端动态请求和写入的预算模型，不包含静态资源访问）：
 
 | 资源 | 估算 | 当前免费上限 | 余量 |
 | --- | ---: | ---: | ---: |
-| Workers/DO 请求 | 约 86,448 次/天 | 100,000 次/天 | 约 13,552 次/天供页面与 API |
-| D1 写入行 | 约 95,400 行/天 | 100,000 行/天 | 约 4,600 行/天 |
+| Workers 动态请求 | 约 86,448 次/天 | 100,000 次/天 | 约 13,552 次/天供页面与 API |
+| Durable Objects 请求 | 至少约 28,800 次/天（按每台 Agent 每 5 分钟写入缓冲估算；读取和告警会增加） | 100,000 次/天 | 典型配置仍有余量，但必须看 Dashboard 实测 |
+| D1 写入行 | 约 95,376 行/天 | 100,000 行/天 | 约 4,624 行/天 |
 | D1 读取行 | 正常约 100-250 万行/天 | 5,000,000 行/天 | 视后台与公开访问量变化 |
 | R2 Class A | 约 210,240 次/月 | 1,000,000 次/月 | 约 789,760 次/月 |
 
-因此默认配置可把 **100 台 + 5 分钟上传** 控制在免费额度的理论范围内，而且没有降低 Agent 上传频率、当前状态刷新频率或前端功能。D1 写入是最紧的指标；大量后台操作、异常重试、通知状态变化、超过 2 个 Latency Agent 或修改默认间隔都会占用余量。公开页面访问还会占用 Workers 请求，流量较大时应开启 Cloudflare 缓存并持续观察 Dashboard，不能把理论值当作永久保证。
+Cloudflare 当前官方口径（文档最后更新时间以官方页面为准）为：Workers Free 动态请求 100,000/天、每次 10 ms CPU；D1 Free 每天 5,000,000 行读取、100,000 行写入、账户总存储 5 GB；Durable Objects Free 请求 100,000/天、SQLite 总存储 5 GB；R2 Standard 免费 10 GB-month、Class A 1,000,000/月、Class B 10,000,000/月。Workers Static Assets 请求免费且不限量，但命中 Worker 的动态页面/API 请求仍计入 Workers 请求。
+
+因此默认配置可把 **100 台 + 5 分钟上传** 控制在免费额度的理论范围内，而且没有降低 Agent 上传频率、当前状态刷新频率或前端功能。D1 写入是最紧的指标；大量后台操作、异常重试、通知状态变化、超过 2 个 Latency Agent 或修改默认间隔都会占用余量。公开页面的动态 API、Durable Object 缓冲读取和告警也会继续消耗独立配额，不能用单一的“86,448 Workers/DO 总数”替代实际监控。建议上线后在 Dashboard 对 Workers、Durable Objects、D1 rows written/read、R2 Class A/B 设置告警；如果长期接近任一 80%，应降低上报频率、减少重试或切换 Workers Paid。
+
+官方依据：
+
+- Workers limits/pricing: https://developers.cloudflare.com/workers/platform/limits/、https://developers.cloudflare.com/workers/platform/pricing/
+- D1 pricing: https://developers.cloudflare.com/d1/platform/pricing/
+- Durable Objects limits/pricing: https://developers.cloudflare.com/durable-objects/platform/limits/、https://developers.cloudflare.com/durable-objects/platform/pricing/
+- R2 pricing: https://developers.cloudflare.com/r2/pricing/
 
 上线前应在 Cloudflare Dashboard 设置用量告警，并定期查看 D1、R2、Workers 和 Durable Objects 指标。

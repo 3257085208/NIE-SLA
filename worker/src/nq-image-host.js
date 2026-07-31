@@ -45,9 +45,9 @@ async function resolveNodeQualityImageHost(env) {
 }
 
 export async function uploadNodeQualityReportImages(env, normalized, options = {}) {
-  if (!normalized?.report) return { normalized, status: { enabled: false, uploaded: 0, skipped: true } };
+  if (!normalized?.report) return { normalized, status: { enabled: false, uploaded: 0, skipped: true, reason: 'report_missing' } };
   const settings = await resolveNodeQualityImageHost(env);
-  if (!settings.enabled) return { normalized, status: { enabled: false, uploaded: 0, skipped: true } };
+  if (!settings.enabled) return { normalized, status: { enabled: false, uploaded: 0, skipped: true, reason: 'image_host_not_configured' } };
   if (!settings.endpoint || !settings.api_token) {
     return { normalized, status: { enabled: true, uploaded: 0, errors: ['图床地址或 API Token 未配置'] } };
   }
@@ -58,13 +58,16 @@ export async function uploadNodeQualityReportImages(env, normalized, options = {
   }
   const tabs = Array.isArray(report.tabs) ? report.tabs : [];
   const candidates = tabs.filter((tab) => ['network', 'route'].includes(String(tab?.id || '')) && tab?.content);
-  if (!candidates.length) return { normalized, status: { enabled: true, uploaded: 0, skipped: true } };
+  if (!candidates.length) return { normalized, status: { enabled: true, uploaded: 0, skipped: true, reason: 'no_network_or_route_tabs' } };
 
   const agentId = safeFilePart(options.agentId || 'vps');
   const reportId = safeFilePart(extractReportId(report.link) || String(options.finishedAt || nowSec()));
   const results = await Promise.all(candidates.map(async (tab) => {
     try {
-      const svg = renderNodeQualitySvg(tab.content);
+      const svg = renderNodeQualitySvg(tab.content, {
+        title: tab.id === 'route' ? 'NodeQuality · 回程路由' : 'NodeQuality · 网络质量',
+        subtitle: String(options.targetName || options.agentId || '').trim(),
+      });
       const filename = `${agentId}-${reportId}-${safeFilePart(tab.id)}.svg`;
       const image = await uploadSvg(settings, svg, filename);
       return { id: tab.id, image };
@@ -89,10 +92,44 @@ export async function uploadNodeQualityReportImages(env, normalized, options = {
   };
 }
 
-export function renderNodeQualitySvg(content) {
-  const source = sanitizeAnsiContent(String(content || ''))
-    .replace(/\t/g, '    ')
-    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, (sequence) => sequence.endsWith('m') ? sequence : '');
+export function renderNodeQualitySvg(content, options = {}) {
+  const source = sanitizeAnsiContent(String(content || '')).replace(/\t/g, '    ');
+  const originalLines = source.split('\n');
+  const lines = originalLines.slice(0, MAX_RENDER_LINES);
+  if (originalLines.length > MAX_RENDER_LINES) lines.push(`... 报告过长，已截取前 ${MAX_RENDER_LINES} 行`);
+  const columns = Math.min(MAX_RENDER_COLUMNS, Math.max(88, ...lines.map((line) => visibleColumns(stripAnsiSafe(line)))));
+  const width = Math.min(2200, Math.max(760, Math.ceil(columns * 8.1 + 48)));
+  const headerHeight = 58;
+  const lineHeight = 18;
+  const height = Math.max(150, headerHeight + 24 + lines.length * lineHeight);
+  const title = xmlEscape(String(options.title || 'NodeQuality').slice(0, 120));
+  const subtitle = xmlEscape(String(options.subtitle || '').slice(0, 160));
+  const textLines = lines.map((line, index) => {
+    const spans = ansiSegments(line).map((segment) => {
+      const style = terminalSegmentStyle(segment);
+      const attributes = `${segment.bold ? ' font-weight=\"700\"' : ''}${segment.italic ? ' font-style=\"italic\"' : ''}${segment.underline ? ' text-decoration=\"underline\"' : ''}${segment.dim ? ' opacity=\"0.6\"' : ''}`;
+      return `<tspan fill=\"${style.foreground}\"${attributes}>${xmlEscape(segment.text || ' ')}</tspan>`;
+    }).join('') || '<tspan> </tspan>';
+    return `<text x=\"24\" y=\"${headerHeight + 24 + index * lineHeight}\" class=\"line\" xml:space=\"preserve\">${spans}</text>`;
+  }).join('');
+  return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${width}\" height=\"${height}\" viewBox=\"0 0 ${width} ${height}\" role=\"img\" aria-label=\"${title}\">
+  <rect width=\"100%\" height=\"100%\" fill=\"#0f172a\"/>
+  <rect width=\"100%\" height=\"${headerHeight}\" fill=\"#162033\"/>
+  <circle cx=\"24\" cy=\"29\" r=\"5\" fill=\"#2ea36d\"/>
+  <text x=\"39\" y=\"26\" class=\"title\">${title}</text>
+  ${subtitle ? `<text x=\"39\" y=\"44\" class=\"subtitle\">${subtitle}</text>` : ''}
+  <style>
+    .title { fill:#f8fafc; font:700 14px ui-monospace,SFMono-Regular,Menlo,Consolas,\"Noto Sans Mono CJK SC\",monospace; }
+    .subtitle { fill:#94a3b8; font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,\"Noto Sans Mono CJK SC\",monospace; }
+    .line { fill:#dbe5f1; font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,\"Noto Sans Mono CJK SC\",monospace; }
+  </style>
+  ${textLines}
+</svg>`;
+}
+
+function renderNodeQualitySvgLegacy(content) {
+  const source = sanitizeAnsiContent(String(content || '')).replace(/\t/g, '    ');
   const originalLines = source.split('\n');
   const truncated = originalLines.length > MAX_RENDER_LINES;
   const lines = originalLines.slice(0, MAX_RENDER_LINES);

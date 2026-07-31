@@ -155,7 +155,12 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
   let imageUpload = null;
   if (normalizedNq) {
     try {
-      const uploaded = await uploadNodeQualityReportImages(env, normalizedNq, { agentId, finishedAt });
+      const target = await env.DB.prepare('SELECT name FROM targets WHERE id = ?').bind(agentId).first().catch(() => null);
+      const uploaded = await uploadNodeQualityReportImages(env, normalizedNq, {
+        agentId,
+        targetName: String(target?.name || '').trim(),
+        finishedAt,
+      });
       normalizedNq = uploaded.normalized;
       imageUpload = uploaded.status;
     } catch (uploadError) {

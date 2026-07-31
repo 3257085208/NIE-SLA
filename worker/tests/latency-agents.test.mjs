@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { ensureV6Schema } from '../src/admin/schema.js';
-import { createLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentTargets, getLatencyAgentUpdatePolicy, getPublicLatency, submitLatencyAgentResults } from '../src/admin/latency-agents.js';
+import { createLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentTargets, getLatencyAgentUpdatePolicy, getPublicLatency, submitLatencyAgentResults } from '../src/admin/latency-agents.js';
 
 globalThis.crypto ||= webcrypto;
 
@@ -48,11 +48,26 @@ const command = await getLatencyAgentInstallCommand(
   new URL(`https://api.example.test/api/latency-agent/install-command?node_id=${created.id}`),
   new Request('https://api.example.test', { headers: { origin: 'https://status.example.test' } }),
 );
-assert.match(command.linux_command, /install-latency\.sh/);
-assert.match(command.linux_command, /install-latency\.sh\?v=6/);
-assert.match(command.linux_command, /sha256sum -c/);
-assert.match(command.linux_command, /NSTATUS_LATENCY_SCRIPT_SHA256=/);
+assert.match(command.linux_command, /\/api\/latency-agent\/install-script/);
+assert.match(command.linux_command, /Authorization: Bearer nsi_[a-f0-9]{48}/);
+assert.equal(command.credential_bound, true);
+assert.equal(command.credential_type, 'one_time_latency_install_token');
+assert.doesNotMatch(command.linux_command, /NSTATUS_LATENCY_TOKEN=|\bnst_[a-f0-9]{32,}\b/);
 assert.doesNotMatch(command.linux_command, /NSTATUS_AGENT_ID=/);
+assert.ok(command.linux_command.length < 380);
+const installTicket = command.linux_command.match(/Bearer (nsi_[a-f0-9]{48})/)?.[1];
+assert.ok(installTicket);
+const installScript = await getLatencyAgentInstallScript(env, new Request('https://api.example.test/api/latency-agent/install-script', { headers: { authorization: `Bearer ${installTicket}` } }));
+assert.equal(installScript.status, 200);
+assert.equal(installScript.headers.get('content-type'), 'text/x-shellscript; charset=utf-8');
+const installScriptText = await installScript.text();
+assert.match(installScriptText, /NSTATUS_LATENCY_TOKEN='nst_[a-f0-9]{48}'/);
+assert.match(installScriptText, /install-latency\.sh\?v=6/);
+assert.match(installScriptText, /3f5c6845d162f5bd817ff557d500d1f9e1606c382a397e326f6f06ca6e5f1fe8/);
+await assert.rejects(
+  () => getLatencyAgentInstallScript(env, new Request('https://api.example.test/api/latency-agent/install-script', { headers: { authorization: `Bearer ${installTicket}` } })),
+  /无效|已使用/,
+);
 
 const checkedAt = Math.floor(Date.now() / 1000);
 const submitted = await submitLatencyAgentResults(jsonRequest({}), env, {

@@ -1562,6 +1562,17 @@ body.nq-modal-open { overflow: hidden; }
   .nq-route-note { font-size: 9px; }
 }
 @media (max-width: 560px) {
+  .nq-ansi-panel,
+  .nq-network-scroll { overflow-x: hidden; }
+  .nq-ansi-panel .nq-ansi,
+  .nq-report-pre {
+    width: 100%;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .nq-network-pre { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
   .nq-ansi { font-size: 10px; line-height: 1.4; }
 }
 @media (max-width: 420px) {
