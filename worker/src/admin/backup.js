@@ -1,6 +1,8 @@
 import { ApiError, safeJson } from '../auth.js';
 
 const BACKUP_SCHEMA = 'nie-sla-backup-v1';
+const D1_BATCH_SIZE = 50;
+const BACKUP_PBKDF2_ITERATIONS = 100_000;
 const PORTABLE_TABLES = ['targets', 'ping_targets', 'latency_agents'];
 const SENSITIVE_TABLES = ['agent_credentials'];
 const RUNTIME_TABLES = [
@@ -76,9 +78,11 @@ export async function restoreBackup(request, env) {
   let runtimeCleanup = null;
   try {
     if (mode === 'replace') {
-      for (const table of [...PORTABLE_TABLES].reverse()) await env.DB.prepare(`DELETE FROM ${table}`).run();
       const keys = (archive.portable?.app_meta || []).map(row => String(row.key || '')).filter(isPortableMetaKey);
-      for (const key of keys) await env.DB.prepare(`DELETE FROM app_meta WHERE key = ?`).bind(key).run();
+      await runD1Batches(env, [
+        ...[...PORTABLE_TABLES].reverse().map(table => env.DB.prepare(`DELETE FROM ${table}`)),
+        ...keys.map(key => env.DB.prepare(`DELETE FROM app_meta WHERE key = ?`).bind(key)),
+      ]);
     }
     for (const table of PORTABLE_TABLES) restored[table] = await restoreRows(env, table, archive.portable?.[table]);
     restored.app_meta = await restoreRows(env, 'app_meta', (archive.portable?.app_meta || []).filter(row => isPortableMetaKey(row.key)));
@@ -160,8 +164,10 @@ async function captureRestoreState(env) {
 }
 
 async function replaceRestoreState(env, state) {
-  for (const table of [...PORTABLE_TABLES, ...SENSITIVE_TABLES].reverse()) await env.DB.prepare(`DELETE FROM ${table}`).run();
-  await env.DB.prepare(`DELETE FROM app_meta`).run();
+  await runD1Batches(env, [
+    ...[...PORTABLE_TABLES, ...SENSITIVE_TABLES].reverse().map(table => env.DB.prepare(`DELETE FROM ${table}`)),
+    env.DB.prepare('DELETE FROM app_meta'),
+  ]);
   for (const table of [...PORTABLE_TABLES, ...SENSITIVE_TABLES]) await restoreRows(env, table, state?.[table]);
   await restoreRows(env, 'app_meta', state?.app_meta);
 }
@@ -215,17 +221,23 @@ async function tableRows(env, table) {
 async function restoreRows(env, table, rows) {
   if (!Array.isArray(rows) || !rows.length) return 0;
   const allowedColumns = await tableColumns(env, table);
-  let count = 0;
+  const statements = [];
   for (const row of rows.slice(0, 10_000)) {
     if (!row || typeof row !== 'object' || Array.isArray(row)) continue;
     const columns = Object.keys(row).filter(column => allowedColumns.has(column));
     if (!columns.length) continue;
     const quoted = columns.map(column => `"${column}"`).join(', ');
     const marks = columns.map(() => '?').join(', ');
-    await env.DB.prepare(`INSERT OR REPLACE INTO ${table} (${quoted}) VALUES (${marks})`).bind(...columns.map(column => row[column])).run();
-    count += 1;
+    statements.push(env.DB.prepare(`INSERT OR REPLACE INTO ${table} (${quoted}) VALUES (${marks})`).bind(...columns.map(column => row[column])));
   }
-  return count;
+  await runD1Batches(env, statements);
+  return statements.length;
+}
+
+async function runD1Batches(env, statements) {
+  for (let offset = 0; offset < statements.length; offset += D1_BATCH_SIZE) {
+    await env.DB.batch(statements.slice(offset, offset + D1_BATCH_SIZE));
+  }
 }
 
 async function tableColumns(env, table) {
@@ -250,7 +262,7 @@ async function encryptJson(value, password) {
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext);
   return {
     algorithm: 'PBKDF2-SHA256+A256GCM',
-    iterations: 310000,
+    iterations: BACKUP_PBKDF2_ITERATIONS,
     salt: bytesToBase64(salt),
     iv: bytesToBase64(iv),
     ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
@@ -260,11 +272,15 @@ async function encryptJson(value, password) {
 async function decryptJson(envelope, password) {
   if (!password) throw new ApiError(400, '该备份包含敏感数据，请输入备份密码');
   if (envelope?.algorithm !== 'PBKDF2-SHA256+A256GCM') throw new ApiError(400, '不支持的敏感备份加密格式');
+  const iterations = Number(envelope.iterations || 0);
+  if (iterations !== BACKUP_PBKDF2_ITERATIONS) {
+    throw new ApiError(400, '该敏感备份的 PBKDF2 迭代参数不受当前 Cloudflare 运行时支持');
+  }
   try {
     const salt = base64ToBytes(envelope.salt);
     const iv = base64ToBytes(envelope.iv);
     const ciphertext = base64ToBytes(envelope.ciphertext);
-    const key = await deriveBackupKey(password, salt, ['decrypt']);
+    const key = await deriveBackupKey(password, salt, ['decrypt'], iterations);
     const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
     return JSON.parse(new TextDecoder().decode(plaintext));
   } catch (_) {
@@ -272,9 +288,9 @@ async function decryptJson(envelope, password) {
   }
 }
 
-async function deriveBackupKey(password, salt, usages) {
+async function deriveBackupKey(password, salt, usages, iterations = BACKUP_PBKDF2_ITERATIONS) {
   const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
-  return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 310000 }, material, { name: 'AES-GCM', length: 256 }, false, usages);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, material, { name: 'AES-GCM', length: 256 }, false, usages);
 }
 
 function bytesToBase64(bytes) {

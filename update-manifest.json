@@ -1,14 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.44",
-  "agent_version": "v1.0.44",
-  "source_ref": "app-v1.0.44",
+  "version": "1.0.45",
+  "agent_version": "v1.0.45",
+  "source_ref": "app-v1.0.45",
   "published_at": "2026-07-31T00:00:00Z",
-  "title": "NIE-SLA 1.0.44",
+  "title": "NIE-SLA 1.0.45",
   "changelog": [
-    "修复自定义后台入口下资源相对路径导致登录按钮可能无响应的问题，并增加启动失败提示",
-    "公开一键构建改为按更新清单固定版本直接下载 Release 资产，不再查询 GitHub API",
-    "Agent、Worker、前端与公开发布版本同步至 1.0.44"
+    "修复 Cloudflare WebCrypto PBKDF2 上限导致备份恢复失败的问题",
+    "D1 replace 恢复改为不超过 50 条的批量写入",
+    "Static Assets 未知路径启用品牌 404 页面",
+    "Agent、Worker、前端与公开发布版本同步至 1.0.45"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

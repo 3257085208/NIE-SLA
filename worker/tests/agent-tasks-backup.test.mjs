@@ -51,8 +51,9 @@ sqlite.exec(`CREATE TABLE agent_metrics_state (
 )`);
 sqlite.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?)`)
   .run('schema:worker-v16-20260726-nodes-tasks-backup', Math.floor(Date.now() / 1000));
+const d1Stats = { batchSizes: [] };
 const env = {
-  DB: d1(sqlite),
+  DB: d1(sqlite, d1Stats),
   ARCHIVE: {
     objects: new Map(),
     async put(key, value) { this.objects.set(key, value); },
@@ -199,6 +200,26 @@ assert.equal(JSON.stringify(portable.backup).includes('private-image-host.exampl
 assert.equal(portable.backup.portable.app_meta.some((row) => row.key.startsWith('nq_image_host_')), false);
 portable.backup.portable.targets[0].unknown_future_column = 'ignored';
 await restoreBackup(jsonRequest({ backup: portable.backup, mode: 'merge', confirm: 'RESTORE' }), env);
+const bulkBackup = structuredClone(portable.backup);
+const targetTemplate = bulkBackup.portable.targets[0];
+bulkBackup.portable.targets = Array.from({ length: 120 }, (_, index) => ({
+  ...targetTemplate,
+  id: `restore-bulk-${index}`,
+  name: `Restore Bulk ${index}`,
+  sort_order: index,
+}));
+bulkBackup.portable.app_meta = Array.from({ length: 80 }, (_, index) => ({
+  key: `restore_bulk_setting_${index}`,
+  value: String(index),
+  updated_at: now,
+}));
+const batchesBeforeBulkRestore = d1Stats.batchSizes.length;
+await restoreBackup(jsonRequest({ backup: bulkBackup, mode: 'replace', confirm: 'RESTORE' }), env);
+const bulkBatchSizes = d1Stats.batchSizes.slice(batchesBeforeBulkRestore);
+assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM targets WHERE id LIKE 'restore-bulk-%'`).get().count, 120);
+assert.ok(bulkBatchSizes.filter(size => size === 50).length >= 3, 'large restores must use bounded D1 batches');
+assert.ok(bulkBatchSizes.every(size => size <= 50), 'D1 restore batches must stay within the configured bound');
+await restoreBackup(jsonRequest({ backup: portable.backup, mode: 'replace', confirm: 'RESTORE' }), env);
 env.ARCHIVE.objects.clear();
 await assert.rejects(
   () => exportBackup(new Request('https://example.test/api/backup/export'), {
@@ -208,6 +229,7 @@ await assert.rejects(
 );
 const protectedBackup = await exportBackup(jsonRequest({ include_secrets: true, password: 'Backup-password-123!' }), env);
 assert.equal(protectedBackup.backup.sensitive.algorithm, 'PBKDF2-SHA256+A256GCM');
+assert.equal(protectedBackup.backup.sensitive.iterations, 100_000);
 assert.equal(JSON.stringify(protectedBackup.backup).includes('private-image-host.example'), false);
 const preview = await previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'Backup-password-123!' }));
 assert.equal(preview.preview.counts.targets, 2);
@@ -216,6 +238,12 @@ assert.equal(preview.preview.sensitive_counts.app_meta, 2);
 await assert.rejects(
   () => previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'wrong-password' })),
   error => error?.status === 400,
+);
+const unsupportedKdfBackup = structuredClone(protectedBackup.backup);
+unsupportedKdfBackup.sensitive.iterations = 310_000;
+await assert.rejects(
+  () => previewBackup(jsonRequest({ backup: unsupportedKdfBackup, password: 'Backup-password-123!' })),
+  error => error?.status === 400 && /PBKDF2|Cloudflare/.test(error.message),
 );
 sqlite.prepare(`UPDATE targets SET name = 'Changed' WHERE id = 'vps-a'`).run();
 sqlite.prepare(`DELETE FROM app_meta WHERE key LIKE 'nq_image_host_%'`).run();
@@ -256,7 +284,7 @@ function jsonRequest(value) {
   });
 }
 
-function d1(database) {
+function d1(database, stats = null) {
   return {
     prepare(sql) {
       let values = [];
@@ -271,6 +299,7 @@ function d1(database) {
       };
     },
     async batch(statements) {
+      if (stats) stats.batchSizes.push(statements.length);
       const results = [];
       for (const statement of statements) results.push(await statement.run());
       return results;
