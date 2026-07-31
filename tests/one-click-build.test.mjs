@@ -58,6 +58,7 @@ const wrangler = JSON.parse(await readFile(path.join(root, 'wrangler.jsonc'), 'u
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 assert.equal(wrangler.assets?.directory, './dist-one-click');
 assert.equal(wrangler.assets?.run_worker_first, true);
+assert.equal(wrangler.assets?.not_found_handling, '404-page');
 assert.deepEqual(wrangler.compatibility_flags, ['global_fetch_strictly_public']);
 const databaseId = wrangler.d1_databases?.[0]?.database_id || '';
 assert.match(databaseId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);

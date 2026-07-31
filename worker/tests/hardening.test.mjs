@@ -38,6 +38,7 @@ assert.match(statusSource, /parsed && typeof parsed === 'object' && !Array\.isAr
 assert.match(metricsSource, /warnings\.push\('Latest Agent metrics unavailable'\)/, 'latest metrics read failures must not look like an empty Agent');
 assert.match(wranglerSource, /MAX_TARGETS_PER_RUN = "20"/, 'cron work must be spread across minute slots while retaining 100 targets per five minutes');
 assert.match(wranglerSource, /global_fetch_strictly_public/, 'signed cron dispatch must loop through the public Worker endpoint instead of bypassing the Worker route');
+assert.match(wranglerSource, /not_found_handling = "404-page"/, 'unknown browser routes must render the branded 404 asset');
 
 function urlWith(qs) {
   return new URL('https://example.test/api/agent/metrics?' + qs);
