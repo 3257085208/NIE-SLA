@@ -756,7 +756,7 @@ function showAgentTaskDiagnostic(target, task, loadError = "") {
   const resultText = task.result ? JSON.stringify(task.result, null, 2) : "";
   const imageUpload = task.action === "nodequality" ? task.result?.image_upload : null;
   const imageUploadNotice = imageUpload && (!imageUpload.uploaded || imageUpload.errors?.length)
-    ? `<div class="task-detail-error">图床图片未完成上传：${escapeHtml(imageUpload.errors?.join("；") || (imageUpload.reason === "image_host_not_configured" ? "Worker 未配置图床地址或 Token；恢复备份不会包含这些敏感配置，请重新配置 Worker Secret。" : "没有生成网络质量/回程路由图片。"))}</div>`
+    ? `<div class="task-detail-error">图床图片未完成上传：${escapeHtml(imageUpload.errors?.join("；") || (imageUpload.reason === "image_host_not_configured" ? "Worker 未配置 NQ_IMGBED_URL/NQ_IMGBED_TOKEN。JSON 备份不会包含 Worker Secret；若使用加密备份恢复了 D1 图床密文，仍需确认 Worker Secret 地址和 Token 已重新配置。" : "没有生成网络质量/回程路由图片。"))}</div>`
     : "";
   byId("modal").className = "modal task-details-modal";
   byId("modal").innerHTML = `
