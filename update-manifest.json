@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.51",
-  "agent_version": "v1.0.51",
-  "source_ref": "app-v1.0.51",
-  "published_at": "2026-08-01T08:46:11Z",
-  "title": "NIE-SLA 1.0.51",
+  "version": "1.0.52",
+  "agent_version": "v1.0.52",
+  "source_ref": "app-v1.0.52",
+  "published_at": "2026-08-01T09:10:32Z",
+  "title": "NIE-SLA 1.0.52",
   "changelog": [
-    "修复 BusyBox 节点运行 NQ/IP 解锁时因 setpriv 不支持 GNU --reuid/--regid 参数而在脚本启动前失败",
-    "Agent 直接在 exec 前清空补充组并切换到 nstatus-task，再设置 no-new-privs 和进入 Linux namespaces，不回退宿主 root",
-    "后台分别保留每台 VPS 最新的 NQ 与 IP 解锁状态和错误，后运行的任务不再遮住另一类任务详情",
+    "完整修复 NQ/IP 沙箱降权后的脚本访问：root 父目录仅允许穿越，随机任务目录继续只对 nstatus-task 可读",
+    "BusyBox 节点不再依赖 GNU setpriv 参数，Agent 自行降权并设置 no-new-privs 后进入 Linux namespaces",
+    "真实 Alpine/BusyBox 节点验收覆盖任务领取、脚本启动和结果回传，不回退宿主 root",
     "固定公益 NQ 图床链路、受限 Broker 协议与 D1/R2 生产绑定保持不变",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.51"
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.52"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -42,7 +42,7 @@ const info = await getAppUpdateInfo(env, {
   }),
 });
 
-assert.equal(info.current_version, '1.0.51');
+assert.equal(info.current_version, '1.0.52');
 assert.equal(info.latest_version, '1.1.0');
 assert.equal(info.update_available, true);
 assert.equal(info.stale, false);
@@ -56,9 +56,9 @@ assert.equal('github_token' in info, false);
 
 const bundledManifest = {
   ...manifest,
-  version: '1.0.51',
-  source_ref: 'app-v1.0.51',
-  title: 'NIE-SLA 1.0.51',
+  version: '1.0.52',
+  source_ref: 'app-v1.0.52',
+  title: 'NIE-SLA 1.0.52',
 };
 let upstreamRequests = 0;
 let assetRequests = 0;
@@ -78,8 +78,8 @@ const rateLimitedFetch = async () => {
   return new Response('rate limited', { status: 429 });
 };
 const fallbackInfo = await getAppUpdateInfo(fallbackEnv, { force: true, fetchImpl: rateLimitedFetch });
-assert.equal(fallbackInfo.current_version, '1.0.51');
-assert.equal(fallbackInfo.latest_version, '1.0.51');
+assert.equal(fallbackInfo.current_version, '1.0.52');
+assert.equal(fallbackInfo.latest_version, '1.0.52');
 assert.equal(fallbackInfo.update_available, false);
 assert.equal(fallbackInfo.stale, true);
 assert.equal(fallbackInfo.update_source, 'bundled');

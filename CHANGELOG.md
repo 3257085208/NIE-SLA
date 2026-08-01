@@ -2,6 +2,14 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.0.52 - 2026-08-01
+
+- 完整修复 NodeQuality/IP 解锁任务在宿主降权后的文件访问：root 管理的任务父目录改为仅可穿越、不可列举的 `0711`，每个随机任务目录继续保持 `nstatus-task` 独占的 `0700`，脚本和兼容 helper 不再因父目录 `0700` 返回 Permission denied。
+- 保留 `1.0.51` 移除 GNU `setpriv` 参数依赖的实现，Agent 仍在 `exec` 前清空补充组、切换非 root 身份、设置 `PR_SET_NO_NEW_PRIVS` 并进入 Linux namespaces；任一步失败都不会回退宿主 root。
+- 使用真实 Alpine Linux 3.23 / BusyBox 1.37 节点执行固定 IP 解锁任务，验证任务领取、脚本启动和结果回传。
+- 固定公益 NQ 图床链路、双动作任务详情与生产 D1/R2 绑定保持不变。
+- 应用、Worker、Rust Agent、前端与教程版本同步至 `1.0.52` / `v1.0.52`。
+
 ## 1.0.51 - 2026-08-01
 
 - 修复 BusyBox 节点运行 NodeQuality 或 IP 解锁时，因 BusyBox `setpriv` 不支持 GNU `--reuid` / `--regid` 参数而在脚本启动前失败的问题。

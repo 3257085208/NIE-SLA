@@ -836,7 +836,8 @@ fn prepare_secure_task_directory(path: &Path, uid: u32) -> Result<()> {
             "fixed task runtime directory is not owned by the Agent process and private"
         ));
     }
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    // Child sandboxes remain 0700; the root-owned parent only permits traversal.
+    fs::set_permissions(path, fs::Permissions::from_mode(0o711))?;
     Ok(())
 }
 
@@ -1388,9 +1389,17 @@ mod tests {
         prepare_secure_task_directory(&tasks, uid).unwrap();
         assert_eq!(
             fs::metadata(&tasks).unwrap().permissions().mode() & 0o777,
+            0o711
+        );
+        let child = tasks.join("child");
+        fs::create_dir(&child).unwrap();
+        set_private_directory_permissions(&child).unwrap();
+        assert_eq!(
+            fs::metadata(&child).unwrap().permissions().mode() & 0o777,
             0o700
         );
 
+        fs::remove_dir(&child).unwrap();
         fs::remove_dir(&tasks).unwrap();
         symlink(base.parent().unwrap(), &tasks).unwrap();
         assert!(prepare_secure_task_directory(&tasks, uid).is_err());
