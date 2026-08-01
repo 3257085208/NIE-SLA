@@ -1,5 +1,6 @@
 use crate::{percent_encode_query, Config, HttpClient, AGENT_VERSION};
 use anyhow::{anyhow, Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::env;
@@ -19,6 +20,9 @@ pub(crate) const TASK_POLL_SEC: u64 = 300;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const MAX_NODEQUALITY_ARTIFACT_BYTES: usize = 24 * 1024;
+const MAX_NODEQUALITY_CAPTURE_CHARS: usize = 180 * 1024;
+const NODEQUALITY_CAPTURE_BEGIN: &str = "__NSTATUS_NQ_ARTIFACTS_V1_BEGIN__";
+const NODEQUALITY_CAPTURE_END: &str = "__NSTATUS_NQ_ARTIFACTS_V1_END__";
 const IP_UNLOCK_ARGS: [&str; 4] = ["-4", "-j", "-n", "-p"];
 const SYSTEM_TASK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const TASK_UNSHARE_ARGS: [&str; 10] = [
@@ -347,10 +351,14 @@ fn run_fixed_remote_script(
     let stderr = child.stderr.take().context("capture fixed task stderr")?;
     let (status, bytes) = collect_task_output(&mut child, stdout, stderr, timeout_sec)?;
     let text = String::from_utf8_lossy(&bytes).to_string();
-    let nodequality = nodequality_result_dir
+    let disk_artifacts = nodequality_result_dir
         .as_deref()
         .map(read_nodequality_artifacts)
         .transpose()?;
+    let nodequality = merge_nodequality_artifacts(
+        parse_nodequality_artifacts_from_output(&text),
+        disk_artifacts,
+    );
     Ok(FixedScriptOutput {
         text,
         status,
@@ -561,6 +569,13 @@ fn inject_nodequality_capture(script: &[u8]) -> Result<Vec<u8>> {
         "        cp \"$result_directory\"/ip_quality.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
         "        cp \"$result_directory\"/net_quality.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
         "        cp \"$result_directory\"/backroute_trace.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "        printf '\\n__NSTATUS_NQ_ARTIFACTS_V1_BEGIN__\\n'\n",
+        "        printf 'header:'; [[ -f \"$result_directory\"/header_info.log ]] && head -c 24576 \"$result_directory\"/header_info.log | base64 | tr -d '\\r\\n'; printf '\\n'\n",
+        "        printf 'hardware:'; [[ -f \"$result_directory\"/hardware_quality.log ]] && head -c 24576 \"$result_directory\"/hardware_quality.log | base64 | tr -d '\\r\\n'; printf '\\n'\n",
+        "        printf 'ip:'; [[ -f \"$result_directory\"/ip_quality.log ]] && head -c 24576 \"$result_directory\"/ip_quality.log | base64 | tr -d '\\r\\n'; printf '\\n'\n",
+        "        printf 'network:'; [[ -f \"$result_directory\"/net_quality.log ]] && head -c 24576 \"$result_directory\"/net_quality.log | base64 | tr -d '\\r\\n'; printf '\\n'\n",
+        "        printf 'route:'; [[ -f \"$result_directory\"/backroute_trace.log ]] && head -c 24576 \"$result_directory\"/backroute_trace.log | base64 | tr -d '\\r\\n'; printf '\\n'\n",
+        "        printf '__NSTATUS_NQ_ARTIFACTS_V1_END__\\n'\n",
         "    fi\n",
         "    upload_result\n",
     );
@@ -570,6 +585,66 @@ fn inject_nodequality_capture(script: &[u8]) -> Result<Vec<u8>> {
         ));
     }
     Ok(source.replacen(marker, capture, 1).into_bytes())
+}
+
+fn merge_nodequality_artifacts(
+    primary: Option<NodeQualityArtifacts>,
+    fallback: Option<NodeQualityArtifacts>,
+) -> Option<NodeQualityArtifacts> {
+    match (primary, fallback) {
+        (Some(mut primary), Some(fallback)) => {
+            for (field, fallback_value) in [
+                (&mut primary.header, fallback.header),
+                (&mut primary.hardware, fallback.hardware),
+                (&mut primary.ip, fallback.ip),
+                (&mut primary.network, fallback.network),
+                (&mut primary.route, fallback.route),
+            ] {
+                if field.is_empty() {
+                    *field = fallback_value;
+                }
+            }
+            Some(primary)
+        }
+        (Some(primary), None) => Some(primary),
+        (None, fallback) => fallback,
+    }
+}
+
+fn parse_nodequality_artifacts_from_output(output: &str) -> Option<NodeQualityArtifacts> {
+    let begin = output.rfind(NODEQUALITY_CAPTURE_BEGIN)? + NODEQUALITY_CAPTURE_BEGIN.len();
+    let remaining = output.get(begin..)?;
+    let end = remaining.find(NODEQUALITY_CAPTURE_END)?;
+    let block = remaining.get(..end)?;
+    if block.len() > MAX_NODEQUALITY_CAPTURE_CHARS {
+        return None;
+    }
+    Some(NodeQualityArtifacts {
+        header: decode_nodequality_capture_field(block, "header"),
+        hardware: decode_nodequality_capture_field(block, "hardware"),
+        ip: decode_nodequality_capture_field(block, "ip"),
+        network: decode_nodequality_capture_field(block, "network"),
+        route: decode_nodequality_capture_field(block, "route"),
+    })
+}
+
+fn decode_nodequality_capture_field(block: &str, name: &str) -> String {
+    let prefix = format!("{name}:");
+    let max_encoded_len = MAX_NODEQUALITY_ARTIFACT_BYTES.div_ceil(3) * 4;
+    let Some(encoded) = block
+        .lines()
+        .find_map(|line| line.strip_prefix(&prefix))
+        .filter(|value| value.len() <= max_encoded_len)
+    else {
+        return String::new();
+    };
+    let Ok(decoded) = BASE64_STANDARD.decode(encoded) else {
+        return String::new();
+    };
+    if decoded.len() > MAX_NODEQUALITY_ARTIFACT_BYTES {
+        return String::new();
+    }
+    String::from_utf8_lossy(&decoded).trim().to_string()
 }
 
 fn read_nodequality_artifacts(path: &Path) -> Result<NodeQualityArtifacts> {
@@ -1180,8 +1255,85 @@ mod tests {
         let patched = String::from_utf8(inject_nodequality_capture(script).unwrap()).unwrap();
         assert!(patched.contains("fi\n    upload_result\n"));
         assert!(patched.contains("backroute_trace.log"));
+        assert!(patched.contains(NODEQUALITY_CAPTURE_BEGIN));
+        assert!(patched.contains(NODEQUALITY_CAPTURE_END));
         assert!(patched.find("header_info.log").unwrap() < patched.find("upload_result").unwrap());
         assert!(patched.find("upload_result").unwrap() < patched.find("post_cleanup").unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn injected_capture_survives_the_upstream_cleanup_boundary() {
+        let base = std::env::temp_dir().join(format!(
+            "nie-sla-nq-capture-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let results = base.join("results");
+        let captured = base.join("captured");
+        fs::create_dir_all(&results).unwrap();
+        fs::create_dir_all(&captured).unwrap();
+        for (name, content) in [
+            ("header_info.log", "header"),
+            ("hardware_quality.log", "hardware"),
+            ("ip_quality.log", "ip"),
+            ("net_quality.log", "\u{1b}[32m网络成功\u{1b}[0m"),
+            ("backroute_trace.log", "route"),
+        ] {
+            fs::write(results.join(name), content).unwrap();
+        }
+        let script = b"upload_result(){ printf 'https://nodequality.com/r/testtoken\\n'; }\nmain(){\n    result_directory=\"$1\"\n    upload_result\n}\nmain \"$@\"\n";
+        let patched = String::from_utf8(inject_nodequality_capture(script).unwrap()).unwrap();
+        let output = Command::new("bash")
+            .args(["-c", &patched, "--"])
+            .arg(&results)
+            .env("NSTATUS_NQ_RESULTS_DIR", &captured)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        let artifacts = parse_nodequality_artifacts_from_output(&text).unwrap();
+        assert_eq!(artifacts.header, "header");
+        assert_eq!(artifacts.hardware, "hardware");
+        assert_eq!(artifacts.ip, "ip");
+        assert_eq!(artifacts.network, "\u{1b}[32m网络成功\u{1b}[0m");
+        assert_eq!(artifacts.route, "route");
+        assert!(text.find(NODEQUALITY_CAPTURE_END).unwrap() < text.find("https://").unwrap());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn streamed_nodequality_capture_is_bounded_and_fills_from_disk() {
+        let malformed =
+            format!("{NODEQUALITY_CAPTURE_BEGIN}\nnetwork:not-base64!\n{NODEQUALITY_CAPTURE_END}");
+        assert!(parse_nodequality_artifacts_from_output(&malformed)
+            .unwrap()
+            .network
+            .is_empty());
+        let oversized = format!(
+            "{NODEQUALITY_CAPTURE_BEGIN}{}{NODEQUALITY_CAPTURE_END}",
+            "x".repeat(MAX_NODEQUALITY_CAPTURE_CHARS + 1)
+        );
+        assert!(parse_nodequality_artifacts_from_output(&oversized).is_none());
+
+        let merged = merge_nodequality_artifacts(
+            Some(NodeQualityArtifacts {
+                network: "streamed network".into(),
+                ..NodeQualityArtifacts::default()
+            }),
+            Some(NodeQualityArtifacts {
+                header: "disk header".into(),
+                route: "disk route".into(),
+                ..NodeQualityArtifacts::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(merged.header, "disk header");
+        assert_eq!(merged.network, "streamed network");
+        assert_eq!(merged.route, "disk route");
     }
 
     #[cfg(unix)]

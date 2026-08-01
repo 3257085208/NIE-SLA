@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.56",
-  "agent_version": "v1.0.56",
-  "source_ref": "app-v1.0.56",
-  "published_at": "2026-08-01T15:36:54Z",
-  "title": "NIE-SLA 1.0.56",
+  "version": "1.0.57",
+  "agent_version": "v1.0.57",
+  "source_ref": "app-v1.0.57",
+  "published_at": "2026-08-01T16:54:27Z",
+  "title": "NIE-SLA 1.0.57",
   "changelog": [
-    "恢复 7 月 29 日 NodeQuality xterm 风格 SVG，不再添加本站标题栏",
-    "网络质量与回程路由优先显示固定公益图床图片，原始文本仅在图片失败时兜底",
-    "桌面与手机保持连续终端整图比例，页面、弹窗和活动面板无横向溢出",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.56"
+    "NodeQuality 五类日志增加私有目录与有界回送双通道捕获，不依赖官方报告 ZIP",
+    "官方报告为空或损坏时仍可用 Agent 本机结果生成本站四页签报告和公益图床图片",
+    "保留原生 xterm SVG、无本站标题栏、图片优先和手机整图等比缩放",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.57"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

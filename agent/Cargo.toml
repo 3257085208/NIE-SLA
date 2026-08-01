@@ -1,6 +1,6 @@
 ﻿[package]
 name = "nstatus-agent"
-version = "1.0.56"
+version = "1.0.57"
 edition = "2021"
 license = "MIT"
 description = "NIE-SLA cross-platform metrics agent"
@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22.1"
 libc = "0.2"
 serde_json = "1"
 sha2 = "0.10"
