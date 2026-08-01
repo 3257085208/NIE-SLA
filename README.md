@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.0.58**
+**Stable · 1.0.59**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -66,7 +66,7 @@ VPS 上的 Agent 安装和后续更新从该用户自己的 Worker/站点 `/bin`
 - Worker 可把网络质量与回程路由渲染成 SVG，通过固定 S3 渠道上传且目录留空；图床凭据只存在于 Worker Secret，上游图片地址由本站代理隐藏，失败时回退到文本报告。
 - IPv4 解锁使用 `IP.Check.Place` JSON 模式，只保存最终媒体解锁字段，不保存纯净度。
 - 缺少 `dig` 或 `nslookup` 时使用 Agent 内置受限解析器，不安装软件、不要求 root，并保留报告原始地区值。
-- 两个入口脚本使用随站点发布的已审计源码快照并校验 SHA-256；二次下载在专用无登录宿主账户与 Linux namespace 内执行，隔离失败即拒绝任务。
+- 两个入口脚本使用随站点发布的已审计源码快照并校验 SHA-256；固定诊断由 root-only Manager 直接执行，以保留 raw socket、路由探测和必要系统工具能力。
 - Linux 主遥测服务继续低权限运行，常驻 root Manager 只识别编译进 Agent 的动作，并负责校验更新、维护服务和上报能力。
 
 以后增删固定动作只更新同一 Agent 二进制，不再新增 VPS 服务。已有 Manager、root 更新任务或 root 主进程的旧安装会自动迁移；后台只会标出确实缺少 root 通道的极早期节点。

@@ -131,6 +131,7 @@ assert.equal(JSON.parse(sqlite.prepare(`SELECT unlock_data FROM targets WHERE id
 const nq = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'nodequality' }), env);
 const nqClaim = await claimAgentTask(env, 'vps-a');
 assert.equal(nqClaim.task.id, nq.task.id);
+assert.equal(nqClaim.task.timeout_sec, 3600);
 await completeAgentTask(jsonRequest({
   status: 'succeeded',
   result: {

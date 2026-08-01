@@ -21,6 +21,8 @@ const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const MAX_NODEQUALITY_ARTIFACT_BYTES: usize = 24 * 1024;
 const MAX_NODEQUALITY_CAPTURE_CHARS: usize = 180 * 1024;
+const NODEQUALITY_TIMEOUT_SEC: u64 = 3600;
+const IP_UNLOCK_TIMEOUT_SEC: u64 = 600;
 const NODEQUALITY_CAPTURE_BEGIN: &str = "__NSTATUS_NQ_ARTIFACTS_V1_BEGIN__";
 const NODEQUALITY_CAPTURE_END: &str = "__NSTATUS_NQ_ARTIFACTS_V1_END__";
 const IP_UNLOCK_ARGS: [&str; 4] = ["-4", "-j", "-n", "-p"];
@@ -68,7 +70,7 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
         .get("timeout_sec")
         .and_then(Value::as_u64)
         .unwrap_or(600)
-        .clamp(30, 1800);
+        .clamp(30, NODEQUALITY_TIMEOUT_SEC);
 
     let outcome = execute_fixed_task(cfg, http, action, timeout_sec);
     let payload = match outcome {
@@ -128,7 +130,7 @@ fn run_nodequality(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<
     let output = run_fixed_remote_script(
         cfg,
         http,
-        timeout_sec.min(1800),
+        timeout_sec.min(NODEQUALITY_TIMEOUT_SEC),
         "https://run.NodeQuality.com",
         &[],
         Some(b"v\ny\ny\ny\n"),
@@ -153,7 +155,7 @@ fn run_ip_unlock(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<Ta
     let output = run_fixed_remote_script(
         cfg,
         http,
-        timeout_sec.min(600),
+        timeout_sec.min(IP_UNLOCK_TIMEOUT_SEC),
         "https://IP.Check.Place",
         &IP_UNLOCK_ARGS,
         None,
@@ -1331,6 +1333,12 @@ mod tests {
         assert_eq!(IP_UNLOCK_ARGS, ["-4", "-j", "-n", "-p"]);
         assert!(!IP_UNLOCK_ARGS.contains(&"-y"));
         assert!(IP_UNLOCK_ARGS.contains(&"-j"));
+    }
+
+    #[test]
+    fn fixed_task_timeouts_are_action_specific() {
+        assert_eq!(NODEQUALITY_TIMEOUT_SEC, 3600);
+        assert_eq!(IP_UNLOCK_TIMEOUT_SEC, 600);
     }
 
     #[test]

@@ -4,7 +4,7 @@ import { normalizeNodeQualityReport, normalizeNodeQualityReportUrl } from '../no
 import { uploadNodeQualityReportImages } from '../nq-image-host.js';
 
 export const AGENT_TASK_ACTIONS = Object.freeze({
-  nodequality: { timeout_sec: 1800, label: 'NodeQuality' },
+  nodequality: { timeout_sec: 3600, label: 'NodeQuality' },
   ip_unlock: { timeout_sec: 600, label: 'IP 解锁' },
 });
 

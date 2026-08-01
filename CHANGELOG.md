@@ -2,6 +2,13 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.0.59 - 2026-08-02
+
+- NodeQuality 深度检测总时限从 1800 秒提高到 3600 秒，避免低配置或慢盘 VPS 在 HardwareQuality 的 Crystal/ATTO 阶段尚未进入网络质量与回程路由就被提前终止。
+- IP 解锁继续保持 600 秒上限；NodeQuality 固定输入仍为 `v/y/y/y`，两个任务继续由 root-only Agent Manager 直接执行，不恢复低权限 sandbox、`nstatus-task`、user namespace 或 `no_new_privs`。
+- 普通指标采集继续由低权限 `nstatus` 服务运行；固定 action、同源脚本镜像、SHA-256、私有目录、符号链接拒绝、清空环境、固定 PATH、输出上限和结果净化边界保持不变。
+- 固定公益图床、原生 xterm NQ UI、D1/R2 绑定和备份恢复行为不变；应用、Worker、Rust Agent、前端与教程版本同步至 `1.0.59` / `v1.0.59`。
+
 ## 1.0.58 - 2026-08-02
 
 - 修复 NodeQuality/IP 解锁任务“总任务成功但延迟全为 0、回程为 NoData”的权限回归：这两个固定诊断不再降权到 `nstatus-task` 或进入 user namespace，而是由已强制 root 运行的 Agent Manager 直接执行，以保留 raw socket、路由探测和必要系统工具能力。

@@ -1,6 +1,6 @@
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1053";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1058";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1059";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
 import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink } from "./shared/nodequality.js?v=20260731-v1049";
 import {

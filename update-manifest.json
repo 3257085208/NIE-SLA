@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.58",
-  "agent_version": "v1.0.58",
-  "source_ref": "app-v1.0.58",
-  "published_at": "2026-08-01T18:36:12Z",
-  "title": "NIE-SLA 1.0.58",
+  "version": "1.0.59",
+  "agent_version": "v1.0.59",
+  "source_ref": "app-v1.0.59",
+  "published_at": "2026-08-01T20:34:00Z",
+  "title": "NIE-SLA 1.0.59",
   "changelog": [
-    "NodeQuality 与 IP 解锁固定任务恢复由 root Agent Manager 直接执行，修复延迟全为 0 和回程 NoData",
-    "普通指标采集继续低权限运行，特权 Manager 仍只允许两个固定 action",
-    "保留脚本 SHA-256、私有目录、无符号链接、清空环境、超时、输出上限和结果净化边界",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.58"
+    "NodeQuality 深度检测总时限从 30 分钟提高到 60 分钟，避免慢盘 VPS 在硬盘测试阶段提前终止",
+    "IP 解锁继续保持 10 分钟上限，NQ 与 IP 均由 root-only Agent Manager 直接执行",
+    "普通遥测继续低权限运行，固定脚本 SHA-256、私有目录、固定 PATH 和输出上限保持不变",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.59"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -10,7 +10,7 @@ set -euo pipefail
 
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 SETUP_URL="${DOWNLOAD_BASE%/}/setup.sh"
-DEFAULT_SETUP_SHA256="25a49c5848d75f140e4cd33810c68e82ad0ea9b2fc2441876fb28f88b504d8e9"
+DEFAULT_SETUP_SHA256="21bce36005524e377b527c4c11f478fcfe71af071c7e74a7127a03d17fee629f"
 
 if [[ -z "${NSTATUS_API_BASE:-${NSTATUS_API:-}}" ]]; then
   echo "缺少 NSTATUS_API_BASE，请从管理后台的部署按钮复制完整命令。" >&2
