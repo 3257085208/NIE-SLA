@@ -26,6 +26,12 @@ const TERMINAL_THEME = Object.freeze({
   normal: ['#050404', '#bd0013', '#4ab118', '#e7741e', '#0f4ac6', '#665993', '#70a598', '#f8dcc0'],
   bright: ['#4e7cbf', '#fc5f5a', '#9eff6e', '#efc11a', '#1997c6', '#9b5953', '#c8faf4', '#f6f5fb'],
 });
+const TERMINAL_CELL_WIDTH = 8.45;
+const TERMINAL_LINE_HEIGHT = 17;
+const TERMINAL_FONT_SIZE = 14;
+const TERMINAL_PADDING = 20;
+const TERMINAL_SCALE = 2;
+
 async function resolveNodeQualityImageHost(env) {
   const endpointFromEnv = String(env.NQ_IMGBED_URL || '').trim();
   const tokenFromEnv = String(env.NQ_IMGBED_TOKEN || '').trim();
@@ -164,10 +170,7 @@ function validateBrokerRequest(input) {
 async function uploadTabsLocally(settings, tabs, options) {
   return Promise.all(tabs.map(async (tab) => {
     try {
-      const svg = renderNodeQualitySvg(tab.content, {
-        title: tab.id === 'route' ? 'NodeQuality · 回程路由' : 'NodeQuality · 网络质量',
-        subtitle: String(options.targetName || '').trim(),
-      });
+      const svg = renderNodeQualitySvg(tab.content);
       const filename = `${safeFilePart(options.agentId)}-${safeFilePart(options.reportId)}-${safeFilePart(tab.id)}.svg`;
       return { id: tab.id, image: await uploadSvg(settings, svg, filename) };
     } catch (error) {
@@ -223,40 +226,94 @@ async function uploadTabsThroughBroker(broker, tabs, options) {
     : { id: tab.id, error: '公益 NQ 图片服务未返回图片' });
 }
 
-export function renderNodeQualitySvg(content, options = {}) {
-  const source = sanitizeAnsiContent(String(content || '')).replace(/\t/g, '    ');
+export function renderNodeQualitySvg(content) {
+  const source = sanitizeAnsiContent(String(content || ''))
+    .replace(/\t/g, '    ')
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, (sequence) => sequence.endsWith('m') ? sequence : '');
   const originalLines = source.split('\n');
+  const truncated = originalLines.length > MAX_RENDER_LINES;
   const lines = originalLines.slice(0, MAX_RENDER_LINES);
-  if (originalLines.length > MAX_RENDER_LINES) lines.push(`... 报告过长，已截取前 ${MAX_RENDER_LINES} 行`);
-  const columns = Math.min(MAX_RENDER_COLUMNS, Math.max(88, ...lines.map((line) => visibleColumns(stripAnsiSafe(line)))));
-  const width = Math.min(2200, Math.max(760, Math.ceil(columns * 8.1 + 48)));
-  const headerHeight = 58;
-  const lineHeight = 18;
-  const height = Math.max(150, headerHeight + 24 + lines.length * lineHeight);
-  const title = xmlEscape(String(options.title || 'NodeQuality').slice(0, 120));
-  const subtitle = xmlEscape(String(options.subtitle || '').slice(0, 160));
-  const textLines = lines.map((line, index) => {
-    const spans = ansiSegments(line).map((segment) => {
-      const style = terminalSegmentStyle(segment);
-      const attributes = `${segment.bold ? ' font-weight=\"700\"' : ''}${segment.italic ? ' font-style=\"italic\"' : ''}${segment.underline ? ' text-decoration=\"underline\"' : ''}${segment.dim ? ' opacity=\"0.6\"' : ''}`;
-      return `<tspan fill=\"${style.foreground}\"${attributes}>${xmlEscape(segment.text || ' ')}</tspan>`;
-    }).join('') || '<tspan> </tspan>';
-    return `<text x=\"24\" y=\"${headerHeight + 24 + index * lineHeight}\" class=\"line\" xml:space=\"preserve\">${spans}</text>`;
-  }).join('');
-  return `<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"${width}\" height=\"${height}\" viewBox=\"0 0 ${width} ${height}\" role=\"img\" aria-label=\"${title}\">
-  <rect width=\"100%\" height=\"100%\" fill=\"#0f172a\"/>
-  <rect width=\"100%\" height=\"${headerHeight}\" fill=\"#162033\"/>
-  <circle cx=\"24\" cy=\"29\" r=\"5\" fill=\"#2ea36d\"/>
-  <text x=\"39\" y=\"26\" class=\"title\">${title}</text>
-  ${subtitle ? `<text x=\"39\" y=\"44\" class=\"subtitle\">${subtitle}</text>` : ''}
+  if (truncated) lines.push(`... 报告过长，已截取前 ${MAX_RENDER_LINES} 行`);
+  // Match NodeQuality's native xterm export dimensions and two-pixel-density crop.
+  const columns = Math.min(MAX_RENDER_COLUMNS, Math.max(1, ...lines.map((line) => visibleColumns(stripAnsiSafe(line)))));
+  const rows = Math.max(1, lines.length);
+  const logicalWidth = columns * TERMINAL_CELL_WIDTH + TERMINAL_PADDING * 2;
+  const logicalHeight = rows * TERMINAL_LINE_HEIGHT + TERMINAL_PADDING * 2;
+  const width = Math.ceil(logicalWidth * TERMINAL_SCALE);
+  const height = Math.ceil(logicalHeight * TERMINAL_SCALE);
+  const state = defaultAnsiState();
+  const renderedLines = lines.map((line, row) => renderTerminalLine(line, row, state)).join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="NodeQuality terminal report">
+  <rect width="100%" height="100%" fill="${TERMINAL_THEME.background}"/>
   <style>
-    .title { fill:#f8fafc; font:700 14px ui-monospace,SFMono-Regular,Menlo,Consolas,\"Noto Sans Mono CJK SC\",monospace; }
-    .subtitle { fill:#94a3b8; font:11px ui-monospace,SFMono-Regular,Menlo,Consolas,\"Noto Sans Mono CJK SC\",monospace; }
-    .line { fill:#dbe5f1; font:13px ui-monospace,SFMono-Regular,Menlo,Consolas,\"Noto Sans Mono CJK SC\",monospace; }
+    .cell { font-family:Consolas,"Noto Sans Mono CJK SC","Sarasa Mono SC","Courier New",monospace; font-size:${TERMINAL_FONT_SIZE}px; font-variant-ligatures:none; }
   </style>
-  ${textLines}
+  <g transform="scale(${TERMINAL_SCALE})">${renderedLines}</g>
 </svg>`;
+}
+
+function renderTerminalLine(line, row, state) {
+  const y = TERMINAL_PADDING + row * TERMINAL_LINE_HEIGHT;
+  return ansiSegments(line, state).map((segment) => {
+    const x = TERMINAL_PADDING + segment.column * TERMINAL_CELL_WIDTH;
+    const width = Math.max(0, segment.columns * TERMINAL_CELL_WIDTH);
+    const style = terminalSegmentStyle(segment);
+    const background = style.background === TERMINAL_THEME.background || width === 0
+      ? ''
+      : `<rect x="${formatNumber(x)}" y="${formatNumber(y)}" width="${formatNumber(width)}" height="${TERMINAL_LINE_HEIGHT}" fill="${style.background}"/>`;
+    return background + renderTerminalSegmentText(segment, x, y, style.foreground);
+  }).join('');
+}
+
+function renderTerminalSegmentText(segment, x, y, foreground) {
+  if (segment.hidden) return '';
+  const decorations = [segment.underline ? 'underline' : '', segment.strike ? 'line-through' : ''].filter(Boolean).join(' ');
+  const textAttributes = `${segment.bold ? ' font-weight="700"' : ''}${segment.italic ? ' font-style="italic"' : ''}${decorations ? ` text-decoration="${decorations}"` : ''}${segment.dim ? ' opacity="0.6"' : ''}`;
+  const textParts = [];
+  let plain = '';
+  let plainColumn = 0;
+  let column = 0;
+  let braillePath = '';
+  const flushPlain = () => {
+    if (!plain) return;
+    const textX = x + plainColumn * TERMINAL_CELL_WIDTH;
+    textParts.push(`<text class="cell" x="${formatNumber(textX)}" y="${formatNumber(y + 13.4)}" fill="${foreground}"${textAttributes} xml:space="preserve">${xmlEscape(plain)}</text>`);
+    plain = '';
+  };
+  for (const char of segment.text) {
+    const cp = char.codePointAt(0);
+    if (cp >= 0x2800 && cp <= 0x28ff) {
+      flushPlain();
+      braillePath += brailleSquarePath(cp - 0x2800, x + column * TERMINAL_CELL_WIDTH, y);
+    } else {
+      if (!plain) plainColumn = column;
+      plain += char;
+    }
+    column += isWide(cp) ? 2 : 1;
+  }
+  flushPlain();
+  if (braillePath) textParts.push(`<path data-nq-bar="square" fill="${foreground}"${segment.dim ? ' opacity="0.6"' : ''} d="${braillePath}"/>`);
+  return textParts.join('');
+}
+
+function brailleSquarePath(bits, x, y) {
+  const gap = 0.45;
+  const size = 3.45;
+  const left = x + 0.55;
+  const top = y + 0.9;
+  const positions = [
+    [0, 0], [0, 1], [0, 2], [1, 0],
+    [1, 1], [1, 2], [0, 3], [1, 3],
+  ];
+  let path = '';
+  positions.forEach(([column, row], bit) => {
+    if ((bits & (1 << bit)) === 0) return;
+    const px = formatNumber(left + column * (size + gap));
+    const py = formatNumber(top + row * (size + gap));
+    path += `M${px} ${py}h${size}v${size}h-${size}z`;
+  });
+  return path;
 }
 
 async function uploadSvg(settings, svg, filename) {
@@ -486,6 +543,10 @@ function ansi256Color(value) {
   const g = channel(Math.floor((cube % 36) / 6));
   const b = channel(cube % 6);
   return `rgb(${r},${g},${b})`;
+}
+
+function formatNumber(value) {
+  return Number(value.toFixed(2)).toString();
 }
 
 function xmlEscape(value) {

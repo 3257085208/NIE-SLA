@@ -430,9 +430,10 @@ const hostedNqWithSource = buildNqModalHtml({
     { id: 'route', kind: 'image', image: '/api/nq/vps-a/image/route', content: '五、三网回程路由\n北京 电信 Cogent -> 163' },
   ],
 });
-assert.match(hostedNqWithSource, /nq-network-panel[\s\S]*nq-network-report/, 'hosted network reports must keep the historical ANSI layout when source content is available');
-assert.match(hostedNqWithSource, /nq-route-panel[\s\S]*nq-route-report/, 'hosted route reports must keep the historical ANSI layout when source content is available');
-assert.doesNotMatch(hostedNqWithSource, /nq-image-panel|class="nq-image"/, 'hosted report images must not replace the historical network and route UI');
+assert.equal((hostedNqWithSource.match(/class="nq-image"/g) || []).length, 2, 'network and route tabs must show their hosted terminal SVGs');
+assert.match(hostedNqWithSource, /\/api\/nq\/vps-a\/image\/network[\s\S]*\/api\/nq\/vps-a\/image\/route/, 'hosted reports must use same-origin image proxy URLs');
+assert.match(hostedNqWithSource, /nq-image-fallback[\s\S]*nq-network-report[\s\S]*nq-image-fallback[\s\S]*nq-route-report/, 'source text must remain available only as an image-load fallback');
+assert.doesNotMatch(hostedNqWithSource, /nq-original-report|nq-original-panel/, 'hosted reports must not bypass the historical terminal images');
 assert.equal(normalizeNqReportLink('https://www.nodequality.com/r/example-report/'), 'https://nodequality.com/r/example-report');
 assert.equal(normalizeNqReportLink('javascript:alert(1)'), '');
 assert.equal(normalizeNqReportLink('https://nodequality.com.evil.example/r/example-report'), '');
@@ -443,7 +444,7 @@ const unsafeNqUrls = buildNqModalHtml({
 });
 assert.doesNotMatch(unsafeNqUrls, /javascript:|image-host\.example|private-image-host\.example|打开原报告/);
 assert.match(unsafeNqUrls, /safe fallback/);
-assert.match(buildNqModalHtml({ tabs: [{ id: 'network', kind: 'ansi', content: '一、BGP信息' }, { id: 'route', kind: 'ansi', content: '五、三网回程路由' }] }), /nq-network-panel[\s\S]*nq-route-panel/, 'ANSI network and route tabs must use their dedicated layouts');
+assert.match(buildNqModalHtml({ tabs: [{ id: 'network', kind: 'ansi', content: '一、BGP信息' }, { id: 'route', kind: 'ansi', content: '五、三网回程路由' }] }), /nq-network-panel[\s\S]*nq-route-panel/, 'text-only network and route tabs must retain dedicated fallbacks');
 const adminSource = readFileSync(new URL('../js/admin.js', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const adminCss = readFileSync(new URL('../admin.css', import.meta.url), 'utf8');

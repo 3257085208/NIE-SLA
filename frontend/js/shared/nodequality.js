@@ -380,8 +380,7 @@ export function buildNqModalHtml(report) {
     const imageSrc = imageProxyBase
       ? `${imageProxyBase}/${encodeURIComponent(tab.id || `tab-${index}`)}`
       : normalizeNqImagePath(tab.image);
-    const useHistoricalReportLayout = Boolean(tab.content) && (rawId === 'network' || rawId === 'route');
-    if (tab.kind === 'image' && imageSrc && !useHistoricalReportLayout) {
+    if (tab.kind === 'image' && imageSrc) {
       const fallback = tab.content
         ? (rawId === 'network' ? renderNqNetworkReportHtml(tab.content) : rawId === 'route' ? renderNqRouteReportHtml(tab.content) : `<pre class="nq-ansi">${renderNqReportHtml(tab.content)}</pre>`)
         : '';
