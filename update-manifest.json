@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.52",
-  "agent_version": "v1.0.52",
-  "source_ref": "app-v1.0.52",
-  "published_at": "2026-08-01T09:10:32Z",
-  "title": "NIE-SLA 1.0.52",
+  "version": "1.0.53",
+  "agent_version": "v1.0.53",
+  "source_ref": "app-v1.0.53",
+  "published_at": "2026-08-01T10:19:14Z",
+  "title": "NIE-SLA 1.0.53",
   "changelog": [
-    "完整修复 NQ/IP 沙箱降权后的脚本访问：root 父目录仅允许穿越，随机任务目录继续只对 nstatus-task 可读",
-    "BusyBox 节点不再依赖 GNU setpriv 参数，Agent 自行降权并设置 no-new-privs 后进入 Linux namespaces",
-    "真实 Alpine/BusyBox 节点验收覆盖任务领取、脚本启动和结果回传，不回退宿主 root",
-    "固定公益 NQ 图床链路、受限 Broker 协议与 D1/R2 生产绑定保持不变",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.52"
+    "修复 NQ 上游成功但本地报告未保存的问题：Agent 在 upload_result 前捕获五类结果日志",
+    "网络质量与回程路由内容可继续由 Worker 生成 SVG，并上传到固定官方公益图床",
+    "NQ 缺少可保存报告时明确记录图片上传错误，不再返回含糊的 null 状态",
+    "BusyBox 直接降权、no-new-privs、Linux namespaces 与私有任务目录边界保持不变",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.53"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

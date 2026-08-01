@@ -149,6 +149,18 @@ const storedNq = sqlite.prepare(`SELECT nq_url, nq_report FROM targets WHERE id 
 assert.equal(storedNq.nq_url, 'https://nodequality.com/r/example123');
 assert.deepEqual(JSON.parse(storedNq.nq_report).tabs.map((tab) => tab.id), ['basic', 'ip', 'network', 'route']);
 assert.equal((await listAgentTasks(env, new URL('https://example.test/api/agent-tasks?agent_id=vps-a'))).tasks.length, 3);
+
+const nqWithoutReport = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'nodequality' }), env);
+await claimAgentTask(env, 'vps-a');
+const nqWithoutReportResult = await completeAgentTask(jsonRequest({
+  status: 'succeeded',
+  result: { report_url: 'https://nodequality.com/r/missingReport123' },
+}), env, nqWithoutReport.task.id, 'vps-a');
+const missingReportPayload = nqWithoutReportResult.task.result;
+assert.equal(missingReportPayload.report_saved, false);
+assert.equal(missingReportPayload.image_upload.uploaded, 0);
+assert.match(missingReportPayload.image_upload.errors[0], /未返回可保存/);
+
 const failedTask = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'ip_unlock' }), env);
 await claimAgentTask(env, 'vps-a');
 const failed = await completeAgentTask(jsonRequest({ status: 'failed', error: 'script failed' }), env, failedTask.task.id, 'vps-a');

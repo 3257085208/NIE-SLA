@@ -166,6 +166,8 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
     } catch (uploadError) {
       imageUpload = { enabled: true, uploaded: 0, errors: [String(uploadError?.message || '图床上传失败').slice(0, 180)] };
     }
+  } else if (succeeded && row.action === 'nodequality') {
+    imageUpload = { enabled: true, uploaded: 0, errors: ['Agent 未返回可保存的 NodeQuality 报告内容'] };
   }
   const storedResult = result && row.action === 'nodequality'
     ? {

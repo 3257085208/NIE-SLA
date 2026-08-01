@@ -555,7 +555,6 @@ fn inject_nodequality_capture(script: &[u8]) -> Result<Vec<u8>> {
     let source = String::from_utf8(script.to_vec()).context("NodeQuality script is not UTF-8")?;
     let marker = "    upload_result\n";
     let capture = concat!(
-        "    upload_result\n",
         "    if [[ -n \"${NSTATUS_NQ_RESULTS_DIR:-}\" ]]; then\n",
         "        cp \"$result_directory\"/header_info.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
         "        cp \"$result_directory\"/hardware_quality.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
@@ -563,6 +562,7 @@ fn inject_nodequality_capture(script: &[u8]) -> Result<Vec<u8>> {
         "        cp \"$result_directory\"/net_quality.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
         "        cp \"$result_directory\"/backroute_trace.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
         "    fi\n",
+        "    upload_result\n",
     );
     if !source.contains(marker) {
         return Err(anyhow!(
@@ -1175,12 +1175,13 @@ mod tests {
     }
 
     #[test]
-    fn injects_capture_after_the_official_upload_step() {
+    fn injects_capture_before_the_official_upload_step() {
         let script = b"main(){\n    upload_result\n    post_cleanup\n}\n";
         let patched = String::from_utf8(inject_nodequality_capture(script).unwrap()).unwrap();
-        assert!(patched.contains("upload_result\n    if [[ -n"));
+        assert!(patched.contains("fi\n    upload_result\n"));
         assert!(patched.contains("backroute_trace.log"));
-        assert!(patched.find("upload_result").unwrap() < patched.find("header_info.log").unwrap());
+        assert!(patched.find("header_info.log").unwrap() < patched.find("upload_result").unwrap());
+        assert!(patched.find("upload_result").unwrap() < patched.find("post_cleanup").unwrap());
     }
 
     #[cfg(unix)]

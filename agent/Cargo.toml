@@ -1,6 +1,6 @@
 ﻿[package]
 name = "nstatus-agent"
-version = "1.0.52"
+version = "1.0.53"
 edition = "2021"
 license = "MIT"
 description = "NIE-SLA cross-platform metrics agent"
