@@ -1,16 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.54",
-  "agent_version": "v1.0.54",
-  "source_ref": "app-v1.0.54",
-  "published_at": "2026-08-01T11:55:14Z",
-  "title": "NIE-SLA 1.0.54",
+  "version": "1.0.55",
+  "agent_version": "v1.0.55",
+  "source_ref": "app-v1.0.55",
+  "published_at": "2026-08-01T13:36:39Z",
+  "title": "NIE-SLA 1.0.55",
   "changelog": [
-    "后台点击已完成的 NQ 任务时直接打开与公开状态页一致的结构化报告弹窗",
-    "旧任务没有本站完整报告时保留 NQ 弹窗并提示重新运行，不再展示原始任务 JSON",
-    "手机端恢复 NodeQuality 终端原始列对齐，超宽内容只在当前报告面板内横向滚动",
-    "固定官方公益图床、BusyBox 降权隔离与私有任务目录边界保持不变",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.54"
+    "网络质量与回程路由恢复此前的 NodeQuality ANSI 报告界面，不再优先展示深蓝自制 SVG",
+    "前台与后台继续共用同一报告弹窗，手机端只在报告分段内横向滚动并保持终端列对齐",
+    "固定官方公益图床继续上传和保存图片，在旧数据缺少原始报告内容时作为显示兜底",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.55"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

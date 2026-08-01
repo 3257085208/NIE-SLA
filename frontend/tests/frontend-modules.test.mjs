@@ -423,6 +423,16 @@ assert.match(proxiedNqImage, /referrerpolicy="no-referrer"/);
 assert.match(proxiedNqImage, /role="tab"[^>]+aria-selected="true"/);
 assert.match(proxiedNqImage, /role="tablist" aria-label="报告章节"/);
 assert.match(proxiedNqImage, /role="tabpanel" aria-labelledby="nq-tab-0" tabindex="0"/);
+const hostedNqWithSource = buildNqModalHtml({
+  image_proxy_base: '/api/nq/vps-a/image',
+  tabs: [
+    { id: 'network', kind: 'image', image: '/api/nq/vps-a/image/network', content: '一、BGP信息\n注册信息：ARIN' },
+    { id: 'route', kind: 'image', image: '/api/nq/vps-a/image/route', content: '五、三网回程路由\n北京 电信 Cogent -> 163' },
+  ],
+});
+assert.match(hostedNqWithSource, /nq-network-panel[\s\S]*nq-network-report/, 'hosted network reports must keep the historical ANSI layout when source content is available');
+assert.match(hostedNqWithSource, /nq-route-panel[\s\S]*nq-route-report/, 'hosted route reports must keep the historical ANSI layout when source content is available');
+assert.doesNotMatch(hostedNqWithSource, /nq-image-panel|class="nq-image"/, 'hosted report images must not replace the historical network and route UI');
 assert.equal(normalizeNqReportLink('https://www.nodequality.com/r/example-report/'), 'https://nodequality.com/r/example-report');
 assert.equal(normalizeNqReportLink('javascript:alert(1)'), '');
 assert.equal(normalizeNqReportLink('https://nodequality.com.evil.example/r/example-report'), '');
