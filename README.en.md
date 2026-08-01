@@ -40,7 +40,7 @@ The admin panel can explicitly request NodeQuality or an IPv4 unlock check on Li
 
 The Worker can render selected NodeQuality sections as SVG and upload them through a fixed S3 channel with no folder. Image-host credentials remain in Worker Secrets, and public reports use the same-origin image proxy instead of exposing the upstream host.
 
-Both entry scripts are reviewed source snapshots served by the deployment and verified by SHA-256. Secondary downloads run under a dedicated no-login host account and Linux namespaces; failure to establish isolation aborts the task.
+Both entry scripts are reviewed source snapshots served by the deployment and verified by SHA-256. These two diagnostics run directly under the root-only Manager because raw sockets, route tracing, and system tools are part of their contract. Normal telemetry remains under the unprivileged `nstatus` service.
 
 ## Migration
 

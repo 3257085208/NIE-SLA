@@ -20,7 +20,6 @@ const MANAGER_STATE_DIR: &str = "/var/lib/nstatus-manager";
 const MANAGER_HEARTBEAT: &str = "/var/lib/nstatus-manager/manager-heartbeat";
 const TELEMETRY_SERVICE: &str = "nstatus-metrics";
 const MANAGER_SERVICE: &str = "nstatus-metrics-tasks";
-const TASK_USER: &str = "nstatus-task";
 const UPDATE_TIMER: &str = "nstatus-metrics-update.timer";
 const UPDATE_BACKUP: &str = "/opt/nstatus-metrics/nstatus-metrics.bak";
 const UPDATE_FAILED: &str = "/opt/nstatus-metrics/nstatus-metrics.failed";
@@ -39,7 +38,6 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
         return Err(anyhow!("the Agent manager must run as root"));
     }
 
-    ensure_task_user().context("prepare isolated task identity")?;
     reconcile_service_layout().context("reconcile Agent services")?;
     write_heartbeat(cfg, "current")?;
     spawn_heartbeat(cfg.clone());
@@ -434,78 +432,6 @@ fn is_root() -> bool {
         == Some(0)
 }
 
-fn ensure_task_user() -> Result<()> {
-    if let Some((uid, gid)) = task_user_identity() {
-        if uid == 0 || gid == 0 {
-            return Err(anyhow!("isolated task user or group must not be root"));
-        }
-        return Ok(());
-    }
-    let shell = ["/usr/sbin/nologin", "/sbin/nologin"]
-        .into_iter()
-        .find(|path| Path::new(path).is_file())
-        .unwrap_or("/bin/false");
-    let mut created = false;
-    if command_exists("useradd") {
-        for args in [
-            vec!["--system", "--no-create-home", "--shell", shell, TASK_USER],
-            vec!["-r", "-M", "-s", shell, TASK_USER],
-        ] {
-            if Command::new("useradd")
-                .args(args)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
-            {
-                created = true;
-                break;
-            }
-        }
-    } else if command_exists("adduser") {
-        for args in [
-            vec!["--system", "--no-create-home", "--shell", shell, TASK_USER],
-            vec!["-S", "-D", "-H", "-s", shell, TASK_USER],
-            vec!["-D", "-H", "-s", shell, TASK_USER],
-        ] {
-            if Command::new("adduser")
-                .args(args)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .is_ok_and(|status| status.success())
-            {
-                created = true;
-                break;
-            }
-        }
-    } else {
-        return Err(anyhow!("useradd or adduser is required for task isolation"));
-    }
-    let Some((uid, gid)) = task_user_identity() else {
-        return Err(anyhow!("isolated task user was not created"));
-    };
-    if !created || uid == 0 || gid == 0 {
-        return Err(anyhow!("isolated task user is not safely configured"));
-    }
-    Ok(())
-}
-
-fn task_user_identity() -> Option<(u32, u32)> {
-    fn id_value(flag: &str) -> Option<u32> {
-        let output = Command::new("id")
-            .args([flag, TASK_USER])
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        output
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&output.stdout).trim().parse().ok())?
-    }
-    Some((id_value("-u")?, id_value("-g")?))
-}
-
 fn reconcile_service_layout() -> Result<()> {
     if !Path::new(AGENT_BINARY).is_file() || !Path::new(ENV_FILE).is_file() {
         return Ok(());
@@ -765,12 +691,14 @@ mod tests {
     fn manager_unit_has_a_fixed_command_surface() {
         let unit = systemd_manager_unit();
         assert!(unit.contains("ExecStart=/opt/nstatus-metrics/nstatus-metrics --task-runner-only"));
+        assert!(unit.contains("User=root"));
         assert!(!unit.contains("$NSTATUS_TASK"));
         assert!(!unit.contains("curl"));
 
         let openrc = openrc_manager_service();
         assert!(openrc.contains("start-stop-daemon --start --background --make-pidfile"));
         assert!(openrc.contains("exec \"/opt/nstatus-metrics/nstatus-metrics\" --task-runner-only"));
+        assert!(!openrc.contains("--user nstatus"));
 
         let path = std::env::temp_dir().join(format!(
             "nie-sla-openrc-manager-{}-{}",

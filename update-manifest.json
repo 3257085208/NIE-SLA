@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.57",
-  "agent_version": "v1.0.57",
-  "source_ref": "app-v1.0.57",
-  "published_at": "2026-08-01T16:54:27Z",
-  "title": "NIE-SLA 1.0.57",
+  "version": "1.0.58",
+  "agent_version": "v1.0.58",
+  "source_ref": "app-v1.0.58",
+  "published_at": "2026-08-01T18:36:12Z",
+  "title": "NIE-SLA 1.0.58",
   "changelog": [
-    "NodeQuality 五类日志增加私有目录与有界回送双通道捕获，不依赖官方报告 ZIP",
-    "官方报告为空或损坏时仍可用 Agent 本机结果生成本站四页签报告和公益图床图片",
-    "保留原生 xterm SVG、无本站标题栏、图片优先和手机整图等比缩放",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.57"
+    "NodeQuality 与 IP 解锁固定任务恢复由 root Agent Manager 直接执行，修复延迟全为 0 和回程 NoData",
+    "普通指标采集继续低权限运行，特权 Manager 仍只允许两个固定 action",
+    "保留脚本 SHA-256、私有目录、无符号链接、清空环境、超时、输出上限和结果净化边界",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.58"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

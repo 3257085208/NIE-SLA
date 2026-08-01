@@ -4,7 +4,7 @@ set -euo pipefail
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 CFTZ_URL_BASE="${CFTZ_URL_BASE:-$DOWNLOAD_BASE}"
 DEFAULT_SHA256SUMS_SHA256=""
-DEFAULT_CFTZ_SHA256="d0d41f0f87d59c0507c3cfa9087d29b239d7c9bd014ceccec94090c747964efd"
+DEFAULT_CFTZ_SHA256="a9261832bac8d873c9c99644a93fb0cd0a61a8b71a7a591de381eed4e5e6635a"
 DEFAULT_EXPECTED_VERSION=""
 BIN_NAME="nstatus-metrics"
 SERVICE_NAME="nstatus-metrics"
@@ -15,7 +15,7 @@ STATE_DIR="/var/lib/nstatus-metrics"
 ENV_FILE="$WORK_DIR/nstatus-metrics.env"
 CFTZ_BIN="$INSTALL_DIR/cftz"
 AGENT_USER="nstatus"
-TASK_USER="nstatus-task"
+LEGACY_TASK_USER="nstatus-task"
 CACHE_KEY="$(printf '%s' "${NSTATUS_SHA256SUMS_SHA256:-$(date +%s)}" | tr -cd 'A-Za-z0-9._-')"
 [[ -n "$CACHE_KEY" ]] || CACHE_KEY="$(date +%s)"
 INSTALL_STARTED_AT="$(date +%s)"
@@ -146,7 +146,6 @@ create_system_user() {
 
 create_users() {
   create_system_user "$AGENT_USER"
-  create_system_user "$TASK_USER"
 }
 
 assert_safe_install_paths() {
@@ -448,7 +447,7 @@ do_uninstall() {
   rm -rf "$WORK_DIR" "$STATE_DIR"
   rm -rf "/var/lib/nstatus-manager"
   userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
-  userdel "$TASK_USER" 2>/dev/null || deluser "$TASK_USER" 2>/dev/null || true
+  userdel "$LEGACY_TASK_USER" 2>/dev/null || deluser "$LEGACY_TASK_USER" 2>/dev/null || true
   ok "已卸载"
 }
 

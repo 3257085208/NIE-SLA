@@ -25,26 +25,12 @@ const NODEQUALITY_CAPTURE_BEGIN: &str = "__NSTATUS_NQ_ARTIFACTS_V1_BEGIN__";
 const NODEQUALITY_CAPTURE_END: &str = "__NSTATUS_NQ_ARTIFACTS_V1_END__";
 const IP_UNLOCK_ARGS: [&str; 4] = ["-4", "-j", "-n", "-p"];
 const SYSTEM_TASK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-const TASK_UNSHARE_ARGS: [&str; 10] = [
-    "--user",
-    "--map-root-user",
-    "--mount",
-    "--pid",
-    "--fork",
-    "--mount-proc",
-    "--ipc",
-    "--uts",
-    "--",
-    "timeout",
-];
 const OPTIONAL_DIG_HELPER: &[u8] =
     b"#!/bin/sh\nexec \"$NSTATUS_DNS_COMPAT_EXECUTABLE\" --dns-compat dig \"$@\"\n";
 const OPTIONAL_NSLOOKUP_HELPER: &[u8] =
     b"#!/bin/sh\nexec \"$NSTATUS_DNS_COMPAT_EXECUTABLE\" --dns-compat nslookup \"$@\"\n";
 const JQ_RELEASE_BASE: &str = "https://github.com/jqlang/jq/releases/download/jq-1.8.1";
 const MAX_JQ_BYTES: usize = 4 * 1024 * 1024;
-#[cfg(target_os = "linux")]
-const TASK_USER: &str = "nstatus-task";
 const NODEQUALITY_SCRIPT_SHA256: &str =
     "4e1b25894cadf908ef61fb0d9ce874a75524c6dafc2ea26f0477107288e0c018";
 const IP_UNLOCK_SCRIPT_SHA256: &str =
@@ -266,6 +252,8 @@ fn run_fixed_remote_script(
     ) {
         return Err(anyhow!("unsupported fixed task source"));
     }
+    // These pinned diagnostics need raw sockets and system tools, so only the root manager may run them.
+    ensure_privileged_fixed_task_context()?;
     let task_dir = secure_task_directory(cfg)?.join(format!(
         "{}-{}",
         std::process::id(),
@@ -313,12 +301,10 @@ fn run_fixed_remote_script(
         .context("write fixed Beta task file")?;
     drop(script_file);
     let task_path = prepare_fixed_task_path(&task_dir, url, SYSTEM_TASK_PATH, http, &cfg.api)?;
-    let identity = task_sandbox_identity()?;
-    prepare_task_sandbox_ownership(&task_dir, identity)?;
+    reject_task_symlinks(&task_dir)?;
 
-    let mut command = task_isolation_command();
+    let mut command = privileged_fixed_task_command();
     command
-        .args(TASK_UNSHARE_ARGS)
         .args(["-k", "5s"])
         .arg(format!("{}s", timeout_sec))
         .arg("bash")
@@ -340,7 +326,6 @@ fn run_fixed_remote_script(
     if let Some(path) = &nodequality_result_dir {
         command.env("NSTATUS_NQ_RESULTS_DIR", path);
     }
-    apply_task_sandbox_identity(&mut command, identity)?;
     let mut child = command.spawn().context("failed to start fixed Beta task")?;
     if let (Some(input), Some(mut handle)) = (stdin, child.stdin.take()) {
         handle
@@ -391,115 +376,25 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct TaskSandboxIdentity {
-    uid: u32,
-    gid: u32,
-}
-
 #[cfg(target_os = "linux")]
-fn task_sandbox_identity() -> Result<TaskSandboxIdentity> {
-    if !task_command_exists(SYSTEM_TASK_PATH, "unshare") {
-        return Err(anyhow!("fixed tasks require unshare for host isolation"));
-    }
-    let passwd = fs::read_to_string("/etc/passwd").context("read isolated task identity")?;
-    passwd
-        .lines()
-        .find_map(|line| {
-            let mut fields = line.split(':');
-            let name = fields.next()?;
-            fields.next()?;
-            let uid = fields.next()?.parse().ok()?;
-            let gid = fields.next()?.parse().ok()?;
-            (name == TASK_USER).then_some(TaskSandboxIdentity { uid, gid })
-        })
-        .ok_or_else(|| anyhow!("isolated task user is missing"))
-        .and_then(|identity| {
-            if identity.uid == 0 || identity.gid == 0 {
-                Err(anyhow!(
-                    "isolated task identity must not use root uid or gid"
-                ))
-            } else {
-                Ok(identity)
-            }
-        })
-}
-
-fn task_isolation_command() -> Command {
-    Command::new("unshare")
-}
-
-#[cfg(not(target_os = "linux"))]
-fn task_sandbox_identity() -> Result<TaskSandboxIdentity> {
-    Err(anyhow!("fixed task isolation currently requires Linux"))
-}
-
-#[cfg(target_os = "linux")]
-fn apply_task_sandbox_identity(command: &mut Command, identity: TaskSandboxIdentity) -> Result<()> {
-    use std::os::unix::process::CommandExt;
-
-    if identity.uid == 0 || identity.gid == 0 {
+fn ensure_privileged_fixed_task_context() -> Result<()> {
+    if unsafe { libc::geteuid() } != 0 {
         return Err(anyhow!(
-            "isolated task identity must not use root uid or gid"
+            "NodeQuality and IP unlock tasks require the privileged Agent manager"
         ));
     }
-    unsafe {
-        command.pre_exec(move || {
-            if libc::setgroups(0, std::ptr::null()) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::setresgid(identity.gid, identity.gid, identity.gid) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::setresuid(identity.uid, identity.uid, identity.uid) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::getuid() != identity.uid
-                || libc::geteuid() != identity.uid
-                || libc::getgid() != identity.gid
-                || libc::getegid() != identity.gid
-            {
-                return Err(std::io::Error::from_raw_os_error(libc::EPERM));
-            }
-            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
     Ok(())
 }
 
 #[cfg(not(target_os = "linux"))]
-fn apply_task_sandbox_identity(
-    _command: &mut Command,
-    _identity: TaskSandboxIdentity,
-) -> Result<()> {
-    Err(anyhow!("fixed task isolation currently requires Linux"))
+fn ensure_privileged_fixed_task_context() -> Result<()> {
+    Err(anyhow!("fixed Beta tasks currently require Linux"))
 }
 
-#[cfg(target_os = "linux")]
-fn prepare_task_sandbox_ownership(path: &Path, identity: TaskSandboxIdentity) -> Result<()> {
-    use std::os::unix::fs::MetadataExt;
-
-    reject_task_symlinks(path)?;
-    let owner = format!("{}:{}", identity.uid, identity.gid);
-    let status = Command::new("chown")
-        .args(["-R", &owner])
-        .arg(path)
-        .status()
-        .context("assign isolated task directory")?;
-    if !status.success() {
-        return Err(anyhow!("failed to assign isolated task directory"));
-    }
-    let metadata = fs::symlink_metadata(path).context("verify isolated task directory owner")?;
-    if metadata.uid() != identity.uid || metadata.gid() != identity.gid {
-        return Err(anyhow!("isolated task directory owner mismatch"));
-    }
-    Ok(())
+fn privileged_fixed_task_command() -> Command {
+    Command::new("timeout")
 }
 
-#[cfg(target_os = "linux")]
 fn reject_task_symlinks(path: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(path).context("inspect task sandbox path")?;
     if metadata.file_type().is_symlink() {
@@ -511,11 +406,6 @@ fn reject_task_symlinks(path: &Path) -> Result<()> {
         }
     }
     Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn prepare_task_sandbox_ownership(_path: &Path, _identity: TaskSandboxIdentity) -> Result<()> {
-    Err(anyhow!("fixed task isolation currently requires Linux"))
 }
 
 #[cfg(unix)]
@@ -1444,48 +1334,23 @@ mod tests {
     }
 
     #[test]
-    fn fixed_tasks_do_not_depend_on_gnu_setpriv_arguments() {
+    fn fixed_tasks_run_directly_under_the_privileged_manager() {
         use std::ffi::OsStr;
 
-        let command = task_isolation_command();
-        assert_eq!(command.get_program(), OsStr::new("unshare"));
-        assert_eq!(
-            TASK_UNSHARE_ARGS,
-            [
-                "--user",
-                "--map-root-user",
-                "--mount",
-                "--pid",
-                "--fork",
-                "--mount-proc",
-                "--ipc",
-                "--uts",
-                "--",
-                "timeout",
-            ]
-        );
-        assert!(!TASK_UNSHARE_ARGS
-            .iter()
-            .any(|arg| matches!(*arg, "--reuid" | "--regid" | "--clear-groups")));
+        let command = privileged_fixed_task_command();
+        assert_eq!(command.get_program(), OsStr::new("timeout"));
+        assert_eq!(command.get_args().count(), 0);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn task_identity_hook_drops_root_and_sets_no_new_privileges() {
-        if unsafe { libc::geteuid() } != 0 {
-            return;
+    fn fixed_task_privilege_gate_matches_the_host_context() {
+        let result = ensure_privileged_fixed_task_context();
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(result.is_ok(), unsafe { libc::geteuid() } == 0);
         }
-        let identity = TaskSandboxIdentity {
-            uid: 65_534,
-            gid: 65_534,
-        };
-        let mut command = Command::new("sh");
-        command.args([
-            "-c",
-            "test \"$(id -u)\" = 65534 && test \"$(id -g)\" = 65534 && grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/self/status",
-        ]);
-        apply_task_sandbox_identity(&mut command, identity).unwrap();
-        assert!(command.status().unwrap().success());
+        #[cfg(not(target_os = "linux"))]
+        assert!(result.is_err());
     }
 
     #[test]

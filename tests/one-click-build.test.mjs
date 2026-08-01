@@ -11,6 +11,8 @@ const buildSource = await readFile(path.join(root, 'scripts', 'prepare-one-click
 assert.doesNotMatch(buildSource, /api\.github\.com/, 'one-click builds must not depend on the rate-limited GitHub API');
 assert.match(buildSource, /requestedTag \|\| String\(updateManifest\.agent_version/, 'the default Agent release must come from update-manifest.json');
 assert.match(buildSource, /releases\/download\/\$\{encodeURIComponent\(releaseTag\)\}/, 'release assets must use the manifest-pinned GitHub download URL');
+assert.match(buildSource, /execFileSync\('git', \['ls-files', '-z', '--', 'frontend'\]/, 'one-click assets must come from tracked frontend files only');
+assert.doesNotMatch(buildSource, /cp\(frontendRoot, outputRoot, \{[\s\S]*recursive: true/, 'one-click build must not recursively copy untracked frontend files');
 
 for (const relative of [
   'index.html', 'admin.html', 'config.js', 'js/theme-bootstrap.js', 'js/themes.js', 'update-manifest.json', 'bin/VERSION', 'bin/SHA256SUMS',

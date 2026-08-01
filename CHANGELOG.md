@@ -2,6 +2,13 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.0.58 - 2026-08-02
+
+- 修复 NodeQuality/IP 解锁任务“总任务成功但延迟全为 0、回程为 NoData”的权限回归：这两个固定诊断不再降权到 `nstatus-task` 或进入 user namespace，而是由已强制 root 运行的 Agent Manager 直接执行，以保留 raw socket、路由探测和必要系统工具能力。
+- 普通指标采集继续由低权限 `nstatus` 服务运行；特权 Manager 仍只接受 `nodequality` 与 `ip_unlock` 两个固定 action，不开放任意命令。
+- 固定任务继续要求受管镜像、精确 SHA-256、root 上下文、私有随机目录、无符号链接、清空环境、固定 PATH、超时、输出上限和结果净化；取消的仅是会让诊断数据失真的低权限/user namespace 层。
+- 新安装不再创建 `nstatus-task`；卸载流程仍兼容清理旧版本遗留账户。应用、Worker、Rust Agent、前端与教程版本同步至 `1.0.58` / `v1.0.58`。
+
 ## 1.0.57 - 2026-08-01
 
 - NodeQuality 报告改为双通道捕获：继续从隔离任务私有目录读取五类日志，同时在上游上传和清理前用有界记录回送给 Agent；任一通道可用都能保存本站报告。

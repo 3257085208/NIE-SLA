@@ -10,9 +10,12 @@ hard-coded digest before execution. At runtime the Agent may apply the
 NodeQuality result-capture hook implemented in its public Rust source.
 
 The upstream scripts can download additional tools and datasets. Those
-secondary downloads are not covered by the entrypoint digest, so NIE-SLA runs
-the task under a dedicated unprivileged host account and Linux namespaces.
-Failure to establish that boundary aborts the task.
+secondary downloads are not covered by the entrypoint digest. Because these
+two fixed diagnostics require raw sockets, route tracing, and system tools,
+they run directly under NIE-SLA's root-only Manager. Normal telemetry remains
+under the unprivileged `nstatus` service; the Manager still accepts only the
+two fixed actions and enforces private directories, symlink rejection, a
+fixed environment, timeouts, and output limits.
 
 The upstream projects are not affiliated with and do not endorse NIE-SLA.
 Their corresponding license text is included in `AGPL-3.0.txt`.

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,13 +15,15 @@ const excluded = new Set([
 
 await assertDirectory(frontendRoot);
 await rm(outputRoot, { recursive: true, force: true });
-await cp(frontendRoot, outputRoot, {
-  recursive: true,
-  filter(entry) {
-    const relative = path.relative(frontendRoot, entry);
-    return !relative.split(path.sep).some(part => excluded.has(part));
-  },
-});
+await mkdir(outputRoot, { recursive: true });
+for (const relative of trackedFrontendFiles()) {
+  if (relative.split('/').some(part => excluded.has(part))) continue;
+  const source = path.join(frontendRoot, ...relative.split('/'));
+  const target = path.join(outputRoot, ...relative.split('/'));
+  if (!(await stat(source).catch(() => null))?.isFile()) continue;
+  await mkdir(path.dirname(target), { recursive: true });
+  await cp(source, target);
+}
 await cp(path.join(root, 'update-manifest.json'), path.join(outputRoot, 'update-manifest.json'));
 await prepareAgentRelease(path.join(outputRoot, 'bin'));
 console.log(`One-click assets prepared in ${path.relative(root, outputRoot)}`);
@@ -133,4 +136,15 @@ function isRetryableStatus(status) {
 async function assertDirectory(directory) {
   const info = await stat(directory).catch(() => null);
   if (!info?.isDirectory()) throw new Error(`Missing directory: ${directory}`);
+}
+
+function trackedFrontendFiles() {
+  const output = execFileSync('git', ['ls-files', '-z', '--', 'frontend'], {
+    cwd: root,
+    encoding: 'utf8',
+  });
+  return output
+    .split('\0')
+    .filter(relative => relative.startsWith('frontend/'))
+    .map(relative => relative.slice('frontend/'.length));
 }

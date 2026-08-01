@@ -13,7 +13,7 @@ STATE_DIR="/var/lib/nstatus-metrics"
 ENV_FILE="${WORK_DIR}/nstatus-metrics.env"
 BIN_NAME="nstatus-metrics"
 AGENT_USER="nstatus"
-TASK_USER="nstatus-task"
+LEGACY_TASK_USER="nstatus-task"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; RED='\033[0;31m'; BOLD='\033[1m'; NC='\033[0m'
 NL=$'\n'
@@ -536,12 +536,9 @@ do_install() {
     local tmpbin
     tmpbin="$(download_binary "$api" "$tok" "$aid")"
 
-    # 创建遥测与隔离任务用户
-    local user
-    for user in "$AGENT_USER" "$TASK_USER"; do
-        create_system_user "$user"
-        ok "用户已就绪: ${user}"
-    done
+    # 普通遥测保持低权限；NQ/IP 固定诊断由 root Manager 直接执行。
+    create_system_user "$AGENT_USER"
+    ok "用户已就绪: ${AGENT_USER}"
 
     assert_safe_install_paths
     mkdir -p "$WORK_DIR" "$STATE_DIR"
@@ -596,7 +593,7 @@ do_uninstall() {
     rm -rf "$WORK_DIR" "$STATE_DIR"
     rm -rf "/var/lib/nstatus-manager"
     userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
-    userdel "$TASK_USER" 2>/dev/null || deluser "$TASK_USER" 2>/dev/null || true
+    userdel "$LEGACY_TASK_USER" 2>/dev/null || deluser "$LEGACY_TASK_USER" 2>/dev/null || true
 
     ok "已完全移除"
 }
