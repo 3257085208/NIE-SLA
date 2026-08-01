@@ -10,7 +10,7 @@ import {
   trimEmptyPointEdges,
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
-import { latestAgentTaskMaps } from '../js/admin/task-history.js';
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from '../js/admin/task-history.js';
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from '../js/install-command.js';
 import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, normalizeGroupByMode, priceBandKey } from '../js/shared/grouping.js';
 import { readStorage, removeStorage, writeStorage } from '../js/shared/storage.js';
@@ -93,6 +93,9 @@ const taskMaps = latestAgentTaskMaps([
 assert.equal(taskMaps.byAgent.get('vps-a').id, 'ip-new');
 assert.equal(taskMaps.byAction.get('vps-a:ip_unlock').id, 'ip-new');
 assert.equal(taskMaps.byAction.get('vps-a:nodequality').id, 'nq-new');
+assert.equal(shouldOpenNodeQualityReport({ action: 'nodequality', status: 'succeeded', result: { report_saved: false } }), true, 'completed legacy NQ tasks must try the current structured report');
+assert.equal(shouldOpenNodeQualityReport({ action: 'nodequality', status: 'failed' }), false);
+assert.equal(shouldOpenNodeQualityReport({ action: 'ip_unlock', status: 'succeeded' }), false);
 await client.apiAuth('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'secret' }) });
 assert.equal(lastRequest.options.headers.Authorization, undefined);
 assert.equal(lastRequest.options.headers['x-admin-session'], undefined);

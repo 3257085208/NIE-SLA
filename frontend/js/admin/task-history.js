@@ -11,3 +11,7 @@ export function latestAgentTaskMaps(tasks) {
   }
   return { byAgent, byAction };
 }
+
+export function shouldOpenNodeQualityReport(task) {
+  return task?.action === "nodequality" && task?.status === "succeeded";
+}

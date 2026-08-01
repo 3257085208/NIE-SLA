@@ -68,11 +68,11 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /href="\/admin\.css\?v=20260731-v1049"/, 'custom admin paths must load CSS from the site root');
+assert.match(adminHtml, /href="\/admin\.css\?v=20260801-v1054"/, 'custom admin paths must load CSS from the site root');
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
 assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260731-v1049"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260801-v1053"/, 'custom admin paths must load the admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260801-v1054"/, 'custom admin paths must load the admin module from the site root');
 assert.match(adminBootstrapSource, /后台脚本加载失败，请刷新页面/, 'admin startup failures must be visible on the login form');
 assert.match(adminBootstrapSource, /loginButton\.onclick = \(event\)/, 'the admin module must replace the startup guard only after it loads');
 assert.match(adminSource, /window\.__NIE_ADMIN_READY__ = true;[\s\S]*nie-admin-ready/, 'the admin module must dismiss its startup guard after binding controls');
@@ -123,7 +123,7 @@ assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day war
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
 assert.match(indexHtml, /app\.js\?v=20260731-v1049/, 'frontend cache key must publish the current release');
-assert.match(indexHtml, /style\.css\?v=20260731-v1049/, 'frontend CSS cache key must publish the current release');
+assert.match(indexHtml, /style\.css\?v=20260801-v1054/, 'frontend CSS cache key must publish the current release');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /class="theme-pending"[\s\S]*id="themeBoot"[\s\S]*id="themeCanvas"/, 'theme runtime must wait behind a first-paint shell');
@@ -229,7 +229,7 @@ assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-image\s*\{\
 assert.doesNotMatch(styleSource, /@media \(max-width: 420px\) \{[\s\S]*\.nq-image\s*\{\s*width:\s*88%/, 'compact iPhones must not waste NQ image width');
 assert.doesNotMatch(styleSource, /\.nq-modal-backdrop\s*\{\s*padding:\s*4px/, 'compact NQ dialogs must retain visible breathing room at the viewport edge');
 assert.match(styleSource, /\.nq-ansi-panel\s*\{[\s\S]*-webkit-overflow-scrolling:\s*touch/, 'ANSI reports must support touch scrolling on iPhone');
-assert.match(styleSource, /@media \(max-width: 560px\) \{[\s\S]*\.nq-ansi-panel \.nq-ansi[\s\S]*white-space:\s*pre-wrap[\s\S]*overflow-wrap:\s*anywhere/, 'mobile ANSI reports must wrap long lines inside the modal');
+assert.match(styleSource, /@media \(max-width: 560px\) \{[\s\S]*\.nq-ansi-panel,[\s\S]*\.nq-network-scroll\s*\{\s*overflow-x:\s*auto[\s\S]*\.nq-ansi-panel \.nq-ansi,[\s\S]*white-space:\s*pre[\s\S]*word-break:\s*normal/, 'mobile ANSI reports must preserve terminal columns inside local horizontal scrollers');
 assert.match(styleSource, /\.nq-panels\s*\{[^}]*flex:\s*1 1 auto[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*auto/, 'NQ report content must constrain horizontal scrolling to the active panel');
 assert.match(styleSource, /\.nq-ansi-panel\s*\{[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/, 'ANSI reports must own their horizontal scrolling region');
 assert.match(styleSource, /@media \(max-width: 560px\) \{[\s\S]*\.nq-ansi\s*\{\s*font-size:\s*10px/, 'phone-sized NQ terminals must remain readable while the ANSI panel owns overflow');
@@ -243,10 +243,13 @@ assert.match(styleSource, /\.nq-network-scroll\s*\{[\s\S]*overflow-x:\s*auto/, '
 assert.match(adminSource, /data-a="task-nq"/, 'admin must expose the fixed NodeQuality action');
 assert.match(adminSource, /data-a="task-unlock"/, 'admin must expose the fixed IPv4 unlock action');
 assert.match(adminSource, /\/api\/agent-tasks/, 'Beta actions must use the fixed task API');
-assert.match(adminSource, /task\.result\?\.report_saved[\s\S]*showSavedNodeQualityReport/, 'successful NQ tasks must open the saved report instead of raw task JSON');
+assert.match(adminSource, /shouldOpenNodeQualityReport\(task\)[\s\S]*showNodeQualityReport/, 'all successful NQ tasks must try the structured report instead of raw task JSON');
+assert.doesNotMatch(adminSource, /task\.result\?\.report_saved[\s\S]*showNodeQualityReport/, 'legacy report_saved flags must not select the admin NQ dialog type');
 assert.match(adminSource, /apiPublic\(`\/api\/nq\/\$\{encodeURIComponent\(target\.id\)\}`\)[\s\S]*buildNqModalHtml\(report\)/, 'admin NQ details must load and render the public structured report');
+assert.match(adminSource, /catch \(error\) \{[\s\S]*root\.innerHTML = `<div class="nq-modal-backdrop">[\s\S]*这条任务没有可展示的完整报告，请重新运行 NQ/, 'missing legacy reports must remain in the NodeQuality dialog with an actionable message');
+assert.doesNotMatch(adminSource, /catch \(error\) \{\s*closeAdminNodeQualityReport\(\);\s*showAgentTaskDiagnostic/, 'successful NQ tasks must not fall back to raw JSON when the report is unavailable');
 assert.match(adminCss, /\.nq-modal\s*\{[\s\S]*width:\s*min\(640px[\s\S]*\.nq-ansi-panel\s*\{[\s\S]*width:\s*100%[\s\S]*-webkit-overflow-scrolling:\s*touch[\s\S]*@media \(max-width: 420px\) \{[\s\S]*\.nq-ansi\s*\{\s*font-size:\s*10px/, 'admin must preserve the desktop and readable compact iPhone NQ report layout');
-assert.match(adminCss, /@media \(max-width: 560px\) \{[\s\S]*\.nq-ansi-panel \.nq-ansi[\s\S]*white-space:\s*pre-wrap[\s\S]*overflow-wrap:\s*anywhere/, 'admin mobile ANSI reports must wrap long lines inside the modal');
+assert.match(adminCss, /@media \(max-width: 560px\) \{[\s\S]*\.nq-ansi-panel,[\s\S]*\.nq-network-scroll\s*\{\s*overflow-x:\s*auto[\s\S]*\.nq-ansi-panel \.nq-ansi,[\s\S]*white-space:\s*pre[\s\S]*word-break:\s*normal/, 'admin mobile ANSI reports must preserve terminal columns inside local horizontal scrollers');
 assert.match(adminCss, /@media \(max-width: 420px\) \{[\s\S]*\.nq-modal-backdrop\s*\{[\s\S]*safe-area-inset-bottom[\s\S]*\.nq-modal\s*\{[^}]*safe-area-inset-top/, 'admin compact NQ dialog must preserve safe-area spacing');
 assert.doesNotMatch(adminSource, /mNqReport|id="m(?:Command|Script|Args|Stdin)"|body:\s*JSON\.stringify\(\{[^}]*\b(?:command|script|args|stdin)\b/, 'admin must not accept reports or arbitrary command input');
 assert.match(appSource, /Always keep explicit bounds/, 'chart zoom-out must keep explicit x bounds');

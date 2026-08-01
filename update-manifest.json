@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.53",
-  "agent_version": "v1.0.53",
-  "source_ref": "app-v1.0.53",
-  "published_at": "2026-08-01T10:19:14Z",
-  "title": "NIE-SLA 1.0.53",
+  "version": "1.0.54",
+  "agent_version": "v1.0.54",
+  "source_ref": "app-v1.0.54",
+  "published_at": "2026-08-01T11:55:14Z",
+  "title": "NIE-SLA 1.0.54",
   "changelog": [
-    "修复 NQ 上游成功但本地报告未保存的问题：Agent 在 upload_result 前捕获五类结果日志",
-    "网络质量与回程路由内容可继续由 Worker 生成 SVG，并上传到固定官方公益图床",
-    "NQ 缺少可保存报告时明确记录图片上传错误，不再返回含糊的 null 状态",
-    "BusyBox 直接降权、no-new-privs、Linux namespaces 与私有任务目录边界保持不变",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.53"
+    "后台点击已完成的 NQ 任务时直接打开与公开状态页一致的结构化报告弹窗",
+    "旧任务没有本站完整报告时保留 NQ 弹窗并提示重新运行，不再展示原始任务 JSON",
+    "手机端恢复 NodeQuality 终端原始列对齐，超宽内容只在当前报告面板内横向滚动",
+    "固定官方公益图床、BusyBox 降权隔离与私有任务目录边界保持不变",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.54"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

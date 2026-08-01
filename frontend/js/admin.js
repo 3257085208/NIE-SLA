@@ -1,8 +1,8 @@
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1053";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
-import { latestAgentTaskMaps } from "./admin/task-history.js?v=20260801-v1053";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260801-v1054";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1049";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink } from "./shared/nodequality.js?v=20260731-v1049";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -791,7 +791,7 @@ function closeAdminNodeQualityReport() {
   if (returnFocus?.isConnected && typeof returnFocus.focus === "function") returnFocus.focus();
 }
 
-async function showSavedNodeQualityReport(target, task) {
+async function showNodeQualityReport(target, task) {
   closeModal();
   closeAdminNodeQualityReport();
   const root = document.createElement("div");
@@ -812,8 +812,10 @@ async function showSavedNodeQualityReport(target, task) {
     root.innerHTML = buildNqModalHtml(report);
     bindNodeQualityModal(root);
   } catch (error) {
-    closeAdminNodeQualityReport();
-    showAgentTaskDiagnostic(target, task, error.message || "未知错误");
+    if (!root.isConnected) return;
+    const reportLink = normalizeNqReportLink(task?.result?.report_url);
+    root.innerHTML = `<div class="nq-modal-backdrop"><div class="nq-modal" role="dialog" aria-modal="true" aria-label="NodeQuality 报告"><div class="nq-modal-head"><div><strong>NodeQuality</strong><span>${escapeHtml(target.name)}</span></div><button type="button" class="nq-close" data-nq-close aria-label="关闭">×</button></div><div class="nq-empty">报告加载失败：${escapeHtml(error.message || "未知错误")}<br>这条任务没有可展示的完整报告，请重新运行 NQ。${reportLink ? `<br><a href="${escapeHtml(reportLink)}" target="_blank" rel="noopener noreferrer">打开原报告</a>` : ""}</div></div></div>`;
+    bindNodeQualityModal(root);
   }
 }
 
@@ -822,11 +824,8 @@ function showAgentTaskDetails(target, action = "") {
     ? agentTasksByAction.get(`${target.id}:${action}`)
     : agentTasks.get(target.id);
   if (!task) return toast("暂无任务详情", "err");
-  const hasSavedReport = task.action === "nodequality"
-    && task.status === "succeeded"
-    && Boolean(task.result?.report_saved);
-  if (hasSavedReport) {
-    void showSavedNodeQualityReport(target, task);
+  if (shouldOpenNodeQualityReport(task)) {
+    void showNodeQualityReport(target, task);
     return;
   }
   showAgentTaskDiagnostic(target, task);
