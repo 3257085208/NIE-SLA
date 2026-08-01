@@ -2,6 +2,14 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.0.51 - 2026-08-01
+
+- 修复 BusyBox 节点运行 NodeQuality 或 IP 解锁时，因 BusyBox `setpriv` 不支持 GNU `--reuid` / `--regid` 参数而在脚本启动前失败的问题。
+- Agent 改为在子进程 `exec` 前直接清空补充组、切换到非 root `nstatus-task` 身份并设置 `PR_SET_NO_NEW_PRIVS`，随后进入原有 user/mount/pid/ipc/uts namespaces；任何隔离步骤失败仍会拒绝任务，不会回退宿主 root。
+- 后台按每台 VPS、每种动作分别保留最新 NQ 与 IP 解锁状态和错误，连续批量运行两类任务后仍可分别打开详情。
+- 固定公益 NQ 图床链路、受限 Broker 协议与生产 D1/R2 绑定保持不变。
+- 应用、Worker、Rust Agent、前端与教程版本同步至 `1.0.51` / `v1.0.51`。
+
 ## 1.0.50 - 2026-08-01
 
 - 一键部署与普通手动部署固定使用官方公益 Broker 生成 NodeQuality 网络质量与回程路由图片，不再要求用户填写自己的图床地址或 Token，也不允许非官方实例通过本地 Secret 覆盖这条链路。

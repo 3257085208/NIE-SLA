@@ -10,6 +10,7 @@ import {
   trimEmptyPointEdges,
 } from '../js/shared/chart-data.js';
 import { createAdminClient } from '../js/admin/api.js';
+import { latestAgentTaskMaps } from '../js/admin/task-history.js';
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from '../js/install-command.js';
 import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, normalizeGroupByMode, priceBandKey } from '../js/shared/grouping.js';
 import { readStorage, removeStorage, writeStorage } from '../js/shared/storage.js';
@@ -83,6 +84,15 @@ client.saveSession('session', Math.floor(Date.now() / 1000) + 60);
 await client.api('/api/targets');
 assert.equal(lastRequest.options.headers.Authorization, undefined);
 assert.equal(lastRequest.options.headers['x-admin-session'], 'session');
+
+const taskMaps = latestAgentTaskMaps([
+  { id: 'ip-new', agent_id: 'vps-a', action: 'ip_unlock', status: 'failed' },
+  { id: 'nq-new', agent_id: 'vps-a', action: 'nodequality', status: 'failed' },
+  { id: 'nq-old', agent_id: 'vps-a', action: 'nodequality', status: 'succeeded' },
+]);
+assert.equal(taskMaps.byAgent.get('vps-a').id, 'ip-new');
+assert.equal(taskMaps.byAction.get('vps-a:ip_unlock').id, 'ip-new');
+assert.equal(taskMaps.byAction.get('vps-a:nodequality').id, 'nq-new');
 await client.apiAuth('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'secret' }) });
 assert.equal(lastRequest.options.headers.Authorization, undefined);
 assert.equal(lastRequest.options.headers['x-admin-session'], undefined);

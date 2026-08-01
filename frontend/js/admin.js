@@ -1,5 +1,6 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1052";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1053";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
+import { latestAgentTaskMaps } from "./admin/task-history.js?v=20260801-v1053";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
 import { bindNodeQualityModal, buildNqModalHtml } from "./shared/nodequality.js?v=20260731-v1049";
 import {
@@ -59,6 +60,7 @@ let targets = [],
   latencyNodes = [],
   pingTargets = [],
   agentTasks = new Map(),
+  agentTasksByAction = new Map(),
   targetRegions = {
     auto: "自动（当前 Worker 执行位置）",
     apac: "亚太",
@@ -712,8 +714,10 @@ function targetActionsHtml(target) {
 
 function betaTaskControlsHtml(target) {
   if (target.type !== "tcp" || !targetAdminLoaded) return "";
-  const task = agentTasks.get(target.id);
-  const active = task && ["queued", "running"].includes(task.status);
+  const actionTasks = ["nodequality", "ip_unlock"]
+    .map((action) => agentTasksByAction.get(`${target.id}:${action}`))
+    .filter(Boolean);
+  const active = actionTasks.some((task) => ["queued", "running"].includes(task.status));
   const runtime = target.agent_runtime || {};
   const capabilities = runtime.capabilities || {};
   const actions = new Set(Array.isArray(capabilities.actions) ? capabilities.actions : []);
@@ -726,18 +730,22 @@ function betaTaskControlsHtml(target) {
       : runtime.last_metrics_at
         ? "等待 Agent 自动更新"
         : "Agent 尚未上报";
-  const queuedTooLong = task?.status === "queued"
-    && Number(task.requested_at || 0) > 0
-    && nowSec() - Number(task.requested_at) >= 120;
-  const state = task ? {
-    queued: queuedTooLong ? "排队超过 2 分钟，请检查 Manager 状态" : "排队中",
-    running: "运行中",
-    succeeded: "已完成",
-    failed: "失败",
-    expired: "已过期",
-    cancelled: "已取消",
-  }[task.status] || task.status : "";
-  const reportUrl = target.nq_url || task?.result?.report_url || "";
+  const nqTask = agentTasksByAction.get(`${target.id}:nodequality`);
+  const reportUrl = target.nq_url || nqTask?.result?.report_url || "";
+  const taskStates = actionTasks.map((task) => {
+    const queuedTooLong = task.status === "queued"
+      && Number(task.requested_at || 0) > 0
+      && nowSec() - Number(task.requested_at) >= 120;
+    const state = {
+      queued: queuedTooLong ? "排队超过 2 分钟，请检查 Manager 状态" : "排队中",
+      running: "运行中",
+      succeeded: "已完成",
+      failed: "失败",
+      expired: "已过期",
+      cancelled: "已取消",
+    }[task.status] || task.status;
+    return `<button type="button" class="task-state task-${escapeHtml(task.status)}" data-a="task-details" data-task-action="${escapeHtml(task.action)}" title="查看任务详情">${escapeHtml(task.action_label || "任务")} · ${escapeHtml(state)}</button>`;
+  }).join("");
   return `<div class="beta-task-actions">
     <div class="beta-task-meta">
       <span class="beta-label">Beta 功能</span>
@@ -748,7 +756,7 @@ function betaTaskControlsHtml(target) {
       <button type="button" class="btn btn-xs" data-a="task-unlock"${active || !unlockAvailable ? " disabled" : ""} title="${escapeHtml(unlockAvailable ? "运行固定 IP 解锁任务" : "此 Agent 尚未上报 IP 解锁能力")}">IP 解锁</button>
       ${reportUrl ? `<a class="btn btn-xs btn-blue" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">NQ 报告</a>` : ""}
     </div>
-    ${state ? `<button type="button" class="task-state task-${escapeHtml(task.status)}" data-a="task-details" title="查看任务详情">${escapeHtml(task.action_label || "任务")} · ${escapeHtml(state)}</button>` : ""}
+    ${taskStates}
   </div>`;
 }
 
@@ -809,8 +817,10 @@ async function showSavedNodeQualityReport(target, task) {
   }
 }
 
-function showAgentTaskDetails(target) {
-  const task = agentTasks.get(target.id);
+function showAgentTaskDetails(target, action = "") {
+  const task = action
+    ? agentTasksByAction.get(`${target.id}:${action}`)
+    : agentTasks.get(target.id);
   if (!task) return toast("暂无任务详情", "err");
   const hasSavedReport = task.action === "nodequality"
     && task.status === "succeeded"
@@ -826,9 +836,9 @@ async function loadAgentTasks(render = true) {
   if (!hasSession()) return;
   try {
     const data = await api("/api/agent-tasks?limit=100");
-    const latest = new Map();
-    for (const task of data.tasks || []) if (!latest.has(task.agent_id)) latest.set(task.agent_id, task);
-    agentTasks = latest;
+    const latest = latestAgentTaskMaps(data.tasks);
+    agentTasks = latest.byAgent;
+    agentTasksByAction = latest.byAction;
     if (render && byId("pg-targets")?.classList.contains("on")) renderTargets();
   } catch (_) {}
 }
@@ -3065,7 +3075,7 @@ byId("tTable").onclick = (e) => {
   if (b.dataset.a === "deploy") deploy(t, b);
   if (b.dataset.a === "task-nq") runAgentTask(t, "nodequality");
   if (b.dataset.a === "task-unlock") runAgentTask(t, "ip_unlock");
-  if (b.dataset.a === "task-details") showAgentTaskDetails(t);
+  if (b.dataset.a === "task-details") showAgentTaskDetails(t, b.dataset.taskAction || "");
   if (b.dataset.a === "move-up") moveTarget(t, -1);
   if (b.dataset.a === "move-down") moveTarget(t, 1);
   if (b.dataset.a === "reload") loadTargets();

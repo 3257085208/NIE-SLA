@@ -21,6 +21,18 @@ const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const MAX_NODEQUALITY_ARTIFACT_BYTES: usize = 24 * 1024;
 const IP_UNLOCK_ARGS: [&str; 4] = ["-4", "-j", "-n", "-p"];
 const SYSTEM_TASK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+const TASK_UNSHARE_ARGS: [&str; 10] = [
+    "--user",
+    "--map-root-user",
+    "--mount",
+    "--pid",
+    "--fork",
+    "--mount-proc",
+    "--ipc",
+    "--uts",
+    "--",
+    "timeout",
+];
 const OPTIONAL_DIG_HELPER: &[u8] =
     b"#!/bin/sh\nexec \"$NSTATUS_DNS_COMPAT_EXECUTABLE\" --dns-compat dig \"$@\"\n";
 const OPTIONAL_NSLOOKUP_HELPER: &[u8] =
@@ -300,29 +312,10 @@ fn run_fixed_remote_script(
     let identity = task_sandbox_identity()?;
     prepare_task_sandbox_ownership(&task_dir, identity)?;
 
-    let mut command = Command::new("setpriv");
+    let mut command = task_isolation_command();
     command
-        .arg("--reuid")
-        .arg(identity.uid.to_string())
-        .arg("--regid")
-        .arg(identity.gid.to_string())
-        .arg("--clear-groups")
-        .arg("--no-new-privs")
-        .arg("unshare")
-        .args([
-            "--user",
-            "--map-root-user",
-            "--mount",
-            "--pid",
-            "--fork",
-            "--mount-proc",
-            "--ipc",
-            "--uts",
-            "--",
-            "timeout",
-            "-k",
-            "5s",
-        ])
+        .args(TASK_UNSHARE_ARGS)
+        .args(["-k", "5s"])
         .arg(format!("{}s", timeout_sec))
         .arg("bash")
         .arg(&script_path)
@@ -343,6 +336,7 @@ fn run_fixed_remote_script(
     if let Some(path) = &nodequality_result_dir {
         command.env("NSTATUS_NQ_RESULTS_DIR", path);
     }
+    apply_task_sandbox_identity(&mut command, identity)?;
     let mut child = command.spawn().context("failed to start fixed Beta task")?;
     if let (Some(input), Some(mut handle)) = (stdin, child.stdin.take()) {
         handle
@@ -397,12 +391,8 @@ struct TaskSandboxIdentity {
 
 #[cfg(target_os = "linux")]
 fn task_sandbox_identity() -> Result<TaskSandboxIdentity> {
-    if !task_command_exists(SYSTEM_TASK_PATH, "setpriv")
-        || !task_command_exists(SYSTEM_TASK_PATH, "unshare")
-    {
-        return Err(anyhow!(
-            "fixed tasks require setpriv and unshare for host isolation"
-        ));
+    if !task_command_exists(SYSTEM_TASK_PATH, "unshare") {
+        return Err(anyhow!("fixed tasks require unshare for host isolation"));
     }
     let passwd = fs::read_to_string("/etc/passwd").context("read isolated task identity")?;
     passwd
@@ -427,8 +417,56 @@ fn task_sandbox_identity() -> Result<TaskSandboxIdentity> {
         })
 }
 
+fn task_isolation_command() -> Command {
+    Command::new("unshare")
+}
+
 #[cfg(not(target_os = "linux"))]
 fn task_sandbox_identity() -> Result<TaskSandboxIdentity> {
+    Err(anyhow!("fixed task isolation currently requires Linux"))
+}
+
+#[cfg(target_os = "linux")]
+fn apply_task_sandbox_identity(command: &mut Command, identity: TaskSandboxIdentity) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+
+    if identity.uid == 0 || identity.gid == 0 {
+        return Err(anyhow!(
+            "isolated task identity must not use root uid or gid"
+        ));
+    }
+    unsafe {
+        command.pre_exec(move || {
+            if libc::setgroups(0, std::ptr::null()) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::setresgid(identity.gid, identity.gid, identity.gid) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::setresuid(identity.uid, identity.uid, identity.uid) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getuid() != identity.uid
+                || libc::geteuid() != identity.uid
+                || libc::getgid() != identity.gid
+                || libc::getegid() != identity.gid
+            {
+                return Err(std::io::Error::from_raw_os_error(libc::EPERM));
+            }
+            if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn apply_task_sandbox_identity(
+    _command: &mut Command,
+    _identity: TaskSandboxIdentity,
+) -> Result<()> {
     Err(anyhow!("fixed task isolation currently requires Linux"))
 }
 
@@ -1249,6 +1287,51 @@ mod tests {
         assert_eq!(IP_UNLOCK_ARGS, ["-4", "-j", "-n", "-p"]);
         assert!(!IP_UNLOCK_ARGS.contains(&"-y"));
         assert!(IP_UNLOCK_ARGS.contains(&"-j"));
+    }
+
+    #[test]
+    fn fixed_tasks_do_not_depend_on_gnu_setpriv_arguments() {
+        use std::ffi::OsStr;
+
+        let command = task_isolation_command();
+        assert_eq!(command.get_program(), OsStr::new("unshare"));
+        assert_eq!(
+            TASK_UNSHARE_ARGS,
+            [
+                "--user",
+                "--map-root-user",
+                "--mount",
+                "--pid",
+                "--fork",
+                "--mount-proc",
+                "--ipc",
+                "--uts",
+                "--",
+                "timeout",
+            ]
+        );
+        assert!(!TASK_UNSHARE_ARGS
+            .iter()
+            .any(|arg| matches!(*arg, "--reuid" | "--regid" | "--clear-groups")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn task_identity_hook_drops_root_and_sets_no_new_privileges() {
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        let identity = TaskSandboxIdentity {
+            uid: 65_534,
+            gid: 65_534,
+        };
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "test \"$(id -u)\" = 65534 && test \"$(id -g)\" = 65534 && grep -q '^NoNewPrivs:[[:space:]]*1$' /proc/self/status",
+        ]);
+        apply_task_sandbox_identity(&mut command, identity).unwrap();
+        assert!(command.status().unwrap().success());
     }
 
     #[test]

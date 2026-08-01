@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.50",
-  "agent_version": "v1.0.50",
-  "source_ref": "app-v1.0.50",
-  "published_at": "2026-07-31T21:30:25Z",
-  "title": "NIE-SLA 1.0.50",
+  "version": "1.0.51",
+  "agent_version": "v1.0.51",
+  "source_ref": "app-v1.0.51",
+  "published_at": "2026-08-01T08:46:11Z",
+  "title": "NIE-SLA 1.0.51",
   "changelog": [
-    "一键部署实例默认使用官方受限公益 Broker 生成 NodeQuality 网络与回程图片，无需填写图床地址或 Token",
-    "公益接口只接受有界 network/route 文本，由服务端重新渲染 SVG，并使用 D1 按来源和全局限流",
-    "官方图床凭据继续只保存在 Worker Secret，源码、前端、备份、Fork 与 Broker 请求均不携带共享 Token",
-    "非官方实例即使设置 NQ_IMGBED_URL 与 NQ_IMGBED_TOKEN 也不能覆盖固定公益链路",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.50"
+    "修复 BusyBox 节点运行 NQ/IP 解锁时因 setpriv 不支持 GNU --reuid/--regid 参数而在脚本启动前失败",
+    "Agent 直接在 exec 前清空补充组并切换到 nstatus-task，再设置 no-new-privs 和进入 Linux namespaces，不回退宿主 root",
+    "后台分别保留每台 VPS 最新的 NQ 与 IP 解锁状态和错误，后运行的任务不再遮住另一类任务详情",
+    "固定公益 NQ 图床链路、受限 Broker 协议与 D1/R2 生产绑定保持不变",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.51"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

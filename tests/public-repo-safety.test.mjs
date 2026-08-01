@@ -38,6 +38,7 @@ for (const file of textFiles) {
   if (/wrangler\.(?:toml|jsonc?)$/i.test(file)) {
     const ids = [...source.matchAll(/database_id["']?\s*(?:=|:)\s*"([0-9a-f-]{36})"/gi)].map((match) => match[1]);
     if (!deploymentValidation && ids.some((id) => id !== '00000000-0000-0000-0000-000000000000')) findings.push(`Cloudflare database ID: ${file}`);
+    if (!deploymentValidation && /nie-sla-(?:private|db|archive)/i.test(source)) findings.push(`official Cloudflare resource name: ${file}`);
   }
 }
 

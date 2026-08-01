@@ -72,7 +72,7 @@ assert.match(adminHtml, /href="\/admin\.css\?v=20260731-v1049"/, 'custom admin p
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
 assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260731-v1049"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260801-v1052"/, 'custom admin paths must load the admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260801-v1053"/, 'custom admin paths must load the admin module from the site root');
 assert.match(adminBootstrapSource, /后台脚本加载失败，请刷新页面/, 'admin startup failures must be visible on the login form');
 assert.match(adminBootstrapSource, /loginButton\.onclick = \(event\)/, 'the admin module must replace the startup guard only after it loads');
 assert.match(adminSource, /window\.__NIE_ADMIN_READY__ = true;[\s\S]*nie-admin-ready/, 'the admin module must dismiss its startup guard after binding controls');
@@ -103,7 +103,7 @@ assert.match(adminSource, /apiAdmin\("\/api\/backup\/export"[\s\S]*60000\)/, 'pr
 assert.match(appSource, /fetchWithTimeout\(api\(`\/api\/nq\//, 'public NodeQuality reports must use a bounded request');
 assert.match(adminApiSource, /defaultTimeoutMs\s*=\s*12_000[\s\S]*if \(!options\.signal\)[\s\S]*withTimeout\(defaultTimeoutMs/, 'all direct Admin API calls need a default timeout');
 assert.match(adminSource, /id="backupStatus"[\s\S]*正在加密 Agent Token/, 'protected backup must expose persistent progress next to its controls');
-assert.match(adminSource, /install-command\.js\?v=20260801-v1052/, 'Agent and Latency install clipboard fixes must use the current cache key');
+assert.match(adminSource, /install-command\.js\?v=20260801-v1053/, 'Agent and Latency install clipboard fixes must use the current cache key');
 assert.match(adminSource, /latencyInstallCommandFromPayload\(data, node\.id\);\s*await copyText\(command\)/, 'Latency deploy must validate and copy the one-time command without opening a dialog');
 const latencyDeploySource = adminSource.slice(adminSource.indexOf('async function deployLatencyNode'), adminSource.indexOf('async function loadPings'));
 assert.doesNotMatch(latencyDeploySource, /openModal\(\)/, 'Latency deploy must not open an install-command dialog');
