@@ -2,6 +2,12 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.0.66 - 2026-08-02
+
+- 修复批量 NodeQuality 在 `v1.0.63` 及更旧 Agent 上约 600 秒被外部 `timeout` 以 exit 124 终止的问题：Worker 对 NQ 任务重新下发 `timeout_sec: 3600` 作为旧 Agent 兼容上限，同时保持 NQ 排队过期仍为 7 天，不占用永久互斥位。
+- `v1.0.64+` Agent 继续忽略 NQ 的 `timeout_sec`，慢速设备可一直运行到完成；深度模式（`v`）在低配机器上仍可能持续较久，建议批量任务优先选择快速硬件模式（`f`）。
+- 应用、Worker、Rust Agent、前端与教程版本同步至 `1.0.66` / `v1.0.66`。
+
 ## 1.0.65 - 2026-08-02
 
 - IP 解锁完整报告自动裁剪上游脚本尾部的赞助商广告（SPONSOR、IPWO、Lisahost、RapidProxy、YINNET、VMRack、IPPeak、Swiftproxy 等）：Agent 在结果回传前、Worker 在存储前、后台在渲染前都按“今日IP检测量 / 总检测量 / 感谢使用xy系列脚本 / 报告链接”标记截断，并保留 ANSI 颜色与完整报告正文。

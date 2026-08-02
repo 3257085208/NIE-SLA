@@ -4,7 +4,9 @@ import { normalizeNodeQualityReport, normalizeNodeQualityReportUrl, sanitizeAnsi
 import { uploadNodeQualityReportImages } from '../nq-image-host.js';
 
 export const AGENT_TASK_ACTIONS = Object.freeze({
-  nodequality: { timeout_sec: null, label: 'NodeQuality' },
+  // v1.0.64+ Agents ignore timeout_sec for NQ; this keeps pre-1.0.64 Agents
+  // from defaulting to 600s (exit 124) when the field is null.
+  nodequality: { timeout_sec: 3600, label: 'NodeQuality' },
   ip_unlock: { timeout_sec: 600, label: 'IP 解锁' },
 });
 const NQ_TASK_EXPIRES_SEC = 7 * 24 * 60 * 60;
@@ -124,7 +126,7 @@ async function createAgentTaskForAgent(env, agentId, action, options = null) {
 
   const now = nowSec();
   const id = crypto.randomUUID();
-  const expiresAt = now + (policy.timeout_sec ?? NQ_TASK_EXPIRES_SEC) + 900;
+  const expiresAt = now + (action === 'nodequality' ? NQ_TASK_EXPIRES_SEC : (policy.timeout_sec ?? NQ_TASK_EXPIRES_SEC)) + 900;
   await env.DB.prepare(`INSERT INTO agent_tasks (id, agent_id, action, options, status, requested_at, expires_at)
     VALUES (?, ?, ?, ?, 'queued', ?, ?)`)
     .bind(id, agentId, action, nqOptions ? JSON.stringify(nqOptions) : null, now, expiresAt).run();
