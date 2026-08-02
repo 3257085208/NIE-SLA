@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.60",
-  "agent_version": "v1.0.60",
-  "source_ref": "app-v1.0.60",
-  "published_at": "2026-08-01T20:34:00Z",
-  "title": "NIE-SLA 1.0.60",
+  "version": "1.0.61",
+  "agent_version": "v1.0.61",
+  "source_ref": "app-v1.0.61",
+  "published_at": "2026-08-02T12:00:00Z",
+  "title": "NIE-SLA 1.0.61",
   "changelog": [
-    "手机端 NodeQuality 四个页签等分并居中显示，基本信息、IP质量、网络质量、回程路由一屏可见",
-    "后台新增 Debug 级别操作日志，记录操作 IP、方法、路径、状态与操作者，并自动清理 30 天前日志",
-    "保留原生 xterm NQ 报告、固定公益图床、D1/R2、备份恢复与任务安全边界不变",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.60"
+    "后台 IP 解锁任务详情改为与 NQ“IP质量”一致的流媒体解锁网格，不再直接展示原始 JSON",
+    "原始输出保留在可折叠区域，失败错误仍直接显示；公共状态页显示保持不变",
+    "保留手机端 NQ 页签等分居中、Debug 操作日志与 30 天自动清理、原生 xterm NQ 报告和任务安全边界",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.61"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

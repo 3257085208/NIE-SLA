@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.0.60**
+**Stable · 1.0.61**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 

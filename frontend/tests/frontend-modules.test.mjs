@@ -33,6 +33,7 @@ import {
   renderNqNetworkReportHtml,
   renderNqReportHtml,
   renderNqRouteReportHtml,
+  renderUnlockServicesReportHtml,
   targetHasNodeQuality,
 } from '../js/shared/nodequality.js';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from '../js/shared/appearance.js';

@@ -3,6 +3,7 @@
   "scripts": {
     "test": "node tests/syntax.test.mjs && node tests/vendor-tasks.test.mjs && node tests/frontend-modules.test.mjs && node tests/app-import-smoke.mjs && python3 tests/latency-agent.test.py",
     "lint": "npx --yes eslint@10.6.0 -c tests/eslint.config.mjs app.js config.js functions js --no-error-on-unmatched-pattern",
-    "verify": "npm test && npm run lint"
+    "test-unlock": "node tests/unlock-services-report.test.mjs",
+    "verify": "npm test && npm run test-unlock && npm run lint"
   }
 }

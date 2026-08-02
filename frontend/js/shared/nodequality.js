@@ -157,12 +157,34 @@ export function renderNqReportHtml(content = '') {
     const start = lines.findIndex((line, index) => index >= cursor && isNqMediaHeading(line));
     if (start < 0) break;
     const end = lines.findIndex((line, index) => index > start && stripNqAnsi(line).startsWith('六、邮局连通性及黑名单检测'));
-    if (end < 0) break;
+    const mediaEnd = end < 0 ? lines.length : end;
     html += renderNqAnsiHtml(lines.slice(cursor, start).join('\n'));
-    html += renderNqMediaBlock(lines.slice(start, end));
-    cursor = end;
+    html += renderNqMediaBlock(lines.slice(start, mediaEnd));
+    cursor = mediaEnd;
   }
   return html + renderNqAnsiHtml(lines.slice(cursor).join('\n'));
+}
+
+export function renderUnlockServicesReportHtml(services = []) {
+  const rows = (Array.isArray(services) ? services : [])
+    .map((service) => ({ ...(service || {}) }))
+    .filter((service) => String(service.name || service.id || '').trim() && (service.status || service.region || service.method));
+  if (!rows.length) return '';
+  const providers = rows.map((service) => String(service.name || service.id || '—').trim());
+  const statuses = rows.map((service) => String(service.status || '—').trim() || '—');
+  const regions = rows.map((service) => {
+    const region = String(service.region || '').replace(/^\[|\]$/g, '').trim();
+    return region && !/^(?:null|none|-)$/i.test(region) ? `[${region}]` : '[]';
+  });
+  const methods = rows.map((service) => String(service.method || '—').trim() || '—');
+  const content = [
+    '五、流媒体服务解锁检测',
+    `服务商： ${providers.join(' ')}`,
+    `状态： ${statuses.join(' ')}`,
+    `地区： ${regions.join(' ')}`,
+    `方式： ${methods.join(' ')}`,
+  ].join('\n');
+  return `<pre class="nq-ansi">${renderNqReportHtml(content)}</pre>`;
 }
 
 function nqReportPre(lines, className = '') {
@@ -363,12 +385,13 @@ function normalizeNqImagePath(value) {
   return /^\/api\/nq\/[^/?#]{1,256}\/image\/[^/?#]{1,128}$/.test(path) ? path : '';
 }
 
-export function buildNqModalHtml(report) {
+export function buildNqModalHtml(report, options = {}) {
   const tabs = Array.isArray(report?.tabs) ? report.tabs : [];
   const time = report?.report_time || '';
   const link = normalizeNqReportLink(report?.link);
   const name = report?.name || '';
   const imageProxyBase = normalizeNqImageProxyBase(report?.image_proxy_base);
+  const modalTitle = String(options?.title || 'NodeQuality');
   const tabButtons = tabs.map((tab, index) => {
     const id = escapeHtml(tab.id || `tab-${index}`);
     const title = escapeHtml(nqTabTitle(tab));
@@ -399,7 +422,7 @@ export function buildNqModalHtml(report) {
       <div class="nq-modal" role="dialog" aria-modal="true" aria-label="NodeQuality 报告">
         <div class="nq-modal-head">
           <div>
-            <strong>NodeQuality</strong>
+            <strong>${escapeHtml(modalTitle)}</strong>
             <span>${escapeHtml(name)}</span>
           </div>
           <button type="button" class="nq-close" data-nq-close aria-label="关闭">×</button>
