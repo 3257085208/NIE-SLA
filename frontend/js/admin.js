@@ -1,9 +1,9 @@
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1053";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1064";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260802-v1064";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1065";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260802-v1065";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml } from "./shared/nodequality.js?v=20260731-v1049";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260802-v1065";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -841,7 +841,7 @@ function showIpUnlockTaskReport(target, task) {
     report_time: `${statusLabel} · ${task.finished_at ? formatDateTime(task.finished_at) : "尚未完成"}`,
     tabs: [{ id: "ip", title: "IP质量", content: "" }],
   };
-  const reportText = typeof task?.result?.report === "string" && task.result.report.trim() ? task.result.report : "";
+  const reportText = typeof task?.result?.report === "string" && task.result.report.trim() ? trimReportAdFooter(task.result.report) : "";
   if (reportText) {
     report.tabs[0].content = reportText;
   } else {

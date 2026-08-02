@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { buildNqModalHtml, renderNqReportHtml, renderUnlockServicesReportHtml } from '../js/shared/nodequality.js';
+import { buildNqModalHtml, renderNqReportHtml, renderUnlockServicesReportHtml, trimReportAdFooter } from '../js/shared/nodequality.js';
 
 const services = [
   { id: 'tiktok', name: 'TikTok', status: '解锁', region: 'DE', method: '原生' },
@@ -42,8 +42,19 @@ const adminSource = readFileSync(new URL('../js/admin.js', import.meta.url), 'ut
 const adminCss = readFileSync(new URL('../admin.css', import.meta.url), 'utf8');
 assert.match(adminSource, /task\.action === "ip_unlock"[\s\S]*showIpUnlockTaskReport/, 'IP unlock task details must open the structured report dialog');
 assert.match(adminSource, /function showIpUnlockTaskReport[\s\S]*renderUnlockServicesReportHtml\(services\)[\s\S]*buildNqModalHtml\(report,\s*\{\s*title:\s*"IP 解锁"\s*\}\)/, 'IP unlock task details must render the structured NQ-style dialog');
-assert.match(adminSource, /task\?\.result\?\.report[\s\S]*report\.tabs\[0\]\.content = reportText[\s\S]*buildNqModalHtml/, 'full IPQuality reports must be placed into the IP-quality tab content');
+assert.match(adminSource, /trimReportAdFooter\(task\.result\.report\)/, 'full IPQuality reports must strip sponsor ads before rendering in the admin dialog');
 assert.match(adminSource, /task\.error[\s\S]*ip-unlock-raw[\s\S]*原始输出/, 'IP unlock failures must keep the raw output available but collapsed');
+const adReport = 'IP 质量体检报告：117.55.*.*\n五、流媒体解锁检测\n========================================================================\n今日IP检测量：1；总检测量：2。感谢使用xy系列脚本！\nTERM environment variable not set.\nSPONSORSPONSORSPONSOR\nIPWOIPWOIPWO https://www.ipwo.net/\n';
+const trimmedAdReport = trimReportAdFooter(adReport);
+assert.equal(trimmedAdReport, 'IP 质量体检报告：117.55.*.*\n五、流媒体解锁检测\n========================================================================\n今日IP检测量：1；总检测量：2。感谢使用xy系列脚本！\n');
+assert.doesNotMatch(trimmedAdReport, /SPONSOR|IPWO|TERM environment/, 'IP unlock reports must strip sponsor advertisements before rendering');
+assert.equal(trimReportAdFooter('IP 质量体检报告\n五、流媒体解锁检测\nNEWSPONSORBANNER\nhttps://example.com/ad\n'), 'IP 质量体检报告\n五、流媒体解锁检测\n');
+assert.equal(trimReportAdFooter('IP 质量体检报告'), 'IP 质量体检报告');
+const ansiAdReport = '\u001b[36mIP 质量体检报告：117.55.*.*\u001b[0m\n\u001b[36m今日IP检测量：1；总检测量：2。感谢使用xy系列脚本！\u001b[0m\nTERM environment variable not set.\nSPONSORSPONSORSPONSOR\n';
+const trimmedAnsiAdReport = trimReportAdFooter(ansiAdReport);
+assert.match(trimmedAnsiAdReport, /今日IP检测量/, 'ANSI-colored report tails must still be detected');
+assert.doesNotMatch(trimmedAnsiAdReport, /SPONSOR|TERM environment/, 'ANSI-colored ad footers must still be stripped');
+
 assert.match(adminCss, /\.ip-unlock-raw\s*\{/, 'admin must style the collapsed IP unlock raw output');
 
 console.log('IP unlock structured report ok');

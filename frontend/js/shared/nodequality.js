@@ -2,6 +2,33 @@ export function targetHasNodeQuality(target = {}) {
   return target?.type === 'tcp' && Boolean(target?.has_nq || target?.nq?.has_report);
 }
 
+function plainReportLine(raw) {
+  return String(raw || '').replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').trim();
+}
+
+export function trimReportAdFooter(value = '') {
+  const text = String(value || '');
+  const lines = text.split(/\r?\n/);
+  const tailMarkers = [/今日IP检测量/, /总检测量/, /感谢使用xy系列脚本/, /报告链接/, /Report Link/];
+  let cut = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = plainReportLine(lines[i]);
+    if (tailMarkers.some((item) => item.test(line))) cut = i;
+  }
+  if (cut < 0) {
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = plainReportLine(lines[i]);
+      if (line.startsWith('TERM environment variable not set.') || /^[A-Z][A-Z0-9.]{5,}$/.test(line)) {
+        cut = i - 1;
+        break;
+      }
+    }
+  }
+  const body = cut >= 0 ? lines.slice(0, cut + 1).join('\n') : text;
+  const trimmed = body.replace(/\s+$/u, '');
+  return cut >= 0 && cut + 1 < lines.length ? `${trimmed}\n` : trimmed;
+}
+
 export function nqTabTitle(tab = {}) {
   const id = String(tab.id || '').toLowerCase();
   if (tab.title) return String(tab.title);

@@ -263,6 +263,33 @@ export async function cancelAgentTask(env, taskId) {
   return { ok: true };
 }
 
+const IP_REPORT_TAIL_MARKERS = [/今日IP检测量/, /总检测量/, /感谢使用xy系列脚本/, /报告链接/, /Report Link/];
+
+function plainReportLine(raw) {
+  return String(raw || '').replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').trim();
+}
+
+function trimReportAdFooter(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  let cut = -1;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = plainReportLine(lines[i]);
+    if (IP_REPORT_TAIL_MARKERS.some((item) => item.test(line))) cut = i;
+  }
+  if (cut < 0) {
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = plainReportLine(lines[i]);
+      if (line.startsWith('TERM environment variable not set.') || /^[A-Z][A-Z0-9.]{5,}$/.test(line)) {
+        cut = i - 1;
+        break;
+      }
+    }
+  }
+  const body = cut >= 0 ? lines.slice(0, cut + 1).join('\n') : String(text || '');
+  const trimmed = body.replace(/\s+$/u, '');
+  return cut >= 0 && cut + 1 < lines.length ? `${trimmed}\n` : trimmed;
+}
+
 export function normalizeTaskResult(action, value) {
   const result = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   if (action === 'nodequality') {
@@ -279,9 +306,10 @@ export function normalizeTaskResult(action, value) {
   if (action === 'ip_unlock') {
     const services = Array.isArray(result.services) ? result.services.slice(0, 20).map(normalizeUnlockService).filter(Boolean) : [];
     if (!services.length) throw new ApiError(400, 'IP 解锁结果中没有可识别的 IPv4 解锁数据');
-    const report = typeof result.report === 'string' && result.report.trim()
-      ? sanitizeAnsiContent(result.report).slice(0, MAX_IP_UNLOCK_REPORT_CHARS)
-      : null;
+    const rawReport = typeof result.report === 'string' && result.report.trim()
+      ? trimReportAdFooter(sanitizeAnsiContent(result.report))
+      : '';
+    const report = rawReport ? rawReport.slice(0, MAX_IP_UNLOCK_REPORT_CHARS) : null;
     return { services, ...(report ? { report } : {}) };
   }
   throw new ApiError(400, '未知任务类型');

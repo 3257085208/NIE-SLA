@@ -2,6 +2,12 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.0.65 - 2026-08-02
+
+- IP 解锁完整报告自动裁剪上游脚本尾部的赞助商广告（SPONSOR、IPWO、Lisahost、RapidProxy、YINNET、VMRack、IPPeak、Swiftproxy 等）：Agent 在结果回传前、Worker 在存储前、后台在渲染前都按“今日IP检测量 / 总检测量 / 感谢使用xy系列脚本 / 报告链接”标记截断，并保留 ANSI 颜色与完整报告正文。
+- 无法识别尾部标记的旧报告会从 `TERM environment variable not set.` 或全大写广告横幅处回退截断；报告仍限制为 64 KiB，公共状态页显示效果不变。
+- 应用、Worker、Rust Agent、前端与教程版本同步至 `1.0.65` / `v1.0.65`。
+
 ## 1.0.64 - 2026-08-02
 
 - 后台运行 NodeQuality 时可在确认弹窗分别选择 HardwareQuality（`y/f/v/n`）、IPQuality（`y/n`）、NetQuality（`y/l/n`）与回程路由（`y/n`），默认 `f/y/y/y`；单机与批量任务都随请求提交选项，Agent 按白名单映射为固定 stdin，不开放任意命令或脚本参数。

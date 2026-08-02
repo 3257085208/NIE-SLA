@@ -200,7 +200,7 @@ fn parse_ip_unlock_task_output(output: &str) -> Option<TaskOutput> {
         return None;
     }
     Some(TaskOutput {
-        result: json!({ "services": services, "report": bounded_report_text(output) }),
+        result: json!({ "services": services, "report": ip_unlock_report_text(output) }),
         excerpt: output_excerpt(&unlock_section(&clean)),
     })
 }
@@ -1133,11 +1133,51 @@ fn output_excerpt(value: &str) -> String {
         .to_string()
 }
 
-fn bounded_report_text(value: &str) -> String {
-    value
+fn ip_unlock_report_text(value: &str) -> String {
+    let lines: Vec<&str> = value.lines().collect();
+    let mut end = lines.len();
+    let mut footer = None;
+    for (index, raw_line) in lines.iter().enumerate() {
+        let plain = strip_ansi_codes(raw_line);
+        let line = plain.trim();
+        if line.contains("今日IP检测量")
+            || line.contains("总检测量")
+            || line.contains("感谢使用xy系列脚本")
+            || line.contains("报告链接")
+            || line.contains("Report Link")
+        {
+            footer = Some(index);
+        }
+    }
+    if let Some(index) = footer {
+        end = index + 1;
+    } else {
+        for (index, raw_line) in lines.iter().enumerate() {
+            let plain = strip_ansi_codes(raw_line);
+            let line = plain.trim();
+            if line.starts_with("TERM environment variable not set.") || is_report_ad_banner(line) {
+                end = index;
+                break;
+            }
+        }
+    }
+    lines[..end]
+        .join("\n")
+        .trim_end()
         .chars()
         .take(MAX_IP_UNLOCK_REPORT_CHARS)
-        .collect::<String>()
+        .collect()
+}
+
+fn is_report_ad_banner(line: &str) -> bool {
+    let trimmed = line.trim();
+    let chars: Vec<char> = trimmed.chars().collect();
+    chars.len() >= 6
+        && chars
+            .iter()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || *ch == '.')
+        && chars.iter().any(|ch| ch.is_ascii_uppercase())
+        && !trimmed.contains('：')
 }
 
 #[cfg(test)]
@@ -1395,10 +1435,45 @@ mod tests {
     fn ip_unlock_report_is_bounded_to_64_kib() {
         let text = "a".repeat(70 * 1024);
         assert_eq!(
-            bounded_report_text(&text).chars().count(),
+            ip_unlock_report_text(&text).chars().count(),
             MAX_IP_UNLOCK_REPORT_CHARS
         );
-        assert_eq!(bounded_report_text("short").chars().count(), 5);
+        assert_eq!(ip_unlock_report_text("short").chars().count(), 5);
+    }
+
+    #[test]
+    fn ip_unlock_report_strips_ad_footer() {
+        let output = concat!(
+            "IP质量体检报告：117.55.*.*\n",
+            "五、流媒体解锁检测\n",
+            "服务商： TikTok Netflix\n",
+            "状态： 解锁 解锁\n",
+            "========================================================================\n",
+            "今日IP检测量：1；总检测量：2。感谢使用xy系列脚本！\n",
+            "TERM environment variable not set.\n",
+            "SPONSORSPONSORSPONSOR\n",
+            "IPWOIPWOIPWO https://www.ipwo.net/\n",
+        );
+        let report = ip_unlock_report_text(output);
+        assert!(report.contains("今日IP检测量"));
+        assert!(!report.contains("SPONSOR"));
+        assert!(!report.contains("TERM environment"));
+        assert!(!report.contains("ipwo.net"));
+    }
+
+    #[test]
+    fn ip_unlock_report_falls_back_before_unknown_ad_banner() {
+        let output = concat!(
+            "IP质量体检报告：117.55.*.*\n",
+            "五、流媒体解锁检测\n",
+            "服务商： TikTok Netflix\n",
+            "状态： 解锁 解锁\n",
+            "NEWSPONSORBANNER\n",
+            "https://example.com/ad\n",
+        );
+        let report = ip_unlock_report_text(output);
+        assert!(!report.contains("NEWSPONSORBANNER"));
+        assert!(!report.contains("example.com/ad"));
     }
 
     #[test]

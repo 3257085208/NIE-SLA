@@ -152,10 +152,21 @@ const storedTaskResult = typeof completed.task.result === 'string'
   ? JSON.parse(completed.task.result)
   : completed.task.result;
 const storedReport = storedTaskResult.report;
-assert.equal(storedReport, 'IP 质量体检报告：117.55.*.*\n五、流媒体解锁检测\u001b[31m彩色\u001b[0m\n');
+assert.equal(storedReport, 'IP 质量体检报告：117.55.*.*\n五、流媒体解锁检测\u001b[31m彩色\u001b[0m');
 const longReport = 'x'.repeat(70 * 1024);
 assert.equal(normalizeTaskResult('ip_unlock', { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }], report: longReport }).report.length, 64 * 1024, 'IP unlock reports must be capped at 64 KiB on the Worker');
 assert.equal(normalizeTaskResult('ip_unlock', { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }], report: '\r\u0000ok\u001b[31mred\u001b[0m' }).report, 'ok\u001b[31mred\u001b[0m', 'IP unlock reports must drop control characters while keeping ANSI SGR colors');
+const adReport = 'IP 质量体检报告：117.55.*.*\n五、流媒体解锁检测\n========================================================================\n今日IP检测量：1；总检测量：2。感谢使用xy系列脚本！\nTERM environment variable not set.\nSPONSORSPONSORSPONSOR\nIPWOIPWOIPWO https://www.ipwo.net/\n';
+const trimmedAdReport = normalizeTaskResult('ip_unlock', { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }], report: adReport }).report;
+assert.equal(trimmedAdReport, 'IP 质量体检报告：117.55.*.*\n五、流媒体解锁检测\n========================================================================\n今日IP检测量：1；总检测量：2。感谢使用xy系列脚本！\n');
+assert.doesNotMatch(trimmedAdReport, /SPONSOR|IPWO|TERM environment/, 'IP unlock reports must strip sponsor advertisements after the report footer');
+const fallbackAdReport = normalizeTaskResult('ip_unlock', { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }], report: 'IP 质量体检报告\n五、流媒体解锁检测\nNEWSPONSORBANNER\nhttps://example.com/ad\n' }).report;
+assert.equal(fallbackAdReport, 'IP 质量体检报告\n五、流媒体解锁检测\n');
+const ansiAdReport = '\u001b[36mIP 质量体检报告：117.55.*.*\u001b[0m\n\u001b[36m今日IP检测量：1；总检测量：2。感谢使用xy系列脚本！\u001b[0m\nTERM environment variable not set.\nSPONSORSPONSORSPONSOR\n';
+const trimmedAnsiAdReport = normalizeTaskResult('ip_unlock', { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }], report: ansiAdReport }).report;
+assert.match(trimmedAnsiAdReport, /今日IP检测量/, 'ANSI-colored report tails must still be detected');
+assert.doesNotMatch(trimmedAnsiAdReport, /SPONSOR|TERM environment/, 'ANSI-colored ad footers must still be stripped');
+
 
 const nq = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'nodequality' }), env);
 const nqClaim = await claimAgentTask(env, 'vps-a');
