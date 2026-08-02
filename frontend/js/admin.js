@@ -1,9 +1,9 @@
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1053";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1066";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260802-v1066";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1067";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260802-v1067";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260802-v1066";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260802-v1067";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -920,10 +920,10 @@ async function queueAgentTask(target, action, label) {
     button.textContent = "提交中...";
   }
   try {
-    await api("/api/agent-tasks", {
+    await apiAdmin("/api/agent-tasks", {
       method: "POST",
       body: JSON.stringify({ agent_id: target.id, action, options: action === "nodequality" ? readNqOptions(byId("modal")) : undefined }),
-    });
+    }, 30000);
     closeModal();
     toast(`${label} 已排队，Agent 最多约 5 分钟内领取`, "ok");
     await loadAgentTasks();
@@ -1119,18 +1119,19 @@ function bulkTaskModal(action) {
 }
 
 async function queueBulkAgentTasks(ids, action, label) {
-  const button = byId("confirmBulkTask");
-  if (button) { button.disabled = true; button.textContent = "提交中..."; }
+  const options = action === "nodequality" ? readNqOptions(byId("modal")) : undefined;
+  const count = ids.length;
+  selectedTargetIds.clear();
+  closeModal();
+  toast(`正在为 ${count} 台 VPS 排队...`, "info");
   try {
-    const result = await api("/api/agent-tasks", { method: "POST", body: JSON.stringify({ agent_ids: ids, action, options: action === "nodequality" ? readNqOptions(byId("modal")) : undefined }) });
-    selectedTargetIds.clear();
-    closeModal();
+    const result = await apiAdmin("/api/agent-tasks", { method: "POST", body: JSON.stringify({ agent_ids: ids, action, options }) }, 60000);
     const rejected = Array.isArray(result.rejected) ? result.rejected.length : 0;
     toast(`已排队 ${result.created?.length || 0} 台${rejected ? `，${rejected} 台未提交` : ""}`, rejected && !result.created?.length ? "err" : "ok");
-    await loadAgentTasks();
+    try { await loadAgentTasks(); } catch (_) {}
   } catch (error) {
     toast(error.message, "err");
-    if (button && document.body.contains(button)) { button.disabled = false; button.textContent = "确认排队"; }
+    try { await loadAgentTasks(); } catch (_) {}
   }
 }
 

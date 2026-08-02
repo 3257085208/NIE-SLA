@@ -1,11 +1,12 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.66",
-  "agent_version": "v1.0.66",
-  "source_ref": "app-v1.0.66",
-  "published_at": "2026-08-02T13:55:08Z",
-  "title": "NIE-SLA 1.0.66",
+  "version": "1.0.67",
+  "agent_version": "v1.0.67",
+  "source_ref": "app-v1.0.67",
+  "published_at": "2026-08-02T15:12:20Z",
+  "title": "NIE-SLA 1.0.67",
   "changelog": [
+    "修复后台批量运行 NQ/IP 解锁时确认排队后弹窗不退出、右下角无提示、刷新后部分 VPS 未开始的问题：Worker 批量创建改为每批 5 台并发，前端改为先关闭弹窗并显示排队中提示，批量请求超时提升到 60 秒",
     "修复批量 NQ 在旧 Agent 上 600 秒被 exit 124 终止：Worker 对 pre-1.0.64 Agent 重新下发 3600 秒兼容上限，v1.0.64+ Agent 仍无外部 NQ 超时，排队过期保持 7 天",
     "IP 解锁完整报告自动裁剪上游脚本尾部的赞助商广告（SPONSOR/IPWO/Lisahost/RapidProxy 等），后台只展示报告正文至“今日IP检测量…感谢使用xy系列脚本！”",
     "NodeQuality 后台任务可分别选择 HardwareQuality/IPQuality/NetQuality/回程路由四项测试选项，不再固定只跑快速硬件模式",

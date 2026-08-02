@@ -103,6 +103,27 @@ await assert.rejects(
   () => createAgentTasks(env, [], 'ip_unlock'),
   error => error?.status === 400,
 );
+const bulkIds = [];
+for (let index = 0; index < 10; index += 1) {
+  const id = `bulk-${index}`;
+  bulkIds.push(id);
+  sqlite.prepare(`INSERT INTO targets (id, name, group_name, type, enabled, no_public_ip, created_at, updated_at, traffic_reset_day)
+    VALUES (?, ?, 'Default', 'tcp', 1, 1, ?, ?, 1)`).run(id, `Bulk ${index}`, now, now);
+  sqlite.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at, capabilities) VALUES (?, ?, ?)`)
+    .run(id, new Date().toISOString(), managerCapabilities);
+}
+const largeBatch = await createAgentTasks(env, [...bulkIds, 'missing-bulk-agent'], 'ip_unlock');
+assert.equal(largeBatch.requested, 11);
+assert.equal(largeBatch.created.length, 10, 'bounded-concurrency bulk queueing must still create every valid VPS task');
+assert.equal(largeBatch.rejected.length, 1);
+assert.equal(largeBatch.rejected[0].agent_id, 'missing-bulk-agent');
+for (const id of bulkIds) {
+  const claim = await claimAgentTask(env, id);
+  assert.equal(claim.task.action, 'ip_unlock');
+  await completeAgentTask(jsonRequest({ status: 'failed', error: 'bulk cleanup' }), env, claim.task.id, id);
+}
+sqlite.prepare(`DELETE FROM agent_tasks WHERE agent_id LIKE 'bulk-%'`).run();
+sqlite.prepare(`DELETE FROM targets WHERE id LIKE 'bulk-%'`).run();
 const batchClaim = await claimAgentTask(env, 'vps-a');
 await completeAgentTask(jsonRequest({ status: 'failed', error: 'batch cleanup' }), env, batchClaim.task.id, 'vps-a');
 const batchClaimB = await claimAgentTask(env, 'vps-b');

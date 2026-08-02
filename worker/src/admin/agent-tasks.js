@@ -34,7 +34,7 @@ const MAX_IP_UNLOCK_REPORT_CHARS = 64 * 1024;
 const AGENT_TASK_POLL_SEC = 300;
 
 const MAX_BULK_AGENT_TASKS = 50;
-
+const BULK_AGENT_TASK_CONCURRENCY = 5;
 
 async function resolveAgentTarget(env, agentIdValue) {
   const raw = String(agentIdValue || '').trim();
@@ -87,11 +87,18 @@ export async function createAgentTasks(env, agentIdsValue, action, options = nul
   if (ids.length > MAX_BULK_AGENT_TASKS) throw new ApiError(400, `一次最多运行 ${MAX_BULK_AGENT_TASKS} 台 VPS`);
   const created = [];
   const rejected = [];
-  for (const agentId of ids) {
-    try {
-      created.push((await createAgentTaskForAgent(env, agentId, action, nqOptions)).task);
-    } catch (error) {
-      rejected.push({ agent_id: agentId, error: String(error?.message || '无法排队').slice(0, 200) });
+  for (let offset = 0; offset < ids.length; offset += BULK_AGENT_TASK_CONCURRENCY) {
+    const chunk = ids.slice(offset, offset + BULK_AGENT_TASK_CONCURRENCY);
+    const results = await Promise.all(chunk.map(async (agentId) => {
+      try {
+        return { created: (await createAgentTaskForAgent(env, agentId, action, nqOptions)).task, rejected: null };
+      } catch (error) {
+        return { created: null, rejected: { agent_id: agentId, error: String(error?.message || '无法排队').slice(0, 200) } };
+      }
+    }));
+    for (const result of results) {
+      if (result.created) created.push(result.created);
+      else rejected.push(result.rejected);
     }
   }
   return { ok: true, bulk: true, action, requested: ids.length, created, rejected };
