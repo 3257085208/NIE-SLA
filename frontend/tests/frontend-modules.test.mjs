@@ -300,8 +300,9 @@ assert.equal(formatLocationLabel('德国', ''), '德国');
 assert.equal(typeof bindNodeQualityModal, 'function');
 console.log('location label helpers ok');
 
-assert.equal(unlockState({ status: 'Yes', region: 'US', method: 'DNS' }), 'dns');
-assert.equal(unlockState({ status: '解锁', region: 'CA', method: 'DNS' }), 'dns');
+assert.equal(unlockState({ status: 'Yes', region: 'US', method: 'DNS' }), 'good');
+assert.equal(unlockState({ status: '解锁', region: 'CA', method: 'DNS' }), 'good');
+assert.equal(unlockState({ status: '仅自制', region: 'DE', method: '原生' }), 'dns');
 assert.equal(unlockState({ status: 'Yes', region: 'US', method: 'Native' }), 'good');
 assert.equal(unlockState({ status: 'No', region: '', method: 'DNS' }), 'bad');
 console.log('unlock state helpers ok');

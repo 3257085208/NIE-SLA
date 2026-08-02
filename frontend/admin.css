@@ -284,6 +284,14 @@ h3 {
 }
 .settings-panel-grid > .debug-logs-card { grid-column: 1 / -1; }
 .debug-log-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.debug-log-details { border: 1px solid var(--line); border-radius: 5px; background: var(--paper); }
+.debug-log-details > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; cursor: pointer; list-style: none; font-weight: 800; }
+.debug-log-details > summary::-webkit-details-marker { display: none; }
+.debug-log-details > summary::before { content: "▸"; color: var(--muted); margin-right: 8px; transition: transform 0.15s ease; }
+.debug-log-details[open] > summary::before { transform: rotate(90deg); }
+.debug-log-details > summary .debug-log-count { margin-left: auto; color: var(--muted); font-weight: 600; }
+.debug-log-details > .debug-log-toolbar, .debug-log-details > .debug-log-scroll, .debug-log-details > .hint { padding: 0 12px 12px; }
+.debug-log-details > .debug-log-toolbar { justify-content: flex-end; margin-bottom: 0; }
 .debug-log-scroll { max-width: 100%; overflow-x: auto; padding-bottom: 2px; }
 .debug-log-list { display: grid; gap: 6px; min-width: 760px; }
 .debug-log-row {
@@ -1355,6 +1363,7 @@ body.admin-modal-open { overflow: hidden; }
   cursor: pointer;
 }
 .bulk-target-option:last-child { border-bottom: 0; }
+.bulk-target-option[hidden] { display: none; }
 .bulk-target-option:hover { background: #f4fbf8; }
 .bulk-target-option input { width: 17px; height: 17px; margin: 0; accent-color: var(--signal); }
 .bulk-target-option span { display: grid; min-width: 0; gap: 2px; }

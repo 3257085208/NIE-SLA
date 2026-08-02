@@ -166,6 +166,8 @@ const liveLatency = refreshLatencySources({ id: 'vps-a', type: 'tcp', checked_at
 ]);
 assert.deepEqual(liveLatency.latency_sources.map(source => source.id), ['cloudflare', 'tokyo']);
 assert.equal(liveLatency.latency_sources[0].latency_ms, 20);
+assert.equal(liveLatency.latency_sources[0].color, '#159754');
+assert.equal(refreshLatencySources({ id: 'vps-a', type: 'tcp' }, [], '#123ABC').latency_sources[0].color, '#123abc');
 assert.deepEqual(refreshLatencySources({ id: 'private', type: 'tcp', no_public_ip: 1 }, liveLatency.latency_sources).latency_sources, []);
 assert.equal(isAgentApiPath('/api/agent/install-command'), false);
 

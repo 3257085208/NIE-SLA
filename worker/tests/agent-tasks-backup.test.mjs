@@ -78,6 +78,8 @@ sqlite.prepare(`INSERT INTO nodes (id, legacy_target_id, name, group_name, enabl
   VALUES (?, ?, ?, 'Default', 1, ?, ?)`).run('vps-a', 'vps-a', 'VPS A', now, now);
 sqlite.prepare(`INSERT INTO targets (id, name, group_name, type, enabled, no_public_ip, created_at, updated_at, traffic_reset_day)
   VALUES (?, ?, 'Default', 'tcp', 1, 1, ?, ?, 1)`).run('vps-b', 'VPS B', now, now);
+sqlite.prepare(`INSERT INTO targets (id, name, group_name, type, enabled, no_public_ip, created_at, updated_at, traffic_reset_day)
+  VALUES (?, ?, 'Default', 'tcp', 1, 1, ?, ?, 1)`).run('bitsflowcloud-lax-9929&cmin2', 'BitsFlow RAW ID', now, now);
 const managerCapabilities = JSON.stringify({
   protocol: 1,
   mode: 'manager',
@@ -88,6 +90,8 @@ sqlite.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at, capabilit
   .run('vps-a', new Date().toISOString(), managerCapabilities);
 sqlite.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at, capabilities) VALUES (?, ?, ?)`)
   .run('vps-b', new Date().toISOString(), managerCapabilities);
+sqlite.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at, capabilities) VALUES (?, ?, ?)`)
+  .run('bitsflowcloud-lax-9929-cmin2', new Date().toISOString(), managerCapabilities);
 
 const batch = await createAgentTasks(env, ['vps-a', 'vps-b', 'missing-agent', 'vps-a'], 'ip_unlock');
 assert.equal(batch.requested, 3);
@@ -103,6 +107,20 @@ const batchClaim = await claimAgentTask(env, 'vps-a');
 await completeAgentTask(jsonRequest({ status: 'failed', error: 'batch cleanup' }), env, batchClaim.task.id, 'vps-a');
 const batchClaimB = await claimAgentTask(env, 'vps-b');
 await completeAgentTask(jsonRequest({ status: 'failed', error: 'batch cleanup' }), env, batchClaimB.task.id, 'vps-b');
+
+const rawId = 'bitsflowcloud-lax-9929&cmin2';
+const canonicalRawId = 'bitsflowcloud-lax-9929-cmin2';
+const rawTask = await createAgentTask(jsonRequest({ agent_id: rawId, action: 'ip_unlock' }), env);
+assert.equal(rawTask.task.agent_id, rawId, 'raw target IDs must be preserved on queued tasks');
+const rawClaim = await claimAgentTask(env, canonicalRawId);
+assert.equal(rawClaim.task.id, rawTask.task.id, 'canonical Agent IDs must claim raw-ID tasks');
+await completeAgentTask(jsonRequest({
+  status: 'succeeded',
+  result: { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }] },
+}), env, rawClaim.task.id, canonicalRawId);
+assert.match(sqlite.prepare(`SELECT unlock_data FROM targets WHERE id = ?`).get(rawId).unlock_data, /Netflix/);
+const rawHistory = await listAgentTasks(env, new URL(`https://example.test/api/agent-tasks?agent_id=${encodeURIComponent(canonicalRawId)}`));
+assert.equal(rawHistory.tasks[0].agent_id, rawId, 'history must keep the raw target ID visible to the admin table');
 
 const created = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'ip_unlock' }), env);
 assert.equal(created.task.status, 'queued');
@@ -218,7 +236,7 @@ sqlite.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?), 
     'nq_image_host_token', 'enc:v1:private-token-ciphertext', now,
   );
 const portable = await exportBackup(new Request('https://example.test/api/backup/export'), env);
-assert.equal(portable.backup.portable.targets.length, 2);
+assert.equal(portable.backup.portable.targets.length, 3);
 assert.equal('sensitive' in portable.backup, false);
 assert.equal(JSON.stringify(portable.backup).includes('private-image-host.example'), false);
 assert.equal(portable.backup.portable.app_meta.some((row) => row.key.startsWith('nq_image_host_')), false);
@@ -256,7 +274,7 @@ assert.equal(protectedBackup.backup.sensitive.algorithm, 'PBKDF2-SHA256+A256GCM'
 assert.equal(protectedBackup.backup.sensitive.iterations, 100_000);
 assert.equal(JSON.stringify(protectedBackup.backup).includes('private-image-host.example'), false);
 const preview = await previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'Backup-password-123!' }));
-assert.equal(preview.preview.counts.targets, 2);
+assert.equal(preview.preview.counts.targets, 3);
 assert.equal(preview.preview.sensitive_counts.agent_tokens, 1);
 assert.equal(preview.preview.sensitive_counts.agent_credentials, 0);
 assert.equal(preview.preview.agent_connections_preserved, true);

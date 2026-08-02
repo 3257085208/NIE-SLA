@@ -2,7 +2,7 @@ import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFro
 import { json } from './auth.js';
 import { validateAdminSession } from './totp.js';
 import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
-import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, convertPriceToCny, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
+import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, convertPriceToCny, getMeta, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
 import { summarizeTrafficWithPending, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 import { compactStatusPayload, refreshLatencySources } from './status-payload.js';
 import { mergeAgentAvailabilityRows } from './agent-availability.js';
@@ -149,6 +149,7 @@ async function buildStatusPayload(env, url = null) {
       return new Map();
     });
 
+  const cloudflareColor = String(await getMeta(env, 'latency_cloudflare_color') || '#159754');
   const rows = (targets.results || []).map((targetRow) => {
     const r2Status = r2State.targets?.[targetRow.id] || {};
     const d1Status = latestMap[targetRow.id] || {};
@@ -164,10 +165,7 @@ async function buildStatusPayload(env, url = null) {
     const publicRow = { ...row, no_public_ip: noPublicIp ? 1 : 0, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || '自动', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, has_nq: hasNq, nq: hasNq ? { has_report: true, updated_at: targetRow.nq_updated_at ? Number(targetRow.nq_updated_at) : null } : null, unlock, ...agentStatusFields(agentState, env) };
     delete publicRow.nq_report;
     delete publicRow.unlock_data;
-    publicRow.latency_sources = noPublicIp ? [] : [
-      { id: 'cloudflare', name: 'Cloudflare', kind: 'cloudflare', builtin: true, checked_at: row.checked_at || null, latency_ms: row.latency_ms ?? null, ok: Number(row.ok) === 1 },
-      ...(externalLatency.get(String(targetRow.id)) || []),
-    ];
+    publicRow.latency_sources = noPublicIp ? [] : refreshLatencySources(publicRow, externalLatency.get(String(targetRow.id)) || [], cloudflareColor).latency_sources;
     if (noPublicIp) {
       Object.assign(publicRow, { status_source: 'agent', agent_online: Boolean(agentState && agentStatusFields(agentState, env).agent_online), latency_ms: null, checked_at: null, ok: null, uptime_24h: null, uptime_7d: null, avg_latency_24h: null, error: null });
     }
@@ -304,6 +302,7 @@ async function overlayLiveTargetStatus(env, payload) {
     ]);
     const byId = new Map((rows.results || []).map((r) => [String(r.target_id), r]));
     const liveTargetById = new Map((liveTargets.results || []).map((target) => [String(target.id), target]));
+    const cloudflareColor = String(await getMeta(env, 'latency_cloudflare_color') || '#159754');
     payload.targets = payload.targets.map((t) => {
       const liveTarget = liveTargetById.get(String(t.id));
       const currentTarget = liveTarget ? {
@@ -316,7 +315,7 @@ async function overlayLiveTargetStatus(env, payload) {
         has_nq: Number(liveTarget.has_nq || 0) === 1,
         nq: Number(liveTarget.has_nq || 0) === 1 ? { has_report: true, updated_at: Number(liveTarget.nq_updated_at || 0) || null } : null,
       } : t;
-      if (Number(currentTarget.no_public_ip || 0) === 1) return refreshLatencySources({ ...currentTarget, status_source: 'agent', latency_ms: null, checked_at: null, ok: null, error: null });
+      if (Number(currentTarget.no_public_ip || 0) === 1) return refreshLatencySources({ ...currentTarget, status_source: 'agent', latency_ms: null, checked_at: null, ok: null, error: null }, [], cloudflareColor);
       const live = byId.get(String(t.id));
       const current = live ? {
         ...currentTarget,
@@ -329,7 +328,7 @@ async function overlayLiveTargetStatus(env, payload) {
         cf_colo: live.cf_colo || currentTarget.cf_colo,
         live_overlay: true,
       } : currentTarget;
-      return refreshLatencySources(current, externalLatency.get(String(t.id)) || []);
+      return refreshLatencySources(current, externalLatency.get(String(t.id)) || [], cloudflareColor);
     });
     payload.live_overlay_at = nowSec();
   } catch (error) {

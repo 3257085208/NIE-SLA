@@ -2068,7 +2068,8 @@ function updateChart(checks, name) {
   state.chart.options.scales.y.grace = '18%';
   state.chart.options.scales.packetLoss = { axis: 'y', type: 'linear', display: false, min: 0, max: 4 };
 
-  const cloudflareSeries = cloudflareLatencyChartSeries(checks);
+  const selectedTarget = (state.data?.targets || []).find(target => target.id === state.selectedId);
+  const cloudflareSeries = cloudflareLatencyChartSeries(checks, cloudflareLatencyColor(selectedTarget));
   const externalSeries = externalLatencyChartSeries();
   const sources = [cloudflareSeries, ...externalSeries].filter(source => source.samples.length);
   const samples = sources.flatMap(source => source.samples);
@@ -2136,12 +2137,18 @@ function buildLatencyChartDatasets(sources = [], samples = [], visibleIds = []) 
   return datasets;
 }
 
-function cloudflareLatencyChartSeries(checks) {
+
+function cloudflareLatencyColor(target = {}) {
+  const source = (target.latency_sources || []).find(source => String(source.id) === 'cloudflare');
+  return configuredChartColor(source?.color, '#159754');
+}
+
+function cloudflareLatencyChartSeries(checks, color = '#159754') {
   const samples = latencySamples('cloudflare', checks, { excludeMissed: true });
   return {
     id: 'cloudflare',
     name: 'Cloudflare',
-    color: '#159754',
+    color,
     samples,
     points: latencyLinePoints(samples),
   };

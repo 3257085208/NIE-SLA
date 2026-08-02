@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { ensureV6Schema } from '../src/admin/schema.js';
-import { createLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentTargets, getLatencyAgentUpdatePolicy, getPublicLatency, submitLatencyAgentResults } from '../src/admin/latency-agents.js';
+import { createLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentTargets, getLatencyAgentUpdatePolicy, getPublicLatency, listLatencyAgents, submitLatencyAgentResults, updateLatencyAgent } from '../src/admin/latency-agents.js';
 
 globalThis.crypto ||= webcrypto;
 
@@ -39,6 +39,15 @@ assert.deepEqual(await getLatencyAgentUpdatePolicy(env), {
 });
 database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES ('agent_auto_update', 'false', ?)`).run(now);
 assert.equal((await getLatencyAgentUpdatePolicy(env)).auto_update, false);
+
+const listed = await listLatencyAgents(env);
+assert.equal(listed.builtin.id, 'cloudflare');
+assert.equal(listed.builtin.color, '#159754');
+const cfUpdate = await updateLatencyAgent('cloudflare', jsonRequest({ color: '#FFAA33' }), env);
+assert.equal(cfUpdate.color, '#ffaa33');
+assert.equal((await listLatencyAgents(env)).builtin.color, '#ffaa33');
+assert.equal(database.prepare(`SELECT value FROM app_meta WHERE key = 'latency_cloudflare_color'`).get().value, '#ffaa33');
+await assert.rejects(() => deleteLatencyAgent('cloudflare', env), /不可删除/);
 
 const created = await createLatencyAgent(jsonRequest({ name: '东京 IIJ', color: '#3366CC' }), env);
 assert.equal(created.ok, true);

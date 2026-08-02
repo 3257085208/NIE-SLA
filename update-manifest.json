@@ -1,15 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.62",
-  "agent_version": "v1.0.62",
-  "source_ref": "app-v1.0.62",
+  "version": "1.0.63",
+  "agent_version": "v1.0.63",
+  "source_ref": "app-v1.0.63",
   "published_at": "2026-08-02T12:00:00Z",
-  "title": "NIE-SLA 1.0.62",
+  "title": "NIE-SLA 1.0.63",
   "changelog": [
-    "后台 IP 解锁任务详情改为与 NQ“IP质量”一致的流媒体解锁网格，不再直接展示原始 JSON",
-    "原始输出保留在可折叠区域，失败错误仍直接显示；公共状态页显示保持不变",
-    "保留手机端 NQ 页签等分居中、Debug 操作日志与 30 天自动清理、原生 xterm NQ 报告和任务安全边界",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.62"
+    "系统调试日志改为可折叠卡片并默认收起，继续记录操作 IP 并自动清理 30 天前的记录",
+    "Cloudflare 内置 Latency 固定保留、不可删除，并支持自定义曲线颜色，公共图表同步应用",
+    "NQ/IP 解锁渲染修复：仅自制恢复黄色，DNS 方式成功的解锁保持绿色",
+    "修复批量任务目标搜索与含特殊字符 VPS ID 的下发；NodeQuality 硬件检测改为快速模式避免慢速设备超时",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.63"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

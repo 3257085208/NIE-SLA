@@ -22,6 +22,7 @@ const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const MAX_NODEQUALITY_ARTIFACT_BYTES: usize = 24 * 1024;
 const MAX_NODEQUALITY_CAPTURE_CHARS: usize = 180 * 1024;
 const NODEQUALITY_TIMEOUT_SEC: u64 = 3600;
+const NODEQUALITY_STDIN: &[u8] = b"f\ny\ny\ny\n";
 const IP_UNLOCK_TIMEOUT_SEC: u64 = 600;
 const NODEQUALITY_CAPTURE_BEGIN: &str = "__NSTATUS_NQ_ARTIFACTS_V1_BEGIN__";
 const NODEQUALITY_CAPTURE_END: &str = "__NSTATUS_NQ_ARTIFACTS_V1_END__";
@@ -134,7 +135,7 @@ fn run_nodequality(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<
         timeout_sec.min(NODEQUALITY_TIMEOUT_SEC),
         "https://run.NodeQuality.com",
         &[],
-        Some(b"v\ny\ny\ny\n"),
+        Some(NODEQUALITY_STDIN),
     )?;
     nodequality_task_output(&output)
 }
@@ -1234,6 +1235,11 @@ mod tests {
         assert_eq!(merged.header, "disk header");
         assert_eq!(merged.network, "streamed network");
         assert_eq!(merged.route, "disk route");
+    }
+
+    #[test]
+    fn nodequality_uses_fast_hardware_mode() {
+        assert_eq!(NODEQUALITY_STDIN, b"f\ny\ny\ny\n");
     }
 
     #[cfg(unix)]

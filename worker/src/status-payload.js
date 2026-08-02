@@ -25,18 +25,21 @@ export function compactStatusPayload(payload) {
   };
 }
 
-export function refreshLatencySources(target, externalSources = []) {
+
+export function refreshLatencySources(target, externalSources = [], cloudflareColor = '#159754') {
   const result = { ...(target || {}) };
   if (Number(result.no_public_ip || 0) === 1) {
     result.latency_sources = [];
     return result;
   }
+  const color = /^#[0-9a-f]{6}$/i.test(String(cloudflareColor || '').trim()) ? String(cloudflareColor).trim().toLowerCase() : '#159754';
   result.latency_sources = [
     {
       id: 'cloudflare',
       name: 'Cloudflare',
       kind: 'cloudflare',
       builtin: true,
+      color,
       checked_at: result.checked_at || null,
       latency_ms: result.latency_ms ?? null,
       ok: Number(result.ok) === 1,

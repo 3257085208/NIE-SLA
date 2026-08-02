@@ -1,6 +1,6 @@
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1053";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1062";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1063";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
 import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml } from "./shared/nodequality.js?v=20260731-v1049";
 import {
@@ -58,6 +58,7 @@ let targets = [],
   adminGroupBy = normalizeGroupByMode(readStorage("localStorage", "nstatus.adminGroupBy", "group")),
   statusMap = new Map(),
   latencyNodes = [],
+  latencyBuiltin = null,
   pingTargets = [],
   agentTasks = new Map(),
   agentTasksByAction = new Map(),
@@ -1085,7 +1086,10 @@ function openBulkTargetPicker(preserveSelection = false, next = bulkTargetModal,
   };
   byId("bulkTargetSearch").oninput = event => {
     const query = event.target.value.trim().toLowerCase();
-    for (const option of byId("modal").querySelectorAll(".bulk-target-option")) option.hidden = Boolean(query && !option.dataset.search.includes(query));
+    for (const option of byId("modal").querySelectorAll(".bulk-target-option")) {
+      const haystack = `${option.dataset.search || ""} ${option.textContent || ""}`.toLowerCase();
+      option.hidden = Boolean(query && !haystack.includes(query));
+    }
     refreshBulkTargetPicker();
   };
   byId("bulkPickerSelectAll").onchange = event => {
@@ -1810,6 +1814,7 @@ async function loadLatencyNodes() {
   try {
     const data = await apiAdmin("/api/latency-agents", {}, 30000);
     latencyNodes = data.nodes || [];
+    latencyBuiltin = data.builtin || { id: "cloudflare", name: "Cloudflare", color: "#159754", builtin: true, enabled: true };
     renderLatencyNodes();
   } catch (error) {
     errBox("latencyTable", error);
@@ -1817,13 +1822,14 @@ async function loadLatencyNodes() {
 }
 
 function renderLatencyNodes() {
+  const builtinColor = configuredChartColor(latencyBuiltin?.color, "#159754");
   const builtin = `
     <tr class="latency-builtin-row">
       <td><code>cloudflare</code></td>
-      <td><span class="chart-color-swatch" style="--chart-color:#159754"></span><strong>Cloudflare</strong><small class="table-note">系统默认来源</small></td>
+      <td><span class="chart-color-swatch" style="--chart-color:${builtinColor}"></span><strong>Cloudflare</strong><small class="table-note">系统默认来源</small></td>
       <td><span class="tag tag-on">内置 · 启用</span></td>
       <td>全球边缘网络</td>
-      <td><span class="muted">固定保留，不可删除</span></td>
+      <td><div class="actions"><span class="muted">固定保留，不可删除</span><button class="btn btn-xs" data-a="latency-edit">编辑颜色</button></div></td>
     </tr>`;
   const external = latencyNodes.map((node, index) => `
     <tr data-i="${index}">
@@ -1847,38 +1853,42 @@ function renderLatencyNodes() {
     </div>`;
 }
 
+
 function latencyNodeModal(node = null) {
   const edit = Boolean(node);
+  const builtin = node?.builtin || String(node?.id || "") === "cloudflare";
   byId("modal").innerHTML = `
     <h3>${edit ? "编辑" : "新增"} Latency 节点</h3>
     ${edit ? inputField("ID", "latencyNodeId", node.id, "readonly") : ""}
-    ${inputField("显示名称", "latencyNodeName", node?.name || "", 'placeholder="例如：东京 IIJ、洛杉矶 CN2"')}
-    ${formField("曲线颜色", `<input id="latencyNodeColor" type="color" value="${configuredChartColor(node?.color, '#2e7dd7')}">`)}
-    <p class="hint">名称用于后台识别及详细延迟图表；VPS 列表不显示节点名称与延迟。此节点与 VPS Agent、Ping 功能完全独立。</p>
+    ${inputField("显示名称", "latencyNodeName", node?.name || "", builtin ? "readonly" : 'placeholder="例如：东京 IIJ、洛杉矶 CN2"')}
+    ${formField("曲线颜色", `<input id="latencyNodeColor" type="color" value="${configuredChartColor(node?.color, builtin ? '#159754' : '#2e7dd7')}">`)}
+    <p class="hint">${builtin ? "Cloudflare 为系统内置来源，名称与启用状态固定，只可修改曲线颜色。" : "名称用于后台识别及详细延迟图表；VPS 列表不显示节点名称与延迟。此节点与 VPS Agent、Ping 功能完全独立。"}</p>
     <div class="ma"><button class="btn" data-close>取消</button><button class="btn btn-primary" id="saveLatencyNode">保存</button></div>`;
   byId("saveLatencyNode").onclick = () => saveLatencyNode(node);
   openModal();
 }
 
 async function saveLatencyNode(node = null) {
+  const builtin = node?.builtin || String(node?.id || "") === "cloudflare";
   const name = byId("latencyNodeName").value.trim();
-  const color = configuredChartColor(byId("latencyNodeColor")?.value, '#2e7dd7');
-  if (!name) return toast("请填写 Latency 节点名称", "err");
+  const color = configuredChartColor(byId("latencyNodeColor")?.value, builtin ? '#159754' : '#2e7dd7');
+  if (!builtin && !name) return toast("请填写 Latency 节点名称", "err");
   const button = byId("saveLatencyNode");
   button.disabled = true;
   try {
     await apiAdmin(node ? `/api/latency-agents/${encodeURIComponent(node.id)}` : "/api/latency-agents", {
       method: node ? "PATCH" : "POST",
-      body: JSON.stringify({ name, color }),
+      body: JSON.stringify(builtin ? { color } : { name, color }),
     }, 30000);
     closeModal();
-    toast("Latency 节点已保存", "ok");
+    toast(builtin ? "Cloudflare 曲线颜色已更新" : "Latency 节点已保存", "ok");
     loadLatencyNodes();
   } catch (error) {
     toast(error.message, "err");
     button.disabled = false;
   }
 }
+
 
 async function toggleLatencyNode(node) {
   try {
@@ -2819,9 +2829,11 @@ async function loadDebugLogs() {
   try {
     const data = await api("/api/debug/logs?limit=200");
     const logs = Array.isArray(data.logs) ? data.logs : [];
-    box.innerHTML = `
-      <div class="debug-log-toolbar"><span>${logs.length} 条记录</span><button class="btn btn-sm" id="debugLogsRefresh">刷新</button></div>
-      ${logs.length ? `<div class="debug-log-scroll"><div class="debug-log-list">${logs.map(renderDebugLogRow).join("")}</div></div>` : '<p class="hint">暂无日志</p>'}`;
+    box.innerHTML = `<details class="debug-log-details">
+      <summary><span class="debug-log-summary-title">系统调试日志</span><span class="debug-log-count">${logs.length} 条记录</span></summary>
+      <div class="debug-log-toolbar"><button class="btn btn-sm" id="debugLogsRefresh">刷新</button></div>
+      ${logs.length ? `<div class="debug-log-scroll"><div class="debug-log-list">${logs.map(renderDebugLogRow).join("")}</div></div>` : '<p class="hint">暂无日志</p>'}
+    </details>`;
     byId("debugLogsRefresh").onclick = loadDebugLogs;
   } catch (e) {
     errBox("sDebugLogs", e);
@@ -3176,7 +3188,8 @@ byId("savePingInterval").onclick = savePingInterval;
 byId("latencyTable").onclick = (e) => {
   const button = e.target.closest("button[data-a]");
   if (!button) return;
-  const node = latencyNodes[Number(button.closest("tr")?.dataset.i)];
+  const row = button.closest("tr");
+  const node = row?.classList?.contains("latency-builtin-row") ? latencyBuiltin : latencyNodes[Number(row?.dataset?.i)];
   if (!node) return;
   if (button.dataset.a === "latency-deploy") deployLatencyNode(node, button);
   if (button.dataset.a === "latency-edit") latencyNodeModal(node);

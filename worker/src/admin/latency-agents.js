@@ -2,7 +2,7 @@ import { ApiError, safeJson } from '../auth.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, sha256Hex } from '../utils.js';
 import { agentApiBase, agentInstallBase, shellQuote } from './install-command.js';
-import { getPublicSettings } from './settings.js';
+import { getMeta, getPublicSettings, setMeta } from './settings.js';
 
 const RESULT_BUCKET_SEC = 60;
 const D1_FALLBACK_BUCKET_SEC = 300;
@@ -18,7 +18,8 @@ const LATENCY_TICKET_PREFIX = 'latency:';
 
 export async function listLatencyAgents(env) {
   const rows = await env.DB.prepare(`SELECT id, name, color, enabled, last_seen_at, created_at, updated_at FROM latency_agents ORDER BY name COLLATE NOCASE`).all();
-  return { ok: true, builtin: { id: 'cloudflare', name: 'Cloudflare', color: '#159754', builtin: true, enabled: true }, nodes: rows.results || [] };
+  const cfColor = normalizeChartColor(await getMeta(env, 'latency_cloudflare_color'), '#159754');
+  return { ok: true, builtin: { id: 'cloudflare', name: 'Cloudflare', color: cfColor, builtin: true, enabled: true }, nodes: rows.results || [] };
 }
 
 export async function createLatencyAgent(request, env) {
@@ -28,6 +29,7 @@ export async function createLatencyAgent(request, env) {
   const id = requestedId || `latency-${crypto.randomUUID().slice(0, 8)}`;
   const color = normalizeChartColor(body?.color, '#2e7dd7');
   if (body?.color !== undefined && !/^#[0-9a-f]{6}$/i.test(String(body.color).trim())) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
+  if (id === 'cloudflare') throw new ApiError(400, 'Cloudflare 是系统内置来源，不能重复创建');
   const now = nowSec();
   await env.DB.prepare(`INSERT INTO latency_agents (id, name, color, enabled, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)`).bind(id, name, color, now, now).run();
   return { ok: true, id, name };
@@ -35,6 +37,13 @@ export async function createLatencyAgent(request, env) {
 
 export async function updateLatencyAgent(id, request, env) {
   const cleanId = sanitizeAgentId(id);
+  if (cleanId === 'cloudflare') {
+    const body = await safeJson(request);
+    const color = normalizeChartColor(body?.color, '');
+    if (!color) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
+    await setMeta(env, 'latency_cloudflare_color', color);
+    return { ok: true, id: 'cloudflare', builtin: true, color };
+  }
   const existing = await env.DB.prepare(`SELECT * FROM latency_agents WHERE id = ?`).bind(cleanId).first();
   if (!existing) return { ok: false, error: 'Latency 节点不存在' };
   const body = await safeJson(request);
@@ -48,6 +57,7 @@ export async function updateLatencyAgent(id, request, env) {
 
 export async function deleteLatencyAgent(id, env) {
   const cleanId = sanitizeAgentId(id);
+  if (cleanId === 'cloudflare') throw new ApiError(400, 'Cloudflare 内置来源不可删除');
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM latency_results WHERE node_id = ?`).bind(cleanId),
     env.DB.prepare(`DELETE FROM agent_credentials WHERE subject_type = 'latency' AND subject_id = ?`).bind(cleanId),

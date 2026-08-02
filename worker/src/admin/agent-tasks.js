@@ -15,18 +15,52 @@ const AGENT_TASK_POLL_SEC = 300;
 
 const MAX_BULK_AGENT_TASKS = 50;
 
+
+async function resolveAgentTarget(env, agentIdValue) {
+  const raw = String(agentIdValue || '').trim();
+  const canonical = sanitizeAgentId(raw);
+  if (!canonical) return { target: null, canonical: '' };
+  const exact = await env.DB.prepare(`SELECT id, name, type, enabled FROM targets WHERE id = ?`).bind(raw).first();
+  if (exact) return { target: exact, canonical };
+  const canonicalTarget = await env.DB.prepare(`SELECT id, name, type, enabled FROM targets WHERE id = ?`).bind(canonical).first();
+  if (canonicalTarget) return { target: canonicalTarget, canonical };
+  const rows = await env.DB.prepare(`SELECT id, name, type, enabled FROM targets WHERE enabled = 1 AND type = 'tcp'`).all();
+  for (const row of rows.results || []) {
+    if (sanitizeAgentId(row.id) === canonical) return { target: row, canonical };
+  }
+  return { target: null, canonical };
+}
+
+async function agentTaskIds(env, agentIdValue) {
+  const { target, canonical } = await resolveAgentTarget(env, agentIdValue);
+  const ids = canonical ? [canonical] : [];
+  if (target && ids.indexOf(target.id) < 0) ids.push(target.id);
+  return ids;
+}
+
+function inClause(values) {
+  return (values || []).map(() => '?').join(',');
+}
+
 export async function createAgentTask(request, env) {
   const body = await safeJson(request, 16 * 1024);
-  const agentId = sanitizeAgentId(body?.agent_id || '');
+  const rawAgentId = String(body?.agent_id || '').trim();
   const action = String(body?.action || '').trim();
   if (Array.isArray(body?.agent_ids)) return createAgentTasks(env, body.agent_ids, action);
-  if (!agentId) throw new ApiError(400, '请选择 Agent');
-  return createAgentTaskForAgent(env, agentId, action);
+  if (!sanitizeAgentId(rawAgentId)) throw new ApiError(400, '请选择 Agent');
+  return createAgentTaskForAgent(env, rawAgentId, action);
 }
 
 export async function createAgentTasks(env, agentIdsValue, action) {
-  const ids = [...new Set((Array.isArray(agentIdsValue) ? agentIdsValue : [])
-    .map((id) => sanitizeAgentId(id)).filter(Boolean))];
+  const seen = new Set();
+  const ids = [];
+  for (const value of Array.isArray(agentIdsValue) ? agentIdsValue : []) {
+    const raw = String(value || '').trim();
+    const canonical = sanitizeAgentId(raw);
+    if (!canonical || seen.has(canonical)) continue;
+    seen.add(canonical);
+    ids.push(raw);
+  }
   if (!ids.length) throw new ApiError(400, '请选择至少一台 VPS');
   if (ids.length > MAX_BULK_AGENT_TASKS) throw new ApiError(400, `一次最多运行 ${MAX_BULK_AGENT_TASKS} 台 VPS`);
   const created = [];
@@ -45,12 +79,13 @@ async function createAgentTaskForAgent(env, agentId, action) {
   const policy = AGENT_TASK_ACTIONS[action];
   if (!policy) throw new ApiError(400, '只允许 NodeQuality 或 IP 解锁任务');
 
-  const target = await env.DB.prepare(`SELECT id, name, type, enabled FROM targets WHERE id = ?`).bind(agentId).first();
+
+  const { target, canonical } = await resolveAgentTarget(env, agentId);
   if (!target || target.type !== 'tcp' || Number(target.enabled || 0) !== 1) {
     throw new ApiError(404, 'Agent 对应的 VPS 不存在或已停用');
   }
   const runtime = await env.DB.prepare(`SELECT updated_at, capabilities FROM agent_metrics_state WHERE agent_id = ?`)
-    .bind(agentId).first().catch(() => null);
+    .bind(canonical).first().catch(() => null);
   const capabilities = parseCapabilities(runtime?.capabilities);
   const lastSeen = Math.floor(new Date(runtime?.updated_at || 0).getTime() / 1000);
   if (!runtime || !lastSeen || nowSec() - lastSeen > 900) {
@@ -61,8 +96,9 @@ async function createAgentTaskForAgent(env, agentId, action) {
       ? '该 VPS 尚未启用 root Manager，请等待自动迁移或查看 Agent 状态'
       : '该 Agent 版本尚不支持此任务，请等待自动更新');
   }
-  const active = await env.DB.prepare(`SELECT id, action, status FROM agent_tasks WHERE agent_id = ? AND status IN ('queued', 'running') LIMIT 1`)
-    .bind(agentId).first();
+  const taskIds = await agentTaskIds(env, agentId);
+  const active = await env.DB.prepare(`SELECT id, action, status FROM agent_tasks WHERE agent_id IN (${inClause(taskIds)}) AND status IN ('queued', 'running') LIMIT 1`)
+    .bind(...taskIds).first();
   if (active) throw new ApiError(409, '该 Agent 已有任务正在排队或运行');
 
   const now = nowSec();
@@ -85,32 +121,36 @@ function parseCapabilities(value) {
 
 export async function listAgentTasks(env, url) {
   await expireStaleTasks(env);
-  const agentId = sanitizeAgentId(url?.searchParams?.get('agent_id') || '');
+  const rawAgentId = String(url?.searchParams?.get('agent_id') || '').trim();
+  const agentId = sanitizeAgentId(rawAgentId);
   const limit = Math.min(100, Math.max(1, Number(url?.searchParams?.get('limit') || 30)));
-  const rows = agentId
-    ? await env.DB.prepare(`SELECT * FROM agent_tasks WHERE agent_id = ? ORDER BY requested_at DESC LIMIT ?`).bind(agentId, limit).all()
+  const taskIds = agentId ? await agentTaskIds(env, rawAgentId) : [];
+  const rows = taskIds.length
+    ? await env.DB.prepare(`SELECT * FROM agent_tasks WHERE agent_id IN (${inClause(taskIds)}) ORDER BY requested_at DESC LIMIT ?`).bind(...taskIds, limit).all()
     : await env.DB.prepare(`SELECT * FROM agent_tasks ORDER BY requested_at DESC LIMIT ?`).bind(limit).all();
   return { ok: true, beta: true, actions: publicActions(), tasks: (rows.results || []).map(taskForAdmin) };
 }
 
 export async function claimAgentTask(env, agentIdValue, allowedActionsValue = '') {
-  const agentId = sanitizeAgentId(agentIdValue || '');
+  const rawAgentId = String(agentIdValue || '').trim();
+  const agentId = sanitizeAgentId(rawAgentId);
   if (!agentId) throw new ApiError(400, '缺少 agent_id');
   const allowedActions = normalizeAllowedActions(allowedActionsValue);
-  await expireStaleTasks(env, agentId);
+  const taskIds = await agentTaskIds(env, rawAgentId);
+  await expireStaleTasks(env, rawAgentId);
   const queued = allowedActions.length === 1
     ? await env.DB.prepare(`SELECT id FROM agent_tasks
-      WHERE agent_id = ? AND status = 'queued' AND expires_at > ? AND action = ?
-      ORDER BY requested_at ASC LIMIT 1`).bind(agentId, nowSec(), allowedActions[0]).first()
+      WHERE agent_id IN (${inClause(taskIds)}) AND status = 'queued' AND expires_at > ? AND action = ?
+      ORDER BY requested_at ASC LIMIT 1`).bind(...taskIds, nowSec(), allowedActions[0]).first()
     : await env.DB.prepare(`SELECT id FROM agent_tasks
-      WHERE agent_id = ? AND status = 'queued' AND expires_at > ?
-      ORDER BY requested_at ASC LIMIT 1`).bind(agentId, nowSec()).first();
+      WHERE agent_id IN (${inClause(taskIds)}) AND status = 'queued' AND expires_at > ?
+      ORDER BY requested_at ASC LIMIT 1`).bind(...taskIds, nowSec()).first();
   if (!queued) return { ok: true, beta: true, poll_after_sec: AGENT_TASK_POLL_SEC, task: null };
 
   const claimedAt = nowSec();
   const update = await env.DB.prepare(`UPDATE agent_tasks SET status = 'running', claimed_at = ?
-    WHERE id = ? AND agent_id = ? AND status = 'queued'`)
-    .bind(claimedAt, queued.id, agentId).run();
+    WHERE id = ? AND agent_id IN (${inClause(taskIds)}) AND status = 'queued'`)
+    .bind(claimedAt, queued.id, ...taskIds).run();
   if (Number(update?.meta?.changes || 0) < 1) return { ok: true, beta: true, poll_after_sec: AGENT_TASK_POLL_SEC, task: null };
   const row = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).bind(queued.id).first();
   const policy = AGENT_TASK_ACTIONS[row.action];
@@ -138,8 +178,8 @@ function normalizeAllowedActions(value) {
 
 export async function completeAgentTask(request, env, taskId, agentIdValue) {
   const agentId = sanitizeAgentId(agentIdValue || '');
-  const row = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ? AND agent_id = ?`).bind(taskId, agentId).first();
-  if (!row) throw new ApiError(404, '任务不存在');
+  const row = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).bind(taskId).first();
+  if (!row || sanitizeAgentId(row.agent_id) !== agentId) throw new ApiError(404, '任务不存在');
   if (row.status !== 'running') throw new ApiError(409, '任务不在运行状态');
 
   const body = await safeJson(request, MAX_RESULT_BYTES);
@@ -156,7 +196,7 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
   let imageUpload = null;
   if (normalizedNq) {
     try {
-      const target = await env.DB.prepare('SELECT name FROM targets WHERE id = ?').bind(agentId).first().catch(() => null);
+      const target = await env.DB.prepare('SELECT name FROM targets WHERE id = ?').bind(row.agent_id).first().catch(() => null);
       const uploaded = await uploadNodeQualityReportImages(env, normalizedNq, {
         agentId,
         targetName: String(target?.name || '').trim(),
@@ -180,15 +220,15 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
     : result;
   await env.DB.prepare(`UPDATE agent_tasks SET status = ?, finished_at = ?, result = ?, error = ?, output_excerpt = ?, agent_version = ?
     WHERE id = ? AND agent_id = ? AND status = 'running'`)
-    .bind(succeeded ? 'succeeded' : 'failed', finishedAt, storedResult ? JSON.stringify(storedResult) : null, error, excerpt, agentVersion, taskId, agentId).run();
+    .bind(succeeded ? 'succeeded' : 'failed', finishedAt, storedResult ? JSON.stringify(storedResult) : null, error, excerpt, agentVersion, taskId, row.agent_id).run();
 
   if (succeeded && row.action === 'nodequality' && result?.report_url) {
     await env.DB.prepare(`UPDATE targets SET nq_url = ?, nq_report = COALESCE(?, nq_report), nq_updated_at = ?, updated_at = ? WHERE id = ?`)
-      .bind(result.report_url, normalizedNq?.report || null, finishedAt, finishedAt, agentId).run();
+      .bind(result.report_url, normalizedNq?.report || null, finishedAt, finishedAt, row.agent_id).run();
   }
   if (succeeded && row.action === 'ip_unlock' && Array.isArray(result?.services)) {
     await env.DB.prepare(`UPDATE targets SET unlock_data = ?, unlock_updated_at = ?, updated_at = ? WHERE id = ?`)
-      .bind(JSON.stringify({ checked_at: finishedAt, source: 'IP.Check.Place', services: result.services }), finishedAt, finishedAt, agentId).run();
+      .bind(JSON.stringify({ checked_at: finishedAt, source: 'IP.Check.Place', services: result.services }), finishedAt, finishedAt, row.agent_id).run();
   }
   return { ok: true, task: taskForAdmin({ ...row, status: succeeded ? 'succeeded' : 'failed', finished_at: finishedAt, result: storedResult ? JSON.stringify(storedResult) : null, error, output_excerpt: excerpt, agent_version: agentVersion }) };
 }
@@ -244,11 +284,13 @@ function normalizeUnlockService(item) {
   return { id, name, status, region, method };
 }
 
+
 async function expireStaleTasks(env, agentId = '') {
   const now = nowSec();
-  if (agentId) {
+  const taskIds = agentId ? await agentTaskIds(env, agentId) : [];
+  if (taskIds.length) {
     await env.DB.prepare(`UPDATE agent_tasks SET status = 'expired', finished_at = ?
-      WHERE agent_id = ? AND status IN ('queued', 'running') AND expires_at <= ?`).bind(now, agentId, now).run();
+      WHERE agent_id IN (${inClause(taskIds)}) AND status IN ('queued', 'running') AND expires_at <= ?`).bind(now, ...taskIds, now).run();
   } else {
     await env.DB.prepare(`UPDATE agent_tasks SET status = 'expired', finished_at = ?
       WHERE status IN ('queued', 'running') AND expires_at <= ?`).bind(now, now).run();
