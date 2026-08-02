@@ -1,6 +1,6 @@
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1053";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1061";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1062";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
 import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml } from "./shared/nodequality.js?v=20260731-v1049";
 import {
@@ -826,8 +826,6 @@ function showIpUnlockTaskReport(target, task) {
   root.className = "nq-modal-root";
   root.dataset.adminNqReport = "";
   root.returnFocus = document.activeElement;
-  const services = Array.isArray(task?.result?.services) ? task.result.services : [];
-  const servicesHtml = renderUnlockServicesReportHtml(services);
   const statusLabel = ({
     succeeded: "已完成",
     failed: "失败",
@@ -841,10 +839,21 @@ function showIpUnlockTaskReport(target, task) {
     report_time: `${statusLabel} · ${task.finished_at ? formatDateTime(task.finished_at) : "尚未完成"}`,
     tabs: [{ id: "ip", title: "IP质量", content: "" }],
   };
+  const reportText = typeof task?.result?.report === "string" && task.result.report.trim() ? task.result.report : "";
+  if (reportText) {
+    report.tabs[0].content = reportText;
+  } else {
+    const services = Array.isArray(task?.result?.services) ? task.result.services : [];
+    const servicesHtml = renderUnlockServicesReportHtml(services);
+    report.tabs[0].content = "";
+  }
   root.innerHTML = buildNqModalHtml(report, { title: "IP 解锁" });
   const panel = root.querySelector('.nq-panel[data-nq-panel="ip"]');
   if (panel) {
-    panel.innerHTML = servicesHtml || '<div class="nq-empty">未解析到可显示的 IPv4 解锁服务</div>';
+    if (!reportText) {
+      const services = Array.isArray(task?.result?.services) ? task.result.services : [];
+      panel.innerHTML = renderUnlockServicesReportHtml(services) || '<div class="nq-empty">未解析到可显示的 IPv4 解锁服务</div>';
+    }
     const notices = [];
     if (task.error) notices.push(`<div class="task-detail-error">${escapeHtml(task.error)}</div>`);
     if (task.output_excerpt) notices.push(`<details class="ip-unlock-raw"><summary>原始输出</summary><pre class="task-detail-output">${escapeHtml(task.output_excerpt)}</pre></details>`);

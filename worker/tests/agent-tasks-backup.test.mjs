@@ -121,12 +121,23 @@ assert.equal(claimed.task.timeout_sec, 600);
 assert.equal(claimed.poll_after_sec, 300);
 const completed = await completeAgentTask(jsonRequest({
   status: 'succeeded',
-  result: { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }] },
+  result: {
+    services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }],
+    report: 'IP 质量体检报告：117.55.*.*\r\n五、流媒体解锁检测\u001b[31m彩色\u001b[0m\n',
+  },
   output_excerpt: 'IPv4 解锁测试完成',
   agent_version: 'v1.0.21',
 }), env, claimed.task.id, 'vps-a');
 assert.equal(completed.task.status, 'succeeded');
 assert.equal(JSON.parse(sqlite.prepare(`SELECT unlock_data FROM targets WHERE id = ?`).get('vps-a').unlock_data).services[0].name, 'Netflix');
+const storedTaskResult = typeof completed.task.result === 'string'
+  ? JSON.parse(completed.task.result)
+  : completed.task.result;
+const storedReport = storedTaskResult.report;
+assert.equal(storedReport, 'IP 质量体检报告：117.55.*.*\n五、流媒体解锁检测\u001b[31m彩色\u001b[0m\n');
+const longReport = 'x'.repeat(70 * 1024);
+assert.equal(normalizeTaskResult('ip_unlock', { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }], report: longReport }).report.length, 64 * 1024, 'IP unlock reports must be capped at 64 KiB on the Worker');
+assert.equal(normalizeTaskResult('ip_unlock', { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }], report: '\r\u0000ok\u001b[31mred\u001b[0m' }).report, 'ok\u001b[31mred\u001b[0m', 'IP unlock reports must drop control characters while keeping ANSI SGR colors');
 
 const nq = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'nodequality' }), env);
 const nqClaim = await claimAgentTask(env, 'vps-a');

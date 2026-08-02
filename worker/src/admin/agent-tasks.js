@@ -1,6 +1,6 @@
 import { ApiError, safeJson } from '../auth.js';
 import { nowSec, sanitizeAgentId } from '../utils.js';
-import { normalizeNodeQualityReport, normalizeNodeQualityReportUrl } from '../nodequality.js';
+import { normalizeNodeQualityReport, normalizeNodeQualityReportUrl, sanitizeAnsiContent } from '../nodequality.js';
 import { uploadNodeQualityReportImages } from '../nq-image-host.js';
 
 export const AGENT_TASK_ACTIONS = Object.freeze({
@@ -10,6 +10,7 @@ export const AGENT_TASK_ACTIONS = Object.freeze({
 
 const MAX_RESULT_BYTES = 256 * 1024;
 const MAX_EXCERPT_CHARS = 16 * 1024;
+const MAX_IP_UNLOCK_REPORT_CHARS = 64 * 1024;
 const AGENT_TASK_POLL_SEC = 300;
 
 const MAX_BULK_AGENT_TASKS = 50;
@@ -216,7 +217,10 @@ export function normalizeTaskResult(action, value) {
   if (action === 'ip_unlock') {
     const services = Array.isArray(result.services) ? result.services.slice(0, 20).map(normalizeUnlockService).filter(Boolean) : [];
     if (!services.length) throw new ApiError(400, 'IP 解锁结果中没有可识别的 IPv4 解锁数据');
-    return { services };
+    const report = typeof result.report === 'string' && result.report.trim()
+      ? sanitizeAnsiContent(result.report).slice(0, MAX_IP_UNLOCK_REPORT_CHARS)
+      : null;
+    return { services, ...(report ? { report } : {}) };
   }
   throw new ApiError(400, '未知任务类型');
 }

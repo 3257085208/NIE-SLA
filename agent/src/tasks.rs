@@ -25,7 +25,8 @@ const NODEQUALITY_TIMEOUT_SEC: u64 = 3600;
 const IP_UNLOCK_TIMEOUT_SEC: u64 = 600;
 const NODEQUALITY_CAPTURE_BEGIN: &str = "__NSTATUS_NQ_ARTIFACTS_V1_BEGIN__";
 const NODEQUALITY_CAPTURE_END: &str = "__NSTATUS_NQ_ARTIFACTS_V1_END__";
-const IP_UNLOCK_ARGS: [&str; 4] = ["-4", "-j", "-n", "-p"];
+const IP_UNLOCK_ARGS: [&str; 3] = ["-4", "-n", "-p"];
+const MAX_IP_UNLOCK_REPORT_CHARS: usize = 64 * 1024;
 const SYSTEM_TASK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const OPTIONAL_DIG_HELPER: &[u8] =
     b"#!/bin/sh\nexec \"$NSTATUS_DNS_COMPAT_EXECUTABLE\" --dns-compat dig \"$@\"\n";
@@ -174,7 +175,7 @@ fn parse_ip_unlock_task_output(output: &str) -> Option<TaskOutput> {
         return None;
     }
     Some(TaskOutput {
-        result: json!({ "services": services }),
+        result: json!({ "services": services, "report": bounded_report_text(output) }),
         excerpt: output_excerpt(&unlock_section(&clean)),
     })
 }
@@ -1098,6 +1099,13 @@ fn output_excerpt(value: &str) -> String {
         .to_string()
 }
 
+fn bounded_report_text(value: &str) -> String {
+    value
+        .chars()
+        .take(MAX_IP_UNLOCK_REPORT_CHARS)
+        .collect::<String>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1306,6 +1314,7 @@ mod tests {
         let result = parse_ip_unlock_task_output(output).unwrap();
         assert_eq!(result.result["services"].as_array().unwrap().len(), 7);
         assert!(result.excerpt.contains("服务商"));
+        assert!(result.result["report"].as_str().unwrap().contains("服务商"));
     }
 
     #[test]
@@ -1330,9 +1339,19 @@ mod tests {
 
     #[test]
     fn ip_unlock_never_installs_dependencies_or_uploads_a_report() {
-        assert_eq!(IP_UNLOCK_ARGS, ["-4", "-j", "-n", "-p"]);
+        assert_eq!(IP_UNLOCK_ARGS, ["-4", "-n", "-p"]);
         assert!(!IP_UNLOCK_ARGS.contains(&"-y"));
-        assert!(IP_UNLOCK_ARGS.contains(&"-j"));
+        assert!(!IP_UNLOCK_ARGS.contains(&"-j"));
+    }
+
+    #[test]
+    fn ip_unlock_report_is_bounded_to_64_kib() {
+        let text = "a".repeat(70 * 1024);
+        assert_eq!(
+            bounded_report_text(&text).chars().count(),
+            MAX_IP_UNLOCK_REPORT_CHARS
+        );
+        assert_eq!(bounded_report_text("short").chars().count(), 5);
     }
 
     #[test]

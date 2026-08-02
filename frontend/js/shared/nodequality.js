@@ -116,7 +116,7 @@ function nqMediaStatusClass(value) {
 }
 
 function isNqMediaHeading(line) {
-  return /^五、流媒体.*服务解锁检测$/.test(stripNqAnsi(line).trim());
+  return /^五、流媒体(?:服务|及AI服务)?解锁检测$/.test(stripNqAnsi(line).trim());
 }
 
 function renderNqMediaBlock(lines) {
