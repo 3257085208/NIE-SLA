@@ -1,4 +1,4 @@
-import { readStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260731-v1049";
+import { readStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260802-v1100";
 
 const SESSION_KEY = "nstatus_admin_session";
 const SESSION_EXP_KEY = "nstatus_admin_session_exp";
@@ -89,7 +89,7 @@ export function createAdminClient({ apiBase, onUnauthorized, defaultTimeoutMs = 
   function apiAdmin(path, options = {}, ms = 12_000) {
     return withTimeout(
       ms,
-      `API 请求超过 ${Math.round(ms / 1000)} 秒，Worker 可能在冷启动或 D1/R2 较慢，请稍后重试`,
+      `API 请求超过 ${Math.round(ms / 1000)} 秒，请求可能仍在服务端继续执行，请稍后刷新查看`,
       (signal) => api(path, { ...options, signal }),
     );
   }

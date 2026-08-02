@@ -596,6 +596,15 @@ th {
 .error {
   color: #dc2626;
 }
+.task-load-warning {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  color: #b45309;
+  background: #fff7ed;
+  border: 1px solid #fcd34d;
+  border-radius: 5px;
+  font-size: 12px;
+}
 .login-bg {
   min-height: 100vh;
   display: flex;

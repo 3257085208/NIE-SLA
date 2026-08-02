@@ -1,9 +1,9 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1053";
-import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1067";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260802-v1067";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260802-v1100";
+import { createAdminClient } from "./admin/api.js?v=20260802-v1100";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1100";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260802-v1100";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260802-v1067";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260802-v1100";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -14,8 +14,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260731-v1049";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260731-v1049";
+} from "./shared/grouping.js?v=20260802-v1100";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260802-v1100";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -83,6 +83,8 @@ let targets = [],
   targetOrderSaving = false,
   selectedTargetIds = new Set();
 let pendingBulkUpdate = null;
+let agentTaskLoadFailures = 0;
+let agentTaskLoadWarning = "";
 let managedThemes = [];
 let toastTimer = 0;
 let vpsSlaChart = null;
@@ -892,8 +894,19 @@ async function loadAgentTasks(render = true) {
     const latest = latestAgentTaskMaps(data.tasks);
     agentTasks = latest.byAgent;
     agentTasksByAction = latest.byAction;
-    if (render && byId("pg-targets")?.classList.contains("on")) renderTargets();
-  } catch (_) {}
+    const onTargetsPage = render && byId("pg-targets")?.classList.contains("on");
+    if (agentTaskLoadFailures || agentTaskLoadWarning) {
+      agentTaskLoadFailures = 0;
+      agentTaskLoadWarning = "";
+    }
+    if (onTargetsPage) renderTargets();
+  } catch (error) {
+    agentTaskLoadFailures += 1;
+    if (agentTaskLoadFailures >= 2 && targets.length && byId("pg-targets")?.classList.contains("on")) {
+      agentTaskLoadWarning = `任务状态刷新失败：${error.message || "未知错误"}，正在自动重试。`;
+      renderTargets();
+    }
+  }
 }
 
 function runAgentTask(target, action) {
@@ -933,6 +946,7 @@ async function queueAgentTask(target, action, label) {
       button.disabled = false;
       button.textContent = "确认运行";
     }
+    try { await loadAgentTasks(); } catch (_) {}
   }
 }
 
@@ -1009,6 +1023,7 @@ function renderTargets() {
   }
   byId("tTable").innerHTML = `
     ${targetBulkBarHtml(currentVpsIds.size)}
+    ${agentTaskLoadWarning ? `<div class="task-load-warning" role="status">${escapeHtml(agentTaskLoadWarning)}</div>` : ""}
     <div class="target-order-bar${targetAdminLoaded && currentVpsIds.size ? " has-bulk" : ""}">
       <div><strong>显示顺序</strong><span>拖动左侧手柄；可按商家/地区/价格/线路分组查看</span></div>
       <div class="order-tools">${groupByMenuHtml(adminGroupBy, "adminGroupByMenu")}<span class="order-state" id="targetOrderState">${targetAdminLoaded ? "已同步" : "读取中"}</span></div>

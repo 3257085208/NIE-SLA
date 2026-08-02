@@ -17,6 +17,8 @@ assert.match(
   'GeoIP settings must require an admin session and must not be cached',
 );
 assert.match(routesSource, /\/api\/backup\/restore[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}ensureV6Schema\(env\)/, 'restore must require an admin session and an initialized schema');
+assert.match(routesSource, /\/api\/backup\/preview[\s\S]{0,500}rateLimitD1\(env, `backup-preview:/, 'backup preview must be rate limited');
+assert.match(routesSource, /\/api\/backup\/restore[\s\S]{0,500}rateLimitD1\(env, `backup-restore:/, 'backup restore must be rate limited');
 assert.match(routesSource, /\/api\/themes\/manage[\s\S]{0,1800}withAdmin\(request, env\)[\s\S]{0,300}listManagedThemes/, 'theme management must require an admin session');
 assert.match(routesSource, /\/api\/themes\/upload[\s\S]{0,1800}withAdmin\(request, env\)[\s\S]{0,300}uploadTheme/, 'theme uploads must require an admin session');
 assert.doesNotMatch(routesSource, /\/api\/(?:extensions|plugins)(?:['/])/, 'plugin and generic extension routes must stay disabled');

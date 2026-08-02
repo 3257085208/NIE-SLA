@@ -370,8 +370,18 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/agent-tasks' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listAgentTasks(env, url), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent-tasks' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await createAgentTask(request, env), 201, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/backup/export' && (m === 'GET' || m === 'POST')) { await withAdmin(request, env); await ensureV6Schema(env); return json(await exportBackup(request, env), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/backup/preview' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await previewBackup(request), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/backup/restore' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await restoreBackup(request, env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/backup/preview' && m === 'POST') {
+    await withAdmin(request, env);
+    await ensureV6Schema(env);
+    if (!await rateLimitD1(env, `backup-preview:${debugClientIp(request)}`, 10, 60)) return deny();
+    return json(await previewBackup(request), 200, env, { 'cache-control': 'no-store' });
+  }
+  if (path === '/api/backup/restore' && m === 'POST') {
+    await withAdmin(request, env);
+    await ensureV6Schema(env);
+    if (!await rateLimitD1(env, `backup-restore:${debugClientIp(request)}`, 3, 300)) return deny();
+    return json(await restoreBackup(request, env), 200, env, { 'cache-control': 'no-store' });
+  }
 
   // Alerts
   if (path === '/api/alerts/settings' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json({ ok: true, ...(await getAlertSettings(env)) }, 200, env, { 'cache-control': 'no-store' }); }
