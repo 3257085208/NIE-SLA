@@ -6,6 +6,7 @@ import { resolveCorsOrigin } from '../src/auth.js';
 import { getDeveloperApiManifest, resolveDeveloperApiOrigin, withDeveloperApiHeaders } from '../src/developer-api.js';
 
 const routesSource = await readFile(new URL('../src/routes.js', import.meta.url), 'utf8');
+const schemaSource = await readFile(new URL('../src/admin/schema.js', import.meta.url), 'utf8');
 const statusSource = await readFile(new URL('../src/status.js', import.meta.url), 'utf8');
 const probeSource = await readFile(new URL('../src/probe.js', import.meta.url), 'utf8');
 const indexSource = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
@@ -19,6 +20,10 @@ assert.match(
 assert.match(routesSource, /\/api\/backup\/restore[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}ensureV6Schema\(env\)/, 'restore must require an admin session and an initialized schema');
 assert.match(routesSource, /\/api\/backup\/preview[\s\S]{0,500}rateLimitD1\(env, `backup-preview:/, 'backup preview must be rate limited');
 assert.match(routesSource, /\/api\/backup\/restore[\s\S]{0,500}rateLimitD1\(env, `backup-restore:/, 'backup restore must be rate limited');
+assert.match(routesSource, /if \(adminTaskCancelMatch && m === 'POST'\) \{ await withAdmin\(request, env\);[\s\S]{0,200}cancelAgentTask/, 'admin force-stop must require an admin session');
+assert.match(routesSource, /if \(agentTaskCancelStatusMatch && m === 'GET'\) \{ await ensureV6Schema\(env\);[\s\S]{0,260}requireAgentForId[\s\S]{0,200}agentTaskCancelStatus/, 'Agent cancel-status must require Agent credentials');
+assert.match(schemaSource, /schema:worker-v23-20260803-task-cancel/, 'schema marker must advance for task cancellation');
+assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN cancel_requested_at INTEGER/, 'running tasks must store a cancellation request timestamp');
 assert.match(routesSource, /\/api\/themes\/manage[\s\S]{0,1800}withAdmin\(request, env\)[\s\S]{0,300}listManagedThemes/, 'theme management must require an admin session');
 assert.match(routesSource, /\/api\/themes\/upload[\s\S]{0,1800}withAdmin\(request, env\)[\s\S]{0,300}uploadTheme/, 'theme uploads must require an admin session');
 assert.doesNotMatch(routesSource, /\/api\/(?:extensions|plugins)(?:['/])/, 'plugin and generic extension routes must stay disabled');

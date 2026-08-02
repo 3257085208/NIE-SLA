@@ -1,9 +1,9 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260802-v1100";
-import { createAdminClient } from "./admin/api.js?v=20260802-v1100";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1100";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260802-v1100";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260803-v1111";
+import { createAdminClient } from "./admin/api.js?v=20260803-v1111";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260803-v1111";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260803-v1111";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260802-v1100";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260803-v1111";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -14,8 +14,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260802-v1100";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260802-v1100";
+} from "./shared/grouping.js?v=20260803-v1111";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260803-v1111";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -740,15 +740,19 @@ function betaTaskControlsHtml(target) {
     const queuedTooLong = task.status === "queued"
       && Number(task.requested_at || 0) > 0
       && nowSec() - Number(task.requested_at) >= 120;
+    const cancelling = task.status === "running" && Number(task.cancel_requested_at || 0) > 0;
     const state = {
       queued: queuedTooLong ? "排队超过 2 分钟，请检查 Manager 状态" : "排队中",
-      running: "运行中",
+      running: cancelling ? "停止中" : "运行中",
       succeeded: "已完成",
       failed: "失败",
       expired: "已过期",
       cancelled: "已取消",
     }[task.status] || task.status;
-    return `<button type="button" class="task-state task-${escapeHtml(task.status)}" data-a="task-details" data-task-action="${escapeHtml(task.action)}" title="查看任务详情">${escapeHtml(task.action_label || "任务")} · ${escapeHtml(state)}</button>`;
+    const stopButton = ["queued", "running"].includes(task.status)
+      ? `<button type="button" class="btn btn-xs btn-danger" data-a="task-cancel" data-task-id="${escapeHtml(task.id)}"${cancelling ? " disabled" : ""} title="强制停止任务，Agent 会终止脚本进程组">${cancelling ? "停止中" : "强制停止"}</button>`
+      : "";
+    return `<span class="task-state-wrap"><button type="button" class="task-state task-${escapeHtml(task.status)}" data-a="task-details" data-task-action="${escapeHtml(task.action)}" title="查看任务详情">${escapeHtml(task.action_label || "任务")} · ${escapeHtml(state)}</button>${stopButton}</span>`;
   }).join("");
   return `<div class="beta-task-actions">
     <div class="beta-task-meta">
@@ -770,12 +774,21 @@ function showAgentTaskDiagnostic(target, task, loadError = "") {
   const imageUploadNotice = imageUpload && (!imageUpload.uploaded || imageUpload.errors?.length)
     ? `<div class="task-detail-error">NQ 图片未完成生成：${escapeHtml(imageUpload.errors?.join("；") || (imageUpload.reason === "image_service_unavailable" ? "公益 NQ 图片服务暂时不可用，请稍后重试。" : "没有生成网络质量/回程路由图片。"))}</div>`
     : "";
+  const cancelling = task.status === "running" && Number(task.cancel_requested_at || 0) > 0;
+  const statusLabel = {
+    queued: "排队中",
+    running: cancelling ? "停止中" : "运行中",
+    succeeded: "已完成",
+    failed: "失败",
+    expired: "已过期",
+    cancelled: "已取消",
+  }[task.status] || task.status || "未知";
   byId("modal").className = "modal task-details-modal";
   byId("modal").innerHTML = `
     <h3>${escapeHtml(task.action_label || "Agent 任务")}</h3>
     <div class="task-detail-grid">
       <span>VPS</span><strong>${escapeHtml(target.name)}</strong>
-      <span>状态</span><strong>${escapeHtml(task.status || "未知")}</strong>
+      <span>状态</span><strong>${escapeHtml(statusLabel)}</strong>
       <span>Agent</span><strong>${escapeHtml(task.agent_version || "-")}</strong>
     </div>
     ${loadError ? `<div class="task-detail-error">报告加载失败：${escapeHtml(loadError)}</div>` : ""}
@@ -783,8 +796,17 @@ function showAgentTaskDiagnostic(target, task, loadError = "") {
     ${imageUploadNotice}
     ${task.output_excerpt ? `<h4>输出摘要</h4><pre class="task-detail-output">${escapeHtml(task.output_excerpt)}</pre>` : ""}
     ${resultText ? `<h4>任务结果</h4><pre class="task-detail-output">${escapeHtml(resultText)}</pre>` : ""}
-    <div class="ma"><button type="button" class="btn" data-close>关闭</button></div>`;
+    <div class="ma">${["queued", "running"].includes(task.status) ? `<button type="button" class="btn btn-danger" id="forceStopTask"${cancelling ? " disabled" : ""}>${cancelling ? "停止中" : "强制停止"}</button>` : ""}<button type="button" class="btn" data-close>关闭</button></div>`;
   openModal();
+  const stopButton = byId("forceStopTask");
+  if (stopButton) {
+    stopButton.onclick = async () => {
+      stopButton.disabled = true;
+      stopButton.textContent = "停止中...";
+      await forceStopAgentTask(task.id);
+      showAgentTaskDetails(target, task.action);
+    };
+  }
 }
 
 function closeAdminNodeQualityReport() {
@@ -834,7 +856,7 @@ function showIpUnlockTaskReport(target, task) {
     succeeded: "已完成",
     failed: "失败",
     queued: "排队中",
-    running: "运行中",
+    running: task.status === "running" && Number(task.cancel_requested_at || 0) > 0 ? "停止中" : "运行中",
     expired: "已过期",
     cancelled: "已取消",
   }[task.status] || task.status || "未知");
@@ -858,15 +880,24 @@ function showIpUnlockTaskReport(target, task) {
       const services = Array.isArray(task?.result?.services) ? task.result.services : [];
       panel.innerHTML = renderUnlockServicesReportHtml(services) || '<div class="nq-empty">未解析到可显示的 IPv4 解锁服务</div>';
     }
+    const cancelling = task.status === "running" && Number(task.cancel_requested_at || 0) > 0;
     const notices = [];
     if (task.error) notices.push(`<div class="task-detail-error">${escapeHtml(task.error)}</div>`);
     if (task.output_excerpt) notices.push(`<details class="ip-unlock-raw"><summary>原始输出</summary><pre class="task-detail-output">${escapeHtml(task.output_excerpt)}</pre></details>`);
+    if (["queued", "running"].includes(task.status)) notices.push(`<button type="button" class="btn btn-danger" data-ip-unlock-force-stop${cancelling ? " disabled" : ""}>${cancelling ? "停止中" : "强制停止"}</button>`);
     panel.insertAdjacentHTML("beforeend", notices.join(""));
   }
   document.body.appendChild(root);
   document.body.classList.add("nq-modal-open");
   bindNodeQualityModal(root);
   root.addEventListener("click", (event) => {
+    const forceStop = event.target.closest("[data-ip-unlock-force-stop]");
+    if (forceStop) {
+      forceStop.disabled = true;
+      forceStop.textContent = "停止中...";
+      void forceStopAgentTask(task.id).then(() => showAgentTaskDetails(target, task.action));
+      return;
+    }
     if (event.target.closest(".nq-close") || event.target.classList.contains("nq-modal-backdrop")) closeAdminNodeQualityReport();
   });
 }
@@ -1144,6 +1175,17 @@ async function queueBulkAgentTasks(ids, action, label) {
     const rejected = Array.isArray(result.rejected) ? result.rejected.length : 0;
     toast(`已排队 ${result.created?.length || 0} 台${rejected ? `，${rejected} 台未提交` : ""}`, rejected && !result.created?.length ? "err" : "ok");
     try { await loadAgentTasks(); } catch (_) {}
+  } catch (error) {
+    toast(error.message, "err");
+    try { await loadAgentTasks(); } catch (_) {}
+  }
+}
+
+async function forceStopAgentTask(taskId) {
+  try {
+    await apiAdmin(`/api/agent-tasks/${encodeURIComponent(taskId)}/cancel`, { method: "POST" }, 15000);
+    toast("已提交强制停止，Agent 检测到后会自动终止脚本", "ok");
+    await loadAgentTasks();
   } catch (error) {
     toast(error.message, "err");
     try { await loadAgentTasks(); } catch (_) {}
@@ -3189,6 +3231,7 @@ byId("tTable").onclick = (e) => {
   if (b.dataset.a === "task-nq") runAgentTask(t, "nodequality");
   if (b.dataset.a === "task-unlock") runAgentTask(t, "ip_unlock");
   if (b.dataset.a === "task-details") showAgentTaskDetails(t, b.dataset.taskAction || "");
+  if (b.dataset.a === "task-cancel") forceStopAgentTask(b.dataset.taskId);
   if (b.dataset.a === "move-up") moveTarget(t, -1);
   if (b.dataset.a === "move-down") moveTarget(t, 1);
   if (b.dataset.a === "reload") loadTargets();

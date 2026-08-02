@@ -8,6 +8,7 @@ const AGENT_API_PATHS = new Set([
   '/api/agent/config',
   '/api/agent/location',
   '/api/agent/tasks',
+  '/api/agent/tasks/{id}/cancel-status',
   '/api/latency-agent/targets',
   '/api/latency-agent/results',
   '/api/latency-agent/update-policy',

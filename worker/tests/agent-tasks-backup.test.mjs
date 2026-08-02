@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { webcrypto } from 'node:crypto';
 import { ensureV6Schema } from '../src/admin/schema.js';
-import { createAgentTask, createAgentTasks, claimAgentTask, completeAgentTask, listAgentTasks, normalizeTaskResult } from '../src/admin/agent-tasks.js';
+import { createAgentTask, createAgentTasks, claimAgentTask, completeAgentTask, listAgentTasks, cancelAgentTask, agentTaskCancelStatus, normalizeTaskResult } from '../src/admin/agent-tasks.js';
 import { getGeoIpSettings, submitAgentLocation, updateGeoIpSettings, validateCustomGeoIpUrl } from '../src/admin/agent-location.js';
 import { exportBackup, previewBackup, restoreBackup } from '../src/admin/backup.js';
 import { getOrCreateAgentToken, verifyAgentCredential } from '../src/agent-credentials.js';
@@ -247,6 +247,37 @@ await assert.rejects(
   () => claimAgentTask(env, 'vps-b', 'shell'),
   error => error?.status === 400,
 );
+
+const queuedCancel = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'ip_unlock' }), env);
+const queuedCancelled = await cancelAgentTask(env, queuedCancel.task.id);
+assert.equal(queuedCancelled.task.status, 'cancelled');
+await assert.rejects(
+  () => cancelAgentTask(env, queuedCancel.task.id),
+  error => error?.status === 409,
+);
+
+const runningCancel = await cancelAgentTask(env, filteredTask.task.id);
+assert.equal(runningCancel.task.status, 'running');
+assert.ok(Number(runningCancel.task.cancel_requested_at || 0) > 0);
+assert.equal((await agentTaskCancelStatus(env, 'vps-b', filteredTask.task.id)).cancelled, true);
+const cancelledComplete = await completeAgentTask(jsonRequest({ status: 'failed', error: 'killed by admin' }), env, filteredTask.task.id, 'vps-b');
+assert.equal(cancelledComplete.task.status, 'cancelled');
+assert.equal(cancelledComplete.task.error, '任务已被管理员强制停止');
+const runningSucceededCancel = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'ip_unlock' }), env);
+const runningSucceededClaim = await claimAgentTask(env, 'vps-a');
+await cancelAgentTask(env, runningSucceededClaim.task.id);
+const cancelledSucceededComplete = await completeAgentTask(jsonRequest({ status: 'succeeded', result: { services: [{ id: 'netflix', name: 'Netflix', status: '解锁', region: '[US]', method: '原生' }] } }), env, runningSucceededClaim.task.id, 'vps-a');
+assert.equal(cancelledSucceededComplete.task.status, 'cancelled');
+assert.equal(cancelledSucceededComplete.task.error, '任务已被管理员强制停止');
+
+const staleCancel = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'ip_unlock' }), env);
+const staleClaim = await claimAgentTask(env, 'vps-a');
+await cancelAgentTask(env, staleClaim.task.id);
+sqlite.prepare(`UPDATE agent_tasks SET expires_at = ? WHERE id = ?`).run(Math.floor(Date.now() / 1000) - 1, staleClaim.task.id);
+const staleList = await listAgentTasks(env, new URL('https://example.test/api/agent-tasks?agent_id=vps-a'));
+const staleRow = staleList.tasks.find((task) => task.id === staleClaim.task.id);
+assert.equal(staleRow.status, 'cancelled');
+assert.equal(staleRow.error, '任务已被管理员强制停止');
 
 assert.equal((await getGeoIpSettings(env)).provider, 'ip_sb');
 await updateGeoIpSettings(jsonRequest({ provider: 'ipip_net' }), env);

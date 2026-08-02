@@ -10,6 +10,7 @@ export const AGENT_TASK_ACTIONS = Object.freeze({
   ip_unlock: { timeout_sec: 600, label: 'IP 解锁' },
 });
 const NQ_TASK_EXPIRES_SEC = 7 * 24 * 60 * 60;
+const CANCEL_GRACE_SEC = 5 * 60;
 export const NQ_OPTION_DEFAULTS = Object.freeze({ hardware: 'f', ip: 'y', net: 'y', route: 'y' });
 const NQ_OPTION_ALLOWED = Object.freeze({
   hardware: new Set(['y', 'f', 'v', 'n']),
@@ -214,13 +215,17 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
   if (row.status !== 'running') throw new ApiError(409, '任务不在运行状态');
 
   const body = await safeJson(request, MAX_RESULT_BYTES);
-  const succeeded = body?.status === 'succeeded';
-  if (!succeeded && body?.status !== 'failed') throw new ApiError(400, '任务状态只能是 succeeded 或 failed');
+  const reportedSucceeded = body?.status === 'succeeded';
+  if (!reportedSucceeded && body?.status !== 'failed') throw new ApiError(400, '任务状态只能是 succeeded 或 failed');
+  const cancelRequested = Number(row.cancel_requested_at || 0) > 0;
+  const succeeded = !cancelRequested && reportedSucceeded;
   const result = succeeded ? normalizeTaskResult(row.action, body?.result) : null;
   const error = String(body?.error || '').trim().slice(0, 2000) || null;
   const excerpt = String(body?.output_excerpt || '').slice(0, MAX_EXCERPT_CHARS) || null;
   const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
   const finishedAt = nowSec();
+  const finalStatus = cancelRequested ? 'cancelled' : (succeeded ? 'succeeded' : 'failed');
+  const finalError = cancelRequested ? '任务已被管理员强制停止' : error;
   let normalizedNq = succeeded && row.action === 'nodequality' && result?.report
     ? normalizeAgentNodeQualityReport(result, finishedAt)
     : null;
@@ -251,7 +256,7 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
     : result;
   await env.DB.prepare(`UPDATE agent_tasks SET status = ?, finished_at = ?, result = ?, error = ?, output_excerpt = ?, agent_version = ?
     WHERE id = ? AND agent_id = ? AND status = 'running'`)
-    .bind(succeeded ? 'succeeded' : 'failed', finishedAt, storedResult ? JSON.stringify(storedResult) : null, error, excerpt, agentVersion, taskId, row.agent_id).run();
+    .bind(finalStatus, finishedAt, storedResult ? JSON.stringify(storedResult) : null, finalError, excerpt, agentVersion, taskId, row.agent_id).run();
 
   if (succeeded && row.action === 'nodequality' && result?.report_url) {
     await env.DB.prepare(`UPDATE targets SET nq_url = ?, nq_report = COALESCE(?, nq_report), nq_updated_at = ?, updated_at = ? WHERE id = ?`)
@@ -261,15 +266,39 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
     await env.DB.prepare(`UPDATE targets SET unlock_data = ?, unlock_updated_at = ?, updated_at = ? WHERE id = ?`)
       .bind(JSON.stringify({ checked_at: finishedAt, source: 'IP.Check.Place', services: result.services }), finishedAt, finishedAt, row.agent_id).run();
   }
-  return { ok: true, task: taskForAdmin({ ...row, status: succeeded ? 'succeeded' : 'failed', finished_at: finishedAt, result: storedResult ? JSON.stringify(storedResult) : null, error, output_excerpt: excerpt, agent_version: agentVersion }) };
+  return { ok: true, task: taskForAdmin({ ...row, status: finalStatus, finished_at: finishedAt, result: storedResult ? JSON.stringify(storedResult) : null, error: finalError, output_excerpt: excerpt, agent_version: agentVersion }) };
 }
 
 export async function cancelAgentTask(env, taskId) {
   const now = nowSec();
-  const result = await env.DB.prepare(`UPDATE agent_tasks SET status = 'cancelled', finished_at = ?
-    WHERE id = ? AND status = 'queued'`).bind(now, taskId).run();
-  if (Number(result?.meta?.changes || 0) < 1) throw new ApiError(409, '只有排队中的任务可以取消');
-  return { ok: true };
+  const row = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).bind(taskId).first();
+  if (!row) throw new ApiError(404, '任务不存在');
+  if (row.status === 'queued') {
+    const result = await env.DB.prepare(`UPDATE agent_tasks SET status = 'cancelled', cancel_requested_at = COALESCE(cancel_requested_at, ?), finished_at = ?
+      WHERE id = ? AND status = 'queued'`).bind(now, now, taskId).run();
+    if (Number(result?.meta?.changes || 0) < 1) throw new ApiError(409, '只有排队中或运行中的任务可以停止');
+    return { ok: true, task: taskForAdmin({ ...row, status: 'cancelled', cancel_requested_at: now, finished_at: now }) };
+  }
+  if (row.status === 'running') {
+    const result = await env.DB.prepare(`UPDATE agent_tasks SET cancel_requested_at = COALESCE(cancel_requested_at, ?), expires_at = MIN(expires_at, ?)
+      WHERE id = ? AND status = 'running'`).bind(now, now + CANCEL_GRACE_SEC, taskId).run();
+    if (Number(result?.meta?.changes || 0) < 1) throw new ApiError(409, '只有排队中或运行中的任务可以停止');
+    const updated = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).bind(taskId).first();
+    return { ok: true, task: taskForAdmin(updated) };
+  }
+  throw new ApiError(409, '任务已结束，无法强制停止');
+}
+
+export async function agentTaskCancelStatus(env, agentIdValue, taskId) {
+  const agentId = sanitizeAgentId(agentIdValue || '');
+  const row = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).bind(taskId).first();
+  if (!row || sanitizeAgentId(row.agent_id) !== agentId) throw new ApiError(404, '任务不存在');
+  return {
+    ok: true,
+    task_id: taskId,
+    cancelled: Number(row.cancel_requested_at || 0) > 0 || row.status === 'cancelled',
+    status: row.status,
+  };
 }
 
 const IP_REPORT_TAIL_MARKERS = [/今日IP检测量/, /总检测量/, /感谢使用xy系列脚本/, /报告链接/, /Report Link/];
@@ -356,10 +385,10 @@ async function expireStaleTasks(env, agentId = '') {
   const now = nowSec();
   const taskIds = agentId ? await agentTaskIds(env, agentId) : [];
   if (taskIds.length) {
-    await env.DB.prepare(`UPDATE agent_tasks SET status = 'expired', finished_at = ?
+    await env.DB.prepare(`UPDATE agent_tasks SET status = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN 'cancelled' ELSE 'expired' END, finished_at = ?, error = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN '任务已被管理员强制停止' ELSE error END
       WHERE agent_id IN (${inClause(taskIds)}) AND status IN ('queued', 'running') AND expires_at <= ?`).bind(now, ...taskIds, now).run();
   } else {
-    await env.DB.prepare(`UPDATE agent_tasks SET status = 'expired', finished_at = ?
+    await env.DB.prepare(`UPDATE agent_tasks SET status = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN 'cancelled' ELSE 'expired' END, finished_at = ?, error = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN '任务已被管理员强制停止' ELSE error END
       WHERE status IN ('queued', 'running') AND expires_at <= ?`).bind(now, now).run();
   }
 }
@@ -385,6 +414,7 @@ function taskForAdmin(row) {
     claimed_at: Number(row.claimed_at || 0) || null,
     finished_at: Number(row.finished_at || 0) || null,
     expires_at: Number(row.expires_at || 0) || null,
+    cancel_requested_at: Number(row.cancel_requested_at || 0) || null,
     options: row.action === 'nodequality' ? parseStoredOptions(row.options) : null,
     result,
     error: row.error || (invalidNodeQualityResult ? '旧任务没有生成有效的 NodeQuality 报告链接，请重新运行 NQ' : null),

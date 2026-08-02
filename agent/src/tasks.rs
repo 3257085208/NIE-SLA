@@ -69,7 +69,15 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
     let timeout_sec = task.get("timeout_sec").and_then(Value::as_u64);
     let options = task.get("options").cloned();
 
-    let outcome = execute_fixed_task(cfg, http, action, timeout_sec, options.as_ref());
+    let cancellation = TaskCancellation::new(cfg, http, task_id);
+    let outcome = execute_fixed_task(
+        cfg,
+        http,
+        action,
+        timeout_sec,
+        options.as_ref(),
+        Some(&cancellation),
+    );
     let payload = match outcome {
         Ok(result) => json!({
             "status": "succeeded",
@@ -98,6 +106,42 @@ struct TaskOutput {
     excerpt: String,
 }
 
+struct TaskCancellation {
+    api: String,
+    token: String,
+    agent_id: String,
+    task_id: String,
+    http: HttpClient,
+}
+
+impl TaskCancellation {
+    fn new(cfg: &Config, http: &HttpClient, task_id: &str) -> Self {
+        Self {
+            api: cfg.api.trim_end_matches('/').to_string(),
+            token: cfg.token.clone(),
+            agent_id: cfg.agent_id.clone(),
+            task_id: task_id.to_string(),
+            http: http.clone(),
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        let url = format!(
+            "{}/api/agent/tasks/{}/cancel-status?agent_id={}",
+            self.api,
+            percent_encode_query(&self.task_id),
+            percent_encode_query(&self.agent_id),
+        );
+        let Ok(body) = self.http.get(&url, &self.token) else {
+            return false;
+        };
+        match serde_json::from_str::<Value>(&body) {
+            Ok(value) => value.get("cancelled").and_then(Value::as_bool) == Some(true),
+            Err(_) => false,
+        }
+    }
+}
+
 #[derive(Default)]
 struct NodeQualityArtifacts {
     header: String,
@@ -113,18 +157,24 @@ fn execute_fixed_task(
     action: &str,
     timeout_sec: Option<u64>,
     options: Option<&Value>,
+    cancellation: Option<&TaskCancellation>,
 ) -> Result<TaskOutput> {
     if !cfg!(target_os = "linux") {
         return Err(anyhow!("Beta task actions currently require Linux"));
     }
     match action {
-        "nodequality" => run_nodequality(cfg, http, options),
-        "ip_unlock" => run_ip_unlock(cfg, http, timeout_sec),
+        "nodequality" => run_nodequality(cfg, http, options, cancellation),
+        "ip_unlock" => run_ip_unlock(cfg, http, timeout_sec, cancellation),
         _ => Err(anyhow!("unsupported fixed task action")),
     }
 }
 
-fn run_nodequality(cfg: &Config, http: &HttpClient, options: Option<&Value>) -> Result<TaskOutput> {
+fn run_nodequality(
+    cfg: &Config,
+    http: &HttpClient,
+    options: Option<&Value>,
+    cancellation: Option<&TaskCancellation>,
+) -> Result<TaskOutput> {
     let stdin = nodequality_stdin(options);
     let output = run_fixed_remote_script(
         cfg,
@@ -133,6 +183,7 @@ fn run_nodequality(cfg: &Config, http: &HttpClient, options: Option<&Value>) -> 
         "https://run.NodeQuality.com",
         &[],
         Some(&stdin),
+        cancellation,
     )?;
     nodequality_task_output(&output)
 }
@@ -173,7 +224,12 @@ fn nodequality_task_output(output: &FixedScriptOutput) -> Result<TaskOutput> {
     Err(anyhow!("NodeQuality completed without a report URL"))
 }
 
-fn run_ip_unlock(cfg: &Config, http: &HttpClient, timeout_sec: Option<u64>) -> Result<TaskOutput> {
+fn run_ip_unlock(
+    cfg: &Config,
+    http: &HttpClient,
+    timeout_sec: Option<u64>,
+    cancellation: Option<&TaskCancellation>,
+) -> Result<TaskOutput> {
     let output = run_fixed_remote_script(
         cfg,
         http,
@@ -185,6 +241,7 @@ fn run_ip_unlock(cfg: &Config, http: &HttpClient, timeout_sec: Option<u64>) -> R
         "https://IP.Check.Place",
         &IP_UNLOCK_ARGS,
         None,
+        cancellation,
     )?;
     if let Some(result) = parse_ip_unlock_task_output(&output.text) {
         return Ok(result);
@@ -273,6 +330,7 @@ fn run_fixed_remote_script(
     url: &str,
     args: &[&str],
     stdin: Option<&[u8]>,
+    cancellation: Option<&TaskCancellation>,
 ) -> Result<FixedScriptOutput> {
     if !matches!(
         url,
@@ -351,6 +409,11 @@ fn run_fixed_remote_script(
     if let Some(path) = &nodequality_result_dir {
         command.env("NSTATUS_NQ_RESULTS_DIR", path);
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
     let mut child = command.spawn().context("failed to start fixed Beta task")?;
     if let (Some(input), Some(mut handle)) = (stdin, child.stdin.take()) {
         handle
@@ -359,7 +422,8 @@ fn run_fixed_remote_script(
     }
     let stdout = child.stdout.take().context("capture fixed task stdout")?;
     let stderr = child.stderr.take().context("capture fixed task stderr")?;
-    let (status, bytes) = collect_task_output(&mut child, stdout, stderr, timeout_sec)?;
+    let (status, bytes) =
+        collect_task_output(&mut child, stdout, stderr, timeout_sec, cancellation)?;
     let text = String::from_utf8_lossy(&bytes).to_string();
     let disk_artifacts = nodequality_result_dir
         .as_deref()
@@ -443,11 +507,33 @@ fn reject_task_symlinks(path: &Path) -> Result<()> {
 }
 
 #[cfg(unix)]
+fn terminate_task_process_group(child: &mut Child) -> Option<ExitStatus> {
+    let pid = child.id() as i32;
+    if pid <= 1 {
+        return None;
+    }
+    unsafe {
+        libc::killpg(pid, libc::SIGTERM);
+    }
+    for _ in 0..25 {
+        if let Some(status) = child.try_wait().ok().flatten() {
+            return Some(status);
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    unsafe {
+        libc::killpg(pid, libc::SIGKILL);
+    }
+    child.wait().ok()
+}
+
+#[cfg(unix)]
 fn collect_task_output(
     child: &mut Child,
     stdout: ChildStdout,
     stderr: ChildStderr,
     timeout_sec: Option<u64>,
+    cancellation: Option<&TaskCancellation>,
 ) -> Result<(ExitStatus, Vec<u8>)> {
     let stop = Arc::new(AtomicBool::new(false));
     let hard_deadline =
@@ -460,7 +546,35 @@ fn collect_task_output(
     let stderr_reader = thread::spawn(move || {
         read_pipe_tail_bounded(stderr, MAX_OUTPUT_BYTES / 2, stderr_stop, hard_deadline)
     });
-    let status = child.wait().context("failed to wait for fixed Beta task")?;
+    let mut last_cancel_check = Instant::now() - Duration::from_secs(5);
+    let status = loop {
+        if let Some(status) = child.try_wait().context("failed to poll fixed Beta task")? {
+            break status;
+        }
+        let now = Instant::now();
+        if hard_deadline.is_some_and(|deadline| now >= deadline) {
+            if let Some(status) = terminate_task_process_group(child) {
+                break status;
+            }
+            break child
+                .wait()
+                .context("failed to wait for timed-out fixed Beta task")?;
+        }
+        if now.duration_since(last_cancel_check) >= Duration::from_secs(2) {
+            last_cancel_check = now;
+            if let Some(cancellation) = cancellation {
+                if cancellation.is_cancelled() {
+                    if let Some(status) = terminate_task_process_group(child) {
+                        break status;
+                    }
+                    break child
+                        .wait()
+                        .context("failed to wait for cancelled fixed Beta task")?;
+                }
+            }
+        }
+        thread::sleep(Duration::from_millis(200));
+    };
     stop.store(true, Ordering::Release);
     let mut bytes = stdout_reader.join().unwrap_or_default();
     bytes.push(b'\n');
@@ -474,6 +588,7 @@ fn collect_task_output(
     stdout: ChildStdout,
     stderr: ChildStderr,
     _timeout_sec: Option<u64>,
+    _cancellation: Option<&TaskCancellation>,
 ) -> Result<(ExitStatus, Vec<u8>)> {
     let stdout_reader = thread::spawn(move || read_tail_capped(stdout, MAX_OUTPUT_BYTES / 2));
     let stderr_reader = thread::spawn(move || read_tail_capped(stderr, MAX_OUTPUT_BYTES / 2));
@@ -1381,6 +1496,36 @@ mod tests {
             .recv_timeout(Duration::from_secs(1))
             .expect("reader must not wait for an inherited writer to close");
         assert_eq!(output, b"task output");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminate_task_process_group_kills_descendants() {
+        use std::io::{BufRead, BufReader};
+        use std::os::unix::process::CommandExt;
+
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg("sleep 30 & echo $!; wait")
+            .process_group(0)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn descendant test shell");
+        let mut pid_text = String::new();
+        let mut stdout = BufReader::new(child.stdout.take().expect("capture descendant pid"));
+        stdout
+            .read_line(&mut pid_text)
+            .expect("read descendant pid");
+        drop(stdout);
+        let grandchild: i32 = pid_text.trim().parse().expect("parse descendant pid");
+        let status = terminate_task_process_group(&mut child).expect("task group should be reaped");
+        assert!(!status.success());
+        assert_eq!(
+            unsafe { libc::kill(grandchild, 0) },
+            -1,
+            "descendant must be terminated with the task group"
+        );
     }
 
     #[test]
