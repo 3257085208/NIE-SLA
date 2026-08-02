@@ -68,11 +68,11 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /href="\/admin\.css\?v=20260802-v1059"/, 'custom admin paths must load CSS from the site root');
+assert.match(adminHtml, /href="\/admin\.css\?v=20260802-v1060"/, 'custom admin paths must load CSS from the site root');
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
 assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260731-v1049"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260802-v1059"/, 'custom admin paths must load the admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260802-v1060"/, 'custom admin paths must load the admin module from the site root');
 assert.match(adminBootstrapSource, /后台脚本加载失败，请刷新页面/, 'admin startup failures must be visible on the login form');
 assert.match(adminBootstrapSource, /loginButton\.onclick = \(event\)/, 'the admin module must replace the startup guard only after it loads');
 assert.match(adminSource, /window\.__NIE_ADMIN_READY__ = true;[\s\S]*nie-admin-ready/, 'the admin module must dismiss its startup guard after binding controls');
@@ -123,7 +123,7 @@ assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day war
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
 assert.match(indexHtml, /app\.js\?v=20260731-v1049/, 'frontend cache key must publish the current release');
-assert.match(indexHtml, /style\.css\?v=20260802-v1059/, 'frontend CSS cache key must publish the current release');
+assert.match(indexHtml, /style\.css\?v=20260802-v1060/, 'frontend CSS cache key must publish the current release');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /class="theme-pending"[\s\S]*id="themeBoot"[\s\S]*id="themeCanvas"/, 'theme runtime must wait behind a first-paint shell');
@@ -249,6 +249,13 @@ assert.doesNotMatch(adminSource, /catch \(error\) \{\s*closeAdminNodeQualityRepo
 assert.match(adminCss, /\.nq-modal\s*\{[\s\S]*width:\s*min\(640px[\s\S]*\.nq-ansi-panel\s*\{[\s\S]*width:\s*100%[\s\S]*-webkit-overflow-scrolling:\s*touch[\s\S]*@media \(max-width: 420px\) \{[\s\S]*\.nq-ansi\s*\{\s*font-size:\s*10px/, 'admin must preserve the desktop and readable compact iPhone NQ report layout');
 assert.match(adminCss, /@media \(max-width: 560px\) \{[\s\S]*\.nq-ansi-panel,[\s\S]*\.nq-network-scroll\s*\{\s*overflow-x:\s*auto[\s\S]*\.nq-ansi-panel \.nq-ansi,[\s\S]*white-space:\s*pre[\s\S]*word-break:\s*normal/, 'admin mobile ANSI reports must preserve terminal columns inside local horizontal scrollers');
 assert.match(adminCss, /@media \(max-width: 420px\) \{[\s\S]*\.nq-modal-backdrop\s*\{[\s\S]*safe-area-inset-bottom[\s\S]*\.nq-modal\s*\{[^}]*safe-area-inset-top/, 'admin compact NQ dialog must preserve safe-area spacing');
+assert.match(styleSource, /\.nq-modal \.nq-tabs \{\s*justify-content:\s*center/, 'NQ tab bars must center their tab groups');
+assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-modal \.nq-tab \{\s*flex:\s*1 1 0[\s\S]*justify-content:\s*center/, 'mobile NQ tabs must split the row into equal centered columns');
+assert.match(adminCss, /\.nq-modal \.nq-tabs \{\s*justify-content:\s*center[\s\S]*@media \(max-width: 760px\) \{[\s\S]*\.nq-modal \.nq-tab \{\s*flex:\s*1 1 0[\s\S]*justify-content:\s*center/, 'admin NQ tabs must keep the same centered equal-width mobile layout');
+assert.match(adminHtml, /id="sDebugLogs"/, 'admin settings must expose the debug operation log view');
+assert.match(adminSource, /loadDebugLogs\(\)/, 'settings must load debug operation logs');
+assert.match(adminSource, /\/api\/debug\/logs\?limit=200/, 'debug log view must request the bounded latest log set');
+assert.match(adminCss, /\.debug-log-row \{[\s\S]*grid-template-columns:/, 'debug log rows must use a stable column grid');
 assert.doesNotMatch(adminSource, /mNqReport|id="m(?:Command|Script|Args|Stdin)"|body:\s*JSON\.stringify\(\{[^}]*\b(?:command|script|args|stdin)\b/, 'admin must not accept reports or arbitrary command input');
 assert.match(appSource, /Always keep explicit bounds/, 'chart zoom-out must keep explicit x bounds');
 assert.match(adminHtml, /id="sGeoIp"/, 'settings must expose the GeoIP provider');

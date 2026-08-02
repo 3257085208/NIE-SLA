@@ -30,9 +30,16 @@ assert.ok(database.prepare(`PRAGMA table_info(ping_targets)`).all().some(column 
 assert.ok(database.prepare(`PRAGMA table_info(latency_agents)`).all().some(column => column.name === 'color'));
 assert.ok(database.prepare(`PRAGMA table_info(agent_install_tickets)`).all().some(column => column.name === 'expires_at'));
 assert.equal(
-  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v20-20260730-agent-install-tickets'`).get()?.value,
+  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v21-20260802-debug-logs'`).get()?.value,
   '1',
 );
+const debugColumns = database.prepare(`PRAGMA table_info(debug_logs)`).all().map(column => column.name);
+for (const column of ['id', 'ts', 'level', 'ip', 'method', 'path', 'actor', 'summary', 'status', 'ref']) {
+  assert.ok(debugColumns.includes(column), `debug_logs missing column: ${column}`);
+}
+const debugIndexes = database.prepare(`PRAGMA index_list(debug_logs)`).all().map(index => index.name);
+assert.ok(debugIndexes.includes('idx_debug_logs_ts'), 'debug_logs must keep a time index');
+assert.ok(debugIndexes.includes('idx_debug_logs_actor_ts'), 'debug_logs must keep an actor/time index');
 
 console.log('legacy chart color schema migration passed');
 

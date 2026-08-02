@@ -27,6 +27,9 @@ export { archiveDay, archiveYesterdayOncePerLocalDay, getRecentIncidents, getSta
 // Check buckets (D1 write layer)
 export { upsertLatestStatus, writeIncidentEvent, touchActiveIncident, upsertTargetLastCheckedAt, upsertCheckBucket, readCheckBuckets, readCheckBucketDaySummary, getCheckBucketSummaries, checkBucketSummaryQueryPlan, applyProbeWriteBatch, cleanupOldCheckBuckets, cleanupVolatileHistory } from './admin/check-buckets.js';
 
+// Debug operation logs
+export { cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, sanitizeDebugLogEntry, shouldLogDebugOperation } from './admin/debug-logs.js';
+
 // Install command
 export { getAgentInstallCommand, getAgentInstallScript } from './admin/install-command.js';
 

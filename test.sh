@@ -85,6 +85,7 @@ run_check "Ping target protocol tests" node "$ROOT/worker/tests/ping-target-prot
 run_check "time-series export tests" node "$ROOT/worker/tests/timeseries-export.test.mjs"
 run_check "compact Ping series tests" node "$ROOT/worker/tests/ping-series.test.mjs"
 run_check "legacy chart color schema migration" node "$ROOT/worker/tests/schema-color-migration.test.mjs"
+run_check "debug operation log retention and safety" node "$ROOT/worker/tests/debug-logs.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
   run_check "public export tool" node --check "$ROOT/scripts/export-public.mjs"
   run_check "public export file classification" node "$ROOT/tests/public-export-files.test.mjs"

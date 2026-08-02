@@ -1471,6 +1471,7 @@ body.nq-modal-open { overflow: hidden; }
 .nq-tabs { position: relative; z-index: 2; display: flex; flex: 0 0 auto; gap: 2px; overflow-x: auto; padding: 0 18px; background: #fff; border-bottom: 1px solid #cbd5e1; }
 .nq-tab { padding: 11px 14px 9px; color: #64748b; background: transparent; border: 0; border-bottom: 3px solid transparent; font: 700 13px/1.2 var(--font), "Noto Sans SC", sans-serif; white-space: nowrap; }
 .nq-tab.active { color: #0f172a; border-bottom-color: #059669; }
+.nq-modal .nq-tabs { justify-content: center; }
 .nq-panels { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 12px; background: #111827; }
 .nq-panel { display: none; width: 100%; min-width: 0; }
 .nq-panel.active { display: block; }
@@ -1617,6 +1618,8 @@ body.nq-modal-open { overflow: hidden; }
   .nq-modal-meta { gap: 5px 9px; padding: 6px 10px; font-size: 10.5px; }
   .nq-tabs { gap: 0; padding: 0 6px; }
   .nq-tab { min-height: 40px; display: inline-flex; align-items: center; padding: 7px 9px 6px; font-size: 11px; }
+  .nq-modal .nq-tabs { justify-content: center; }
+  .nq-modal .nq-tab { flex: 1 1 0; min-width: 0; justify-content: center; padding-inline: 6px; }
   .nq-panels { padding: 5px; }
   .nq-ansi { font-size: 10px; line-height: 1.35; }
   .nq-media-block { font-size: 10px; }
@@ -1670,6 +1673,7 @@ body.nq-modal-open { overflow: hidden; }
   .nq-modal { max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
   .nq-modal-meta { padding-block: 5px; }
   .nq-tab { min-height: 38px; padding-inline: 8px; font-size: 10.5px; }
+  .nq-modal .nq-tab { padding-inline: 4px; }
   .nq-ansi { font-size: 10px; line-height: 1.45; }
   .vps-info-section {
     grid-template-columns: 1fr;

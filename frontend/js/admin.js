@@ -1,6 +1,6 @@
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1053";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1059";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1060";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
 import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink } from "./shared/nodequality.js?v=20260731-v1049";
 import {
@@ -2070,6 +2070,7 @@ async function loadSettings() {
   loadTraffic();
   loadAlerts();
   loadAppearance();
+  loadDebugLogs();
 }
 
 async function loadEncryption() {
@@ -2759,6 +2760,37 @@ async function loadSysInfo() {
 }
 function infoRow(k, v) {
   return `<div class="ir"><span>${escapeHtml(k)}</span><b>${escapeHtml(v)}</b></div>`;
+}
+async function loadDebugLogs() {
+  const box = byId("sDebugLogs");
+  if (!box) return;
+  try {
+    const data = await api("/api/debug/logs?limit=200");
+    const logs = Array.isArray(data.logs) ? data.logs : [];
+    box.innerHTML = `
+      <div class="debug-log-toolbar"><span>${logs.length} 条记录</span><button class="btn btn-sm" id="debugLogsRefresh">刷新</button></div>
+      ${logs.length ? `<div class="debug-log-scroll"><div class="debug-log-list">${logs.map(renderDebugLogRow).join("")}</div></div>` : '<p class="hint">暂无日志</p>'}`;
+    byId("debugLogsRefresh").onclick = loadDebugLogs;
+  } catch (e) {
+    errBox("sDebugLogs", e);
+  }
+}
+function renderDebugLogRow(log) {
+  const status = Number(log.status || 0);
+  return `<div class="debug-log-row">
+    <span class="dl-time" title="${escapeHtml(log.ts)}">${escapeHtml(formatLogTime(log.ts))}</span>
+    <span class="dl-ip">${escapeHtml(log.ip || "-")}</span>
+    <span class="dl-method ${escapeHtml(String(log.method || "").toLowerCase())}">${escapeHtml(log.method || "-")}</span>
+    <span class="dl-path" title="${escapeHtml(log.path || "")}">${escapeHtml(log.path || "-")}</span>
+    <span class="dl-summary">${escapeHtml(log.summary || "-")}</span>
+    <span class="dl-status${status >= 400 ? " bad" : ""}">${escapeHtml(String(status || "-"))}</span>
+    <span class="dl-actor">${escapeHtml(log.actor || "-")}</span>
+  </div>`;
+}
+function formatLogTime(ts) {
+  const value = Number(ts || 0);
+  if (!value) return "-";
+  return new Date(value * 1000).toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 async function loadTotp() {
   try {

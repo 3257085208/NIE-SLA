@@ -2,7 +2,7 @@ import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValida
 import { requireAgentForId, requireAnyAgent, requireAgentIdentity, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
-import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup } from './admin.js';
+import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
 import { VERSION } from './version.js';
@@ -19,11 +19,21 @@ import { createNodeQualityBrokerImages } from './nq-image-host.js';
 
 function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
+
+const adminSessionCache = new WeakMap();
 async function withAdmin(request, env) {
+  const cached = adminSessionCache.get(request);
+  if (cached?.env === env) return cached.session;
   const presentedSession = String(request.headers.get('x-admin-session') || '').trim();
   const session = presentedSession ? await validateAdminSession(env, presentedSession) : null;
   if (!session?.valid) throw new ApiError(401, '需要有效的管理会话，请重新登录');
+  adminSessionCache.set(request, { env, session });
   return session;
+}
+
+function cachedAdminSession(request, env) {
+  const cached = adminSessionCache.get(request);
+  return cached?.env === env ? cached.session : null;
 }
 
 async function loginState(request, env) {
@@ -157,6 +167,7 @@ const ROUTES = [
   // Admin CRUD
   { method: 'GET', path: '/api/debug-colo', rl: 'write' },
   { method: 'GET', path: '/api/debug/latency-health', rl: 'write' },
+  { method: 'GET', path: '/api/debug/logs', rl: 'write' },
   { method: 'GET', path: '/api/targets', rl: 'write' },
   { method: 'POST', path: '/api/targets', rl: 'write' },
   { method: 'PATCH', path: '/api/targets/bulk', rl: 'write' },
@@ -379,6 +390,7 @@ async function dispatchStatic(env, url, request, ctx) {
   // Admin CRUD
   if (path === '/api/debug-colo' && m === 'GET') { await withAdmin(request, env); return debugColo(env, url); }
   if (path === '/api/debug/latency-health' && m === 'GET') { await withAdmin(request, env); return json(await getLatencyHealth(env, url), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/debug/logs' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listDebugLogs(env, url), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/targets' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listTargets(env), 200, env); }
   if (path === '/api/sync-targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await syncEnvTargets(env, { force: true }), 200, env); }
   if (path === '/api/targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json({ ok: true, id: (await createTarget(request, env)).id }, 201, env); }
@@ -463,6 +475,36 @@ async function getPublicLatencyCached(env, url, ctx = null) {
 
 // ── Main handler ─────────────────────────────────────────────────────────────
 
+
+function debugActorFor(url, request, env) {
+  const session = cachedAdminSession(request, env);
+  if (session?.subject) return String(session.subject).slice(0, 120);
+  if (url.pathname.startsWith('/api/agent/')) {
+    return String(url.searchParams.get('agent_id') || '').trim().slice(0, 120) || 'agent';
+  }
+  if (url.pathname.startsWith('/api/latency-agent/')) {
+    return String(url.searchParams.get('node_id') || '').trim().slice(0, 120) || 'latency-agent';
+  }
+  if (url.pathname.startsWith('/api/auth/')) return 'auth';
+  if (url.pathname.endsWith('/install-script')) return 'install';
+  return 'system';
+}
+
+async function maybeLogDebugOperation(request, env, url, path, method, status, ctx, failed = false) {
+  if (!shouldLogDebugOperation(path, method)) return;
+  const entry = {
+    ip: debugClientIp(request),
+    method,
+    path,
+    actor: debugActorFor(url, request, env),
+    summary: failed ? `${debugSummary(path, method)}失败` : debugSummary(path, method),
+    status,
+  };
+  const task = recordDebugLog(env, entry);
+  if (ctx?.waitUntil) { ctx.waitUntil(task); return; }
+  await task;
+}
+
 export async function handleRequest(request, env, ctx) {
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, '') || '/';
@@ -473,10 +515,18 @@ export async function handleRequest(request, env, ctx) {
   // Global cap
   if (!await rateLimitGlobal(request, env, 2000, 60, { bestEffort: true })) return deny();
 
-  const response = await dispatchStatic(env, url, request, ctx);
-  if (response) return response;
-
-  return json({ ok: false, error: '未找到请求的资源' }, 404, env);
+  try {
+    const response = await dispatchStatic(env, url, request, ctx);
+    if (response) {
+      await maybeLogDebugOperation(request, env, url, path, request.method, response.status, ctx);
+      return response;
+    }
+    await maybeLogDebugOperation(request, env, url, path, request.method, 404, ctx);
+    return json({ ok: false, error: '未找到请求的资源' }, 404, env);
+  } catch (error) {
+    await maybeLogDebugOperation(request, env, url, path, request.method, error?.status || 500, ctx, true);
+    throw error;
+  }
 }
 
 function archiveYesterdayLocal(env) {
