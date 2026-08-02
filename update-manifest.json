@@ -1,16 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.1",
-  "agent_version": "v1.1.1",
-  "source_ref": "app-v1.1.1",
+  "version": "1.1.2",
+  "agent_version": "v1.1.2",
+  "source_ref": "app-v1.1.2",
   "published_at": "2026-08-03T00:00:00Z",
-  "title": "NIE-SLA 1.1.1",
+  "title": "NIE-SLA 1.1.2",
   "changelog": [
-    "后台 NQ/IP 解锁任务新增强制停止：排队中任务立即取消，运行中任务由新版 Agent 每 2 秒检查取消标志，检测后终止整个脚本进程组并落为已取消",
-    "Worker 增加 cancel_requested_at 字段与管理员强制停止接口、Agent 专用取消状态查询接口；取消后不再写入 NQ/IP 解锁结果，5 分钟宽限内旧 Agent 也会由过期清理落为已取消",
-    "前端任务表格与详情弹窗显示停止按钮，取消请求后显示停止中状态；IP 解锁详情弹窗同步支持强制停止",
-    "前端本次变更模块缓存键统一升至 20260803-v1111",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.1.1 / v1.1.1"
+    "公开状态页与后台解锁数据优先读取 NodeQuality 报告中的流媒体解锁段：NQ 报告可用时不再回退到 IP.Check.Place，解决 zouter jp intl 这类 NQ 全解锁但公开页仍显示失败的问题",
+    "Worker 为存量目标新增 nq_unlock_data / nq_unlock_updated_at 字段并在 Schema 升级时自动回填 NQ 解锁数据，新报告保存时同步写入",
+    "前端解锁状态显示修正：Youtube 状态为“中国”时显示红色，屏蔽/中国/失败/禁会员在红色框内显示对应文字，仅自制保持黄色",
+    "前端本次变更模块缓存键统一升至 20260803-v1112",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.1.2 / v1.1.2"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

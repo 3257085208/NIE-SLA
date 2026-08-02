@@ -137,7 +137,7 @@ function nqMediaRow(lines, label, starts) {
 
 
 function nqMediaStatusClass(value) {
-  if (/失败|屏蔽|禁会员|阻断/.test(value)) return 'danger';
+  if (/失败|屏蔽|禁会员|阻断|中国/.test(value)) return 'danger';
   if (/DNS|部分|未知|仅自制|仅网页|仅APP/.test(value)) return 'warning';
   if (/解锁|可用/.test(value)) return 'success';
   return 'neutral';

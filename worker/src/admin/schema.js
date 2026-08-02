@@ -1,10 +1,11 @@
 ﻿// Admin sub-module: D1 schema migrations.
 import { dayFromSec, nowSec, parseBoolean, timezoneOffsetMin } from '../utils.js';
 
+import { nodeQualityUnlockData } from '../nodequality.js';
 let schemaEnsured = false;
 let schemaPromise = null;
 // Bump this marker whenever an existing installation needs new D1 objects.
-const SCHEMA_MARKER = 'schema:worker-v23-20260803-task-cancel';
+const SCHEMA_MARKER = 'schema:worker-v24-20260803-nq-unlock';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -42,6 +43,9 @@ export async function ensureV6Schema(env) {
   if (installed?.value === '1') { schemaEnsured = true; return; }
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, no_public_ip INTEGER NOT NULL DEFAULT 0, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', city TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', traffic_reset_day INTEGER NOT NULL DEFAULT 1, alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '', nq_report TEXT DEFAULT '', nq_updated_at INTEGER)`).run();
   for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN traffic_reset_day INTEGER', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN no_public_ip INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN city TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_report TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_updated_at INTEGER']) {
+    await runOptionalSchemaChange(env, stmt);
+  }
+  for (const stmt of ['ALTER TABLE targets ADD COLUMN nq_unlock_data TEXT', 'ALTER TABLE targets ADD COLUMN nq_unlock_updated_at INTEGER']) {
     await runOptionalSchemaChange(env, stmt);
   }
   for (const stmt of [
@@ -372,6 +376,7 @@ export async function ensureV6Schema(env) {
   )`).run();
   await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN options TEXT');
   await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN cancel_requested_at INTEGER');
+  await backfillNodeQualityUnlockData(env);
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_claim ON agent_tasks(agent_id, status, requested_at)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_recent ON agent_tasks(requested_at DESC)`).run();
   await env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_tasks_one_active ON agent_tasks(agent_id) WHERE status IN ('queued', 'running')`).run();
@@ -381,6 +386,37 @@ export async function ensureV6Schema(env) {
   } catch (e) { schemaPromise = null; throw e; }
   })();
   await schemaPromise;
+}
+
+async function backfillNodeQualityUnlockData(env) {
+  try {
+    const rows = await env.DB.prepare(`SELECT id, nq_report, nq_updated_at, nq_unlock_data, nq_unlock_updated_at FROM targets WHERE nq_report IS NOT NULL AND nq_report != ''`).all();
+    for (const row of rows.results || []) {
+      const nqAt = Number(row.nq_updated_at || 0) || 0;
+      const storedAt = Number(row.nq_unlock_updated_at || 0) || 0;
+      const unlock = nodeQualityUnlockData({ nq_report: row.nq_report, nq_updated_at: nqAt });
+      const stored = parseStoredUnlock(row.nq_unlock_data);
+      if (unlock) {
+        const current = JSON.stringify(unlock);
+        if (stored?.source === 'NQ' && storedAt >= nqAt && JSON.stringify(stored) === current) continue;
+        await env.DB.prepare(`UPDATE targets SET nq_unlock_data = ?, nq_unlock_updated_at = ? WHERE id = ?`).bind(current, nqAt || nowSec(), row.id).run();
+      } else if (stored?.source === 'NQ' && storedAt <= nqAt) {
+        await env.DB.prepare(`UPDATE targets SET nq_unlock_data = NULL, nq_unlock_updated_at = NULL WHERE id = ?`).bind(row.id).run();
+      }
+    }
+  } catch (error) {
+    console.error('NQ unlock backfill failed:', String(error?.message || error));
+  }
+}
+
+function parseStoredUnlock(value) {
+  if (!value || typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 export function shouldEnsureSchemaForRequest(path, method, env) {

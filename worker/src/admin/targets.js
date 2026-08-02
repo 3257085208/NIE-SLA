@@ -10,7 +10,7 @@ import { setMeta } from './settings.js';
 import { syncEnvTargetsMaybe, syncEnvTargets } from './sync.js';
 import { normalizeTargetOrder } from './target-order.js';
 import { convertPriceToCny, getExchangeRates, normalizeCurrency } from './settings.js';
-import { normalizeNodeQualityReport, normalizeNodeQualityReportUrl, publicNodeQualitySummary } from '../nodequality.js';
+import { nodeQualityUnlockData, normalizeNodeQualityReport, normalizeNodeQualityReportUrl, publicNodeQualitySummary } from '../nodequality.js';
 import { applyBulkTargetColumns, normalizeBulkTargetUpdate } from './target-bulk.js';
 
 const TARGET_ORDER_SQL = `CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END, sort_order, group_name COLLATE NOCASE, name COLLATE NOCASE`;
@@ -81,7 +81,8 @@ export async function listTargets(env) {
     const priceCny = convertPriceToCny(target.price, target.currency, rates);
     const nq = publicNodeQualitySummary(target);
     const nqUrl = normalizeNodeQualityReportUrl(target.nq_url) || normalizeNodeQualityReportUrl(nq?.link);
-    const unlock = parseJsonObject(target.unlock_data);
+    const unlock = parseJsonObject(target.nq_unlock_data);
+    const unlockData = Array.isArray(unlock?.services) ? unlock : parseJsonObject(target.unlock_data);
     return {
       ...target,
       ...(priceCny == null ? {} : { price_cny: priceCny }),
@@ -89,7 +90,7 @@ export async function listTargets(env) {
       nq,
       nq_url: nqUrl || null,
       has_nq: Boolean(nq?.has_report || nqUrl),
-      unlock: Array.isArray(unlock?.services) ? unlock : null,
+      unlock: Array.isArray(unlockData?.services) ? unlockData : null,
       agent_runtime: agentStates[sanitizeAgentId(target.id)] || null,
     };
   });
@@ -113,6 +114,7 @@ export async function createTarget(request, env) {
   const nq = body?.nq_report !== undefined
     ? normalizeNodeQualityReport(body.nq_report)
     : { report: null, updatedAt: null };
+  const nqUnlock = nq.report ? nodeQualityUnlockData({ nq_report: nq.report, nq_updated_at: nq.updatedAt }) : null;
   const currency = normalizeCurrency(body?.currency, 'USD');
   const trafficEnabled = parseBoolean(body?.traffic_enabled, false) ? 1 : 0;
   const trafficQuotaGb = normalizeTrafficQuotaGb(body?.traffic_quota_gb ?? 0);
@@ -124,7 +126,7 @@ export async function createTarget(request, env) {
   const alertTrafficGb = normalizeNullableNumber(body?.alert_traffic_remaining_gb, 1048576);
   const maxSort = await env.DB.prepare(`SELECT MAX(sort_order) AS value FROM targets`).first().catch(() => null);
   const sortOrder = maxSort?.value == null ? null : Number(maxSort.value) + 1;
-  await env.DB.prepare(`INSERT INTO targets (id, name, group_name, type, target_host, target_port, url, method, expected_status, timeout_ms, interval_sec, probe_region, enabled, no_public_ip, sort_order, created_at, updated_at, expires_at, price, billing_cycle, tags, location, city, currency, traffic_enabled, traffic_quota_gb, traffic_mode, traffic_reset_day, alert_enabled, alert_expiry_days, alert_traffic_remaining_percent, alert_traffic_remaining_gb, provider, line_type, nq_report, nq_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, normalized.name, normalized.group_name, normalized.type, normalized.target_host, normalized.target_port, normalized.url, normalized.method, normalized.expected_status, normalized.timeout_ms, normalized.interval_sec, normalized.probe_region, normalized.enabled ? 1 : 0, normalized.no_public_ip ? 1 : 0, sortOrder, now, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, trafficResetDay, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nq.report, nq.updatedAt).run();
+  await env.DB.prepare(`INSERT INTO targets (id, name, group_name, type, target_host, target_port, url, method, expected_status, timeout_ms, interval_sec, probe_region, enabled, no_public_ip, sort_order, created_at, updated_at, expires_at, price, billing_cycle, tags, location, city, currency, traffic_enabled, traffic_quota_gb, traffic_mode, traffic_reset_day, alert_enabled, alert_expiry_days, alert_traffic_remaining_percent, alert_traffic_remaining_gb, provider, line_type, nq_report, nq_updated_at, nq_unlock_data, nq_unlock_updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(id, normalized.name, normalized.group_name, normalized.type, normalized.target_host, normalized.target_port, normalized.url, normalized.method, normalized.expected_status, normalized.timeout_ms, normalized.interval_sec, normalized.probe_region, normalized.enabled ? 1 : 0, normalized.no_public_ip ? 1 : 0, sortOrder, now, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, trafficResetDay, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nq.report, nq.updatedAt, nqUnlock ? JSON.stringify(nqUnlock) : null, nqUnlock ? nq.updatedAt : null).run();
   await syncTargetCompatibility(env, id);
   await setMeta(env, 'targets_last_sync_at', String(now));
   return { ok: true, id };
@@ -186,10 +188,15 @@ async function updateTargetRecord(id, body, existing, env, { updateMeta = true }
   const lineType = body?.line_type !== undefined ? (String(body.line_type || '').trim() || null) : (existing.line_type ?? null);
   let nqReport = existing.nq_report ?? null;
   let nqUpdatedAt = existing.nq_updated_at ?? null;
+  let nqUnlockData = existing.nq_unlock_data ?? null;
+  let nqUnlockUpdatedAt = existing.nq_unlock_updated_at ?? null;
   if (body?.nq_report !== undefined) {
     const nq = normalizeNodeQualityReport(body.nq_report);
     nqReport = nq.report;
     nqUpdatedAt = nq.updatedAt;
+    const nqUnlock = nq.report ? nodeQualityUnlockData({ nq_report: nq.report, nq_updated_at: nq.updatedAt }) : null;
+    nqUnlockData = nqUnlock ? JSON.stringify(nqUnlock) : null;
+    nqUnlockUpdatedAt = nqUnlock ? nq.updatedAt : null;
   }
   const currency = body?.currency !== undefined ? normalizeCurrency(body.currency, 'USD') : normalizeCurrency(existing.currency, 'USD');
   const trafficEnabled = body?.traffic_enabled !== undefined ? (parseBoolean(body.traffic_enabled, false) ? 1 : 0) : (parseBoolean(existing.traffic_enabled, false) ? 1 : 0);
@@ -201,7 +208,7 @@ async function updateTargetRecord(id, body, existing, env, { updateMeta = true }
   const alertExpiryDays = body?.alert_expiry_days !== undefined ? normalizeNullableNumber(body.alert_expiry_days, 3650) : (existing.alert_expiry_days ?? null);
   const alertTrafficPercent = body?.alert_traffic_remaining_percent !== undefined ? normalizeNullableNumber(body.alert_traffic_remaining_percent, 100) : (existing.alert_traffic_remaining_percent ?? null);
   const alertTrafficGb = body?.alert_traffic_remaining_gb !== undefined ? normalizeNullableNumber(body.alert_traffic_remaining_gb, 1048576) : (existing.alert_traffic_remaining_gb ?? null);
-  await env.DB.prepare(`UPDATE targets SET name = ?, group_name = ?, type = ?, target_host = ?, target_port = ?, url = ?, method = ?, expected_status = ?, timeout_ms = ?, interval_sec = ?, probe_region = ?, enabled = ?, no_public_ip = ?, updated_at = ?, expires_at = ?, price = ?, billing_cycle = ?, tags = ?, location = ?, city = ?, currency = ?, traffic_enabled = ?, traffic_quota_gb = ?, traffic_mode = ?, traffic_reset_day = ?, alert_enabled = ?, alert_expiry_days = ?, alert_traffic_remaining_percent = ?, alert_traffic_remaining_gb = ?, provider = ?, line_type = ?, nq_report = ?, nq_updated_at = ? WHERE id = ?`).bind(merged.name, merged.group_name, merged.type, merged.target_host, merged.target_port, merged.url, merged.method, merged.expected_status, merged.timeout_ms, merged.interval_sec, merged.probe_region, merged.enabled ? 1 : 0, merged.no_public_ip ? 1 : 0, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, trafficResetDay, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nqReport, nqUpdatedAt, id).run();
+  await env.DB.prepare(`UPDATE targets SET name = ?, group_name = ?, type = ?, target_host = ?, target_port = ?, url = ?, method = ?, expected_status = ?, timeout_ms = ?, interval_sec = ?, probe_region = ?, enabled = ?, no_public_ip = ?, updated_at = ?, expires_at = ?, price = ?, billing_cycle = ?, tags = ?, location = ?, city = ?, currency = ?, traffic_enabled = ?, traffic_quota_gb = ?, traffic_mode = ?, traffic_reset_day = ?, alert_enabled = ?, alert_expiry_days = ?, alert_traffic_remaining_percent = ?, alert_traffic_remaining_gb = ?, provider = ?, line_type = ?, nq_report = ?, nq_updated_at = ?, nq_unlock_data = ?, nq_unlock_updated_at = ? WHERE id = ?`).bind(merged.name, merged.group_name, merged.type, merged.target_host, merged.target_port, merged.url, merged.method, merged.expected_status, merged.timeout_ms, merged.interval_sec, merged.probe_region, merged.enabled ? 1 : 0, merged.no_public_ip ? 1 : 0, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, trafficResetDay, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nqReport, nqUpdatedAt, nqUnlockData, nqUnlockUpdatedAt, id).run();
   await syncTargetCompatibility(env, id);
   if (trafficResetDayChanged) {
     await rebuildAgentTrafficPeriod(env, sanitizeAgentId(id), {

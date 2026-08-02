@@ -33,7 +33,7 @@ const nodeQualitySource = await readFile(path.join(root, 'js', 'shared', 'nodequ
 const installCommandSource = await readFile(path.join(root, 'js', 'install-command.js'), 'utf8');
 const adminApiSource = await readFile(path.join(root, 'js', 'admin', 'api.js'), 'utf8');
 const nqOptionsSource = await readFile(path.join(root, 'js', 'admin', 'nq-options.js'), 'utf8');
-assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260803-v1111"/, 'admin must import the configurable NodeQuality option helpers');
+assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260803-v1112"/, 'admin must import the configurable NodeQuality option helpers');
 assert.match(nqOptionsSource, /data-nq-option="/, 'NodeQuality options must use stable data attributes for each select');
 assert.match(nqOptionsSource, /运行 HardwareQuality 测试/, 'NodeQuality options must expose the four upstream questions');
 assert.doesNotMatch(adminSource, /showInstallProgress|showInstallCommands|data-copy-install|data-retry-install/, 'Agent deploy must not open an install-command dialog');
@@ -72,11 +72,11 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /href="\/admin\.css\?v=20260803-v1111"/, 'custom admin paths must load CSS from the site root');
+assert.match(adminHtml, /href="\/admin\.css\?v=20260803-v1112"/, 'custom admin paths must load CSS from the site root');
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
-assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260803-v1111"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260803-v1111"/, 'custom admin paths must load the admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260803-v1112"/, 'admin login must install a startup failure guard');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260803-v1112"/, 'custom admin paths must load the admin module from the site root');
 assert.match(adminBootstrapSource, /后台脚本加载失败，请刷新页面/, 'admin startup failures must be visible on the login form');
 assert.match(adminBootstrapSource, /loginButton\.onclick = \(event\)/, 'the admin module must replace the startup guard only after it loads');
 assert.match(adminSource, /window\.__NIE_ADMIN_READY__ = true;[\s\S]*nie-admin-ready/, 'the admin module must dismiss its startup guard after binding controls');
@@ -115,7 +115,7 @@ assert.match(adminApiSource, /请求可能仍在服务端继续执行，请稍�
 assert.match(adminSource, /任务状态刷新失败[\s\S]*task-load-warning/, 'task polling failures must surface a visible warning');
 assert.match(adminSource, /async function queueAgentTask[\s\S]*catch \(error\) \{[\s\S]*await loadAgentTasks\(\)/, 'single-machine queue failures must refresh task state');
 assert.match(adminSource, /id="backupStatus"[\s\S]*正在加密 Agent Token/, 'protected backup must expose persistent progress next to its controls');
-assert.match(adminSource, /install-command\.js\?v=20260803-v1111/, 'Agent and Latency install clipboard fixes must use the current cache key');
+assert.match(adminSource, /install-command\.js\?v=20260803-v1112/, 'Agent and Latency install clipboard fixes must use the current cache key');
 assert.match(adminSource, /latencyInstallCommandFromPayload\(data, node\.id\);\s*await copyText\(command\)/, 'Latency deploy must validate and copy the one-time command without opening a dialog');
 const latencyDeploySource = adminSource.slice(adminSource.indexOf('async function deployLatencyNode'), adminSource.indexOf('async function loadPings'));
 assert.doesNotMatch(latencyDeploySource, /openModal\(\)/, 'Latency deploy must not open an install-command dialog');
@@ -134,8 +134,8 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260803-v1111/, 'frontend cache key must publish the current release');
-assert.match(indexHtml, /style\.css\?v=20260803-v1111/, 'frontend CSS cache key must publish the current release');
+assert.match(indexHtml, /app\.js\?v=20260803-v1112/, 'frontend cache key must publish the current release');
+assert.match(indexHtml, /style\.css\?v=20260803-v1112/, 'frontend CSS cache key must publish the current release');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /class="theme-pending"[\s\S]*id="themeBoot"[\s\S]*id="themeCanvas"/, 'theme runtime must wait behind a first-paint shell');
@@ -191,6 +191,8 @@ assert.match(appSource, /const primary = \['tiktok', 'disney', 'netflix', 'youtu
 assert.match(unlockSource, /if \(\/仅\\s\*自制\|仅\\s\*网页\|仅\\s\*app\|部分\|partial\/\.test\(status\)\) return 'dns';[\s\S]*if \(\/解锁\|原生\|unlocked\|native\|yes\|ok\/\.test\(status\)\) return 'good';[\s\S]*if \(\/dns\/\.test\(status\) \|\| \/dns\/\.test\(method\)\) return 'dns'/, 'successful unlock statuses must stay green even when the method is DNS');
 assert.match(appSource, /\$\{metaBadges[\s\S]*\$\{unlockStrip\}\s*<\/div>\s*<div class="service-status">/, 'unlock summary must stay with the VPS metadata above the uptime bars');
 assert.doesNotMatch(appSource, /unlockDetailSection|vps-unlock-section/, 'unlock checks must not be duplicated in the lower VPS details panel');
+assert.match(unlockSource, /失败\|未解锁\|不支持\|封锁\|屏蔽\|禁止\|禁会员\|中国/, 'China-only unlock status must be classified as failed');
+assert.match(appSource, /stateName === 'bad'[\s\S]*if \(\/屏蔽\/\.test\(status\)\) return '屏蔽';/, 'blocked unlock services must label the red box');
 assert.match(appSource, /ping_stats[\s\S]*renderPingLossStats/, 'TCP Ping must render per-target packet-loss statistics');
 assert.match(appSource, /max_points_per_target:\s*String\(\(\{\s*['"]1h['"]:\s*360,[\s\S]*['"]24h['"]:\s*480/, 'TCP Ping history must use the bounded standard point budgets');
 assert.doesNotMatch(appSource, /include_loss:\s*['"]1['"]|pingLossOverlayPlugin|pingLossLaneBounds/, 'TCP Ping must not request or draw chart-internal packet-loss overlays');

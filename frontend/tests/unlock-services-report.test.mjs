@@ -6,6 +6,7 @@ const services = [
   { id: 'tiktok', name: 'TikTok', status: '解锁', region: 'DE', method: '原生' },
   { id: 'netflix', name: 'Netflix', status: '仅自制', region: 'DE', method: '原生' },
   { id: 'reddit', name: 'Reddit', status: '屏蔽', region: '', method: '' },
+  { id: 'youtube', name: 'Youtube', status: '中国', region: '', method: '' },
   { id: 'chatgpt', name: 'ChatGPT', status: '解锁', region: 'US', method: 'DNS' },
 ];
 
@@ -13,6 +14,8 @@ const unlockHtml = renderUnlockServicesReportHtml(services);
 assert.match(unlockHtml, /nq-media-grid[\s\S]*nq-media-badge success[\s\S]*nq-media-badge danger/, 'IP unlock task services must render as the NodeQuality IP-quality media grid');
 const unlockBadges = [...unlockHtml.matchAll(/nq-media-badge ([a-z]+)">([^<]+)</g)].map(match => `${match[1]}:${match[2]}`);
 assert.ok(unlockBadges.includes('warning:仅自制'), '仅自制 must render with the yellow warning state');
+assert.ok(unlockBadges.includes('danger:屏蔽'), '屏蔽 must render inside the red danger badge');
+assert.ok(unlockBadges.includes('danger:中国'), '中国 must render with the red danger state');
 assert.equal(unlockBadges.at(-1), 'success:解锁', 'ChatGPT DNS unlock must stay green when the source status is 解锁');
 assert.match(unlockHtml, /nq-media-label">地区<\/span>[\s\S]*\[DE\][\s\S]*\[\]/, 'IP unlock regions must keep the NodeQuality bracketed column format');
 assert.equal(renderUnlockServicesReportHtml([]), '', 'empty IP unlock results must not render an empty terminal block');

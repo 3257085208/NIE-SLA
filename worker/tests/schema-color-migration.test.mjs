@@ -30,8 +30,10 @@ assert.ok(database.prepare(`PRAGMA table_info(ping_targets)`).all().some(column 
 assert.ok(database.prepare(`PRAGMA table_info(latency_agents)`).all().some(column => column.name === 'color'));
 assert.ok(database.prepare(`PRAGMA table_info(agent_install_tickets)`).all().some(column => column.name === 'expires_at'));
 assert.ok(database.prepare(`PRAGMA table_info(agent_tasks)`).all().some(column => column.name === 'cancel_requested_at'));
+assert.ok(database.prepare(`PRAGMA table_info(targets)`).all().some(column => column.name === 'nq_unlock_data'));
+assert.ok(database.prepare(`PRAGMA table_info(targets)`).all().some(column => column.name === 'nq_unlock_updated_at'));
 assert.equal(
-  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v23-20260803-task-cancel'`).get()?.value,
+  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v24-20260803-nq-unlock'`).get()?.value,
   '1',
 );
 const debugColumns = database.prepare(`PRAGMA table_info(debug_logs)`).all().map(column => column.name);

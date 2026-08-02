@@ -5,9 +5,9 @@ import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
 
-const INSTALLER_SHA256 = 'a249fda72eff6310ba371a494b4c2b7c315d774733ce8bf7ef250acd5fdb60e1';
-const SETUP_SHA256 = 'df5e239dab6fc8f9ccd4f612e84275e3a38af06725f4b8d93de06c324348bf12';
-const CFTZ_SHA256 = 'a5688bbbadafc6edba082e1009f89bdef71ee8a19c51c151329883944e782395';
+const INSTALLER_SHA256 = 'e330b77fa2b99a1d5803070d4b0cce0c499f796ac85b469a7d5feaf5c681c1be';
+const SETUP_SHA256 = '672d1cb15ffb9f9de45e631d7764776d63ca3704ac2db738b3a648ddce349d48';
+const CFTZ_SHA256 = 'dd79aff1ac0860b2ee5431edbb72f913ffc02b8ca8584d7b25703fe096461022';
 const INSTALL_TICKET_PREFIX = 'nsi_';
 const INSTALL_TICKET_BYTES = 24;
 const INSTALL_TICKET_TTL_SEC = 600;
@@ -32,7 +32,7 @@ export async function getAgentInstallCommand(env, url, request = null) {
   const pingSec = String(await getPingIntervalSec(env));
   const release = await loadAgentRelease(env, request).catch(() => null);
   const sha256SumsSha256 = String(env.NSTATUS_SHA256SUMS_SHA256 || '').trim() || String(release?.manifest_sha256 || '').trim();
-  const expectedVersion = String(env.AGENT_LATEST_VERSION || '').trim() || String(release?.latest_version || '').trim();
+const expectedVersion = String(env.AGENT_LATEST_VERSION || '').trim() || String(release?.latest_version || '').trim();
   const installTicket = randomInstallTicket();
   const now = nowSec();
   const expiresAt = now + INSTALL_TICKET_TTL_SEC;

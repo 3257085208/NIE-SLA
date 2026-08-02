@@ -1,6 +1,6 @@
 import { ApiError, safeJson } from '../auth.js';
 import { nowSec, sanitizeAgentId } from '../utils.js';
-import { normalizeNodeQualityReport, normalizeNodeQualityReportUrl, sanitizeAnsiContent } from '../nodequality.js';
+import { nodeQualityUnlockData, normalizeNodeQualityReport, normalizeNodeQualityReportUrl, sanitizeAnsiContent } from '../nodequality.js';
 import { uploadNodeQualityReportImages } from '../nq-image-host.js';
 
 export const AGENT_TASK_ACTIONS = Object.freeze({
@@ -259,8 +259,14 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
     .bind(finalStatus, finishedAt, storedResult ? JSON.stringify(storedResult) : null, finalError, excerpt, agentVersion, taskId, row.agent_id).run();
 
   if (succeeded && row.action === 'nodequality' && result?.report_url) {
-    await env.DB.prepare(`UPDATE targets SET nq_url = ?, nq_report = COALESCE(?, nq_report), nq_updated_at = ?, updated_at = ? WHERE id = ?`)
-      .bind(result.report_url, normalizedNq?.report || null, finishedAt, finishedAt, row.agent_id).run();
+    const nqUnlock = normalizedNq?.report ? nodeQualityUnlockData({ nq_report: normalizedNq.report, nq_updated_at: finishedAt }) : null;
+    if (normalizedNq?.report) {
+      await env.DB.prepare(`UPDATE targets SET nq_url = ?, nq_report = ?, nq_updated_at = ?, nq_unlock_data = ?, nq_unlock_updated_at = ?, updated_at = ? WHERE id = ?`)
+        .bind(result.report_url, normalizedNq.report, finishedAt, nqUnlock ? JSON.stringify(nqUnlock) : null, nqUnlock ? finishedAt : null, finishedAt, row.agent_id).run();
+    } else {
+      await env.DB.prepare(`UPDATE targets SET nq_url = ?, nq_report = COALESCE(?, nq_report), nq_updated_at = ?, updated_at = ? WHERE id = ?`)
+        .bind(result.report_url, null, finishedAt, finishedAt, row.agent_id).run();
+    }
   }
   if (succeeded && row.action === 'ip_unlock' && Array.isArray(result?.services)) {
     await env.DB.prepare(`UPDATE targets SET unlock_data = ?, unlock_updated_at = ?, updated_at = ? WHERE id = ?`)

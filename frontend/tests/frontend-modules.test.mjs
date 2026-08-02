@@ -411,6 +411,8 @@ console.log('Pages API proxy CORS ok');
 assert.equal(targetHasNodeQuality({ type: 'tcp', has_nq: 1 }), true);
 assert.equal(targetHasNodeQuality({ type: 'tcp', nq: { has_report: true } }), true);
 assert.equal(targetHasNodeQuality({ type: 'http', has_nq: 1 }), false);
+assert.equal(unlockState({ status: '中国' }), 'bad', 'China-only unlock status must render as a failed state');
+assert.equal(unlockState({ status: '屏蔽' }), 'bad', 'blocked unlock status must render as a failed state');
 assert.match(renderNqAnsiHtml('\u001b[31mred\u001b[0m'), /color:#ef4444/);
 assert.match(renderNqReportHtml('五、流媒体服务解锁检测\n服务商： TikTok Netflix\n状态： 解锁 失败\n地区： [TW] []\n方式： DNS\n六、邮局连通性及黑名单检测'), /nq-media-grid[\s\S]*nq-media-badge success[\s\S]*nq-media-badge danger/);
 const sparseUnlock = renderNqReportHtml('五、流媒体服务解锁检测\n服务商：  TikTok   Disney+  Netflix Youtube  AmazonPV  Reddit   Bilibili\n状态：     失败     失败     失败    失败     屏蔽     解锁     失败\n地区：                         []\n方式：                         DNS\n六、邮局连通性及黑名单检测');

@@ -23,7 +23,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260803-v1111';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260803-v1112';
 import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
@@ -35,13 +35,13 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260803-v1111';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260803-v1112';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
 import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
 import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260729-beta23';
-import { readStorage, writeStorage } from './js/shared/storage.js?v=20260803-v1111';
+import { readStorage, writeStorage } from './js/shared/storage.js?v=20260803-v1112';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -1285,7 +1285,14 @@ function unlockCompactHtml(unlock) {
 }
 
 function unlockCountryCode(service, stateName) {
-  if (stateName === 'bad') return '--';
+  if (stateName === 'bad') {
+    const status = String(service?.status || '').trim();
+    if (/屏蔽/.test(status)) return '屏蔽';
+    if (/中国/.test(status)) return '中国';
+    if (/失败/.test(status)) return '失败';
+    if (/禁会员/.test(status)) return '禁会员';
+    return '--';
+  }
   const raw = String(service?.region || '').replace(/^\[|\]$/g, '').trim();
   if (!raw || /^(?:null|none|-)$/i.test(raw)) return '--';
   const normalized = raw.toUpperCase().replace(/[^A-Z\u4E00-\u9FFF]/g, '');

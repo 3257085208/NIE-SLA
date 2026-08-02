@@ -202,16 +202,19 @@ await completeAgentTask(jsonRequest({
     report: {
       tabs: [
         { id: 'basic', title: '基本信息', content: 'CPU: Test' },
-        { id: 'ip', title: 'IP质量', content: 'IP: Test' },
+        { id: 'ip', title: 'IP质量', content: '五、流媒体及AI服务解锁检测\n服务商： TikTok Netflix\n状态： 解锁 失败\n地区： [TW] []\n方式： DNS DNS' },
         { id: 'network', title: '网络质量', content: 'Network: Test' },
         { id: 'route', title: '回程路由', content: 'Route: Test' },
       ],
     },
   },
 }), env, nq.task.id, 'vps-a');
-const storedNq = sqlite.prepare(`SELECT nq_url, nq_report FROM targets WHERE id = ?`).get('vps-a');
+const storedNq = sqlite.prepare(`SELECT nq_url, nq_report, nq_unlock_data, nq_unlock_updated_at FROM targets WHERE id = ?`).get('vps-a');
 assert.equal(storedNq.nq_url, 'https://nodequality.com/r/example123');
 assert.deepEqual(JSON.parse(storedNq.nq_report).tabs.map((tab) => tab.id), ['basic', 'ip', 'network', 'route']);
+assert.equal(JSON.parse(storedNq.nq_unlock_data).source, 'NQ');
+assert.deepEqual(JSON.parse(storedNq.nq_unlock_data).services.map((service) => [service.id, service.status]), [['tiktok', '解锁'], ['netflix', '失败']]);
+assert.ok(Number(storedNq.nq_unlock_updated_at) > 0);
 assert.equal((await listAgentTasks(env, new URL('https://example.test/api/agent-tasks?agent_id=vps-a'))).tasks.length, 3);
 
 const nqCustom = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'nodequality', options: { hardware: 'v', ip: 'n', net: 'l', route: 'n' } }), env);

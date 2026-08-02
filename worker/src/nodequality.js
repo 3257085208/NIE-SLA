@@ -283,6 +283,128 @@ export function stripAnsiSafe(text) {
     .replace(/\r/g, '');
 }
 
+const NQ_MEDIA_PROVIDERS = new Map([
+  ['tiktok', { id: 'tiktok', name: 'TikTok' }],
+  ['disney+', { id: 'disney_plus', name: 'Disney+' }],
+  ['disneyplus', { id: 'disney_plus', name: 'Disney+' }],
+  ['netflix', { id: 'netflix', name: 'Netflix' }],
+  ['youtube', { id: 'youtube', name: 'Youtube' }],
+  ['amazonpv', { id: 'amazon_pv', name: 'AmazonPV' }],
+  ['reddit', { id: 'reddit', name: 'Reddit' }],
+  ['chatgpt', { id: 'chatgpt', name: 'ChatGPT' }],
+]);
+
+function nqMediaHeading(line) {
+  return /^[五5]\s*[、.]\s*流媒体(?:服务|及AI服务)?解锁检测/.test(stripAnsiSafe(line).trim());
+}
+
+function nqMediaHeader(lines) {
+  const line = lines.find((item) => /^服务商\s*[:：]/.test(stripAnsiSafe(item).trim()));
+  if (!line) return { names: [], starts: [] };
+  const plain = stripAnsiSafe(line);
+  const match = plain.match(/^服务商\s*[:：]\s*/);
+  const bodyStart = match ? match[0].length : 0;
+  const body = plain.slice(bodyStart);
+  const names = [];
+  const starts = [];
+  const matcher = /\S+/g;
+  let m;
+  while ((m = matcher.exec(body))) {
+    names.push(m[0]);
+    starts.push(bodyStart + m.index);
+  }
+  return { names, starts };
+}
+
+function nqMediaRow(lines, labelPattern, starts) {
+  const line = lines.find((item) => labelPattern.test(stripAnsiSafe(item).trim()));
+  if (!line) return [];
+  const plain = stripAnsiSafe(line);
+  const match = plain.match(labelPattern);
+  const bodyStart = match ? match[0].length : 0;
+  const body = plain.slice(bodyStart);
+  const values = Array.from({ length: starts.length }, () => '');
+  const tokens = [...body.matchAll(/\S+/g)];
+  let previousColumn = -1;
+  for (const token of tokens) {
+    const absoluteStart = bodyStart + token.index;
+    let bestColumn = -1;
+    let bestDistance = Infinity;
+    starts.forEach((start, index) => {
+      if (index <= previousColumn) return;
+      const distance = Math.abs(start - absoluteStart);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestColumn = index;
+      }
+    });
+    if (bestColumn < 0) break;
+    values[bestColumn] = token[0];
+    previousColumn = bestColumn;
+  }
+  return values;
+}
+
+export function parseNqMediaServices(content = '') {
+  const lines = String(content || '').replace(/\r/g, '').split('\n');
+  const start = lines.findIndex((line) => nqMediaHeading(line));
+  if (start < 0) return [];
+  const end = lines.findIndex((line, index) => index > start && /^[六6]\s*[、.]/.test(stripAnsiSafe(line).trim()));
+  const block = lines.slice(start, end < 0 ? lines.length : end);
+  const { names, starts } = nqMediaHeader(block);
+  if (!names.length || !starts.length) return [];
+  const statuses = nqMediaRow(block, /^状态\s*[:：]/, starts);
+  const regions = nqMediaRow(block, /^地区\s*[:：]/, starts);
+  const methods = nqMediaRow(block, /^方式\s*[:：]/, starts);
+  const count = Math.max(names.length, statuses.length, regions.length, methods.length);
+  const services = [];
+  for (let index = 0; index < count; index += 1) {
+    const service = normalizeNqMediaService(names[index] || '', statuses[index] || '', regions[index] || '', methods[index] || '');
+    if (service) services.push(service);
+  }
+  return services;
+}
+
+function normalizeNqMediaService(rawName, rawStatus, rawRegion, rawMethod) {
+  const name = String(rawName || '').trim().slice(0, 40);
+  const status = /^[-—]$/.test(String(rawStatus || '').trim()) ? '' : String(rawStatus || '').trim().slice(0, 80);
+  const region = /^[-—]$/.test(String(rawRegion || '').trim()) ? '' : String(rawRegion || '').trim().slice(0, 40);
+  const method = /^[-—]$/.test(String(rawMethod || '').trim()) ? '' : String(rawMethod || '').trim().slice(0, 40);
+  if (!name || (!status && !region && !method)) return null;
+  const key = name.toLowerCase().replace(/[^a-z0-9+]/g, '');
+  const canonical = NQ_MEDIA_PROVIDERS.get(key);
+  const id = String(canonical?.id || name.toLowerCase().replace(/[^a-z0-9_+-]/g, '_')).slice(0, 40);
+  return { id, name: canonical?.name || name, status, region, method };
+}
+
+function nodeQualityReportTabs(value) {
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.tabs)) return parsed.tabs;
+    } catch (_) { }
+    return parseNodeQualityMarkdown(value).tabs;
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    if (Array.isArray(value.tabs)) return value.tabs;
+    return [];
+  }
+  return [];
+}
+
+export function nodeQualityUnlockData(target = {}) {
+  const tabs = nodeQualityReportTabs(target?.nq_report);
+  const ipTab = tabs.find((tab) => String(tab?.id || '').toLowerCase() === 'ip' || /IP质量/.test(String(tab?.title || '')));
+  if (!ipTab) return null;
+  const services = parseNqMediaServices(ipTab?.content || ipTab?.text || ipTab?.body || '');
+  if (!services.length) return null;
+  return {
+    checked_at: Number(target?.nq_updated_at || 0) || null,
+    source: 'NQ',
+    services,
+  };
+}
+
 function stripEmoji(text) {
   return String(text || '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').trim();
 }
