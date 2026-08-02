@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.0.63**
+**Stable · 1.0.64**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -62,7 +62,7 @@ VPS 上的 Agent 安装和后续更新从该用户自己的 Worker/站点 `/bin`
 
 后台可手动触发 NodeQuality 与 IPv4 解锁检测。两者均为固定动作，不接受任意命令、参数、脚本地址、stdin 或定时计划。
 
-- NodeQuality 固定输入 `v/y/y/y`，后台保存结构化报告与经过限制的 `nodequality.com` 报告链接。
+- NodeQuality 四项测试可在后台分别选择：HardwareQuality `y/f/v/n`、IPQuality `y/n`、NetQuality `y/l/n`、回程路由 `y/n`，默认 `f/y/y/y`；任务不再设置外部超时，后台保存结构化报告与经过限制的 `nodequality.com` 报告链接。
 - Worker 可把网络质量与回程路由渲染成 SVG，通过固定 S3 渠道上传且目录留空；图床凭据只存在于 Worker Secret，上游图片地址由本站代理隐藏，失败时回退到文本报告。
 - IPv4 解锁使用 `IP.Check.Place` JSON 模式，只保存最终媒体解锁字段，不保存纯净度。
 - 缺少 `dig` 或 `nslookup` 时使用 Agent 内置受限解析器，不安装软件、不要求 root，并保留报告原始地区值。

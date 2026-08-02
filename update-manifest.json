@@ -1,16 +1,18 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.0.63",
-  "agent_version": "v1.0.63",
-  "source_ref": "app-v1.0.63",
+  "version": "1.0.64",
+  "agent_version": "v1.0.64",
+  "source_ref": "app-v1.0.64",
   "published_at": "2026-08-02T12:00:00Z",
-  "title": "NIE-SLA 1.0.63",
+  "title": "NIE-SLA 1.0.64",
   "changelog": [
+    "NodeQuality 后台任务可分别选择 HardwareQuality/IPQuality/NetQuality/回程路由四项测试选项，不再固定只跑快速硬件模式",
+    "NQ 任务取消外部超时，慢速设备可一直运行到完成，排队过期仍保留以避免永久占用互斥位",
     "系统调试日志改为可折叠卡片并默认收起，继续记录操作 IP 并自动清理 30 天前的记录",
     "Cloudflare 内置 Latency 固定保留、不可删除，并支持自定义曲线颜色，公共图表同步应用",
     "NQ/IP 解锁渲染修复：仅自制恢复黄色，DNS 方式成功的解锁保持绿色",
     "修复批量任务目标搜索与含特殊字符 VPS ID 的下发；NodeQuality 硬件检测改为快速模式避免慢速设备超时",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.63"
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.0.64"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

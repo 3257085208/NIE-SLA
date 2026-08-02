@@ -2,6 +2,13 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.0.64 - 2026-08-02
+
+- 后台运行 NodeQuality 时可在确认弹窗分别选择 HardwareQuality（`y/f/v/n`）、IPQuality（`y/n`）、NetQuality（`y/l/n`）与回程路由（`y/n`），默认 `f/y/y/y`；单机与批量任务都随请求提交选项，Agent 按白名单映射为固定 stdin，不开放任意命令或脚本参数。
+- NodeQuality 任务取消外部 `timeout` 包装，慢速设备可一直运行到完成，不再因下载 Geekbench 或慢盘阶段被 exit 124 提前终止；IP 解锁仍保留 600 秒上限。
+- 排队过期保留 7 天加 900 秒宽限，避免未领取的 NQ 任务永久占用单任务互斥位；Worker 新增 `agent_tasks.options` 字段，旧库通过 Schema 迁移自动补齐。
+- 应用、Worker、Rust Agent、前端与教程版本同步至 `1.0.64` / `v1.0.64`。
+
 ## 1.0.63 - 2026-08-02
 
 - 系统调试日志改为可折叠卡片并默认收起，后台仍可一键刷新查看最近 200 条带操作 IP 的 Debug 记录。

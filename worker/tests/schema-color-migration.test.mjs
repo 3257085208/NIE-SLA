@@ -30,7 +30,7 @@ assert.ok(database.prepare(`PRAGMA table_info(ping_targets)`).all().some(column 
 assert.ok(database.prepare(`PRAGMA table_info(latency_agents)`).all().some(column => column.name === 'color'));
 assert.ok(database.prepare(`PRAGMA table_info(agent_install_tickets)`).all().some(column => column.name === 'expires_at'));
 assert.equal(
-  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v21-20260802-debug-logs'`).get()?.value,
+  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v22-20260802-nq-options'`).get()?.value,
   '1',
 );
 const debugColumns = database.prepare(`PRAGMA table_info(debug_logs)`).all().map(column => column.name);

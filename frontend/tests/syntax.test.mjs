@@ -32,6 +32,10 @@ const unlockSource = await readFile(path.join(root, 'js', 'shared', 'unlock.js')
 const nodeQualitySource = await readFile(path.join(root, 'js', 'shared', 'nodequality.js'), 'utf8');
 const installCommandSource = await readFile(path.join(root, 'js', 'install-command.js'), 'utf8');
 const adminApiSource = await readFile(path.join(root, 'js', 'admin', 'api.js'), 'utf8');
+const nqOptionsSource = await readFile(path.join(root, 'js', 'admin', 'nq-options.js'), 'utf8');
+assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260802-v1064"/, 'admin must import the configurable NodeQuality option helpers');
+assert.match(nqOptionsSource, /data-nq-option="/, 'NodeQuality options must use stable data attributes for each select');
+assert.match(nqOptionsSource, /运行 HardwareQuality 测试/, 'NodeQuality options must expose the four upstream questions');
 assert.doesNotMatch(adminSource, /showInstallProgress|showInstallCommands|data-copy-install|data-retry-install/, 'Agent deploy must not open an install-command dialog');
 assert.match(adminSource, /agentInstallCommandFromPayload\(d, t\.id\);\s*await copyText\(cmd\)/, 'deploy must validate the credential-bound command before copying');
 assert.match(adminSource, /含一次性凭据/, 'successful copy feedback must identify the one-time credential');
@@ -68,11 +72,11 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /href="\/admin\.css\?v=20260802-v1063"/, 'custom admin paths must load CSS from the site root');
+assert.match(adminHtml, /href="\/admin\.css\?v=20260802-v1064"/, 'custom admin paths must load CSS from the site root');
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
 assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260731-v1049"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260802-v1063"/, 'custom admin paths must load the admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260802-v1064"/, 'custom admin paths must load the admin module from the site root');
 assert.match(adminBootstrapSource, /后台脚本加载失败，请刷新页面/, 'admin startup failures must be visible on the login form');
 assert.match(adminBootstrapSource, /loginButton\.onclick = \(event\)/, 'the admin module must replace the startup guard only after it loads');
 assert.match(adminSource, /window\.__NIE_ADMIN_READY__ = true;[\s\S]*nie-admin-ready/, 'the admin module must dismiss its startup guard after binding controls');
@@ -83,7 +87,9 @@ assert.match(adminCss, /\.ping-interval-row\s*\{[\s\S]*grid-template-columns:\s*
 assert.match(adminSource, /selectedTargetIds[\s\S]*targetBulkBarHtml[\s\S]*bulkTargetModal/, 'admin must support selecting and batch-editing VPS targets');
 assert.match(adminSource, /apiAdmin\("\/api\/targets\/bulk"[\s\S]*method:\s*"PATCH"/, 'batch target editing must use one protected Worker request');
 assert.match(adminSource, /openBulkTargetPicker\(false, \(\) => bulkTaskModal\("nodequality"\), 50\)/, 'batch NodeQuality selection must match the Worker batch limit');
-assert.match(adminSource, /JSON\.stringify\(\{ agent_ids: ids, action \}\)/, 'batch Agent tasks must submit the selected VPS IDs in one request');
+assert.match(adminSource, /JSON\.stringify\(\{ agent_ids: ids, action, options: action === "nodequality" \? readNqOptions\(byId\("modal"\)\) : undefined \}\)/, 'batch Agent tasks must submit selected VPS IDs and NodeQuality options in one request');
+assert.match(adminSource, /JSON\.stringify\(\{ agent_id: target\.id, action, options: action === "nodequality" \? readNqOptions\(byId\("modal"\)\) : undefined \}\)/, 'single Agent tasks must submit NodeQuality options');
+assert.match(adminSource, /nqOptionsHtml\(\)/, 'NodeQuality confirmation dialogs must offer the four configurable test options');
 assert.match(adminSource, /只有左侧已勾选的字段会被覆盖/, 'batch editor must explain selective field updates');
 assert.match(adminCss, /@media \(max-width: 720px\)\s*\{[\s\S]*\.target-bulk-bar\s*\{[\s\S]*flex-wrap:\s*wrap/, 'batch target controls must wrap on mobile');
 assert.match(adminSource, /target-action-main[\s\S]*targetActionsHtml\(target\)[\s\S]*betaTaskControlsHtml\(target\)/, 'standard target actions must render before Beta tasks');
@@ -123,7 +129,7 @@ assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day war
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
 assert.match(indexHtml, /app\.js\?v=20260731-v1049/, 'frontend cache key must publish the current release');
-assert.match(indexHtml, /style\.css\?v=20260802-v1063/, 'frontend CSS cache key must publish the current release');
+assert.match(indexHtml, /style\.css\?v=20260802-v1064/, 'frontend CSS cache key must publish the current release');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /class="theme-pending"[\s\S]*id="themeBoot"[\s\S]*id="themeCanvas"/, 'theme runtime must wait behind a first-paint shell');

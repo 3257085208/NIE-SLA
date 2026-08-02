@@ -1374,6 +1374,11 @@ body.admin-modal-open { overflow: hidden; }
 .bulk-confirm-targets { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
 .bulk-confirm-targets span { padding: 5px 7px; background: #eef5f2; border: 1px solid var(--line); border-radius: 4px; font-size: 11px; }
 .task-confirm-target { margin: 8px 0; color: var(--ink); font-weight: 800; overflow-wrap: anywhere; }
+.nq-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0 4px; padding: 12px; border: 1px solid var(--line); border-radius: 6px; }
+.nq-option { display: grid; gap: 5px; min-width: 0; }
+.nq-option span { color: #475569; font-size: 12px; font-weight: 800; overflow-wrap: anywhere; }
+.nq-option select { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid var(--line-dark); border-radius: 3px; background: #fff; font: inherit; }
+@media (max-width: 560px) { .nq-options { grid-template-columns: minmax(0, 1fr); } }
 .task-state {
   display: inline;
   padding: 0;

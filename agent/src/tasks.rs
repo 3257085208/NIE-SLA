@@ -21,8 +21,6 @@ const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const MAX_NODEQUALITY_ARTIFACT_BYTES: usize = 24 * 1024;
 const MAX_NODEQUALITY_CAPTURE_CHARS: usize = 180 * 1024;
-const NODEQUALITY_TIMEOUT_SEC: u64 = 3600;
-const NODEQUALITY_STDIN: &[u8] = b"f\ny\ny\ny\n";
 const IP_UNLOCK_TIMEOUT_SEC: u64 = 600;
 const NODEQUALITY_CAPTURE_BEGIN: &str = "__NSTATUS_NQ_ARTIFACTS_V1_BEGIN__";
 const NODEQUALITY_CAPTURE_END: &str = "__NSTATUS_NQ_ARTIFACTS_V1_END__";
@@ -68,13 +66,10 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
         .get("action")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("task response has no action"))?;
-    let timeout_sec = task
-        .get("timeout_sec")
-        .and_then(Value::as_u64)
-        .unwrap_or(600)
-        .clamp(30, NODEQUALITY_TIMEOUT_SEC);
+    let timeout_sec = task.get("timeout_sec").and_then(Value::as_u64);
+    let options = task.get("options").cloned();
 
-    let outcome = execute_fixed_task(cfg, http, action, timeout_sec);
+    let outcome = execute_fixed_task(cfg, http, action, timeout_sec, options.as_ref());
     let payload = match outcome {
         Ok(result) => json!({
             "status": "succeeded",
@@ -116,28 +111,53 @@ fn execute_fixed_task(
     cfg: &Config,
     http: &HttpClient,
     action: &str,
-    timeout_sec: u64,
+    timeout_sec: Option<u64>,
+    options: Option<&Value>,
 ) -> Result<TaskOutput> {
     if !cfg!(target_os = "linux") {
         return Err(anyhow!("Beta task actions currently require Linux"));
     }
     match action {
-        "nodequality" => run_nodequality(cfg, http, timeout_sec),
+        "nodequality" => run_nodequality(cfg, http, options),
         "ip_unlock" => run_ip_unlock(cfg, http, timeout_sec),
         _ => Err(anyhow!("unsupported fixed task action")),
     }
 }
 
-fn run_nodequality(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<TaskOutput> {
+fn run_nodequality(cfg: &Config, http: &HttpClient, options: Option<&Value>) -> Result<TaskOutput> {
+    let stdin = nodequality_stdin(options);
     let output = run_fixed_remote_script(
         cfg,
         http,
-        timeout_sec.min(NODEQUALITY_TIMEOUT_SEC),
+        None,
         "https://run.NodeQuality.com",
         &[],
-        Some(NODEQUALITY_STDIN),
+        Some(&stdin),
     )?;
     nodequality_task_output(&output)
+}
+
+fn nodequality_stdin(options: Option<&Value>) -> Vec<u8> {
+    let option = |key: &str, allowed: &[&str], fallback: &str| -> String {
+        let value = options
+            .and_then(|value| value.get(key))
+            .and_then(Value::as_str)
+            .map(|text| text.trim().to_ascii_lowercase())
+            .unwrap_or_else(|| fallback.to_string());
+        if allowed.iter().any(|candidate| *candidate == value) {
+            value
+        } else {
+            fallback.to_string()
+        }
+    };
+    format!(
+        "{}\n{}\n{}\n{}\n",
+        option("hardware", &["y", "f", "v", "n"], "f"),
+        option("ip", &["y", "n"], "y"),
+        option("net", &["y", "l", "n"], "y"),
+        option("route", &["y", "n"], "y"),
+    )
+    .into_bytes()
 }
 
 fn nodequality_task_output(output: &FixedScriptOutput) -> Result<TaskOutput> {
@@ -153,11 +173,15 @@ fn nodequality_task_output(output: &FixedScriptOutput) -> Result<TaskOutput> {
     Err(anyhow!("NodeQuality completed without a report URL"))
 }
 
-fn run_ip_unlock(cfg: &Config, http: &HttpClient, timeout_sec: u64) -> Result<TaskOutput> {
+fn run_ip_unlock(cfg: &Config, http: &HttpClient, timeout_sec: Option<u64>) -> Result<TaskOutput> {
     let output = run_fixed_remote_script(
         cfg,
         http,
-        timeout_sec.min(IP_UNLOCK_TIMEOUT_SEC),
+        Some(
+            timeout_sec
+                .unwrap_or(IP_UNLOCK_TIMEOUT_SEC)
+                .min(IP_UNLOCK_TIMEOUT_SEC),
+        ),
         "https://IP.Check.Place",
         &IP_UNLOCK_ARGS,
         None,
@@ -245,7 +269,7 @@ fn json_text(value: Option<&Value>) -> String {
 fn run_fixed_remote_script(
     cfg: &Config,
     http: &HttpClient,
-    timeout_sec: u64,
+    timeout_sec: Option<u64>,
     url: &str,
     args: &[&str],
     stdin: Option<&[u8]>,
@@ -307,11 +331,8 @@ fn run_fixed_remote_script(
     let task_path = prepare_fixed_task_path(&task_dir, url, SYSTEM_TASK_PATH, http, &cfg.api)?;
     reject_task_symlinks(&task_dir)?;
 
-    let mut command = privileged_fixed_task_command();
+    let mut command = fixed_task_command(timeout_sec);
     command
-        .args(["-k", "5s"])
-        .arg(format!("{}s", timeout_sec))
-        .arg("bash")
         .arg(&script_path)
         .args(args)
         .current_dir(&task_dir)
@@ -395,8 +416,17 @@ fn ensure_privileged_fixed_task_context() -> Result<()> {
     Err(anyhow!("fixed Beta tasks currently require Linux"))
 }
 
-fn privileged_fixed_task_command() -> Command {
-    Command::new("timeout")
+fn fixed_task_command(timeout_sec: Option<u64>) -> Command {
+    if let Some(secs) = timeout_sec {
+        let mut command = Command::new("timeout");
+        command
+            .args(["-k", "5s"])
+            .arg(format!("{}s", secs))
+            .arg("bash");
+        command
+    } else {
+        Command::new("bash")
+    }
 }
 
 fn reject_task_symlinks(path: &Path) -> Result<()> {
@@ -417,10 +447,11 @@ fn collect_task_output(
     child: &mut Child,
     stdout: ChildStdout,
     stderr: ChildStderr,
-    timeout_sec: u64,
+    timeout_sec: Option<u64>,
 ) -> Result<(ExitStatus, Vec<u8>)> {
     let stop = Arc::new(AtomicBool::new(false));
-    let hard_deadline = Instant::now() + Duration::from_secs(timeout_sec.saturating_add(5));
+    let hard_deadline =
+        timeout_sec.map(|sec| Instant::now() + Duration::from_secs(sec.saturating_add(5)));
     let stdout_stop = Arc::clone(&stop);
     let stderr_stop = Arc::clone(&stop);
     let stdout_reader = thread::spawn(move || {
@@ -442,7 +473,7 @@ fn collect_task_output(
     child: &mut Child,
     stdout: ChildStdout,
     stderr: ChildStderr,
-    _timeout_sec: u64,
+    _timeout_sec: Option<u64>,
 ) -> Result<(ExitStatus, Vec<u8>)> {
     let stdout_reader = thread::spawn(move || read_tail_capped(stdout, MAX_OUTPUT_BYTES / 2));
     let stderr_reader = thread::spawn(move || read_tail_capped(stderr, MAX_OUTPUT_BYTES / 2));
@@ -854,7 +885,7 @@ fn read_pipe_tail_bounded<R>(
     mut reader: R,
     limit: usize,
     stop: Arc<AtomicBool>,
-    hard_deadline: Instant,
+    hard_deadline: Option<Instant>,
 ) -> Vec<u8>
 where
     R: Read + std::os::fd::AsRawFd,
@@ -874,7 +905,9 @@ where
         if stop.load(Ordering::Acquire) && stop_deadline.is_none() {
             stop_deadline = Some(now + Duration::from_millis(100));
         }
-        if now >= hard_deadline || stop_deadline.is_some_and(|deadline| now >= deadline) {
+        if hard_deadline.is_some_and(|deadline| now >= deadline)
+            || stop_deadline.is_some_and(|deadline| now >= deadline)
+        {
             break;
         }
         match reader.read(&mut buffer) {
@@ -1238,8 +1271,16 @@ mod tests {
     }
 
     #[test]
-    fn nodequality_uses_fast_hardware_mode() {
-        assert_eq!(NODEQUALITY_STDIN, b"f\ny\ny\ny\n");
+    fn nodequality_defaults_to_fast_hardware_mode() {
+        assert_eq!(nodequality_stdin(None), b"f\ny\ny\ny\n");
+    }
+
+    #[test]
+    fn nodequality_options_map_to_stdin_with_allowlist() {
+        let options = json!({"hardware": "v", "ip": "n", "net": "l", "route": "n"});
+        assert_eq!(nodequality_stdin(Some(&options)), b"v\nn\nl\nn\n");
+        let invalid = json!({"hardware": "x", "ip": "maybe", "net": "z", "route": ""});
+        assert_eq!(nodequality_stdin(Some(&invalid)), b"f\ny\ny\ny\n");
     }
 
     #[cfg(unix)]
@@ -1290,7 +1331,7 @@ mod tests {
                 reader,
                 1024,
                 reader_stop,
-                Instant::now() + Duration::from_secs(5),
+                Some(Instant::now() + Duration::from_secs(5)),
             );
             result_tx.send(output).unwrap();
         });
@@ -1362,7 +1403,6 @@ mod tests {
 
     #[test]
     fn fixed_task_timeouts_are_action_specific() {
-        assert_eq!(NODEQUALITY_TIMEOUT_SEC, 3600);
         assert_eq!(IP_UNLOCK_TIMEOUT_SEC, 600);
     }
 
@@ -1370,9 +1410,19 @@ mod tests {
     fn fixed_tasks_run_directly_under_the_privileged_manager() {
         use std::ffi::OsStr;
 
-        let command = privileged_fixed_task_command();
-        assert_eq!(command.get_program(), OsStr::new("timeout"));
-        assert_eq!(command.get_args().count(), 0);
+        let direct = fixed_task_command(None);
+        assert_eq!(direct.get_program(), OsStr::new("bash"));
+        let timed = fixed_task_command(Some(600));
+        assert_eq!(timed.get_program(), OsStr::new("timeout"));
+        assert_eq!(
+            timed.get_args().collect::<Vec<_>>(),
+            vec![
+                OsStr::new("-k"),
+                OsStr::new("5s"),
+                OsStr::new("600s"),
+                OsStr::new("bash")
+            ]
+        );
     }
 
     #[test]

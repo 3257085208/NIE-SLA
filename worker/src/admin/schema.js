@@ -4,7 +4,7 @@ import { dayFromSec, nowSec, parseBoolean, timezoneOffsetMin } from '../utils.js
 let schemaEnsured = false;
 let schemaPromise = null;
 // Bump this marker whenever an existing installation needs new D1 objects.
-const SCHEMA_MARKER = 'schema:worker-v21-20260802-debug-logs';
+const SCHEMA_MARKER = 'schema:worker-v22-20260802-nq-options';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -358,6 +358,7 @@ export async function ensureV6Schema(env) {
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
     action TEXT NOT NULL CHECK (action IN ('nodequality', 'ip_unlock')),
+    options TEXT,
     status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'expired', 'cancelled')),
     requested_at INTEGER NOT NULL,
     claimed_at INTEGER,
@@ -368,6 +369,7 @@ export async function ensureV6Schema(env) {
     output_excerpt TEXT,
     agent_version TEXT
   )`).run();
+  await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN options TEXT');
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_claim ON agent_tasks(agent_id, status, requested_at)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_recent ON agent_tasks(requested_at DESC)`).run();
   await env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_tasks_one_active ON agent_tasks(agent_id) WHERE status IN ('queued', 'running')`).run();

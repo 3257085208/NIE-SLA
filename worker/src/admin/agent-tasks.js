@@ -4,9 +4,27 @@ import { normalizeNodeQualityReport, normalizeNodeQualityReportUrl, sanitizeAnsi
 import { uploadNodeQualityReportImages } from '../nq-image-host.js';
 
 export const AGENT_TASK_ACTIONS = Object.freeze({
-  nodequality: { timeout_sec: 3600, label: 'NodeQuality' },
+  nodequality: { timeout_sec: null, label: 'NodeQuality' },
   ip_unlock: { timeout_sec: 600, label: 'IP 解锁' },
 });
+const NQ_TASK_EXPIRES_SEC = 7 * 24 * 60 * 60;
+export const NQ_OPTION_DEFAULTS = Object.freeze({ hardware: 'f', ip: 'y', net: 'y', route: 'y' });
+const NQ_OPTION_ALLOWED = Object.freeze({
+  hardware: new Set(['y', 'f', 'v', 'n']),
+  ip: new Set(['y', 'n']),
+  net: new Set(['y', 'l', 'n']),
+  route: new Set(['y', 'n']),
+});
+
+export function normalizeNqOptions(value) {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const normalized = {};
+  for (const [key, fallback] of Object.entries(NQ_OPTION_DEFAULTS)) {
+    const candidate = String(raw[key] ?? fallback).trim().toLowerCase();
+    normalized[key] = NQ_OPTION_ALLOWED[key].has(candidate) ? candidate : fallback;
+  }
+  return normalized;
+}
 
 const MAX_RESULT_BYTES = 256 * 1024;
 const MAX_EXCERPT_CHARS = 16 * 1024;
@@ -46,12 +64,14 @@ export async function createAgentTask(request, env) {
   const body = await safeJson(request, 16 * 1024);
   const rawAgentId = String(body?.agent_id || '').trim();
   const action = String(body?.action || '').trim();
-  if (Array.isArray(body?.agent_ids)) return createAgentTasks(env, body.agent_ids, action);
+  const nqOptions = action === 'nodequality' ? normalizeNqOptions(body?.options) : null;
+  if (Array.isArray(body?.agent_ids)) return createAgentTasks(env, body.agent_ids, action, nqOptions);
   if (!sanitizeAgentId(rawAgentId)) throw new ApiError(400, '请选择 Agent');
-  return createAgentTaskForAgent(env, rawAgentId, action);
+  return createAgentTaskForAgent(env, rawAgentId, action, nqOptions);
 }
 
-export async function createAgentTasks(env, agentIdsValue, action) {
+export async function createAgentTasks(env, agentIdsValue, action, options = null) {
+  const nqOptions = action === 'nodequality' ? normalizeNqOptions(options) : null;
   const seen = new Set();
   const ids = [];
   for (const value of Array.isArray(agentIdsValue) ? agentIdsValue : []) {
@@ -67,7 +87,7 @@ export async function createAgentTasks(env, agentIdsValue, action) {
   const rejected = [];
   for (const agentId of ids) {
     try {
-      created.push((await createAgentTaskForAgent(env, agentId, action)).task);
+      created.push((await createAgentTaskForAgent(env, agentId, action, nqOptions)).task);
     } catch (error) {
       rejected.push({ agent_id: agentId, error: String(error?.message || '无法排队').slice(0, 200) });
     }
@@ -75,7 +95,8 @@ export async function createAgentTasks(env, agentIdsValue, action) {
   return { ok: true, bulk: true, action, requested: ids.length, created, rejected };
 }
 
-async function createAgentTaskForAgent(env, agentId, action) {
+async function createAgentTaskForAgent(env, agentId, action, options = null) {
+  const nqOptions = action === 'nodequality' ? normalizeNqOptions(options) : null;
   const policy = AGENT_TASK_ACTIONS[action];
   if (!policy) throw new ApiError(400, '只允许 NodeQuality 或 IP 解锁任务');
 
@@ -103,10 +124,11 @@ async function createAgentTaskForAgent(env, agentId, action) {
 
   const now = nowSec();
   const id = crypto.randomUUID();
-  await env.DB.prepare(`INSERT INTO agent_tasks (id, agent_id, action, status, requested_at, expires_at)
-    VALUES (?, ?, ?, 'queued', ?, ?)`)
-    .bind(id, agentId, action, now, now + policy.timeout_sec + 900).run();
-  return { ok: true, task: taskForAdmin({ id, agent_id: agentId, action, status: 'queued', requested_at: now, expires_at: now + policy.timeout_sec + 900 }) };
+  const expiresAt = now + (policy.timeout_sec ?? NQ_TASK_EXPIRES_SEC) + 900;
+  await env.DB.prepare(`INSERT INTO agent_tasks (id, agent_id, action, options, status, requested_at, expires_at)
+    VALUES (?, ?, ?, ?, 'queued', ?, ?)`)
+    .bind(id, agentId, action, nqOptions ? JSON.stringify(nqOptions) : null, now, expiresAt).run();
+  return { ok: true, task: taskForAdmin({ id, agent_id: agentId, action, options: nqOptions, status: 'queued', requested_at: now, expires_at: expiresAt }) };
 }
 
 function parseCapabilities(value) {
@@ -162,7 +184,7 @@ export async function claimAgentTask(env, agentIdValue, allowedActionsValue = ''
       id: row.id,
       action: row.action,
       timeout_sec: policy.timeout_sec,
-      stdin_profile: row.action === 'nodequality' ? 'nodequality-v1' : null,
+      ...(row.action === 'nodequality' ? { options: parseStoredOptions(row.options) } : {}),
     },
   };
 }
@@ -284,6 +306,14 @@ function normalizeUnlockService(item) {
   return { id, name, status, region, method };
 }
 
+function parseStoredOptions(value) {
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return normalizeNqOptions(parsed);
+  } catch (_) {
+    return { ...NQ_OPTION_DEFAULTS };
+  }
+}
 
 async function expireStaleTasks(env, agentId = '') {
   const now = nowSec();
@@ -318,6 +348,7 @@ function taskForAdmin(row) {
     claimed_at: Number(row.claimed_at || 0) || null,
     finished_at: Number(row.finished_at || 0) || null,
     expires_at: Number(row.expires_at || 0) || null,
+    options: row.action === 'nodequality' ? parseStoredOptions(row.options) : null,
     result,
     error: row.error || (invalidNodeQualityResult ? '旧任务没有生成有效的 NodeQuality 报告链接，请重新运行 NQ' : null),
     output_excerpt: row.output_excerpt || null,

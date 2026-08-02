@@ -1,6 +1,7 @@
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260801-v1053";
 import { createAdminClient } from "./admin/api.js?v=20260731-v1049";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1063";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260802-v1064";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260802-v1064";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
 import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml } from "./shared/nodequality.js?v=20260731-v1049";
 import {
@@ -905,6 +906,7 @@ function runAgentTask(target, action) {
     <h3>运行 ${escapeHtml(label)}</h3>
     <p class="task-confirm-target">${escapeHtml(target.name)}</p>
     <p class="hint">${escapeHtml(detail)}</p>
+    ${action === "nodequality" ? nqOptionsHtml() : ""}
     <div class="bulk-target-warning">Beta 功能只会运行内置固定脚本，提交后可在当前列表查看执行状态。</div>
     <div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="confirmAgentTask">确认运行</button></div>`;
   byId("confirmAgentTask").onclick = () => queueAgentTask(target, action, label);
@@ -920,7 +922,7 @@ async function queueAgentTask(target, action, label) {
   try {
     await api("/api/agent-tasks", {
       method: "POST",
-      body: JSON.stringify({ agent_id: target.id, action }),
+      body: JSON.stringify({ agent_id: target.id, action, options: action === "nodequality" ? readNqOptions(byId("modal")) : undefined }),
     });
     closeModal();
     toast(`${label} 已排队，Agent 最多约 5 分钟内领取`, "ok");
@@ -1112,7 +1114,7 @@ function bulkTaskModal(action) {
   if (!selected.length) return toast("请选择至少一台 VPS", "err");
   const label = action === "nodequality" ? "NodeQuality" : "IP 解锁";
   byId("modal").className = "modal bulk-confirm-modal";
-  byId("modal").innerHTML = `<h3>批量运行 ${escapeHtml(label)}</h3><p>将向 <strong>${selected.length}</strong> 台在线 VPS 排队提交任务；离线、能力不匹配或已有任务的 VPS 会单独返回原因。</p><div class="bulk-confirm-targets">${selected.slice(0, 14).map((target) => `<span>${escapeHtml(target.name)}</span>`).join("")}${selected.length > 14 ? `<span>另 ${selected.length - 14} 台</span>` : ""}</div><div class="bulk-target-warning">每台 VPS 仍保持单任务互斥，任务会在各 Agent 独立执行。</div><div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="confirmBulkTask">确认排队</button></div>`;
+  byId("modal").innerHTML = `<h3>批量运行 ${escapeHtml(label)}</h3><p>将向 <strong>${selected.length}</strong> 台在线 VPS 排队提交任务；离线、能力不匹配或已有任务的 VPS 会单独返回原因。</p><div class="bulk-confirm-targets">${selected.slice(0, 14).map((target) => `<span>${escapeHtml(target.name)}</span>`).join("")}${selected.length > 14 ? `<span>另 ${selected.length - 14} 台</span>` : ""}</div>${action === "nodequality" ? nqOptionsHtml() : ""}<div class="bulk-target-warning">每台 VPS 仍保持单任务互斥，任务会在各 Agent 独立执行。</div><div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="confirmBulkTask">确认排队</button></div>`;
   byId("confirmBulkTask").onclick = () => queueBulkAgentTasks(selected.map((target) => target.id), action, label);
 }
 
@@ -1120,7 +1122,7 @@ async function queueBulkAgentTasks(ids, action, label) {
   const button = byId("confirmBulkTask");
   if (button) { button.disabled = true; button.textContent = "提交中..."; }
   try {
-    const result = await api("/api/agent-tasks", { method: "POST", body: JSON.stringify({ agent_ids: ids, action }) });
+    const result = await api("/api/agent-tasks", { method: "POST", body: JSON.stringify({ agent_ids: ids, action, options: action === "nodequality" ? readNqOptions(byId("modal")) : undefined }) });
     selectedTargetIds.clear();
     closeModal();
     const rejected = Array.isArray(result.rejected) ? result.rejected.length : 0;
