@@ -3,6 +3,7 @@ export const NQ_OPTION_DEFAULTS = Object.freeze({
   ip: "y",
   net: "y",
   route: "y",
+  accelerator: "auto",
 });
 
 const NQ_OPTION_ALLOWED = Object.freeze({
@@ -10,6 +11,7 @@ const NQ_OPTION_ALLOWED = Object.freeze({
   ip: new Set(["y", "n"]),
   net: new Set(["y", "l", "n"]),
   route: new Set(["y", "n"]),
+  accelerator: new Set(["auto", "eo", "cf"]),
 });
 
 const NQ_OPTION_LABELS = Object.freeze({
@@ -17,6 +19,7 @@ const NQ_OPTION_LABELS = Object.freeze({
   ip: "运行 IPQuality 测试？",
   net: "运行 NetQuality 测试？",
   route: "运行 回程路由追踪（Backroute Trace）测试？",
+  accelerator: "加速源",
 });
 
 const NQ_OPTION_CHOICES = Object.freeze({
@@ -24,6 +27,7 @@ const NQ_OPTION_CHOICES = Object.freeze({
   ip: [["y", "是"], ["n", "否"]],
   net: [["y", "是"], ["l", "低流量"], ["n", "否"]],
   route: [["y", "是"], ["n", "否"]],
+  accelerator: [["auto", "自动"], ["eo", "EdgeOne 国内"], ["cf", "Cloudflare 海外"]],
 });
 
 export function normalizeNqOptions(value) {

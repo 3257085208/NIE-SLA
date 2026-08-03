@@ -14,12 +14,13 @@ const CANCEL_GRACE_SEC = 5 * 60;
 const RUNNER_HEARTBEAT_INTERVAL_SEC = 30;
 const RUNNER_STALE_SEC = 30 * 60;
 const RUNNER_INSTANCE_MAX_CHARS = 128;
-export const NQ_OPTION_DEFAULTS = Object.freeze({ hardware: 'f', ip: 'y', net: 'y', route: 'y' });
+export const NQ_OPTION_DEFAULTS = Object.freeze({ hardware: 'f', ip: 'y', net: 'y', route: 'y', accelerator: 'auto' });
 const NQ_OPTION_ALLOWED = Object.freeze({
   hardware: new Set(['y', 'f', 'v', 'n']),
   ip: new Set(['y', 'n']),
   net: new Set(['y', 'l', 'n']),
   route: new Set(['y', 'n']),
+  accelerator: new Set(['auto', 'eo', 'cf']),
 });
 
 export function normalizeNqOptions(value) {

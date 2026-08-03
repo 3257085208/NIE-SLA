@@ -51,7 +51,7 @@ const OPTIONAL_NSLOOKUP_HELPER: &[u8] =
 const JQ_RELEASE_BASE: &str = "https://github.com/jqlang/jq/releases/download/jq-1.8.1";
 const MAX_JQ_BYTES: usize = 4 * 1024 * 1024;
 const NODEQUALITY_SCRIPT_SHA256: &str =
-    "de08d6771cbf53ea6b9c2c417dc676355bf21444089b94193014ba76d778c9fd";
+    "156c1ead9cf4756527093b5b7f6f50e0328d6ec57578b86f798bf13ef8d9c8fc";
 const IP_UNLOCK_SCRIPT_SHA256: &str =
     "69e7a8d0b9018a508fa7a54a3f7e98c9fa8c19eeb6995d60675070361cb76c03";
 
@@ -194,6 +194,7 @@ fn run_nodequality(
     cancellation: Option<&TaskCancellation>,
 ) -> Result<TaskOutput> {
     let stdin = nodequality_stdin(options);
+    let accelerator = nodequality_accelerator(options);
     let output = run_fixed_remote_script(
         cfg,
         http,
@@ -201,6 +202,7 @@ fn run_nodequality(
         "https://run.NodeQuality.com",
         &[],
         Some(&stdin),
+        &[("NQ_ACCELERATOR", accelerator.as_str())],
         cancellation,
     )?;
     nodequality_task_output(&output)
@@ -227,6 +229,18 @@ fn nodequality_stdin(options: Option<&Value>) -> Vec<u8> {
         option("route", &["y", "n"], "y"),
     )
     .into_bytes()
+}
+
+fn nodequality_accelerator(options: Option<&Value>) -> String {
+    let value = options
+        .and_then(|value| value.get("accelerator"))
+        .and_then(Value::as_str)
+        .map(|text| text.trim().to_ascii_lowercase())
+        .unwrap_or_else(|| "auto".to_string());
+    match value.as_str() {
+        "eo" | "cf" => value,
+        _ => "auto".to_string(),
+    }
 }
 
 fn nodequality_task_output(output: &FixedScriptOutput) -> Result<TaskOutput> {
@@ -259,6 +273,7 @@ fn run_ip_unlock(
         "https://IP.Check.Place",
         &IP_UNLOCK_ARGS,
         None,
+        &[],
         cancellation,
     )?;
     if let Some(result) = parse_ip_unlock_task_output(&output.text) {
@@ -341,6 +356,7 @@ fn json_text(value: Option<&Value>) -> String {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_fixed_remote_script(
     cfg: &Config,
     http: &HttpClient,
@@ -348,6 +364,7 @@ fn run_fixed_remote_script(
     url: &str,
     args: &[&str],
     stdin: Option<&[u8]>,
+    envs: &[(&str, &str)],
     cancellation: Option<&TaskCancellation>,
 ) -> Result<FixedScriptOutput> {
     if !matches!(
@@ -417,6 +434,7 @@ fn run_fixed_remote_script(
         .env("HOME", &task_dir)
         .env("LANG", "C.UTF-8")
         .env("NSTATUS_DNS_COMPAT_EXECUTABLE", agent_executable)
+        .envs(envs.iter().copied())
         .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -1457,14 +1475,21 @@ mod tests {
     #[test]
     fn nodequality_defaults_to_fast_hardware_mode() {
         assert_eq!(nodequality_stdin(None), b"f\ny\ny\ny\n");
+        assert_eq!(nodequality_accelerator(None), "auto");
     }
 
     #[test]
     fn nodequality_options_map_to_stdin_with_allowlist() {
         let options = json!({"hardware": "v", "ip": "n", "net": "l", "route": "n"});
         assert_eq!(nodequality_stdin(Some(&options)), b"v\nn\nl\nn\n");
+        assert_eq!(nodequality_accelerator(Some(&options)), "auto");
         let invalid = json!({"hardware": "x", "ip": "maybe", "net": "z", "route": ""});
         assert_eq!(nodequality_stdin(Some(&invalid)), b"f\ny\ny\ny\n");
+        assert_eq!(nodequality_accelerator(Some(&invalid)), "auto");
+        let forced = json!({"accelerator": "cf"});
+        assert_eq!(nodequality_accelerator(Some(&forced)), "cf");
+        let invalid_accelerator = json!({"accelerator": "evil"});
+        assert_eq!(nodequality_accelerator(Some(&invalid_accelerator)), "auto");
     }
 
     #[cfg(unix)]

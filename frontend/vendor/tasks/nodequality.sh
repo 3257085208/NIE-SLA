@@ -13,6 +13,10 @@ github_mirrors=(
     "https://ghfast.top"
     "https://gh.ddlc.top"
 )
+accelerator_domestic="https://mirror-eo.i8-mc.cn"
+accelerator_overseas="https://mirror-cf.example.com"
+accelerator_base="$accelerator_overseas"
+accelerator_override="${NQ_ACCELERATOR:-auto}"
 bench_os_sha256_x86_64="5f844e73941c3623175c5cdc16b01db34c155d0d1bd9b0cf71f3d72e8b1148e1"
 bench_os_sha256_arm="a4dd4e55b129157a02dab437b78e41b5797a7a79a0f0b7febdecab8eb2a312c7"
 nexttrace_sha256="cffdcbbb4ed328b9a4e238dde9cb68d4263b3a5769f340d8a55a98fa8e99294c"
@@ -222,12 +226,64 @@ function file_sha256(){
     fi
 }
 
+function fetch_raw(){
+    local path="$1"
+    curl -fsSL --max-time 30 "$accelerator_base/p/raw.githubusercontent.com/LloydAsp/NodeQuality/refs/heads/main/$path" 2>/dev/null \
+        || curl -fsSL --max-time 60 "https://raw.githubusercontent.com/LloydAsp/NodeQuality/refs/heads/main/$path"
+}
+
+function fetch_script(){
+    local direct="$1"
+    local host
+    host="$(printf '%s' "$direct" | sed -E 's#^https://([^/]+).*#\1#' | tr 'A-Z' 'a-z')"
+    curl -fsSL --max-time 30 "$accelerator_base/p/$host" 2>/dev/null || curl -fsSL --max-time 60 "$direct"
+}
+
+function detect_accelerator_base(){
+    if [[ "$accelerator_override" == "eo" ]]; then
+        accelerator_base="$accelerator_domestic"
+        echo "NIE Proxy accelerator: $accelerator_base (forced=eo)"
+        return
+    fi
+    if [[ "$accelerator_override" == "cf" ]]; then
+        accelerator_base="$accelerator_overseas"
+        echo "NIE Proxy accelerator: $accelerator_base (forced=cf)"
+        return
+    fi
+    local country=""
+    country="$(curl -fsS --max-time 8 https://api-ipv4.ip.sb/geoip 2>/dev/null | sed -n 's/.*"country_code":"\([A-Z][A-Z]\)".*/\1/p')"
+    if [[ -z "$country" ]]; then
+        country="$(curl -fsS --max-time 8 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | awk -F= '$1=="loc"{print $2}')"
+    fi
+    if [[ -z "$country" ]] && curl -fsS --max-time 8 https://myip.ipip.net/json 2>/dev/null | grep -q '中国'; then
+        country="CN"
+    fi
+    if [[ "$country" == "CN" ]]; then
+        accelerator_base="$accelerator_domestic"
+    elif [[ -z "$country" ]]; then
+        local eo_ms cf_ms
+        eo_ms="$(curl -sS -o /dev/null --max-time 6 -w '%{time_total}' "$accelerator_domestic/health" 2>/dev/null || true)"
+        cf_ms="$(curl -sS -o /dev/null --max-time 6 -w '%{time_total}' "$accelerator_overseas/health" 2>/dev/null || true)"
+        if [[ -n "$eo_ms" && -n "$cf_ms" ]]; then
+            if awk -v a="$eo_ms" -v b="$cf_ms" 'BEGIN{exit !(a < b)}'; then
+                accelerator_base="$accelerator_domestic"
+            fi
+        elif [[ -n "$eo_ms" ]]; then
+            accelerator_base="$accelerator_domestic"
+        fi
+    else
+        accelerator_base="$accelerator_overseas"
+    fi
+    echo "NIE Proxy accelerator: $accelerator_base (country=${country:-latency})"
+}
+
 function download_with_mirrors(){
     local url="$1"
     local output="$2"
     local expected_sha256="$3"
     local candidates=("$url")
     if [[ "$url" == https://github.com/* ]]; then
+        candidates=("$accelerator_base/p/github.com${url#https://github.com}" "$url")
         for mirror in "${github_mirrors[@]}"; do
             candidates+=("$mirror/$url")
         done
@@ -262,6 +318,7 @@ function chroot_download_with_mirrors(){
     local expected_sha256="$3"
     local candidates=("$url")
     if [[ "$url" == https://github.com/* ]]; then
+        candidates=("$accelerator_base/p/github.com${url#https://github.com}" "$url")
         for mirror in "${github_mirrors[@]}"; do
             candidates+=("$mirror/$url")
         done
@@ -319,7 +376,7 @@ function chroot_run(){
 
 function load_part(){
     # gb5-test.sh, swap part
-    . <(curl -sL "$raw_file_prefix/part/swap.sh")
+    . <(fetch_raw "part/swap.sh")
 }
 
 function load_3rd_program(){
@@ -330,7 +387,7 @@ function load_3rd_program(){
 }
 
 function run_header(){
-    chroot_run bash <(curl -Ls "$raw_file_prefix/part/header.sh")
+    chroot_run bash <(fetch_raw "part/header.sh")
 }
 
 function detect_virt() {
@@ -505,23 +562,23 @@ function run_HardwareQuality(){
     [[ "$run_hardware_quality_test" =~ ^[Vv]$ ]] && params=" -V"
     pre_fetch_info # HQ预处理
     payload=$(declare -p osinfo meminfo diskinfo) # HQ预处理
-    curl -Ls https://Hardware.Check.Place | chroot_run "env NQENV=$(printf '%q' "$payload") bash -s -- $opt_lang $params -y -o /result/$hardware_quality_json_filename" # HQ预处理
+    fetch_script https://Hardware.Check.Place | chroot_run "env NQENV=$(printf '%q' "$payload") bash -s -- $opt_lang $params -y -o /result/$hardware_quality_json_filename" # HQ预处理
     # 原始语句为：chroot_run bash <(curl -Ls https://Hardware.Check.Place) $opt_lang -y -o /result/$hardware_quality_json_filename
 }
 
 
 function run_ip_quality(){
-    chroot_run bash <(curl -Ls https://IP.Check.Place) $opt_ipv $opt_lang -y -o /result/$ip_quality_json_filename
+    chroot_run bash <(fetch_script https://IP.Check.Place) $opt_ipv $opt_lang -y -o /result/$ip_quality_json_filename
 }
 
 function run_net_quality(){
     local params=""
     [[ "$run_net_quality_test" =~ ^[Ll]$ ]] && params=" -L"
-    chroot_run bash <(curl -Ls https://Net.Check.Place) $opt_ipv $opt_lang $params -y -o /result/$net_quality_json_filename
+    chroot_run bash <(fetch_script https://Net.Check.Place) $opt_ipv $opt_lang $params -y -o /result/$net_quality_json_filename
 }
 
 function run_net_trace(){
-    chroot_run bash <(curl -Ls https://Net.Check.Place) $opt_ipv $opt_lang -R -n -S 123 -o /result/$backroute_trace_json_filename
+    chroot_run bash <(fetch_script https://Net.Check.Place) $opt_ipv $opt_lang -R -n -S 123 -o /result/$backroute_trace_json_filename
 }
 
 uploadAPI="https://api.nodequality.com/api/v1/record"
@@ -591,6 +648,7 @@ function main(){
     trap 'sig_cleanup' INT TERM SIGHUP EXIT
 
     start_ascii
+    detect_accelerator_base
 
     ask_question
 

@@ -2,6 +2,13 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.1.4 - 2026-08-03
+
+- 后台运行 NodeQuality 时新增“加速源”选择：`自动`（按国家/延迟自动选线）、`EdgeOne 国内`、`Cloudflare 海外`；单机与批量任务都会把选项持久化到任务参数，Agent 通过 `NQ_ACCELERATOR` 环境变量下发给 NQ 脚本，不开放任意脚本参数。
+- NodeQuality 脚本优先通过 NIE-Proxy 公益加速站下载 Hardware/IP/Net/回程脚本、上游组件与 BenchOs，失败自动回退官方源和镜像并继续校验 SHA-256；NIE-Proxy 白名单同步允许 Check.Place 使用的 jsDelivr 中国节点重定向。
+- 前端本次变更模块缓存键统一升至 `20260803-v1114`，发布后旧缓存不会继续加载过期模块。
+- 应用、Worker、Rust Agent、前端、教程与公开发布版本同步至 `1.1.4` / `v1.1.4`。
+
 ## 1.1.3 - 2026-08-03
 
 - 修复腾讯云等网络环境无法从 GitHub 下载 NodeQuality `BenchOs.tar.gz` / `nexttrace` 导致 NQ 长时间卡在第一步的问题：NodeQuality 静态脚本保留官方 GitHub 源，并自动回退到实测可用的 `ghfast.top`、`gh.ddlc.top` 加速镜像；下载完成后强制校验 SHA-256，失败自动换源。

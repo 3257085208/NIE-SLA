@@ -1,16 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.3",
-  "agent_version": "v1.1.3",
-  "source_ref": "app-v1.1.3",
-  "published_at": "2026-08-03T00:00:00Z",
-  "title": "NIE-SLA 1.1.3",
+  "version": "1.1.4",
+  "agent_version": "v1.1.4",
+  "source_ref": "app-v1.1.4",
+  "published_at": "2026-08-03T14:00:00Z",
+  "title": "NIE-SLA 1.1.4",
   "changelog": [
-    "修复腾讯云等网络环境无法从 GitHub 下载 NodeQuality BenchOs/nexttrace 导致 NQ 卡死的问题：脚本保留官方源并自动回退到实测可用的 GitHub 加速镜像，下载后强制校验 SHA-256",
-    "Agent 任务 Runner 增加实例归属与 30 分钟心跳兜底：Manager 重启后旧 running 任务自动落失败，不再永久显示“运行中”；运行中的 NQ/IP 解锁任务可被后台强制停止",
-    "修复 Worker 重复 GET 任务路由导致 Runner 心跳/恢复未接线的问题，并修复前端右上角 Cloudflare Logo 因 assets manifest 复用而 404 的问题",
-    "前端本次变更模块缓存键统一升至 20260803-v1113",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.1.3 / v1.1.3"
+    "NodeQuality 运行弹窗新增加速源选择：自动 / EdgeOne 国内 / Cloudflare 海外，选项持久化并经 NQ_ACCELERATOR 下发给 Agent",
+    "NodeQuality 脚本优先通过 NIE-Proxy 公益加速站下载脚本、原始组件与 BenchOs，失败自动回退官方源与镜像，并允许 jsDelivr 中国节点重定向",
+    "前端本次变更模块缓存键统一升至 20260803-v1114",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.1.4 / v1.1.4"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

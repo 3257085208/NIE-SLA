@@ -194,7 +194,7 @@ const nqClaim = await claimAgentTask(env, 'vps-a');
 assert.equal(nqClaim.task.id, nq.task.id);
 assert.equal(nq.task.expires_at - nq.task.requested_at, 7 * 24 * 60 * 60 + 900, 'NQ queue expiry must stay at 7 days even with the legacy timeout shim');
 assert.equal(nqClaim.task.timeout_sec, 3600);
-assert.deepEqual(nqClaim.task.options, { hardware: 'f', ip: 'y', net: 'y', route: 'y' });
+assert.deepEqual(nqClaim.task.options, { hardware: 'f', ip: 'y', net: 'y', route: 'y', accelerator: 'auto' });
 await completeAgentTask(jsonRequest({
   status: 'succeeded',
   result: {
@@ -217,11 +217,11 @@ assert.deepEqual(JSON.parse(storedNq.nq_unlock_data).services.map((service) => [
 assert.ok(Number(storedNq.nq_unlock_updated_at) > 0);
 assert.equal((await listAgentTasks(env, new URL('https://example.test/api/agent-tasks?agent_id=vps-a'))).tasks.length, 3);
 
-const nqCustom = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'nodequality', options: { hardware: 'v', ip: 'n', net: 'l', route: 'n' } }), env);
+const nqCustom = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'nodequality', options: { hardware: 'v', ip: 'n', net: 'l', route: 'n', accelerator: 'eo' } }), env);
 const nqCustomClaim = await claimAgentTask(env, 'vps-a');
 assert.equal(nqCustomClaim.task.id, nqCustom.task.id);
 assert.equal(nqCustomClaim.task.timeout_sec, 3600);
-assert.deepEqual(nqCustomClaim.task.options, { hardware: 'v', ip: 'n', net: 'l', route: 'n' });
+assert.deepEqual(nqCustomClaim.task.options, { hardware: 'v', ip: 'n', net: 'l', route: 'n', accelerator: 'eo' });
 await completeAgentTask(jsonRequest({ status: 'failed', error: 'custom options cleanup' }), env, nqCustomClaim.task.id, 'vps-a');
 const nqWithoutReport = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'nodequality' }), env);
 await claimAgentTask(env, 'vps-a');

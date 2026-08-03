@@ -30,6 +30,12 @@ assert.match(
 
 const nodequalitySource = fs.readFileSync(path.join(vendorDir, 'nodequality.sh'), 'utf8');
 assert.match(nodequalitySource, /github_mirrors=\(/, 'NodeQuality must keep a GitHub mirror fallback list');
+assert.match(nodequalitySource, /accelerator_domestic="https:\/\/mirror-eo\.i8-mc\.cn"/, 'NodeQuality must keep the domestic EdgeOne accelerator');
+assert.match(nodequalitySource, /accelerator_overseas="https:\/\/mirror-cf\.niekaixiang\.com"/, 'NodeQuality must keep the overseas Cloudflare accelerator');
+assert.match(nodequalitySource, /function detect_accelerator_base\(\)\{/, 'NodeQuality must auto-select domestic/overseas accelerator');
+assert.match(nodequalitySource, /accelerator_override="\$\{NQ_ACCELERATOR:-auto\}"/, 'NodeQuality must honor the Agent-provided accelerator override');
+assert.match(nodequalitySource, /\$\{NQ_ACCELERATOR:-auto\}/, 'NodeQuality must read NQ_ACCELERATOR');
+assert.match(nodequalitySource, /fetch_script https:\/\/Hardware\.Check\.Place/, 'HardwareQuality must fetch through the selected accelerator');
 assert.match(nodequalitySource, /bench_os_sha256_x86_64=/, 'NodeQuality must pin the x86_64 BenchOs checksum');
 assert.match(nodequalitySource, /download_with_mirrors "\$bench_os_url"/, 'BenchOs downloads must use mirror fallback');
 assert.doesNotMatch(nodequalitySource, /curl "-L#o" BenchOs\.tar\.gz \$bench_os_url/, 'BenchOs must not rely only on the GitHub direct URL');
