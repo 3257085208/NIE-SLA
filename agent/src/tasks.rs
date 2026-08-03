@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, OnceLock,
 };
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -24,6 +24,23 @@ const MAX_NODEQUALITY_CAPTURE_CHARS: usize = 180 * 1024;
 const IP_UNLOCK_TIMEOUT_SEC: u64 = 600;
 const NODEQUALITY_CAPTURE_BEGIN: &str = "__NSTATUS_NQ_ARTIFACTS_V1_BEGIN__";
 const NODEQUALITY_CAPTURE_END: &str = "__NSTATUS_NQ_ARTIFACTS_V1_END__";
+
+pub(crate) fn runner_instance_id() -> &'static str {
+    static RUNNER_INSTANCE_ID: OnceLock<String> = OnceLock::new();
+    RUNNER_INSTANCE_ID.get_or_init(|| {
+        let boot_id = fs::read_to_string("/proc/sys/kernel/random/boot_id")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "unknown-boot".to_string());
+        let pid = std::process::id();
+        let start_nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        format!("{}-{}-{}", boot_id, pid, start_nanos)
+    })
+}
 const IP_UNLOCK_ARGS: [&str; 3] = ["-4", "-n", "-p"];
 const MAX_IP_UNLOCK_REPORT_CHARS: usize = 64 * 1024;
 const SYSTEM_TASK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -34,7 +51,7 @@ const OPTIONAL_NSLOOKUP_HELPER: &[u8] =
 const JQ_RELEASE_BASE: &str = "https://github.com/jqlang/jq/releases/download/jq-1.8.1";
 const MAX_JQ_BYTES: usize = 4 * 1024 * 1024;
 const NODEQUALITY_SCRIPT_SHA256: &str =
-    "4e1b25894cadf908ef61fb0d9ce874a75524c6dafc2ea26f0477107288e0c018";
+    "de08d6771cbf53ea6b9c2c417dc676355bf21444089b94193014ba76d778c9fd";
 const IP_UNLOCK_SCRIPT_SHA256: &str =
     "69e7a8d0b9018a508fa7a54a3f7e98c9fa8c19eeb6995d60675070361cb76c03";
 
@@ -50,9 +67,10 @@ pub(crate) fn poll_once_manager(cfg: &Config, http: &HttpClient) -> Result<()> {
 
 fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
     let url = format!(
-        "{}/api/agent/tasks?agent_id={}",
+        "{}/api/agent/tasks?agent_id={}&runner_instance_id={}",
         cfg.api.trim_end_matches('/'),
-        percent_encode_query(&cfg.agent_id)
+        percent_encode_query(&cfg.agent_id),
+        percent_encode_query(runner_instance_id())
     );
     let response: Value = serde_json::from_str(&http.get(&url, &cfg.token)?)?;
     let Some(task) = response.get("task").filter(|value| !value.is_null()) else {
@@ -1302,6 +1320,17 @@ mod tests {
     #[test]
     fn idle_task_polling_uses_the_cost_aware_interval() {
         assert_eq!(TASK_POLL_SEC, 300);
+    }
+
+    #[test]
+    fn runner_instance_id_is_stable_and_safe_for_query_strings() {
+        let first = runner_instance_id();
+        let second = runner_instance_id();
+        assert_eq!(first, second);
+        assert!(!first.is_empty());
+        assert!(first
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_' | '~')));
     }
 
     #[test]

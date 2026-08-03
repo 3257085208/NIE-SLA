@@ -27,4 +27,10 @@ assert.match(
   fs.readFileSync(path.join(vendorDir, 'AGPL-3.0.txt'), 'utf8'),
   /GNU AFFERO GENERAL PUBLIC LICENSE\s+Version 3/,
 );
+
+const nodequalitySource = fs.readFileSync(path.join(vendorDir, 'nodequality.sh'), 'utf8');
+assert.match(nodequalitySource, /github_mirrors=\(/, 'NodeQuality must keep a GitHub mirror fallback list');
+assert.match(nodequalitySource, /bench_os_sha256_x86_64=/, 'NodeQuality must pin the x86_64 BenchOs checksum');
+assert.match(nodequalitySource, /download_with_mirrors "\$bench_os_url"/, 'BenchOs downloads must use mirror fallback');
+assert.doesNotMatch(nodequalitySource, /curl "-L#o" BenchOs\.tar\.gz \$bench_os_url/, 'BenchOs must not rely only on the GitHub direct URL');
 console.log(`reviewed task source snapshots verified (${manifest.assets.length} assets)`);

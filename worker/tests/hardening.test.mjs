@@ -22,8 +22,12 @@ assert.match(routesSource, /\/api\/backup\/preview[\s\S]{0,500}rateLimitD1\(env,
 assert.match(routesSource, /\/api\/backup\/restore[\s\S]{0,500}rateLimitD1\(env, `backup-restore:/, 'backup restore must be rate limited');
 assert.match(routesSource, /if \(adminTaskCancelMatch && m === 'POST'\) \{ await withAdmin\(request, env\);[\s\S]{0,200}cancelAgentTask/, 'admin force-stop must require an admin session');
 assert.match(routesSource, /if \(agentTaskCancelStatusMatch && m === 'GET'\) \{ await ensureV6Schema\(env\);[\s\S]{0,260}requireAgentForId[\s\S]{0,200}agentTaskCancelStatus/, 'Agent cancel-status must require Agent credentials');
-assert.match(schemaSource, /schema:worker-v24-20260803-nq-unlock/, 'schema marker must advance for NQ unlock data');
+assert.equal((routesSource.match(/path === '\/api\/agent\/tasks' && m === 'GET'/g) || []).length, 1, 'agent task claim route must be declared exactly once');
+assert.match(routesSource, /\/api\/agent\/tasks' && m === 'GET'[\s\S]{0,600}runner_instance_id/, 'agent task claim route must accept runner_instance_id');
+assert.match(schemaSource, /schema:worker-v25-20260803-task-owner/, 'schema marker must advance for task owner tracking');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN cancel_requested_at INTEGER/, 'running tasks must store a cancellation request timestamp');
+assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN runner_instance_id TEXT/, 'running tasks must track the Agent Manager runner instance');
+assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN runner_heartbeat_at INTEGER/, 'running tasks must track Manager heartbeats');
 assert.match(schemaSource, /ALTER TABLE targets ADD COLUMN nq_unlock_data TEXT/, 'targets must store NQ-derived unlock data separately');
 assert.match(routesSource, /\/api\/themes\/manage[\s\S]{0,1800}withAdmin\(request, env\)[\s\S]{0,300}listManagedThemes/, 'theme management must require an admin session');
 assert.match(routesSource, /\/api\/themes\/upload[\s\S]{0,1800}withAdmin\(request, env\)[\s\S]{0,300}uploadTheme/, 'theme uploads must require an admin session');

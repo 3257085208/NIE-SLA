@@ -2,6 +2,14 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.1.3 - 2026-08-03
+
+- 修复腾讯云等网络环境无法从 GitHub 下载 NodeQuality `BenchOs.tar.gz` / `nexttrace` 导致 NQ 长时间卡在第一步的问题：NodeQuality 静态脚本保留官方 GitHub 源，并自动回退到实测可用的 `ghfast.top`、`gh.ddlc.top` 加速镜像；下载完成后强制校验 SHA-256，失败自动换源。
+- Agent 任务 Runner 增加实例归属与 30 分钟心跳兜底：Manager 重启后旧 running 任务自动标记失败，不再永久显示“运行中”；新 Runner 接管时也会清理旧任务，后台强制停止保持可用。
+- 修复 Worker 中重复的 `/api/agent/tasks` GET 路由导致 Runner 心跳/恢复逻辑实际未接线的问题；修复 Cloudflare Logo 与部分 flags 因 Wrangler assets manifest 复用而 404 的问题，发布时写入唯一构建标识强制刷新静态资源清单。
+- 前端本次变更模块缓存键统一升至 `20260803-v1113`，发布后旧缓存不会继续加载过期模块。
+- 应用、Worker、Rust Agent、前端、教程与公开发布版本同步至 `1.1.3` / `v1.1.3`。
+
 ## 1.1.2 - 2026-08-03
 
 - 公开状态页与后台解锁数据优先读取 NodeQuality 报告中的流媒体解锁段：NQ 报告可用时不再回退到 IP.Check.Place，解决 NQ 全解锁但公开页仍显示失败/红色的问题。

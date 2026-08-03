@@ -5,7 +5,7 @@ import { nodeQualityUnlockData } from '../nodequality.js';
 let schemaEnsured = false;
 let schemaPromise = null;
 // Bump this marker whenever an existing installation needs new D1 objects.
-const SCHEMA_MARKER = 'schema:worker-v24-20260803-nq-unlock';
+const SCHEMA_MARKER = 'schema:worker-v25-20260803-task-owner';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -367,6 +367,8 @@ export async function ensureV6Schema(env) {
     requested_at INTEGER NOT NULL,
     claimed_at INTEGER,
     cancel_requested_at INTEGER,
+    runner_instance_id TEXT,
+    runner_heartbeat_at INTEGER,
     finished_at INTEGER,
     expires_at INTEGER NOT NULL,
     result TEXT,
@@ -376,10 +378,13 @@ export async function ensureV6Schema(env) {
   )`).run();
   await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN options TEXT');
   await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN cancel_requested_at INTEGER');
+  await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN runner_instance_id TEXT');
+  await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN runner_heartbeat_at INTEGER');
   await backfillNodeQualityUnlockData(env);
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_claim ON agent_tasks(agent_id, status, requested_at)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_recent ON agent_tasks(requested_at DESC)`).run();
   await env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_tasks_one_active ON agent_tasks(agent_id) WHERE status IN ('queued', 'running')`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_runner_stale ON agent_tasks(status, runner_heartbeat_at)`).run();
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
     .bind(SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   schemaEnsured = true;

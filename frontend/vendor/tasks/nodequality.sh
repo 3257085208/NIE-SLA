@@ -9,6 +9,14 @@ if uname -m | grep -Eq 'arm|aarch64'; then
     bench_os_url="https://github.com/LloydAsp/NodeQuality/releases/download/v0.0.2/BenchOs-arm.tar.gz"
 fi
 
+github_mirrors=(
+    "https://ghfast.top"
+    "https://gh.ddlc.top"
+)
+bench_os_sha256_x86_64="5f844e73941c3623175c5cdc16b01db34c155d0d1bd9b0cf71f3d72e8b1148e1"
+bench_os_sha256_arm="a4dd4e55b129157a02dab437b78e41b5797a7a79a0f0b7febdecab8eb2a312c7"
+nexttrace_sha256="cffdcbbb4ed328b9a4e238dde9cb68d4263b3a5769f340d8a55a98fa8e99294c"
+
 header_info_filename=header_info.log
 ip_quality_filename=ip_quality.log
 ip_quality_json_filename=ip_quality.json
@@ -201,12 +209,99 @@ function clear_mount(){
     umount -R $work_dir/BenchOs/dev/ 2> /dev/null
 }
 
+function file_sha256(){
+    local file="$1"
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+        openssl dgst -sha256 "$file" | awk '{print $NF}'
+    else
+        echo ""
+    fi
+}
+
+function download_with_mirrors(){
+    local url="$1"
+    local output="$2"
+    local expected_sha256="$3"
+    local candidates=("$url")
+    if [[ "$url" == https://github.com/* ]]; then
+        for mirror in "${github_mirrors[@]}"; do
+            candidates+=("$mirror/$url")
+        done
+    fi
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        echo "Downloading from $candidate"
+        rm -f "$output"
+        if curl -fL --retry 2 --retry-delay 2 --connect-timeout 15 --speed-limit 32768 --speed-time 30 -o "$output" "$candidate"; then
+            local actual
+            actual="$(file_sha256 "$output")"
+            if [[ -n "$expected_sha256" ]]; then
+                if [[ "$actual" == "$expected_sha256" ]]; then
+                    return 0
+                fi
+                echo "SHA-256 mismatch, trying next mirror"
+                rm -f "$output"
+            else
+                return 0
+            fi
+        else
+            echo "Download failed, trying next mirror"
+            rm -f "$output"
+        fi
+    done
+    return 1
+}
+
+function chroot_download_with_mirrors(){
+    local dst="$1"
+    local url="$2"
+    local expected_sha256="$3"
+    local candidates=("$url")
+    if [[ "$url" == https://github.com/* ]]; then
+        for mirror in "${github_mirrors[@]}"; do
+            candidates+=("$mirror/$url")
+        done
+    fi
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        echo "Downloading nexttrace from $candidate"
+        chroot "$work_dir/BenchOs" /bin/bash -c "if command -v curl >/dev/null 2>&1; then curl -fsSL --retry 2 --connect-timeout 15 --speed-limit 32768 --speed-time 20 -o '$dst' '$candidate'; elif command -v wget >/dev/null 2>&1; then wget --timeout=30 --tries=2 -qO '$dst' '$candidate'; else exit 127; fi"
+        if [[ -s "$work_dir/BenchOs$dst" ]]; then
+            local actual
+            actual="$(file_sha256 "$work_dir/BenchOs$dst")"
+            if [[ -n "$expected_sha256" ]]; then
+                if [[ "$actual" == "$expected_sha256" ]]; then
+                    chroot "$work_dir/BenchOs" /bin/bash -c "chmod u+x '$dst'"
+                    return 0
+                fi
+                echo "nexttrace SHA-256 mismatch, trying next mirror"
+                chroot "$work_dir/BenchOs" /bin/bash -c "rm -f '$dst'"
+            else
+                chroot "$work_dir/BenchOs" /bin/bash -c "chmod u+x '$dst'"
+                return 0
+            fi
+        fi
+    done
+    return 1
+}
+
 function load_bench_os(){
     cd $work_dir
     rm -rf BenchOs
 
-    curl "-L#o" BenchOs.tar.gz $bench_os_url
-    tar -xzf BenchOs.tar.gz     
+    local expected_sha256="$bench_os_sha256_x86_64"
+    if uname -m | grep -Eq 'arm|aarch64'; then
+        expected_sha256="$bench_os_sha256_arm"
+    fi
+    if ! download_with_mirrors "$bench_os_url" BenchOs.tar.gz "$expected_sha256"; then
+        echo "Failed to download BenchOs from all mirrors"
+        exit 1
+    fi
+    tar -xzf BenchOs.tar.gz
     cd $work_dir/BenchOs
 
     mount -t proc /proc proc/
@@ -228,8 +323,10 @@ function load_part(){
 }
 
 function load_3rd_program(){
-    chroot_run wget https://github.com/nxtrace/NTrace-core/releases/download/v1.3.7/nexttrace_linux_amd64 -qO /usr/local/bin/nexttrace
-    chroot_run chmod u+x /usr/local/bin/nexttrace
+    if ! chroot_download_with_mirrors "/usr/local/bin/nexttrace" "https://github.com/nxtrace/NTrace-core/releases/download/v1.3.7/nexttrace_linux_amd64" "$nexttrace_sha256"; then
+        echo "Failed to download nexttrace from all mirrors"
+        exit 1
+    fi
 }
 
 function run_header(){

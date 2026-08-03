@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { webcrypto } from 'node:crypto';
 import { ensureV6Schema } from '../src/admin/schema.js';
-import { createAgentTask, createAgentTasks, claimAgentTask, completeAgentTask, listAgentTasks, cancelAgentTask, agentTaskCancelStatus, normalizeTaskResult } from '../src/admin/agent-tasks.js';
+import { createAgentTask, createAgentTasks, claimAgentTask, completeAgentTask, listAgentTasks, cancelAgentTask, agentTaskCancelStatus, normalizeRunnerInstanceId, normalizeTaskResult } from '../src/admin/agent-tasks.js';
 import { getGeoIpSettings, submitAgentLocation, updateGeoIpSettings, validateCustomGeoIpUrl } from '../src/admin/agent-location.js';
 import { exportBackup, previewBackup, restoreBackup } from '../src/admin/backup.js';
 import { getOrCreateAgentToken, verifyAgentCredential } from '../src/agent-credentials.js';
@@ -251,6 +251,57 @@ await assert.rejects(
   error => error?.status === 400,
 );
 
+assert.equal(normalizeRunnerInstanceId('abc-123_def:~@!<>'), 'abc-123_def:');
+assert.equal(normalizeRunnerInstanceId('x'.repeat(200)).length, 128);
+assert.equal(normalizeRunnerInstanceId('   '), '');
+
+sqlite.prepare(`INSERT INTO targets (id, name, group_name, type, enabled, no_public_ip, created_at, updated_at, traffic_reset_day)
+  VALUES (?, ?, 'Default', 'tcp', 1, 1, ?, ?, 1)`).run('vps-owner', 'VPS Owner', now, now);
+sqlite.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at, capabilities) VALUES (?, ?, ?)`)
+  .run('vps-owner', new Date().toISOString(), managerCapabilities);
+
+const ownerTask = await createAgentTask(jsonRequest({ agent_id: 'vps-owner', action: 'ip_unlock' }), env);
+const ownerClaim = await claimAgentTask(env, 'vps-owner', '', 'runner-A');
+assert.equal(ownerClaim.task.id, ownerTask.task.id);
+let ownerRow = sqlite.prepare(`SELECT status, runner_instance_id, runner_heartbeat_at FROM agent_tasks WHERE id = ?`).get(ownerTask.task.id);
+assert.equal(ownerRow.runner_instance_id, 'runner-A');
+assert.ok(Number(ownerRow.runner_heartbeat_at) > 0);
+const orphanRecovery = await claimAgentTask(env, 'vps-owner', '', 'runner-B');
+assert.equal(orphanRecovery.task, null);
+ownerRow = sqlite.prepare(`SELECT status, error FROM agent_tasks WHERE id = ?`).get(ownerTask.task.id);
+assert.equal(ownerRow.status, 'failed');
+assert.equal(ownerRow.error, 'Agent Manager 重启导致任务中断，请重新运行');
+
+const ownerTask2 = await createAgentTask(jsonRequest({ agent_id: 'vps-owner', action: 'ip_unlock' }), env);
+const ownerClaim2 = await claimAgentTask(env, 'vps-owner', '', 'runner-B');
+assert.equal(ownerClaim2.task.id, ownerTask2.task.id);
+await completeAgentTask(jsonRequest({ status: 'failed', error: 'owner cleanup' }), env, ownerTask2.task.id, 'vps-owner');
+
+const heartbeatTask = await createAgentTask(jsonRequest({ agent_id: 'vps-owner', action: 'ip_unlock' }), env);
+const heartbeatClaim = await claimAgentTask(env, 'vps-owner', '', 'runner-B');
+sqlite.prepare(`UPDATE agent_tasks SET runner_heartbeat_at = ? WHERE id = ?`).run(now - 120, heartbeatClaim.task.id);
+await agentTaskCancelStatus(env, 'vps-owner', heartbeatClaim.task.id);
+const heartbeatRow = sqlite.prepare(`SELECT runner_heartbeat_at FROM agent_tasks WHERE id = ?`).get(heartbeatClaim.task.id);
+assert.ok(Number(heartbeatRow.runner_heartbeat_at) > now - 60);
+await completeAgentTask(jsonRequest({ status: 'failed', error: 'heartbeat cleanup' }), env, heartbeatClaim.task.id, 'vps-owner');
+
+const staleOwnerTask = await createAgentTask(jsonRequest({ agent_id: 'vps-owner', action: 'ip_unlock' }), env);
+const staleOwnerClaim = await claimAgentTask(env, 'vps-owner', '', 'runner-C');
+sqlite.prepare(`UPDATE agent_tasks SET runner_heartbeat_at = ? WHERE id = ?`).run(now - 31 * 60, staleOwnerClaim.task.id);
+const staleOwnerList = await listAgentTasks(env, new URL('https://example.test/api/agent-tasks?agent_id=vps-owner'));
+const staleOwnerRow = staleOwnerList.tasks.find((task) => task.id === staleOwnerClaim.task.id);
+assert.equal(staleOwnerRow.status, 'failed');
+assert.match(staleOwnerRow.error, /心跳超时/);
+
+const legacyOwnerTask = await createAgentTask(jsonRequest({ agent_id: 'vps-owner', action: 'ip_unlock' }), env);
+const legacyOwnerClaim = await claimAgentTask(env, 'vps-owner');
+assert.equal(legacyOwnerClaim.task.id, legacyOwnerTask.task.id);
+assert.equal(sqlite.prepare(`SELECT runner_instance_id FROM agent_tasks WHERE id = ?`).get(legacyOwnerTask.task.id).runner_instance_id, null);
+const legacyRecovery = await claimAgentTask(env, 'vps-owner', '', 'runner-D');
+assert.equal(legacyRecovery.task, null);
+assert.equal(sqlite.prepare(`SELECT status FROM agent_tasks WHERE id = ?`).get(legacyOwnerTask.task.id).status, 'running');
+await completeAgentTask(jsonRequest({ status: 'failed', error: 'legacy cleanup' }), env, legacyOwnerTask.task.id, 'vps-owner');
+
 const queuedCancel = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'ip_unlock' }), env);
 const queuedCancelled = await cancelAgentTask(env, queuedCancel.task.id);
 assert.equal(queuedCancelled.task.status, 'cancelled');
@@ -310,7 +361,7 @@ sqlite.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?), 
     'nq_image_host_token', 'enc:v1:private-token-ciphertext', now,
   );
 const portable = await exportBackup(new Request('https://example.test/api/backup/export'), env);
-assert.equal(portable.backup.portable.targets.length, 3);
+assert.equal(portable.backup.portable.targets.length, 4);
 assert.equal('sensitive' in portable.backup, false);
 assert.equal(JSON.stringify(portable.backup).includes('private-image-host.example'), false);
 assert.equal(portable.backup.portable.app_meta.some((row) => row.key.startsWith('nq_image_host_')), false);
@@ -348,7 +399,7 @@ assert.equal(protectedBackup.backup.sensitive.algorithm, 'PBKDF2-SHA256+A256GCM'
 assert.equal(protectedBackup.backup.sensitive.iterations, 100_000);
 assert.equal(JSON.stringify(protectedBackup.backup).includes('private-image-host.example'), false);
 const preview = await previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'Backup-password-123!' }));
-assert.equal(preview.preview.counts.targets, 3);
+assert.equal(preview.preview.counts.targets, 4);
 assert.equal(preview.preview.sensitive_counts.agent_tokens, 1);
 assert.equal(preview.preview.sensitive_counts.agent_credentials, 0);
 assert.equal(preview.preview.agent_connections_preserved, true);

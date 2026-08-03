@@ -1,6 +1,6 @@
 {
   "schema": "nie-sla-reviewed-task-sources-v1",
-  "reviewed_at": "2026-07-31",
+  "reviewed_at": "2026-08-03",
   "assets": [
     {
       "id": "nodequality",
@@ -9,7 +9,7 @@
       "source_repository": "https://github.com/LloydAsp/NodeQuality",
       "source_commit": "a92fca6c0067df29ddd03fdc2fee6f3000f64545",
       "source_path": "NodeQuality.sh",
-      "sha256": "4e1b25894cadf908ef61fb0d9ce874a75524c6dafc2ea26f0477107288e0c018",
+      "sha256": "de08d6771cbf53ea6b9c2c417dc676355bf21444089b94193014ba76d778c9fd",
       "license": "AGPL-3.0-only"
     },
     {

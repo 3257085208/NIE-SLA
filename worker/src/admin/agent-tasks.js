@@ -11,6 +11,9 @@ export const AGENT_TASK_ACTIONS = Object.freeze({
 });
 const NQ_TASK_EXPIRES_SEC = 7 * 24 * 60 * 60;
 const CANCEL_GRACE_SEC = 5 * 60;
+const RUNNER_HEARTBEAT_INTERVAL_SEC = 30;
+const RUNNER_STALE_SEC = 30 * 60;
+const RUNNER_INSTANCE_MAX_CHARS = 128;
 export const NQ_OPTION_DEFAULTS = Object.freeze({ hardware: 'f', ip: 'y', net: 'y', route: 'y' });
 const NQ_OPTION_ALLOWED = Object.freeze({
   hardware: new Set(['y', 'f', 'v', 'n']),
@@ -27,6 +30,11 @@ export function normalizeNqOptions(value) {
     normalized[key] = NQ_OPTION_ALLOWED[key].has(candidate) ? candidate : fallback;
   }
   return normalized;
+}
+
+export function normalizeRunnerInstanceId(value) {
+  const raw = String(value || '').trim().slice(0, RUNNER_INSTANCE_MAX_CHARS);
+  return raw.replace(/[^A-Za-z0-9._:=-]/g, '');
 }
 
 const MAX_RESULT_BYTES = 256 * 1024;
@@ -163,13 +171,15 @@ export async function listAgentTasks(env, url) {
   return { ok: true, beta: true, actions: publicActions(), tasks: (rows.results || []).map(taskForAdmin) };
 }
 
-export async function claimAgentTask(env, agentIdValue, allowedActionsValue = '') {
+export async function claimAgentTask(env, agentIdValue, allowedActionsValue = '', runnerInstanceIdValue = '') {
   const rawAgentId = String(agentIdValue || '').trim();
   const agentId = sanitizeAgentId(rawAgentId);
   if (!agentId) throw new ApiError(400, '缺少 agent_id');
   const allowedActions = normalizeAllowedActions(allowedActionsValue);
   const taskIds = await agentTaskIds(env, rawAgentId);
   await expireStaleTasks(env, rawAgentId);
+  const runnerInstanceId = normalizeRunnerInstanceId(runnerInstanceIdValue);
+  await recoverOrphanedRunningTasks(env, taskIds, runnerInstanceId);
   const queued = allowedActions.length === 1
     ? await env.DB.prepare(`SELECT id FROM agent_tasks
       WHERE agent_id IN (${inClause(taskIds)}) AND status = 'queued' AND expires_at > ? AND action = ?
@@ -180,9 +190,9 @@ export async function claimAgentTask(env, agentIdValue, allowedActionsValue = ''
   if (!queued) return { ok: true, beta: true, poll_after_sec: AGENT_TASK_POLL_SEC, task: null };
 
   const claimedAt = nowSec();
-  const update = await env.DB.prepare(`UPDATE agent_tasks SET status = 'running', claimed_at = ?
+  const update = await env.DB.prepare(`UPDATE agent_tasks SET status = 'running', claimed_at = ?, runner_instance_id = ?, runner_heartbeat_at = ?
     WHERE id = ? AND agent_id IN (${inClause(taskIds)}) AND status = 'queued'`)
-    .bind(claimedAt, queued.id, ...taskIds).run();
+    .bind(claimedAt, runnerInstanceId || null, runnerInstanceId ? claimedAt : null, queued.id, ...taskIds).run();
   if (Number(update?.meta?.changes || 0) < 1) return { ok: true, beta: true, poll_after_sec: AGENT_TASK_POLL_SEC, task: null };
   const row = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).bind(queued.id).first();
   const policy = AGENT_TASK_ACTIONS[row.action];
@@ -299,6 +309,11 @@ export async function agentTaskCancelStatus(env, agentIdValue, taskId) {
   const agentId = sanitizeAgentId(agentIdValue || '');
   const row = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).bind(taskId).first();
   if (!row || sanitizeAgentId(row.agent_id) !== agentId) throw new ApiError(404, '任务不存在');
+  if (row.status === 'running' && row.runner_instance_id) {
+    const now = nowSec();
+    await env.DB.prepare(`UPDATE agent_tasks SET runner_heartbeat_at = ? WHERE id = ? AND status = 'running' AND runner_instance_id IS NOT NULL AND (runner_heartbeat_at IS NULL OR runner_heartbeat_at < ?)`)
+      .bind(now, taskId, now - RUNNER_HEARTBEAT_INTERVAL_SEC).run();
+  }
   return {
     ok: true,
     task_id: taskId,
@@ -397,6 +412,21 @@ async function expireStaleTasks(env, agentId = '') {
     await env.DB.prepare(`UPDATE agent_tasks SET status = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN 'cancelled' ELSE 'expired' END, finished_at = ?, error = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN '任务已被管理员强制停止' ELSE error END
       WHERE status IN ('queued', 'running') AND expires_at <= ?`).bind(now, now).run();
   }
+  const staleBefore = now - RUNNER_STALE_SEC;
+  if (taskIds.length) {
+    await env.DB.prepare(`UPDATE agent_tasks SET status = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN 'cancelled' ELSE 'failed' END, finished_at = ?, error = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN '任务已被管理员强制停止' ELSE 'Agent Manager 心跳超时导致任务中断，请重新运行' END
+      WHERE agent_id IN (${inClause(taskIds)}) AND status = 'running' AND runner_instance_id IS NOT NULL AND runner_heartbeat_at IS NOT NULL AND runner_heartbeat_at <= ?`).bind(now, ...taskIds, staleBefore).run();
+  } else {
+    await env.DB.prepare(`UPDATE agent_tasks SET status = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN 'cancelled' ELSE 'failed' END, finished_at = ?, error = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN '任务已被管理员强制停止' ELSE 'Agent Manager 心跳超时导致任务中断，请重新运行' END
+      WHERE status = 'running' AND runner_instance_id IS NOT NULL AND runner_heartbeat_at IS NOT NULL AND runner_heartbeat_at <= ?`).bind(now, staleBefore).run();
+  }
+}
+
+async function recoverOrphanedRunningTasks(env, taskIds, runnerInstanceId) {
+  if (!runnerInstanceId) return;
+  const now = nowSec();
+  await env.DB.prepare(`UPDATE agent_tasks SET status = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN 'cancelled' ELSE 'failed' END, finished_at = ?, error = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN '任务已被管理员强制停止' ELSE 'Agent Manager 重启导致任务中断，请重新运行' END
+    WHERE agent_id IN (${inClause(taskIds)}) AND status = 'running' AND runner_instance_id IS NOT NULL AND runner_instance_id != ?`).bind(now, ...taskIds, runnerInstanceId).run();
 }
 
 function taskForAdmin(row) {
