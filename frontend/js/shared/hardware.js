@@ -30,8 +30,8 @@ export function hasGpuData(info = {}) {
   if (info?.gpu_accessible === true) return true;
   if (info?.gpu_accessible === false) return false;
 
-  // Older agents could see host DRM metadata from inside a container even
-  // though no GPU device was passed through. Require a live GPU metric there.
+
+
   if (isVirtualized(info)) {
     return ['gpu_util', 'gpu_temp_c'].some(key => info?.[key] != null && Number.isFinite(Number(info[key])));
   }

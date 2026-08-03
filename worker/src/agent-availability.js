@@ -87,7 +87,7 @@ export function uptimeBaselineRows(storedRows = [], metricRows = [], targetRows 
     addInterval(rows, startAt, endAt, true, env);
     const firstRecordedDay = earliestStoredDay.get(id);
     for (const row of rows.values()) {
-      // Once the heartbeat ledger starts, it is authoritative from that day onward.
+
       if (firstRecordedDay && row.day >= firstRecordedDay) continue;
       output.push({ agent_id: id, ...row });
     }

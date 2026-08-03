@@ -72,7 +72,7 @@ export async function copyText(text, { timeoutMs = 2500 } = {}) {
       ]);
       return;
     } catch (_) {
-      // Safari may reject or leave the Clipboard API pending; use the synchronous fallback.
+
     } finally {
       if (timer) clearTimeout(timer);
     }

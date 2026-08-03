@@ -1,4 +1,4 @@
-// ── Constants ────────────────────────────────────────────────────────────────
+
 
 export const REGION_LABELS = {
   auto: '自动',
@@ -24,7 +24,7 @@ export const R2_STATE_SCHEMA = 'nstatus-r2-state-v1';
 export const R2_HISTORY_SCHEMA = 'nstatus-r2-history-v1';
 export const DEFAULT_PUBLIC_WORKER_URL = '';
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+
 
 export function clamp(n, min, max) {
   if (!Number.isFinite(n)) return min;
@@ -63,7 +63,7 @@ export function parseBoolean(value, fallback = false) {
   return fallback;
 }
 
-// ── Timezone ─────────────────────────────────────────────────────────────────
+
 
 export function timezoneOffsetMin(env) {
   const raw = env?.TIMEZONE_OFFSET_MINUTES ?? env?.PUBLIC_TIMEZONE_OFFSET_MINUTES ?? 480;
@@ -142,15 +142,15 @@ export function isPrivateHost(host) {
   const raw = String(host || '').trim().toLowerCase();
   if (!raw) return true;
   let hostname = raw;
-  // strip brackets for IPv6 literals
+
   if (hostname.startsWith('[') && hostname.endsWith(']')) hostname = hostname.slice(1, -1);
-  // strip zone id
+
   hostname = hostname.split('%')[0];
   if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || hostname === '0.0.0.0') return true;
-  // IPv4-mapped IPv6 ::ffff:a.b.c.d
+
   const v4mapped = hostname.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
   if (v4mapped) return isPrivateHost(v4mapped[1]);
-  // dotted IPv4
+
   if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)) {
     const parts = hostname.split('.').map((p) => Number(p));
     if (parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return true;
@@ -159,28 +159,28 @@ export function isPrivateHost(host) {
     if (a === 169 && b === 254) return true;
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 192 && b === 0 && parts[2] === 0) return true;
-    if (a === 192 && b === 0 && parts[2] === 2) return true; // documentation
+    if (a === 192 && b === 0 && parts[2] === 2) return true;
     if (a === 192 && b === 88 && parts[2] === 99) return true;
     if (a === 192 && b === 168) return true;
-    if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking
-    if (a === 198 && b === 51 && parts[2] === 100) return true; // documentation
-    if (a === 203 && b === 0 && parts[2] === 113) return true; // documentation
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-    if (a >= 224) return true; // multicast/reserved
+    if (a === 198 && (b === 18 || b === 19)) return true;
+    if (a === 198 && b === 51 && parts[2] === 100) return true;
+    if (a === 203 && b === 0 && parts[2] === 113) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a >= 224) return true;
     return false;
   }
-  // IPv6
+
   if (hostname.includes(':')) {
     const groups = expandIpv6(hostname);
     if (!groups) return true;
     if (groups.every((part, index) => part === 0 || (index === 7 && part === 1))) return true;
     if ((groups[0] & 0xfe00) === 0xfc00 || (groups[0] & 0xffc0) === 0xfe80) return true;
-    if ((groups[0] & 0xff00) === 0xff00) return true; // multicast
-    if (groups[0] === 0x0100 && groups.slice(1, 4).every(part => part === 0)) return true; // discard-only 100::/64
-    if (groups[0] === 0x2001 && groups[1] === 0x0db8) return true; // documentation
-    if (groups[0] === 0x2002) return true; // deprecated 6to4 can embed non-public IPv4
+    if ((groups[0] & 0xff00) === 0xff00) return true;
+    if (groups[0] === 0x0100 && groups.slice(1, 4).every(part => part === 0)) return true;
+    if (groups[0] === 0x2001 && groups[1] === 0x0db8) return true;
+    if (groups[0] === 0x2002) return true;
     if (groups[0] === 0x0064 && groups[1] === 0xff9b
-      && (groups[2] === 1 || groups.slice(2, 6).every(part => part === 0))) return true; // NAT64 special-use prefixes
+      && (groups[2] === 1 || groups.slice(2, 6).every(part => part === 0))) return true;
     const mappedV4 = groups.slice(0, 5).every(part => part === 0) && groups[5] === 0xffff;
     const compatibleV4 = groups.slice(0, 6).every(part => part === 0);
     if (mappedV4 || compatibleV4) {
@@ -288,7 +288,7 @@ export function agentStatusFields(state, env = {}) {
   };
 }
 
-// ── Target normalization ─────────────────────────────────────────────────────
+
 
 export function normalizeTarget(input, allowPartial = false) {
   const type = String(input?.type || '').toLowerCase();
@@ -330,7 +330,7 @@ export function stableTargetId(input, normalized) {
   return sanitizeId(raw);
 }
 
-// ── Expected status ──────────────────────────────────────────────────────────
+
 
 function normalizeExpectedStatus(value) {
   const nums = String(value || '').split(',').map(x => Number(String(x).trim())).filter(x => Number.isInteger(x) && x >= 100 && x <= 599);
@@ -342,7 +342,7 @@ export function parseExpectedStatus(value) {
   return String(value).split(',').map(x => Number(x.trim())).filter(x => Number.isInteger(x));
 }
 
-// ── Privacy ──────────────────────────────────────────────────────────────────
+
 
 export function publicMaskIps(env) {
   return parseBoolean(env.PUBLIC_MASK_IPS ?? env.MASK_IPS ?? env.PRIVACY_MASK_IPS ?? true, true);
@@ -453,7 +453,7 @@ export function sanitizePublicTarget(row, env, maskIps = publicMaskIps(env), hid
   return clean;
 }
 
-// ── Agent config ─────────────────────────────────────────────────────────────
+
 
 export function configuredAgents(env) {
   const raw = String(env.PUBLIC_AGENT_SERIES || env.AGENT_SERIES || '').trim();
@@ -478,7 +478,7 @@ export function agentSeriesEnabled(env) {
   return parseBoolean(env.PUBLIC_ENABLE_AGENT_SERIES ?? env.ENABLE_AGENT_SERIES ?? true, true);
 }
 
-// ── History helpers ──────────────────────────────────────────────────────────
+
 
 export function normalizeHistoryPoint(p) {
   const missed = isMissedMonitorPoint(p);

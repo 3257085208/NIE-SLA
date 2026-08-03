@@ -373,7 +373,7 @@ fn run_fixed_remote_script(
     ) {
         return Err(anyhow!("unsupported fixed task source"));
     }
-    // These pinned diagnostics need raw sockets and system tools, so only the root manager may run them.
+
     ensure_privileged_fixed_task_context()?;
     let task_dir = secure_task_directory(cfg)?.join(format!(
         "{}-{}",
@@ -794,7 +794,6 @@ fn prepare_fixed_task_path(
     fs::create_dir(&bin_dir).context("create fixed task compatibility directory")?;
     set_private_directory_permissions(&bin_dir)?;
     if needs_dig {
-        // The upstream script treats an optional DNSBL lookup as fatal after media checks.
         write_private_executable(
             &bin_dir.join("dig"),
             OPTIONAL_DIG_HELPER,
@@ -987,7 +986,7 @@ fn prepare_secure_task_directory(path: &Path, uid: u32) -> Result<()> {
             "fixed task runtime directory is not owned by the Agent process and private"
         ));
     }
-    // Child sandboxes remain 0700; the root-owned parent only permits traversal.
+
     fs::set_permissions(path, fs::Permissions::from_mode(0o711))?;
     Ok(())
 }

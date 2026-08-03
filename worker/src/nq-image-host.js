@@ -19,7 +19,7 @@ const DEFAULT_SETTINGS = Object.freeze({
 });
 const FIXED_UPLOAD_CHANNEL = 's3';
 
-// Matches the xterm.js settings used by NodeQuality's own image export.
+
 const TERMINAL_THEME = Object.freeze({
   foreground: '#f8dcc0',
   background: '#1d1d1e',
@@ -234,7 +234,7 @@ export function renderNodeQualitySvg(content) {
   const truncated = originalLines.length > MAX_RENDER_LINES;
   const lines = originalLines.slice(0, MAX_RENDER_LINES);
   if (truncated) lines.push(`... 报告过长，已截取前 ${MAX_RENDER_LINES} 行`);
-  // Match NodeQuality's native xterm export dimensions and two-pixel-density crop.
+
   const columns = Math.min(MAX_RENDER_COLUMNS, Math.max(1, ...lines.map((line) => visibleColumns(stripAnsiSafe(line)))));
   const rows = Math.max(1, lines.length);
   const logicalWidth = columns * TERMINAL_CELL_WIDTH + TERMINAL_PADDING * 2;

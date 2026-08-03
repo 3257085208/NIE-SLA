@@ -163,8 +163,8 @@ function themeZip(manifest, files) {
 
 async function exampleThemeZip(directory) {
   const root = new URL(`../../examples/themes/${directory}/`, import.meta.url);
-  const entries = await readdir(root, { withFileTypes: true });
-  const files = await Promise.all(entries.filter(entry => entry.isFile()).map(async entry => [
+  const entries = (await readdir(root, { withFileTypes: true })).filter(entry => entry.isFile() && !/\s\d+(?:\.\d+)*\.\w+$/i.test(entry.name));
+  const files = await Promise.all(entries.map(async entry => [
     entry.name,
     new Uint8Array(await readFile(new URL(entry.name, root))),
   ]));

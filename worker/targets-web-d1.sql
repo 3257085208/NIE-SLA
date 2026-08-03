@@ -94,8 +94,8 @@ CREATE INDEX IF NOT EXISTS idx_alert_state_updated ON alert_state(updated_at DES
 CREATE INDEX IF NOT EXISTS idx_agent_traffic_month ON agent_traffic_monthly(month);
 CREATE INDEX IF NOT EXISTS idx_agent_traffic_daily_day ON agent_traffic_daily(day, agent_id);
 
--- This file intentionally contains schema only.
--- Do not commit real VPS IP addresses, private hostnames, or personal domains here.
--- Seed targets should be added through the admin panel, D1 console, or private .sql files ignored by git.
+
+
+
 
 SELECT COUNT(*) AS target_count FROM targets;

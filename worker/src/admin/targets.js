@@ -1,4 +1,4 @@
-﻿// Admin sub-module: target CRUD, probes, and agent target listing.
+﻿
 import { clamp, nowSec, sanitizeId, sanitizeAgentId, parseBoolean, normalizeTarget, parseExpectedStatus, REGION_LABELS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC } from '../utils.js';
 import { normalizeTrafficMode, normalizeTrafficQuotaGb, normalizeTrafficResetDay, summarizeTrafficWithPending, trafficSettingsFromTarget } from '../traffic.js';
 import { safeJson } from '../auth.js';
@@ -44,7 +44,7 @@ function dayStartSec(dayStr, env) {
   return Math.floor(new Date(`${dayStr}T00:00:00.000Z`).getTime() / 1000) - tzOffset;
 }
 
-// ── Target CRUD ──────────────────────────────────────────────────────────────
+
 
 export async function listTargets(env) {
   await syncEnvTargetsMaybe(env);
@@ -329,7 +329,7 @@ function parseJsonObject(value) {
   try { return JSON.parse(value); } catch (_) { return null; }
 }
 
-// ── Probe now (admin) ────────────────────────────────────────────────────────
+
 
 export async function probeNow(env, id) {
   if (parseBoolean(env.AUTO_SYNC_TARGETS ?? false, false)) await syncEnvTargets(env, { force: true });
@@ -340,7 +340,7 @@ export async function probeNow(env, id) {
   return { ok: true, count: targets.length, results: await runTargetBatch(env, targets) };
 }
 
-// ── Agent targets ───────────────────────────────────────────────────────────
+
 
 export async function getAgentTargets(env, url) {
   if (parseBoolean(env.ENSURE_SCHEMA_ON_READ ?? false, false)) await ensureV6Schema(env);

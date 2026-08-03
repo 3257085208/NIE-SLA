@@ -57,8 +57,8 @@ async function isAdminRequest(request, env) {
 }
 
 export async function getStatusFresh(env, url) {
-  // A fresh one-click deployment can receive its first page view before the
-  // first cron tick. The schema marker keeps this cheap after initialization.
+
+
   await ensureV6Schema(env);
   let payload = await buildStatusPayload(env, url);
   if (url?.searchParams?.get('lite') === '1') payload = compactStatusPayload(payload);
@@ -124,7 +124,7 @@ async function buildStatusPayload(env, url = null) {
     warnings.push('Traffic totals unavailable');
   }
   const metricsMap = {};
-  // Agent heartbeat summaries use elapsed seconds, so missing reports become explicit downtime.
+
   for (const r of metricsResult.results || []) {
     if (r.updated_at) {
       const key = sanitizeAgentId(r.agent_id);
@@ -175,7 +175,7 @@ async function buildStatusPayload(env, url = null) {
     if (hidePorts) delete publicRow.target_port;
     return publicRow;
   });
-  // Add CNY price conversion
+
   const rates = await getExchangeRates(env);
   if (rates && rows.length) {
     for (const row of rows) {

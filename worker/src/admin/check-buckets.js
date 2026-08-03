@@ -1,8 +1,8 @@
-// Admin sub-module: D1 check bucket & incident write operations.
+
 import { clamp, parseBoolean, nowSec, dayFromSec, isMissedMonitorPoint, buildMissedPoints, buildOpenMissedPoints, retentionSeconds } from '../utils.js';
 import { summaryRowsFromChecks } from '../storage.js';
 
-// ── D1 state write ───────────────────────────────────────────────────────────
+
 
 function latestStatusStatement(env, s) {
   return env.DB.prepare(`
@@ -34,7 +34,7 @@ export async function upsertLatestStatus(env, s) {
   }
 }
 
-// ── Incident events ─────────────────────────────────────────────────────────
+
 
 function incidentEventStatement(env, targetId, action, startedAt, recoveredAt, colo, error) {
   const now = nowSec();
@@ -94,7 +94,7 @@ export async function upsertTargetLastCheckedAt(env, targetId, checkedAt) {
   }
 }
 
-// ── Check bucket operations ─────────────────────────────────────────────────
+
 
 function normalizeCheckBucketPoint(point) {
   const missed = isMissedMonitorPoint(point);

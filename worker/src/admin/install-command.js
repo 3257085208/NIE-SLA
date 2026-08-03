@@ -1,13 +1,13 @@
-// Admin sub-module: agent install command generation.
+
 import { ApiError } from '../auth.js';
 import { clamp, sanitizeAgentId, sha256Hex } from '../utils.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
 
-const INSTALLER_SHA256 = 'c15704dd195aad93d69d110b0c5145bb703f541e8f6574ad943e9442175a4507';
-const SETUP_SHA256 = '28c15e27e8a4158045e0fc17e54c80db9aa588b3582b3cac175d9d4033551735';
-const CFTZ_SHA256 = 'cadf30452c9372c8f1caa8e4f80c2c50033b09eb2a7dce10303be382eb1b8cbc';
+const INSTALLER_SHA256 = 'b7cf397c449815e232134f3efb92000e43f2aff403ffb15e116c2d4b1ca0924d';
+const SETUP_SHA256 = 'b3110310124d0d78fcb9966ecdf519e9c9b403721451ad425690df42d9347628';
+const CFTZ_SHA256 = '3632df3856e33e22d02a07a0e4043e9583dd0d08c975f2aa41ff3c4f8bd8fe26';
 const INSTALL_TICKET_PREFIX = 'nsi_';
 const INSTALL_TICKET_BYTES = 24;
 const INSTALL_TICKET_TTL_SEC = 600;
@@ -205,9 +205,9 @@ export async function agentInstallBase(env, request = null) {
   const publicOrigin = publicRequestOrigin(request);
   if (publicOrigin) return publicOrigin.replace(/\/+$/, '');
 
-  // Integrated one-click deployments serve Admin and Agent assets from the
-  // same Worker. Their no-referrer policy leaves same-origin GETs without
-  // Origin or Referer headers, so the request URL is the only public base.
+
+
+
   const workerOrigin = requestUrlOrigin(request);
   return workerOrigin ? workerOrigin.replace(/\/+$/, '') : '';
 }

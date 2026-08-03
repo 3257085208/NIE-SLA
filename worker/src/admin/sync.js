@@ -1,4 +1,4 @@
-// Admin sub-module: target sync from TARGETS_JSON env.
+
 import { nowSec, parseBoolean, normalizeTarget, stableTargetId, sha256Hex } from '../utils.js';
 import { normalizeTrafficMode, normalizeTrafficQuotaGb, normalizeTrafficResetDay } from '../traffic.js';
 import { rebuildAgentTrafficPeriod } from '../metrics.js';

@@ -13,7 +13,7 @@ export { TelemetryBuffer } from './telemetry-buffer.js';
 
 const INTERNAL_SCHEDULE_PATH = '/api/internal/scheduled';
 
-// Durable Object for region probing.
+
 
 export class ProbeRegion {
   constructor(state, env) { this.state = state; this.env = env; this.scheduledRun = null; }
@@ -48,7 +48,7 @@ export class ProbeRegion {
   }
 }
 
-// Worker entry.
+
 
 export default {
   async fetch(request, env, ctx) {
@@ -82,8 +82,8 @@ export async function runScheduledTasks(env, cron, options = {}) {
     finally { timings[name] = Date.now() - started; }
   };
   try { await ensureV6Schema(env); } catch (err) { results.schema_error = String(err?.message || err); }
-  // Availability checks are the time-sensitive task; maintenance must never
-  // consume the cron execution window before probes have run.
+
+
   try { results.probe = await measure('probe', () => runDueTargets(env, { skipLease: options.serialized === true })); } catch (err) { results.probe_error = String(err?.message || err); }
   if (results.probe_error || shouldRunScheduledFollowups(results.probe)) {
     try { await recordProbeResult(env, cron, results.probe, results.probe_error, timings.probe); } catch (_) {}

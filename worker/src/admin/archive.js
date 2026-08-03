@@ -1,10 +1,10 @@
-// Admin sub-module: archives, incidents, and stats.
+
 import { clamp, nowSec, parseBoolean, timezoneOffsetMin, publicError, publicHost, publicUrl, REGION_LABELS } from '../utils.js';
 import { summaryRowsFromChecks } from '../storage.js';
 import { getMeta, setMeta } from './settings.js';
 import { readCheckBuckets } from './check-buckets.js';
 
-// ── Archive ──────────────────────────────────────────────────────────────────
+
 
 function dayStartSecValue(day, env) { return Math.floor(new Date(`${day}T00:00:00.000Z`).getTime() / 1000) - timezoneOffsetMin(env) * 60; }
 
@@ -43,7 +43,7 @@ export async function archiveDay(env, day) {
   return { ok: true, key, summary_rows: summaries.length, incident_rows: (incidents.results || []).length };
 }
 
-// ── Incidents ────────────────────────────────────────────────────────────────
+
 
 export async function getRecentIncidents(env, limit, maskIps, hidePorts = true) {
   const rows = await env.DB.prepare(`SELECT i.id, i.target_id, i.started_at, i.recovered_at, i.last_checked_at, i.start_colo, i.recover_colo, i.last_error, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.probe_region FROM incident_events i LEFT JOIN targets t ON t.id = i.target_id ORDER BY COALESCE(i.recovered_at, i.started_at) DESC LIMIT ?`).bind(limit).all();
@@ -56,7 +56,7 @@ export async function getRecentIncidents(env, limit, maskIps, hidePorts = true) 
   });
 }
 
-// ── Stats / diagnostics ──────────────────────────────────────────────────────
+
 
 export async function getStats(env) {
   if (!env.DB) return { ok: true, note: '未绑定 D1' };

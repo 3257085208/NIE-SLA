@@ -1,4 +1,4 @@
-// Admin sub-module: agent result submission.
+
 import { nowSec, clamp, sanitizeAgentId, dayFromSec, parseExpectedStatus, BUCKET_SEC, publicCheckPoint } from '../utils.js';
 import { safeJson } from '../auth.js';
 import { readR2State, mergeR2StateUpdates, appendAgentR2HistoryPoints, setDailySummary, dailySummaryFromPoints, statsFromDailySummaries } from '../storage.js';

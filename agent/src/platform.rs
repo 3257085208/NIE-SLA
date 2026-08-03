@@ -146,7 +146,6 @@ pub(super) fn connection_counts() -> (u64, u64) {
     (0, 0)
 }
 
-/// Detect hypervisor / container / cloud virt. Prefer specific products over bare "kvm".
 pub(super) fn virtualization() -> String {
     #[cfg(target_os = "linux")]
     {
@@ -278,7 +277,7 @@ fn detect_via_cpuinfo() -> Option<String> {
     let text = std::fs::read_to_string("/proc/cpuinfo")
         .ok()?
         .to_lowercase();
-    // CPUID hypervisor leaves fingerprints in model name / flags / vendor-like strings.
+
     for (needle, label) in [
         ("kvmkvmkvm", "kvm"),
         ("microsoft hv", "hyper-v"),
@@ -296,7 +295,6 @@ fn detect_via_cpuinfo() -> Option<String> {
         }
     }
     if text.contains("hypervisor") {
-        // Generic hypervisor bit without vendor — try DMI next, but keep qemu guess low priority
         if text.contains("qemu") {
             return Some("qemu".to_string());
         }
@@ -371,7 +369,6 @@ fn detect_via_dmi() -> Option<String> {
         ("virtual", "virtual"),
     ] {
         if blobs.contains(needle) {
-            // Avoid labeling bare metal Apple Mac as virtual
             if label == "apple-virt" && !blobs.contains("virtual") {
                 continue;
             }
@@ -420,7 +417,6 @@ fn normalize_virt_label(raw: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn detect_windows_virt() -> Option<String> {
-    // Lightweight model/manufacturer probe via PowerShell CIM (best-effort).
     let script = r#"
 $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
 $model = ($cs.Model + ' ' + $cs.Manufacturer + ' ' + $cs.SystemFamily)
@@ -457,7 +453,6 @@ $model.ToLower()
 fn cpu_temperature_c() -> Option<f64> {
     let mut candidates: Vec<(i32, f64)> = Vec::new();
 
-    // thermal_zone* — prefer package/CPU zones
     if let Ok(entries) = std::fs::read_dir("/sys/class/thermal") {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -479,7 +474,6 @@ fn cpu_temperature_c() -> Option<f64> {
         }
     }
 
-    // hwmon sensors
     if let Ok(entries) = std::fs::read_dir("/sys/class/hwmon") {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -494,7 +488,7 @@ fn cpu_temperature_c() -> Option<f64> {
             {
                 continue;
             }
-            // collect temp*_input
+
             if let Ok(files) = std::fs::read_dir(&path) {
                 for file in files.flatten() {
                     let fname = file.file_name().to_string_lossy().to_lowercase();
@@ -588,7 +582,7 @@ fn read_millidegree(path: impl AsRef<Path>) -> Option<f64> {
         .trim()
         .parse::<f64>()
         .ok()?;
-    // Some sensors already report whole degrees; millidegree is typical for hwmon.
+
     let c = if raw.abs() > 200.0 { raw / 1000.0 } else { raw };
     if c.is_finite() {
         Some(c)
@@ -817,8 +811,7 @@ fn probe_drm_sysfs() -> Option<(Option<f64>, Option<f64>, String, usize)> {
         if !fname.starts_with("card") || fname.contains('-') {
             continue;
         }
-        // Containers can see host DRM sysfs without receiving the device.
-        // Only report hardware that this Agent can actually open.
+
         if std::fs::OpenOptions::new()
             .read(true)
             .open(Path::new("/dev/dri").join(&fname))
@@ -855,7 +848,7 @@ fn probe_drm_sysfs() -> Option<(Option<f64>, Option<f64>, String, usize)> {
                 util_n += 1;
             }
         }
-        // hwmon under device
+
         let hwmon_root = device.join("hwmon");
         if let Ok(hws) = std::fs::read_dir(hwmon_root) {
             for hw in hws.flatten() {

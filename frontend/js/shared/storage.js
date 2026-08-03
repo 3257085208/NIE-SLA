@@ -1,4 +1,4 @@
-/** Browser storage access that tolerates disabled or unavailable storage APIs. */
+
 
 function storageArea(name) {
   try {

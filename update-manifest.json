@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.6",
-  "agent_version": "v1.1.6",
-  "source_ref": "app-v1.1.6",
-  "published_at": "2026-08-04T08:00:00Z",
-  "title": "NIE-SLA 1.1.6",
+  "version": "1.1.7",
+  "agent_version": "v1.1.7",
+  "source_ref": "app-v1.1.7",
+  "published_at": "2026-08-04T10:00:00Z",
+  "title": "NIE-SLA 1.1.7",
   "changelog": [
-    "移除 EdgeOne 国内加速源，NQ 运行弹窗仅保留“默认”与“Cloudflare 海外”",
-    "NQ 脚本不再按国家/延迟自动选择 EdgeOne，默认与 auto 均使用 Cloudflare NIE-Proxy 加速源，历史 eo 任务自动回退默认",
-    "前端本次变更模块缓存键统一升至 20260804-v1116",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.1.6 / v1.1.6"
+    "Agent 上报接口改为先鉴权再读取请求体，未带凭据的请求不再消耗 JSON 解析，降低空请求刷 CPU 的风险",
+    "按 100 台/5 分钟与 200 台/10 分钟两种规模重新核算 Cloudflare 免费额度，并把结论固化为自动化测试，避免后续误判",
+    "清理全部源码注释，发布代码更简洁",
+    "前端缓存键升至 20260804-v1117，应用与 Agent 同步到 1.1.7 / v1.1.7"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# cftz - 聶.NET VPS Agent 管理工具
-# Usage: cftz {install|uninstall|update|log|set|status}
+
+
 
 set -euo pipefail
 
@@ -506,7 +506,7 @@ reconcile_service_layout() {
     esac
 }
 
-# ── 子命令 ────────────────────────────────────────────────────────
+
 
 detect_init() {
     if command -v systemctl &>/dev/null && [[ -d /run/systemd/system ]]; then echo "systemd"
@@ -536,7 +536,7 @@ do_install() {
     local tmpbin
     tmpbin="$(download_binary "$api" "$tok" "$aid")"
 
-    # 普通遥测保持低权限；NQ/IP 固定诊断由 root Manager 直接执行。
+
     create_system_user "$AGENT_USER"
     ok "用户已就绪: ${AGENT_USER}"
 
@@ -756,7 +756,7 @@ do_set_target() {
         return
     fi
 
-    # 显示输出到 stderr (调用者用 $(...) 捕获 stdout)
+
     echo -e "\n${BOLD}可选探针目标${NC} (选择作为本 Agent 的目标 ID)\n" >&2
     local ol=$(echo "$list_json" | tr -d '\r\n\t ')
     local pr="${ol//'{"id"'/${NL}{\"id\"}}"
@@ -871,7 +871,7 @@ do_status() {
     esac
 }
 
-# ── 管理面板 ──────────────────────────────────────────────────────
+
 
 do_admin() {
     read_env
@@ -1205,4 +1205,3 @@ case "${1:-}" in
         echo
         ;;
 esac
-# v1.1.6

@@ -56,7 +56,7 @@ function urlWith(qs) {
   return new URL('https://example.test/api/agent/metrics?' + qs);
 }
 
-// metrics caps
+
 {
   const q0 = resolvePublicMetricsQuery(urlWith('hours=24&max_points=0'), {});
   assert.equal(q0.maxPoints, defaultMetricsMaxPointsForHours(24, {}));
@@ -68,7 +68,7 @@ function urlWith(qs) {
   assert.equal(q1h.maxPoints, 3600);
 }
 
-// private hosts
+
 assert.equal(isPrivateHost('127.0.0.1'), true);
 assert.equal(isPrivateHost('10.0.0.1'), true);
 assert.equal(isPrivateHost('192.168.1.1'), true);
@@ -109,7 +109,7 @@ assert.ok(assertPublicHttpUrl('https://example.com/path'));
   assert.deepEqual(requested, ['https://images.example.test/start']);
 }
 
-// grace default >= 120
+
 {
   const prev = { checked_at: Math.floor(Date.now()/1000) - 400 };
   const points = buildOpenMissedPoints({}, prev, Math.floor(Date.now()/1000));
@@ -118,7 +118,7 @@ assert.ok(assertPublicHttpUrl('https://example.com/path'));
 
 console.log('hardening tests passed');
 
-// CORS origin resolution
+
 {
   assert.equal(resolveCorsOrigin({ ALLOWED_ORIGIN: 'https://sla.example' }), 'https://sla.example');
   assert.equal(resolveCorsOrigin({ PUBLIC_SITE_ORIGIN: 'https://pages.example/' }), 'https://pages.example');
@@ -126,7 +126,7 @@ console.log('hardening tests passed');
 }
 console.log('cors tests passed');
 
-// Versioned developer API stays read-only and uses explicit origins.
+
 {
   const request = new Request('https://api.example.test/api/v1', { headers: { origin: 'https://theme.example.test' } });
   const env = {

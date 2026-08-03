@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Compatibility wrapper for one-line NIE-SLA Agent installs.
-# Required env:
-#   NSTATUS_API_BASE or NSTATUS_API
-#   NSTATUS_AGENT_TOKEN or NSTATUS_TOKEN
-# Optional env:
-#   NSTATUS_AGENT_ID or NSTATUS_TARGET
-#   NSTATUS_AGENT_LABEL, NSTATUS_INTERVAL_SEC, NSTATUS_PING_TARGETS, NSTATUS_PING_SEC
+
+
+
+
+
+
+
 set -euo pipefail
 
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 SETUP_URL="${DOWNLOAD_BASE%/}/setup.sh"
-DEFAULT_SETUP_SHA256="28c15e27e8a4158045e0fc17e54c80db9aa588b3582b3cac175d9d4033551735"
+DEFAULT_SETUP_SHA256="b3110310124d0d78fcb9966ecdf519e9c9b403721451ad425690df42d9347628"
 
 if [[ -z "${NSTATUS_API_BASE:-${NSTATUS_API:-}}" ]]; then
   echo "缺少 NSTATUS_API_BASE，请从管理后台的部署按钮复制完整命令。" >&2

@@ -1,6 +1,6 @@
 (() => {
   const config = window.NSTATUS_CONFIG || {};
-  // API endpoints are deployment configuration, never user-controlled URL state.
+
   try {
     localStorage.removeItem('nstatus.apiBase');
   } catch (_) {}

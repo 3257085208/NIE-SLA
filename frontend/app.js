@@ -23,7 +23,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260804-v1116';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260804-v1117';
 import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
@@ -35,13 +35,13 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260804-v1116';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260804-v1117';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
 import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
 import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260729-beta23';
-import { readStorage, writeStorage } from './js/shared/storage.js?v=20260804-v1116';
+import { readStorage, writeStorage } from './js/shared/storage.js?v=20260804-v1117';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -398,7 +398,7 @@ function statusGroupsRenderKey(data) {
   return JSON.stringify({
     groupByMode: state.groupByMode,
     filter: state.filteredText,
-    // Relative time labels only need periodic refresh when status data is unchanged.
+
     relativeBucket: Math.floor(Date.now() / 300000),
     appearance: state.appearance,
     days: data?.days || [],
@@ -768,7 +768,7 @@ function renderService(t, days, summaries) {
   const nqButton = targetHasNodeQuality(t)
     ? `<button type="button" class="nq-report-btn" data-nq-target="${escapeAttr(t.id)}" data-nq-name="${escapeAttr(displayName)}" title="查看 NodeQuality 报告">NQ</button>`
     : '';
-  // Metadata badges
+
   let metaBadges = '';
   if (t.line_type) metaBadges += `<span class="meta-badge meta-line">${escapeHtml(t.line_type)}</span>`;
   if (t.location || targetCityName(t)) {
@@ -850,8 +850,8 @@ async function openNodeQualityReport(targetId, targetName = '', returnTarget = n
     }
   };
   root.addEventListener('click', (event) => {
-    // Only the close button or empty backdrop closes the dialog. A tab is
-    // inside the backdrop, so closest('[data-nq-close]') would close it too.
+
+
     if (event.target.closest('.nq-close') || event.target.classList.contains('nq-modal-backdrop')) closeNodeQualityReport();
   });
   await load();
@@ -895,9 +895,9 @@ function configuredChartColor(value, fallback) {
 }
 
 function isTargetStale() {
-  // Web checks have one source of truth: the latest check result. A successful
-  // result remains healthy until a later check fails. Agent freshness is
-  // already represented by agent_online from the Worker.
+
+
+
   return false;
 }
 
@@ -963,7 +963,7 @@ async function selectService(id, name, el) {
   state.selectedId = id;
   state.selectedName = name;
   state.checksPage = 1;
-  // Find target type
+
   const target = (state.data?.targets || []).find(t => t.id === id);
   const hasLatency = targetHasPublicLatency(target);
   state.selectedMetric = hasLatency ? 'latency' : 'cpu';
@@ -980,7 +980,7 @@ async function selectService(id, name, el) {
 
   document.querySelectorAll('.metric-tab').forEach(b => b.classList.remove('active'));
   document.querySelector(`.metric-tab[data-metric="${hasLatency ? 'latency' : 'cpu'}"]`)?.classList.add('active');
-  // Hide metric tabs for HTTP targets (websites)
+
   document.querySelectorAll('.metric-tab[data-metric]').forEach(b => {
     if (b.dataset.metric === 'latency') {
       b.style.display = hasLatency ? '' : 'none';
@@ -1330,7 +1330,7 @@ function vpsItem(label, value) {
   return `<span class="vps-info-item"><span class="vps-info-label">${escapeHtml(label)}</span><span class="vps-info-value">${escapeHtml(value)}</span></span>`;
 }
 
-// TCP Ping
+
 
 const PING_COLORS = ['#159754','#2ea3ff','#e67e22','#e74c3c','#8e44ad','#1abc9c','#f39c12','#3498db','#2ecc71','#9b59b6'];
 
@@ -1828,7 +1828,7 @@ function updateMetricsChart() {
     els.chartServiceName.textContent = `${state.selectedName || '服务'} ${metricLabel}`;
     return;
   }
-  // If history is empty, create a synthetic point from latest state
+
   if (!m.history || !m.history.length) {
     const latestTs = Math.floor(new Date(m.latest.updated_at || 0).getTime() / 1000) || Math.floor(Date.now() / 1000);
     m.history = [{
@@ -1840,7 +1840,7 @@ function updateMetricsChart() {
     }];
   }
 
-  // Filter by time range
+
   const rangeSec = { '1h': 3600, '6h': 21600, '24h': 86400 }[range] || 3600;
   const now = Math.floor(Date.now() / 1000);
   let history = m.history.filter(p => Number(p.ts) >= now - rangeSec);
@@ -2296,14 +2296,14 @@ function registerChartNearestTimeMode() {
       let bestDistance = Infinity;
       const data = dataset.data || [];
       if (data.length > 0) {
-        // Binary search for nearest x value (data is sorted by x)
+
         let lo = 0, hi = data.length - 1;
         while (lo < hi) {
           const mid = (lo + hi) >> 1;
           if (Number(data[mid]?.x || 0) < targetValue) lo = mid + 1;
           else hi = mid;
         }
-        // Check lo-1, lo, lo+1 for actual nearest
+
         for (let idx = Math.max(0, lo - 1); idx <= Math.min(data.length - 1, lo + 1); idx++) {
           const px = Number(data[idx]?.x);
           const py = Number(data[idx]?.y);
@@ -2359,7 +2359,7 @@ function applyChartFullRange(rows) {
   }
 
   const range = minMax(xs);
-  // Keep the visible domain tight to data edges so zoom-out never reintroduces blank gutters.
+
   const min = range.min === range.max ? range.min - 150 : range.min;
   const max = range.min === range.max ? range.max + 150 : range.max;
   state.chartZoomFullMin = min;
@@ -2407,7 +2407,7 @@ function handleChartWheel(event) {
     nextMin = nextMax - nextSpan;
   }
 
-  // Always keep explicit bounds so Chart.js cannot auto-pad blank ends after zoom-out.
+
   if (nextSpan >= fullSpan * 0.995) {
     chart.options.scales.x.min = fullMin;
     chart.options.scales.x.max = fullMax;

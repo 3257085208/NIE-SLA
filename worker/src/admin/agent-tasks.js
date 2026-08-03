@@ -4,8 +4,8 @@ import { nodeQualityUnlockData, normalizeNodeQualityReport, normalizeNodeQuality
 import { uploadNodeQualityReportImages } from '../nq-image-host.js';
 
 export const AGENT_TASK_ACTIONS = Object.freeze({
-  // v1.0.64+ Agents ignore timeout_sec for NQ; this keeps pre-1.0.64 Agents
-  // from defaulting to 600s (exit 124) when the field is null.
+
+
   nodequality: { timeout_sec: 3600, label: 'NodeQuality' },
   ip_unlock: { timeout_sec: 600, label: 'IP 解锁' },
 });

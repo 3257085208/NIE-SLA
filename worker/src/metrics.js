@@ -1,6 +1,6 @@
 ﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean } from './utils.js';
 import { summarizeTraffic, summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffic.js';
-import { requireAgentForId, safeJson, json } from './auth.js';
+import { requireAgentForId, requireAnyAgent, safeJson, json } from './auth.js';
 import { readR2Json, writeR2Json } from './storage.js';
 import { rateLimitByIp } from './ratelimit.js';
 import { recordAgentAvailability } from './agent-availability.js';
@@ -170,6 +170,7 @@ export function normalizeAgentCapabilities(value, observedAt = nowSec()) {
 export async function submitAgentMetrics(request, env, ctx = null) {
   if (!env.DB) return json({ ok: false, error: '缺少 D1 的 DB 绑定' }, 500, env);
 
+  await requireAnyAgent(request, env);
   const body = await safeJson(request);
   const agentId = sanitizeAgentId(body?.agent_id || env.DEFAULT_AGENT_ID || 'vps');
   await requireAgentForId(request, env, agentId);
@@ -350,7 +351,7 @@ function normalizedMetricsCacheUrl(url, env) {
   return normalized;
 }
 
-/** Public metrics query hard caps: never allow unlimited (max_points<=0) raw history. */
+
 export function resolvePublicMetricsQuery(url, env = {}) {
   const publicMaxHours = clamp(Number(env.AGENT_METRICS_PUBLIC_MAX_HOURS || 72), 1, 168);
   const hours = clamp(Math.floor(Number(url.searchParams.get('hours') || 24)), 1, publicMaxHours);
@@ -1276,8 +1277,8 @@ async function persistAgentMetrics(env, data) {
   const rawPoints = mapSamples(rawSamples);
   if (!rawPoints.length) rawPoints.push(toPoint(state));
   if (env.ARCHIVE) {
-    // Do not acknowledge the report until its high-frequency history is durable.
-    // The Agent keeps unacknowledged samples and retries them on the next upload.
+
+
     await writeAgentTelemetryR2History(env, agentId, rawPoints, rawPings);
   }
 

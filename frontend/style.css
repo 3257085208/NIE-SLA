@@ -745,7 +745,7 @@ button { border: 0; cursor: pointer; }
 
 
 
-/* subtle motion */
+
 body:not(.is-loaded) .topbar,
 body:not(.is-loaded) .hero,
 body:not(.is-loaded) .search-row,
@@ -920,7 +920,7 @@ body:not(.is-loaded) .footer {
 
 
 
-/* v5.2 compact metadata + outage log */
+
 .intro:empty {
   display: none;
 }
@@ -1076,7 +1076,7 @@ body:not(.is-loaded) .incident-log {
 
 
 
-/* v5.3 service log position */
+
 .search-row + .incident-log {
   margin-top: 18px;
 }
@@ -1820,7 +1820,7 @@ tr.group-sep td{background:rgba(127,127,127,.12);font-size:13px;padding:8px 10px
   .group-by-option { padding: 0 11px; }
 }
 
-/* Runtime appearance settings from the admin panel. */
+
 .brand-custom-logo { width: auto; max-width: 88px; height: var(--appearance-brand-logo-height, 36px); flex: 0 0 auto; object-fit: contain; }
 .brand-subtitle { max-width: 180px; margin-left: 9px; overflow: hidden; color: var(--muted); font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .appearance-header-text { color: var(--soft); font-size: 13px; font-weight: 800; text-decoration: none; white-space: nowrap; }
@@ -1837,7 +1837,7 @@ html, body { background-color: var(--appearance-bg, var(--bg)); }
   .brand-subtitle { display: none; }
 }
 
-/* Mobile status view: preserve dense monitoring data without shrinking its hierarchy. */
+
 @media (max-width: 760px) {
   body { overflow-x: hidden; }
   button, .service, .group-head { -webkit-tap-highlight-color: rgba(21, 151, 84, .12); }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# NIE-SLA Agent 一键更新脚本
+
 set -euo pipefail
 
 GREEN='\033[0;32m'
@@ -55,7 +55,7 @@ verify_binary_checksum() {
     ok "SHA256 校验通过"
 }
 
-# 检查权限
+
 if [[ $EUID -ne 0 ]]; then
    err "需要 root 权限，请使用 sudo"
    exit 1
@@ -63,7 +63,7 @@ fi
 
 title "NIE-SLA Agent 更新"
 
-# 检测架构
+
 case "$(uname -m)" in
     x86_64|amd64) ARCH="amd64" ;;
     i386|i486|i586|i686) ARCH="386" ;;
@@ -118,7 +118,7 @@ rollback_update() {
     exit 1
 }
 
-# 检查当前版本
+
 if [[ -f "$BINARY_PATH" ]]; then
     CURRENT_VERSION=$("$BINARY_PATH" --version 2>&1 || echo "unknown")
     info "当前版本: $CURRENT_VERSION"
@@ -126,7 +126,7 @@ else
     info "未检测到已安装的 Agent"
 fi
 
-# 备份当前版本
+
 if [[ -f "$BINARY_PATH" ]]; then
     cp "$BINARY_PATH" "$BACKUP_PATH"
     chown root:root "$BACKUP_PATH"
@@ -134,7 +134,7 @@ if [[ -f "$BINARY_PATH" ]]; then
     ok "已备份当前版本"
 fi
 
-# 下载新版本
+
 info "正在下载最新版本..."
 mkdir -p "$(dirname "$BINARY_PATH")"
 SUMS_TMP="$(mktemp)"
@@ -157,17 +157,17 @@ else
     exit 1
 fi
 
-# 重启服务
+
 info "重启服务..."
 restart_service || rollback_update "新版本服务重启失败"
 
-# 检查新版本
+
 sleep 2
 service_is_healthy || rollback_update "新版本服务未能保持运行"
 NEW_VERSION=$("$BINARY_PATH" --version 2>&1) || rollback_update "新版本二进制自检失败"
 ok "新版本: $NEW_VERSION"
 
-# 清理备份
+
 rm -f "$BACKUP_PATH"
 
 title "更新完成！"

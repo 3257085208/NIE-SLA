@@ -785,7 +785,7 @@ function fakeStatement(sql, tables) {
 }
 
 
-// cpu_temp thermal fields
+
 {
   const pts = compactMetricPoints([
     { ts: 1, cpu: 1, cpu_temp: 40, gpu_temp: 50, gpu_util: 10, motherboard_temp: 35, disk_temp: 32, chipset_temp: 44 },

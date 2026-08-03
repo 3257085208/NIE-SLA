@@ -89,7 +89,7 @@ export async function createAdminSession(env, { provider = 'password', subject =
   });
   while (sessions.length > MAX_ADMIN_SESSIONS) sessions.shift();
   await setMeta(env, SESSIONS_KEY, JSON.stringify(sessions));
-  // Keep legacy single-session keys pointing at the newest session for older clients.
+
   await setMeta(env, SESSION_ID_KEY, tokenHash);
   await setMeta(env, SESSION_EXPIRES_KEY, String(expiresAt));
   return { session_id: sessionId, expires_at: expiresAt };
@@ -184,7 +184,7 @@ async function readStoredSecret(value, env) {
   if (isEncryptedSecret(stored)) return decryptSecret(stored.slice(ENCRYPTED_SECRET_PREFIX.length), env);
   if (looksLikePlainSecret(stored)) return { secret: stored.toUpperCase(), needsMigration: true };
 
-  // Compatibility for older encrypted rows that were stored before a prefix was added.
+
   const legacy = await decryptSecret(stored, env);
   return { ...legacy, needsMigration: true };
 }

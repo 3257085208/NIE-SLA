@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Basic smoke test: validates JS syntax, Rust Agent, shell scripts, and admin modules.
+
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -21,8 +21,8 @@ export PACKAGE_EXEC
 TMP_PARENT="${TMPDIR:-/tmp}"
 TMP_DIR="$(mktemp -d "$TMP_PARENT/nstatus-test.XXXXXX")"
 trap 'rm -rf -- "$TMP_DIR"' EXIT
-# Keep linker intermediates out of Unicode/OneDrive paths without sharing stale
-# artifacts between repositories or test runs.
+
+
 if [[ -z "${CARGO_TARGET_DIR:-}" ]]; then
   CARGO_TARGET_DIR="$TMP_DIR/cargo-target"
 fi
@@ -86,6 +86,7 @@ run_check "time-series export tests" node "$ROOT/worker/tests/timeseries-export.
 run_check "compact Ping series tests" node "$ROOT/worker/tests/ping-series.test.mjs"
 run_check "legacy chart color schema migration" node "$ROOT/worker/tests/schema-color-migration.test.mjs"
 run_check "debug operation log retention and safety" node "$ROOT/worker/tests/debug-logs.test.mjs"
+run_check "auth order tests" node "$ROOT/worker/tests/auth-order.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
   run_check "public export tool" node --check "$ROOT/scripts/export-public.mjs"
   run_check "public export file classification" node "$ROOT/tests/public-export-files.test.mjs"

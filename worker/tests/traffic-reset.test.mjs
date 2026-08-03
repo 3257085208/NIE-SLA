@@ -52,7 +52,7 @@ database.exec(`
   );
 `);
 
-const oldExpiry = Date.parse('2027-01-26T16:00:00.000Z') / 1000; // 27th in UTC+8.
+const oldExpiry = Date.parse('2027-01-26T16:00:00.000Z') / 1000;
 database.prepare(`INSERT INTO targets
   (id, name, group_name, type, target_host, target_port, timeout_ms, interval_sec, probe_region, enabled, created_at, updated_at, expires_at, traffic_enabled)
   VALUES ('legacy-vps', 'Legacy VPS', 'VPS', 'tcp', '203.0.113.10', 443, 5000, 300, 'auto', 1, 1, 1, ?, 1)`)

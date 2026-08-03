@@ -8,26 +8,26 @@ const minutesPerDay = 24 * 60;
 const daysPerMonth = 30;
 
 const workerRequests = nodes * (
-  reportsPerDay       // metrics upload
-  + reportsPerDay     // fixed task poll
-  + 24 * 6            // ping-target refresh every ten minutes
-  + 24 * 2            // telemetry and privileged-manager update checks
+  reportsPerDay
+  + reportsPerDay
+  + 24 * 6
+  + 24 * 2
 ) + latencyAgents * (
-  minutesPerDay       // target refresh
-  + minutesPerDay     // result upload
-  + 24                // update policy
-) + minutesPerDay     // scheduled dispatch
-  + nodes * 24;       // completed-hour telemetry alarms
+  minutesPerDay
+  + minutesPerDay
+  + 24
+) + minutesPerDay
+  + nodes * 24;
 
-const durableObjectRequests = nodes * reportsPerDay; // one telemetry buffer append per Agent report
+const durableObjectRequests = nodes * reportsPerDay;
 
 const d1Writes = nodes * (
-  reportsPerDay       // latest metric state
-  + reportsPerDay * 2 // one SLA bucket and latest check status
-  + 48                // traffic ledger, at most every thirty minutes
+  reportsPerDay
+  + reportsPerDay * 2
+  + 48
 ) + latencyAgents * minutesPerDay
-  + (nodes + latencyAgents) * 4 // credential touch, at most every six hours
-  + 3 * reportsPerDay // scheduled, alert, and probe diagnostics
+  + (nodes + latencyAgents) * 4
+  + 3 * reportsPerDay
   + 24;
 
 const r2ClassA = nodes * 24 * daysPerMonth
@@ -39,6 +39,33 @@ assert.ok(workerRequests < 100_000, `Worker request budget exceeded: ${workerReq
 assert.ok(durableObjectRequests < 100_000, `Durable Object request budget exceeded: ${durableObjectRequests}`);
 assert.ok(d1Writes < 100_000, `D1 write budget exceeded: ${d1Writes}`);
 assert.ok(r2ClassA < 1_000_000, `R2 Class A budget exceeded: ${r2ClassA}`);
+
+const bigNodes = 200;
+const bigReportsPerDay = 24 * 60 / 10;
+const bigWorkerRequests = bigNodes * (
+  bigReportsPerDay
+  + bigReportsPerDay
+  + 24 * 6
+  + 24 * 2
+) + latencyAgents * (
+  minutesPerDay
+  + minutesPerDay
+  + 24
+) + minutesPerDay
+  + bigNodes * 24;
+const bigDurableObjectRequests = bigNodes * bigReportsPerDay;
+const bigD1Writes = bigNodes * (
+  bigReportsPerDay
+  + bigReportsPerDay * 2
+  + 48
+) + latencyAgents * minutesPerDay
+  + (bigNodes + latencyAgents) * 4
+  + 3 * bigReportsPerDay
+  + 24;
+
+assert.ok(bigWorkerRequests >= 100_000, '200-node ten-minute scenario must stay outside the free tier');
+assert.ok(bigDurableObjectRequests < 100_000, '200-node Durable Object request budget exceeded');
+assert.ok(bigD1Writes >= 100_000, '200-node ten-minute D1 writes must stay outside the free tier');
 
 const wrangler = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
 assert.match(wrangler, /name = "TELEMETRY_BUFFER"/);

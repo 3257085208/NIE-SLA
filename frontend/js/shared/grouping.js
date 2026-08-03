@@ -1,4 +1,4 @@
-﻿/** Multi-dimension VPS / target grouping helpers. */
+﻿
 
 export const GROUP_BY_OPTIONS = [
   { id: 'group', label: 'VPS / Web' },

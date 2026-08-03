@@ -6,10 +6,16 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const socketsLoader = path.join(root, 'worker', 'tests', 'cloudflare-sockets-loader.mjs');
 
+function isDuplicateCopy(name) {
+  return /\s\d+(?:\.\d+)*\.(?:js|mjs)$/i.test(name);
+}
+
 function filesIn(directory, extension) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const file = path.join(directory, entry.name);
-    return entry.isDirectory() ? filesIn(file, extension) : entry.name.endsWith(extension) ? [file] : [];
+    if (entry.isDirectory()) return filesIn(file, extension);
+    if (!entry.name.endsWith(extension) || isDuplicateCopy(entry.name)) return [];
+    return [file];
   });
 }
 

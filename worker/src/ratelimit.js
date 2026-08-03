@@ -1,6 +1,6 @@
-// Worker isolates do not share memory, so this Map is only a best-effort
-// throttle for public/cacheable reads. Use the D1-backed path for anything
-// security-sensitive, such as admin login, TOTP and write endpoints.
+
+
+
 const buckets = new Map();
 let d1TableReady = false;
 

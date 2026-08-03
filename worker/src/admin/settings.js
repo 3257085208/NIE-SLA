@@ -1,4 +1,4 @@
-// Admin sub-module: settings, meta, and exchange rates.
+
 import { nowSec, clamp, parseBoolean, sha256Hex, assertPublicHttpUrl } from '../utils.js';
 import { ApiError, safeJson } from '../auth.js';
 import { getAdminPath, setAdminPath } from '../admin-path.js';
@@ -11,7 +11,7 @@ export const SUPPORTED_CURRENCIES = new Set([
   'PHP', 'VND', 'AED', 'TRY', 'PLN', 'SEK', 'NOK', 'DKK', 'CZK', 'ZAR',
 ]);
 
-// ── Meta ─────────────────────────────────────────────────────────────────────
+
 
 export async function getMeta(env, key) {
   const row = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(key).first();
@@ -26,7 +26,7 @@ async function deleteMeta(env, key) {
   await env.DB.prepare(`DELETE FROM app_meta WHERE key = ?`).bind(key).run();
 }
 
-// ── Exchange rates ─────────────────────────────────────────────────────────
+
 
 export async function fetchExchangeRates(env) {
   if (!env.DB) return null;
@@ -79,7 +79,7 @@ export function convertPriceToCny(amount, currency, rates) {
   return Math.round((value / rate) * 100) / 100;
 }
 
-// ── Settings ────────────────────────────────────────────────────────────────
+
 
 export const DEFAULT_FRONTEND_APPEARANCE = Object.freeze({
   site_name: 'NIE-SLA', site_subtitle: '', hero_subtitle: '', page_title: '', favicon_url: '', brand_home_url: './',

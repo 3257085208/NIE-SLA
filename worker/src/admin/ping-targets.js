@@ -1,6 +1,6 @@
-// Admin sub-module: ping target CRUD and agent TCP ping operations.
+
 import { nowSec, clamp, parseBoolean, sanitizeAgentId, retentionSeconds } from '../utils.js';
-import { safeJson, requireAgentForId, ApiError } from '../auth.js';
+import { safeJson, requireAgentForId, requireAnyAgent, ApiError } from '../auth.js';
 import { writeAgentTelemetryR2History, compactPingPointsByTarget, loadAgentPingsR2History, pingLossPointsToRuns, pingPointsToSeries, summarizePingPointsByTarget } from '../metrics.js';
 import { rateLimitByIp } from '../ratelimit.js';
 import { getPingIntervalSec, pingConfigPayload } from '../ping-config.js';
@@ -13,7 +13,7 @@ function normalizeOkInt(value) {
   return ['1', 'true', 'yes', 'ok', 'up'].includes(text) ? 1 : 0;
 }
 
-// ── Ping targets CRUD ───────────────────────────────────────────────────────
+
 
 export async function getPingTargets(env, options = {}) {
   const enabledOnly = options.enabledOnly !== false;
@@ -62,10 +62,11 @@ export async function deletePingTarget(id, env) {
   return { ok: true, id };
 }
 
-// ── Agent TCP Ping ──────────────────────────────────────────────────────────
+
 
 export async function submitAgentPings(request, env) {
   if (!env.DB) return { ok: false, error: '缺少 D1 的 DB 绑定' };
+  await requireAnyAgent(request, env);
   const body = await safeJson(request);
   const agentId = sanitizeAgentId(body?.agent_id || '');
   if (!agentId) return { ok: false, error: '必须提供 agent_id' };

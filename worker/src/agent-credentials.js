@@ -59,6 +59,20 @@ export async function findAgentCredential(env, token) {
   return { agent_id: String(row.subject_id) };
 }
 
+export async function findLatencyCredential(env, token) {
+  const presented = String(token || '').trim();
+  if (!presented || !env.DB) return null;
+  const hash = await sha256Hex(presented);
+  const row = await env.DB.prepare(`SELECT subject_id, token_hash FROM agent_credentials
+    WHERE subject_type = 'latency' AND token_hash = ? LIMIT 1`)
+    .bind(hash)
+    .first()
+    .catch(() => null);
+  if (!row?.subject_id || !constantTimeEqual(hash, row.token_hash)) return null;
+  await touchCredential(env, 'latency', row.subject_id);
+  return { node_id: String(row.subject_id) };
+}
+
 export async function exportAgentTokens(env) {
   if (!env.DB) throw new Error('导出节点凭据需要 D1 数据库');
   const result = await env.DB.prepare(`SELECT subject_type, subject_id, token_hash, token_ciphertext

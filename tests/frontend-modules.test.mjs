@@ -63,7 +63,7 @@ assert.equal(unauthorized, '未授权');
 console.log('frontend module tests passed');
 
 
-// grouping dimensions
+
 {
   const targets = [
     { name: 'a', group_name: 'G1', provider: 'DMIT', location: 'HK', line_type: '落地鸡', price: 8, currency: 'USD' },

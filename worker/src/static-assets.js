@@ -38,8 +38,8 @@ function isLegacyAdminPath(pathname) {
 
 async function adminAssetResponse(request, env) {
   const assetUrl = new URL(request.url);
-  // Static Assets canonicalizes /admin.html to /admin. Fetching the canonical
-  // URL internally avoids returning that redirect to /admin in a loop.
+
+
   assetUrl.pathname = DEFAULT_ADMIN_PATH;
   assetUrl.search = '';
   const response = await env.ASSETS.fetch(new Request(assetUrl, request));

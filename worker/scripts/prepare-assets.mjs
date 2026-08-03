@@ -40,8 +40,8 @@ await cp(frontendRoot, outputRoot, {
 });
 await cp(updateManifest, path.join(outputRoot, 'update-manifest.json'));
 
-// A unique asset forces Wrangler to process a fresh assets manifest instead of
-// reusing a stale one that can leave static files absent from ASSETS.
+
+
 const releaseBuildId = `${Date.now().toString(36)}-${randomBytes(6).toString('hex')}`;
 await writeFile(path.join(outputRoot, 'release-build-id.txt'), `${releaseBuildId}\n`, 'utf8');
 

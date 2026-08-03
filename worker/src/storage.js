@@ -1,6 +1,6 @@
 import { clamp, nowSec, sanitizeId, sanitizeAgentId, dayFromSec, dayStartSec, timezoneOffsetMin, normalizeHistoryPoint, publicCheckPoint, configuredAgents, agentSeriesEnabled, BUCKET_SEC, R2_STATE_SCHEMA, R2_HISTORY_SCHEMA, isMissedMonitorPoint } from './utils.js';
 
-// ── R2 generic ───────────────────────────────────────────────────────────────
+
 
 export async function readR2Json(env, key, fallback) {
   if (!env.ARCHIVE) return fallback;
@@ -12,7 +12,7 @@ export async function writeR2Json(env, key, value, metadata = {}) {
   await env.ARCHIVE.put(key, JSON.stringify(value), { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: metadata });
 }
 
-// ── State ────────────────────────────────────────────────────────────────────
+
 
 function r2StateKey(env) { return String(env.R2_STATE_KEY || 'state/status.json').replace(/^\/+/, ''); }
 
@@ -40,7 +40,7 @@ export async function removeTargetFromR2State(env, targetId) {
   }
 }
 
-// R2 objects do not support atomic read-modify-write, so serialize state updates in D1.
+
 async function acquireR2Lock(env, timeoutSec = 10, attempts = 8) {
   if (!env.DB) return null;
   const lockKey = 'r2_state_lock';
@@ -77,14 +77,14 @@ async function releaseR2Lock(env, lock) {
 
 export async function mergeR2StateUpdates(env, updates) {
   if (!updates.length) return { ok: true, skipped: true };
-  
-  // Acquire lock before reading/writing R2 state to prevent race conditions
+
+
   const lock = await acquireR2Lock(env, 10);
   if (!lock) {
     console.warn('Failed to acquire R2 lock, skipping state update to prevent race condition');
     return { ok: false, error: 'lock_failed', skipped: true };
   }
-  
+
   try {
     const state = await readR2State(env);
     state.schema = R2_STATE_SCHEMA;
@@ -102,7 +102,7 @@ export async function mergeR2StateUpdates(env, updates) {
   }
 }
 
-// ── History ──────────────────────────────────────────────────────────────────
+
 
 function r2HistoryKey(targetId, day, env) {
   return `${String(env.R2_HISTORY_PREFIX || 'history').replace(/^\/+|\/+$/g, '')}/${day}/${sanitizeId(targetId)}.json`;
@@ -135,7 +135,7 @@ export async function getR2HistoryRange(env, targetId, days) {
   return out.sort((a, b) => Number(a.checked_at) - Number(b.checked_at));
 }
 
-// ── Agent history ────────────────────────────────────────────────────────────
+
 
 function agentR2HistoryKey(agentId, targetId, day, env) {
   return `${String(env.AGENT_R2_HISTORY_PREFIX || 'agent-history').replace(/^\/+|\/+$/g, '')}/${sanitizeAgentId(agentId)}/${day}/${sanitizeId(targetId)}.json`;
@@ -190,13 +190,13 @@ export async function getAgentSeriesForTarget(env, targetId, days, since, limit)
   return out;
 }
 
-// ── Snapshot helpers ─────────────────────────────────────────────────────────
+
 
 export async function getStatusSnapshotGeneratedAt(env, key) {
   try { const object = await env.ARCHIVE.get(key); if (!object) return 0; const payload = await object.json(); const generatedAt = Math.floor(new Date(payload?.generated_at || payload?.now || 0).getTime() / 1000); return Number.isFinite(generatedAt) ? generatedAt : 0; } catch (_) { return 0; }
 }
 
-// ── Summary rows ─────────────────────────────────────────────────────────────
+
 
 export function getSummaryRowsFromState(state, startDay) {
   const rows = [];

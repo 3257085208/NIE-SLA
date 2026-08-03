@@ -1,9 +1,9 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260804-v1116";
-import { createAdminClient } from "./admin/api.js?v=20260804-v1116";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260804-v1116";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260804-v1116";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260804-v1117";
+import { createAdminClient } from "./admin/api.js?v=20260804-v1117";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260804-v1117";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260804-v1117";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260804-v1116";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260804-v1117";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -14,8 +14,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260804-v1116";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260804-v1116";
+} from "./shared/grouping.js?v=20260804-v1117";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260804-v1117";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -3265,7 +3265,7 @@ window.dispatchEvent(new Event("nie-admin-ready"));
 setupSettingsTabs();
 loadAuthConfig();
 if (await completeGitHubRedirect()) {
-  // OAuth completion owns the initial login state.
+
 } else if (hasSession())
   api("/api/login", { method: "GET" })
     .then((d) => {

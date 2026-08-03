@@ -3,7 +3,7 @@ import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatu
 import { readR2State, mergeR2StateUpdates, setDailySummary, cachedDailySummaryBefore, dailySummaryFromPoints, statsFromDailySummaries } from './storage.js';
 import { applyProbeWriteBatch, readCheckBucketDaySummary } from './admin.js';
 
-// ── HTTP/TCP probe ───────────────────────────────────────────────────────────
+
 
 export async function probeTarget(target, cf = {}) {
   if (Number(target?.no_public_ip || 0) === 1) {
@@ -51,7 +51,7 @@ async function probeTcp(target, cf) {
   }
 }
 
-// ── Region probe via Durable Object ──────────────────────────────────────────
+
 
 export async function probeAndSaveTargetViaRegion(env, target, checkedAt, previousState = null) {
   if (Number(target?.no_public_ip || 0) === 1) {
@@ -78,7 +78,7 @@ export async function probeAndSaveTargetViaRegion(env, target, checkedAt, previo
   return { target_id: target.id, name: target.name, ...result, saved, state_update: saved.state_update };
 }
 
-// ── Colo detection ───────────────────────────────────────────────────────────
+
 
 export async function enrichCfContext(cf = {}, env = {}) {
   const requestColo = String(cf?.colo || '').trim().toUpperCase();
@@ -116,7 +116,7 @@ export async function getRuntimeColo(env) {
   } catch (_) { return ''; } finally { clearTimeout(timer); }
 }
 
-// ── Save check ───────────────────────────────────────────────────────────────
+
 
 export async function saveCheck(env, target, checkedAt, result, previous = null) {
   const bucketAt = Math.floor(checkedAt / BUCKET_SEC) * BUCKET_SEC;
@@ -128,7 +128,7 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
   const probeRegion = target.probe_region || 'auto';
   const cfColo = result.cf_colo || null;
 
-  // Skipped probes (private IP, agent-monitored): don't record as failure
+
   if (result.skipped) {
     await applyProbeWriteBatch(env, target.id, bucketAt, [], null, null);
     return { history_points: 0, uptime_24h: previous?.uptime_24h ?? null, uptime_7d: previous?.uptime_7d ?? null, incident: null, storage: 'skipped', state_update: null };
@@ -163,7 +163,7 @@ function missedBackfillWriteLimit(env) {
   return clamp(Number(raw), 0, 48);
 }
 
-// ── Incident tracking ────────────────────────────────────────────────────────
+
 
 function buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous) {
   const wasDown = previous && Number(previous.ok) === 0;
@@ -178,7 +178,7 @@ function buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous) 
   return { action: 'none', currentOutageStartedAt: null, lastRecoverAt: previous?.last_recover_at || null, write: null };
 }
 
-// ── Batch runner ─────────────────────────────────────────────────────────────
+
 
 export async function runDueTargets(env, options = {}) {
   const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 20), 1, 200);

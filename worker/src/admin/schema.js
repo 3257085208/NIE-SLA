@@ -1,10 +1,10 @@
-﻿// Admin sub-module: D1 schema migrations.
+﻿
 import { dayFromSec, nowSec, parseBoolean, timezoneOffsetMin } from '../utils.js';
 
 import { nodeQualityUnlockData } from '../nodequality.js';
 let schemaEnsured = false;
 let schemaPromise = null;
-// Bump this marker whenever an existing installation needs new D1 objects.
+
 const SCHEMA_MARKER = 'schema:worker-v25-20260803-task-owner';
 
 async function runOptionalSchemaChange(env, statement) {
@@ -37,8 +37,8 @@ export async function ensureV6Schema(env) {
   if (schemaPromise) { await schemaPromise; return; }
   schemaPromise = (async () => {
   try {
-  // Worker isolates are short-lived. Avoid replaying dozens of idempotent DDL
-  // statements on every cron invocation once this schema revision is installed.
+
+
   const installed = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(SCHEMA_MARKER).first().catch(() => null);
   if (installed?.value === '1') { schemaEnsured = true; return; }
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, no_public_ip INTEGER NOT NULL DEFAULT 0, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', city TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', traffic_reset_day INTEGER NOT NULL DEFAULT 1, alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '', nq_report TEXT DEFAULT '', nq_updated_at INTEGER)`).run();
@@ -164,8 +164,8 @@ export async function ensureV6Schema(env) {
   )`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_traffic_daily_day ON agent_traffic_daily(day, agent_id)`).run();
 
-  // Legacy totals cannot be split retroactively. Preserve the newest total as
-  // an upgrade-day entry; subsequent days are recorded precisely.
+
+
   const migrationNow = nowSec();
   const migrationDay = dayFromSec(migrationNow, env);
   await env.DB.prepare(`INSERT OR IGNORE INTO agent_traffic_daily (agent_id, day, rx_bytes, tx_bytes, updated_at)
@@ -275,8 +275,8 @@ export async function ensureV6Schema(env) {
   )`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_alert_state_updated ON alert_state(updated_at DESC)`).run();
 
-  // 0.24 introduces explicit node/check ownership while legacy target APIs stay
-  // active. IDs are preserved so installed Agents and their credentials remain valid.
+
+
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS nodes (
     id TEXT PRIMARY KEY,
     legacy_target_id TEXT UNIQUE,

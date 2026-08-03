@@ -1,4 +1,4 @@
-// Admin sub-module: sanitized debug operation logs with 30-day retention.
+
 import { clamp } from '../utils.js';
 import { ensureV6Schema } from './schema.js';
 

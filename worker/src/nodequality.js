@@ -1,6 +1,6 @@
 import { assertPublicHttpUrl } from './utils.js';
 
-// NodeQuality report parsing and normalization for VPS targets.
+
 const MAX_REPORT_CHARS = 120_000;
 const TAB_ALIASES = {
   '基本信息': 'basic',
@@ -35,7 +35,7 @@ export function normalizeNodeQualityReport(raw, { now = Math.floor(Date.now() / 
     try {
       return normalizeStructuredReport(JSON.parse(text), now);
     } catch (_) {
-      // fall through to markdown/tab parse
+
     }
   }
   const parsed = parseNodeQualityMarkdown(text);
@@ -62,7 +62,7 @@ function normalizeStructuredReport(input, now) {
   let tabs = Array.isArray(input?.tabs) ? input.tabs.map(normalizeTab).filter(Boolean) : [];
   if (!tabs.length && input?.raw) tabs = parseNodeQualityMarkdown(String(input.raw)).tabs;
   if (!tabs.length) {
-    // Accept section maps: { basic, ip, network, route }
+
     for (const [key, value] of Object.entries(input || {})) {
       const id = TAB_ALIASES[String(key).toLowerCase()] || TAB_ALIASES[String(key)] || null;
       if (!id) continue;
@@ -128,9 +128,9 @@ function defaultTabTitle(id) {
 export function parseNodeQualityMarkdown(text) {
   const source = String(text || '').replace(/\r\n/g, '\n');
   const tabs = [];
-  // Format A: ::: tab-item TITLE ... :::. NodeQuality puts a standalone :::
-  // between items, so slice from each header instead of relying on a fragile
-  // lookahead that can consume the following item.
+
+
+
   const headers = [];
   const tabItemRe = /^[\t ]*:::[\t ]*tab-item[\t ]+([^\n]+?)[\t ]*$/gim;
   let match;
@@ -142,8 +142,8 @@ export function parseNodeQualityMarkdown(text) {
     body = body.replace(/\n[\t ]*::::[\t ]*\s*$/i, '').replace(/\n[\t ]*:::[\t ]*\s*$/i, '').trim();
     const title = stripEmoji(header.title).trim();
     const ansi = extractAnsiBlock(body);
-    // Prefer fenced ANSI/text content over any SVG/report links that appear inside the report body.
-    // Image tabs are only used when the tab body is primarily a markdown/bare image (network/route).
+
+
     const image = ansi ? '' : extractMarkdownImage(body);
     const id = normalizeTabId(title) || `tab-${tabs.length + 1}`;
     const tabTitle = defaultTabTitle(id) === id ? (title || defaultTabTitle(id)) : defaultTabTitle(id);
@@ -159,7 +159,7 @@ export function parseNodeQualityMarkdown(text) {
     };
   }
 
-  // Format B: plain multi-section NodeQuality paste with report links / images.
+
   const sections = splitPlainSections(source);
   for (const section of sections) {
     const id = normalizeTabId(section.title) || `tab-${tabs.length + 1}`;
@@ -262,11 +262,11 @@ function isSafeImageUrl(value) {
   if (!isSafeHttpUrl(value)) return false;
   let u;
   try { u = assertPublicHttpUrl(value); } catch (_) { return false; }
-  // Block obvious script-like payloads; allow common image hosts / report CDNs.
+
   return !/[<>"']/.test(value) && u.pathname.length < 1024;
 }
 
-// Keep SGR color codes for frontend rendering; drop OSC/other control sequences.
+
 export function sanitizeAnsiContent(text) {
   return String(text || '')
     .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, '')
@@ -416,7 +416,7 @@ export function publicNodeQualitySummary(target = {}) {
   try {
     report = typeof raw === 'string' ? JSON.parse(raw) : raw;
   } catch (_) {
-    // legacy plain text
+
     const reportTime = extractReportTime(raw);
     return {
       has_report: true,

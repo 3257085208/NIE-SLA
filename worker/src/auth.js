@@ -1,5 +1,5 @@
 import { sanitizeAgentId } from './utils.js';
-import { findAgentCredential, legacyScopedToken, verifyAgentCredential } from './agent-credentials.js';
+import { findAgentCredential, findLatencyCredential, legacyScopedToken, verifyAgentCredential } from './agent-credentials.js';
 
 export function requireAgent(request, env) {
   const configured = env.AGENT_TOKEN;
@@ -90,12 +90,30 @@ export async function latencyAgentScopedToken(env, nodeId) {
   return legacyScopedToken(env, 'latency', sanitizeAgentId(nodeId));
 }
 
+export async function requireAnyLatencyAgent(request, env) {
+  const configured = String(env.AGENT_TOKEN || '').trim();
+  const token = bearerToken(request);
+  if (!token) throw new ApiError(401, '未授权');
+  if (configured && constantTimeEqual(token, configured)) return { type: 'global' };
+  if (!env.DB) throw new ApiError(401, '未授权');
+  const credential = await findLatencyCredential(env, token);
+  if (credential) {
+    const node = await env.DB.prepare(`SELECT id FROM latency_agents WHERE id = ? AND enabled = 1`).bind(credential.node_id).first().catch(() => null);
+    if (node) return { type: 'scoped', node_id: credential.node_id };
+  }
+  const rows = await env.DB.prepare(`SELECT id FROM latency_agents WHERE enabled = 1`).all().catch(() => ({ results: [] }));
+  for (const row of rows.results || []) {
+    const scoped = await latencyAgentScopedToken(env, row.id);
+    if (scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', node_id: String(row.id || '') };
+  }
+  throw new ApiError(401, '未授权');
+}
+
 export function bearerToken(request) {
   const auth = request.headers.get('authorization') || '';
   return auth.toLowerCase().startsWith('bearer ') ? auth.slice(7) : '';
 }
 
-/** Prefer explicit ALLOWED_ORIGIN; never default open CORS in production configs. */
 export function resolveCorsOrigin(env) {
   const allowed = String(env?.ALLOWED_ORIGIN || '').trim();
   if (allowed) return allowed;

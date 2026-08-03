@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Agent-only smoke test.
+
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"

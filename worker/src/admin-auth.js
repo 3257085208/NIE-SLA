@@ -11,8 +11,8 @@ const OAUTH_TICKET_TTL_SEC = 300;
 const MAX_PENDING_OAUTH = 10;
 const ADMIN_CREDENTIALS_KEY = 'admin_credentials_v1';
 const PASSWORD_ALGORITHM = 'pbkdf2-sha256';
-// Keep password hashing within the free Worker CPU budget. D1 rate limiting,
-// password complexity and optional TOTP provide the surrounding protections.
+
+
 const PASSWORD_ITERATIONS = 50_000;
 const MIN_PASSWORD_LENGTH = 9;
 const MAX_PASSWORD_LENGTH = 256;
