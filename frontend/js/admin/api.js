@@ -1,4 +1,4 @@
-import { readStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260803-v1115";
+import { readStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260804-v1116";
 
 const SESSION_KEY = "nstatus_admin_session";
 const SESSION_EXP_KEY = "nstatus_admin_session_exp";

@@ -30,11 +30,13 @@ assert.match(
 
 const nodequalitySource = fs.readFileSync(path.join(vendorDir, 'nodequality.sh'), 'utf8');
 assert.match(nodequalitySource, /github_mirrors=\(/, 'NodeQuality must keep a GitHub mirror fallback list');
-assert.match(nodequalitySource, /accelerator_domestic="https:\/\/mirror-eo\.i8-mc\.cn"/, 'NodeQuality must keep the domestic EdgeOne accelerator');
 assert.match(nodequalitySource, /accelerator_overseas="https:\/\/mirror-cf\.niekaixiang\.com"/, 'NodeQuality must keep the overseas Cloudflare accelerator');
-assert.match(nodequalitySource, /function detect_accelerator_base\(\)\{/, 'NodeQuality must auto-select domestic/overseas accelerator');
+assert.doesNotMatch(nodequalitySource, /mirror-eo|accelerator_domestic|EdgeOne/, 'NodeQuality must no longer reference the EdgeOne accelerator');
+assert.match(nodequalitySource, /function detect_accelerator_base\(\)\{/, 'NodeQuality must keep a deterministic accelerator selector');
 assert.match(nodequalitySource, /accelerator_override="\$\{NQ_ACCELERATOR:-auto\}"/, 'NodeQuality must honor the Agent-provided accelerator override');
 assert.match(nodequalitySource, /\$\{NQ_ACCELERATOR:-auto\}/, 'NodeQuality must read NQ_ACCELERATOR');
+assert.match(nodequalitySource, /accelerator_base="\$accelerator_overseas"/, 'NodeQuality default must resolve to Cloudflare');
+assert.doesNotMatch(nodequalitySource, /api-ipv4\.ip\.sb|cdn-cgi\/trace|myip\.ipip\.net/, 'NodeQuality must not geo-select an accelerator');
 assert.match(nodequalitySource, /fetch_script https:\/\/Hardware\.Check\.Place/, 'HardwareQuality must fetch through the selected accelerator');
 assert.match(nodequalitySource, /hq_script="\$\(fetch_script https:\/\/Hardware\.Check\.Place/, 'HardwareQuality must be fetched into a local variable before chroot');
 assert.match(nodequalitySource, /accelerator_base\/p\/cdn\.geekbench\.com/, 'HardwareQuality must route Geekbench downloads through the selected accelerator');

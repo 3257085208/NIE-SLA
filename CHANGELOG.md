@@ -2,6 +2,13 @@
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
 
+## 1.1.6 - 2026-08-04
+
+- 移除 EdgeOne 国内加速源：后台 NQ 运行弹窗只保留“默认”与“Cloudflare 海外”，NQ 脚本不再按国家/延迟自动选择 EdgeOne，默认与 `auto` 均使用 Cloudflare NIE-Proxy 加速源；历史 `eo` 任务自动归一化为默认，不会拒绝执行。
+- 前端本次变更模块缓存键统一升至 `20260804-v1116`，发布后旧缓存不会继续加载过期模块。
+- 应用、Worker、Rust Agent、前端、教程与公开发布版本同步至 `1.1.6` / `v1.1.6`。
+
+
 ## 1.1.5 - 2026-08-03
 
 - HardwareQuality 内部的 Geekbench 5 安装包（x86_64 约 93 MB、ARM 预览约 112 MB）改为优先经 NIE-Proxy 当前加速源下载，与 NQ 主脚本、组件和 BenchOs 共用同一 CDN 链路；NIE-Proxy 白名单新增 `cdn.geekbench.com`。

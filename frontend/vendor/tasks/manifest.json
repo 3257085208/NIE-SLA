@@ -1,6 +1,6 @@
 {
   "schema": "nie-sla-reviewed-task-sources-v1",
-  "reviewed_at": "2026-08-03",
+  "reviewed_at": "2026-08-04",
   "assets": [
     {
       "id": "nodequality",
@@ -10,7 +10,7 @@
       "source_commit": "a92fca6c0067df29ddd03fdc2fee6f3000f64545",
       "source_path": "NodeQuality.sh",
       "upstream_sha256": "156c1ead9cf4756527093b5b7f6f50e0328d6ec57578b86f798bf13ef8d9c8fc",
-      "sha256": "d6d9d65f968704cbf7b4a3f5c3387e64e58222464f161791c87489abe23dd649",
+      "sha256": "ecdfcc0ef06b9fae4a669d36687bca84f6da5b59d2f1380b289f1ed2c462bd9e",
       "license": "AGPL-3.0-only"
     },
     {

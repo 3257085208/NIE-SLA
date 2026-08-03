@@ -221,7 +221,7 @@ const nqCustom = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 
 const nqCustomClaim = await claimAgentTask(env, 'vps-a');
 assert.equal(nqCustomClaim.task.id, nqCustom.task.id);
 assert.equal(nqCustomClaim.task.timeout_sec, 3600);
-assert.deepEqual(nqCustomClaim.task.options, { hardware: 'v', ip: 'n', net: 'l', route: 'n', accelerator: 'eo' });
+assert.deepEqual(nqCustomClaim.task.options, { hardware: 'v', ip: 'n', net: 'l', route: 'n', accelerator: 'auto' });
 await completeAgentTask(jsonRequest({ status: 'failed', error: 'custom options cleanup' }), env, nqCustomClaim.task.id, 'vps-a');
 const nqWithoutReport = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'nodequality' }), env);
 await claimAgentTask(env, 'vps-a');

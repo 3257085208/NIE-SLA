@@ -11,7 +11,7 @@ const NQ_OPTION_ALLOWED = Object.freeze({
   ip: new Set(["y", "n"]),
   net: new Set(["y", "l", "n"]),
   route: new Set(["y", "n"]),
-  accelerator: new Set(["auto", "eo", "cf"]),
+  accelerator: new Set(["auto", "cf"]),
 });
 
 const NQ_OPTION_LABELS = Object.freeze({
@@ -27,7 +27,7 @@ const NQ_OPTION_CHOICES = Object.freeze({
   ip: [["y", "是"], ["n", "否"]],
   net: [["y", "是"], ["l", "低流量"], ["n", "否"]],
   route: [["y", "是"], ["n", "否"]],
-  accelerator: [["auto", "自动"], ["eo", "EdgeOne 国内"], ["cf", "Cloudflare 海外"]],
+  accelerator: [["auto", "默认"], ["cf", "Cloudflare 海外"]],
 });
 
 export function normalizeNqOptions(value) {

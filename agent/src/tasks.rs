@@ -51,7 +51,7 @@ const OPTIONAL_NSLOOKUP_HELPER: &[u8] =
 const JQ_RELEASE_BASE: &str = "https://github.com/jqlang/jq/releases/download/jq-1.8.1";
 const MAX_JQ_BYTES: usize = 4 * 1024 * 1024;
 const NODEQUALITY_SCRIPT_SHA256: &str =
-    "d6d9d65f968704cbf7b4a3f5c3387e64e58222464f161791c87489abe23dd649";
+    "ecdfcc0ef06b9fae4a669d36687bca84f6da5b59d2f1380b289f1ed2c462bd9e";
 const IP_UNLOCK_SCRIPT_SHA256: &str =
     "69e7a8d0b9018a508fa7a54a3f7e98c9fa8c19eeb6995d60675070361cb76c03";
 
@@ -238,7 +238,7 @@ fn nodequality_accelerator(options: Option<&Value>) -> String {
         .map(|text| text.trim().to_ascii_lowercase())
         .unwrap_or_else(|| "auto".to_string());
     match value.as_str() {
-        "eo" | "cf" => value,
+        "cf" => value,
         _ => "auto".to_string(),
     }
 }
@@ -1488,6 +1488,8 @@ mod tests {
         assert_eq!(nodequality_accelerator(Some(&invalid)), "auto");
         let forced = json!({"accelerator": "cf"});
         assert_eq!(nodequality_accelerator(Some(&forced)), "cf");
+        let removed_earthone = json!({"accelerator": "eo"});
+        assert_eq!(nodequality_accelerator(Some(&removed_earthone)), "auto");
         let invalid_accelerator = json!({"accelerator": "evil"});
         assert_eq!(nodequality_accelerator(Some(&invalid_accelerator)), "auto");
     }

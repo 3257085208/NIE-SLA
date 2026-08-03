@@ -20,7 +20,7 @@ const NQ_OPTION_ALLOWED = Object.freeze({
   ip: new Set(['y', 'n']),
   net: new Set(['y', 'l', 'n']),
   route: new Set(['y', 'n']),
-  accelerator: new Set(['auto', 'eo', 'cf']),
+  accelerator: new Set(['auto', 'cf']),
 });
 
 export function normalizeNqOptions(value) {

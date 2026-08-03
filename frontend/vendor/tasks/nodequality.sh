@@ -13,7 +13,6 @@ github_mirrors=(
     "https://ghfast.top"
     "https://gh.ddlc.top"
 )
-accelerator_domestic="https://mirror-eo.i8-mc.cn"
 accelerator_overseas="https://mirror-cf.niekaixiang.com"
 accelerator_base="$accelerator_overseas"
 accelerator_override="${NQ_ACCELERATOR:-auto}"
@@ -240,41 +239,13 @@ function fetch_script(){
 }
 
 function detect_accelerator_base(){
-    if [[ "$accelerator_override" == "eo" ]]; then
-        accelerator_base="$accelerator_domestic"
-        echo "NIE Proxy accelerator: $accelerator_base (forced=eo)"
-        return
-    fi
     if [[ "$accelerator_override" == "cf" ]]; then
         accelerator_base="$accelerator_overseas"
         echo "NIE Proxy accelerator: $accelerator_base (forced=cf)"
         return
     fi
-    local country=""
-    country="$(curl -fsS --max-time 8 https://api-ipv4.ip.sb/geoip 2>/dev/null | sed -n 's/.*"country_code":"\([A-Z][A-Z]\)".*/\1/p')"
-    if [[ -z "$country" ]]; then
-        country="$(curl -fsS --max-time 8 https://1.1.1.1/cdn-cgi/trace 2>/dev/null | awk -F= '$1=="loc"{print $2}')"
-    fi
-    if [[ -z "$country" ]] && curl -fsS --max-time 8 https://myip.ipip.net/json 2>/dev/null | grep -q '中国'; then
-        country="CN"
-    fi
-    if [[ "$country" == "CN" ]]; then
-        accelerator_base="$accelerator_domestic"
-    elif [[ -z "$country" ]]; then
-        local eo_ms cf_ms
-        eo_ms="$(curl -sS -o /dev/null --max-time 6 -w '%{time_total}' "$accelerator_domestic/health" 2>/dev/null || true)"
-        cf_ms="$(curl -sS -o /dev/null --max-time 6 -w '%{time_total}' "$accelerator_overseas/health" 2>/dev/null || true)"
-        if [[ -n "$eo_ms" && -n "$cf_ms" ]]; then
-            if awk -v a="$eo_ms" -v b="$cf_ms" 'BEGIN{exit !(a < b)}'; then
-                accelerator_base="$accelerator_domestic"
-            fi
-        elif [[ -n "$eo_ms" ]]; then
-            accelerator_base="$accelerator_domestic"
-        fi
-    else
-        accelerator_base="$accelerator_overseas"
-    fi
-    echo "NIE Proxy accelerator: $accelerator_base (country=${country:-latency})"
+    accelerator_base="$accelerator_overseas"
+    echo "NIE Proxy accelerator: $accelerator_base (default)"
 }
 
 function download_with_mirrors(){
