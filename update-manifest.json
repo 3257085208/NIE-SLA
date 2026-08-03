@@ -1,15 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.4",
-  "agent_version": "v1.1.4",
-  "source_ref": "app-v1.1.4",
+  "version": "1.1.5",
+  "agent_version": "v1.1.5",
+  "source_ref": "app-v1.1.5",
   "published_at": "2026-08-03T14:00:00Z",
-  "title": "NIE-SLA 1.1.4",
+  "title": "NIE-SLA 1.1.5",
   "changelog": [
     "NodeQuality 运行弹窗新增加速源选择：自动 / EdgeOne 国内 / Cloudflare 海外，选项持久化并经 NQ_ACCELERATOR 下发给 Agent",
     "NodeQuality 脚本优先通过 NIE-Proxy 公益加速站下载脚本、原始组件与 BenchOs，失败自动回退官方源与镜像，并允许 jsDelivr 中国节点重定向",
-    "前端本次变更模块缓存键统一升至 20260803-v1114",
-    "Agent、Worker、前端、教程与公开发布版本同步至 1.1.4 / v1.1.4"
+    "HardwareQuality 内部的 Geekbench 5 安装包也改为优先经 NIE-Proxy 当前加速源下载，白名单新增 cdn.geekbench.com",
+    "前端本次变更模块缓存键统一升至 20260803-v1115",
+    "Agent、Worker、前端、教程与公开发布版本同步至 1.1.5 / v1.1.5"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

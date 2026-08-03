@@ -36,6 +36,10 @@ assert.match(nodequalitySource, /function detect_accelerator_base\(\)\{/, 'NodeQ
 assert.match(nodequalitySource, /accelerator_override="\$\{NQ_ACCELERATOR:-auto\}"/, 'NodeQuality must honor the Agent-provided accelerator override');
 assert.match(nodequalitySource, /\$\{NQ_ACCELERATOR:-auto\}/, 'NodeQuality must read NQ_ACCELERATOR');
 assert.match(nodequalitySource, /fetch_script https:\/\/Hardware\.Check\.Place/, 'HardwareQuality must fetch through the selected accelerator');
+assert.match(nodequalitySource, /hq_script="\$\(fetch_script https:\/\/Hardware\.Check\.Place/, 'HardwareQuality must be fetched into a local variable before chroot');
+assert.match(nodequalitySource, /accelerator_base\/p\/cdn\.geekbench\.com/, 'HardwareQuality must route Geekbench downloads through the selected accelerator');
+assert.ok(nodequalitySource.includes('cdn\\\\.geekbench\\\\.com'), 'the Geekbench rewrite must keep the escaped official host pattern');
+assert.doesNotMatch(nodequalitySource, /fetch_script https:\/\/Hardware\.Check\.Place \| chroot_run/, 'HardwareQuality must not be executed twice');
 assert.match(nodequalitySource, /bench_os_sha256_x86_64=/, 'NodeQuality must pin the x86_64 BenchOs checksum');
 assert.match(nodequalitySource, /download_with_mirrors "\$bench_os_url"/, 'BenchOs downloads must use mirror fallback');
 assert.doesNotMatch(nodequalitySource, /curl "-L#o" BenchOs\.tar\.gz \$bench_os_url/, 'BenchOs must not rely only on the GitHub direct URL');

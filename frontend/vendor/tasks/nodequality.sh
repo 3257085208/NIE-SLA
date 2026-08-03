@@ -14,7 +14,7 @@ github_mirrors=(
     "https://gh.ddlc.top"
 )
 accelerator_domestic="https://mirror-eo.i8-mc.cn"
-accelerator_overseas="https://mirror-cf.example.com"
+accelerator_overseas="https://mirror-cf.niekaixiang.com"
 accelerator_base="$accelerator_overseas"
 accelerator_override="${NQ_ACCELERATOR:-auto}"
 bench_os_sha256_x86_64="5f844e73941c3623175c5cdc16b01db34c155d0d1bd9b0cf71f3d72e8b1148e1"
@@ -562,7 +562,9 @@ function run_HardwareQuality(){
     [[ "$run_hardware_quality_test" =~ ^[Vv]$ ]] && params=" -V"
     pre_fetch_info # HQ预处理
     payload=$(declare -p osinfo meminfo diskinfo) # HQ预处理
-    fetch_script https://Hardware.Check.Place | chroot_run "env NQENV=$(printf '%q' "$payload") bash -s -- $opt_lang $params -y -o /result/$hardware_quality_json_filename" # HQ预处理
+    local hq_script
+    hq_script="$(fetch_script https://Hardware.Check.Place | sed "s#https://cdn\\.geekbench\\.com#$accelerator_base/p/cdn.geekbench.com#g")"
+    printf '%s\n' "$hq_script" | chroot_run "env NQENV=$(printf '%q' "$payload") bash -s -- $opt_lang $params -y -o /result/$hardware_quality_json_filename" # HQ预处理
     # 原始语句为：chroot_run bash <(curl -Ls https://Hardware.Check.Place) $opt_lang -y -o /result/$hardware_quality_json_filename
 }
 
