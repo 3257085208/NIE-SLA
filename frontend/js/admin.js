@@ -1,9 +1,9 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260804-v1117";
-import { createAdminClient } from "./admin/api.js?v=20260804-v1117";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260804-v1117";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260804-v1117";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260804-v1118";
+import { createAdminClient } from "./admin/api.js?v=20260804-v1118";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260804-v1118";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260804-v1118";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260804-v1117";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260804-v1118";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -14,8 +14,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260804-v1117";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260804-v1117";
+} from "./shared/grouping.js?v=20260804-v1118";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260804-v1118";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(

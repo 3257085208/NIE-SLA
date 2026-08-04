@@ -275,6 +275,21 @@ export function sanitizeAgentId(value) {
   return out || '';
 }
 
+export async function findEnabledAgentTarget(env, agentIdValue) {
+  const raw = String(agentIdValue || '').trim();
+  const canonical = sanitizeAgentId(raw);
+  if (!canonical || !env?.DB) return null;
+  const exact = await env.DB.prepare(`SELECT id, name, type, enabled FROM targets WHERE id = ? AND enabled = 1`).bind(raw).first().catch(() => null);
+  if (exact) return exact;
+  const canonicalTarget = await env.DB.prepare(`SELECT id, name, type, enabled FROM targets WHERE id = ? AND enabled = 1`).bind(canonical).first().catch(() => null);
+  if (canonicalTarget) return canonicalTarget;
+  const rows = await env.DB.prepare(`SELECT id, name, type, enabled FROM targets WHERE enabled = 1`).all().catch(() => ({ results: [] }));
+  for (const row of rows.results || []) {
+    if (sanitizeAgentId(row.id) === canonical) return row;
+  }
+  return null;
+}
+
 export function agentStatusFields(state, env = {}) {
   if (!state?.updated_at) return {};
   const updatedAt = Math.floor(new Date(state.updated_at).getTime() / 1000);

@@ -80,6 +80,8 @@ sqlite.prepare(`INSERT INTO targets (id, name, group_name, type, enabled, no_pub
   VALUES (?, ?, 'Default', 'tcp', 1, 1, ?, ?, 1)`).run('vps-b', 'VPS B', now, now);
 sqlite.prepare(`INSERT INTO targets (id, name, group_name, type, enabled, no_public_ip, created_at, updated_at, traffic_reset_day)
   VALUES (?, ?, 'Default', 'tcp', 1, 1, ?, ?, 1)`).run('bitsflowcloud-lax-9929&cmin2', 'BitsFlow RAW ID', now, now);
+sqlite.prepare(`INSERT INTO nodes (id, legacy_target_id, name, group_name, enabled, created_at, updated_at)
+  VALUES (?, ?, ?, 'Default', 1, ?, ?)`).run('bitsflowcloud-lax-9929&cmin2', 'bitsflowcloud-lax-9929&cmin2', 'BitsFlow RAW ID', now, now);
 const managerCapabilities = JSON.stringify({
   protocol: 1,
   mode: 'manager',
@@ -353,6 +355,19 @@ assert.equal(location.location, 'US');
 assert.equal(location.city, 'Los Angeles');
 assert.equal(location.location_source, 'ipip_net');
 assert.equal(sqlite.prepare(`SELECT country_code FROM nodes WHERE id = ?`).get('vps-a').country_code, 'US');
+
+await submitAgentLocation(jsonRequest({
+  provider: 'ip_sb',
+  ipv4: '203.0.113.9',
+  country_code: 'DE',
+  country: 'Germany',
+  city: 'Berlin',
+}), env, 'bitsflowcloud-lax-9929-cmin2');
+const rawLocation = sqlite.prepare(`SELECT location, city, location_source FROM targets WHERE id = ?`).get('bitsflowcloud-lax-9929&cmin2');
+assert.equal(rawLocation.location, 'DE');
+assert.equal(rawLocation.city, 'Berlin');
+assert.equal(rawLocation.location_source, 'ip_sb');
+assert.equal(sqlite.prepare(`SELECT country_code FROM nodes WHERE id = ?`).get('bitsflowcloud-lax-9929&cmin2').country_code, 'DE');
 
 const originalAgentToken = await getOrCreateAgentToken(env, 'agent', 'vps-a');
 sqlite.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?), (?, ?, ?)`)

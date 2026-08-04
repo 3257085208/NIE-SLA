@@ -1,5 +1,5 @@
-import { sanitizeAgentId } from './utils.js';
 import { findAgentCredential, findLatencyCredential, legacyScopedToken, verifyAgentCredential } from './agent-credentials.js';
+import { findEnabledAgentTarget, sanitizeAgentId } from './utils.js';
 
 export function requireAgent(request, env) {
   const configured = env.AGENT_TOKEN;
@@ -19,11 +19,7 @@ export async function requireAgentForId(request, env, agentId) {
   const configured = String(env.AGENT_TOKEN || '').trim();
   const id = String(agentId || '').trim();
   if (!id || !env.DB) throw new ApiError(401, '未授权');
-  let target = await env.DB.prepare(`SELECT id FROM targets WHERE id = ? AND enabled = 1`).bind(id).first().catch(() => null);
-  if (!target) {
-    const rows = await env.DB.prepare(`SELECT id FROM targets WHERE enabled = 1`).all().catch(() => ({ results: [] }));
-    target = (rows.results || []).find(row => sanitizeAgentId(row.id) === id) || null;
-  }
+  const target = await findEnabledAgentTarget(env, id);
   if (!target) throw new ApiError(401, 'Agent 目标不存在或已禁用');
   const token = bearerToken(request);
   if (!token) throw new ApiError(401, '未授权');
@@ -42,7 +38,7 @@ export async function requireAnyAgent(request, env) {
   if (!env.DB) throw new ApiError(401, '未授权');
   const credential = await findAgentCredential(env, token);
   if (credential) {
-    const target = await env.DB.prepare(`SELECT id FROM targets WHERE id = ? AND enabled = 1`).bind(credential.agent_id).first().catch(() => null);
+    const target = await findEnabledAgentTarget(env, credential.agent_id);
     if (target) return { type: 'scoped', agent_id: credential.agent_id };
   }
   const rows = await env.DB.prepare(`SELECT id FROM targets WHERE enabled = 1`).all().catch(() => ({ results: [] }));

@@ -1,5 +1,5 @@
 import { ApiError, safeJson } from '../auth.js';
-import { nowSec, sanitizeAgentId } from '../utils.js';
+import { findEnabledAgentTarget, nowSec, sanitizeAgentId } from '../utils.js';
 import { getMeta, setMeta } from './settings.js';
 
 export const GEOIP_PROVIDERS = Object.freeze([
@@ -53,13 +53,13 @@ export async function submitAgentLocation(request, env, agentIdValue) {
   const city = cleanText(body?.city, 80);
   const now = nowSec();
 
-  const target = await env.DB.prepare(`SELECT id, type FROM targets WHERE id = ? AND enabled = 1`).bind(agentId).first();
+  const target = await findEnabledAgentTarget(env, agentIdValue);
   if (!target || target.type !== 'tcp') throw new ApiError(404, 'Agent 对应的 VPS 不存在或已停用');
   const location = countryCode || country;
   await env.DB.prepare(`UPDATE targets SET ipv4 = ?, ipv6 = ?, location = ?, city = ?, location_source = ?, location_updated_at = ?, updated_at = ? WHERE id = ?`)
-    .bind(ipv4, ipv6, location, city, provider, now, now, agentId).run();
-  await env.DB.prepare(`UPDATE nodes SET ipv4 = ?, ipv6 = ?, country_code = ?, country = ?, city = ?, location_source = ?, location_updated_at = ?, updated_at = ? WHERE id = ?`)
-    .bind(ipv4, ipv6, countryCode, country, city, provider, now, now, agentId).run();
+    .bind(ipv4, ipv6, location, city, provider, now, now, target.id).run();
+  await env.DB.prepare(`UPDATE nodes SET ipv4 = ?, ipv6 = ?, country_code = ?, country = ?, city = ?, location_source = ?, location_updated_at = ?, updated_at = ? WHERE id = ? OR id = ? OR legacy_target_id = ?`)
+    .bind(ipv4, ipv6, countryCode, country, city, provider, now, now, target.id, agentId, target.id).run();
   return { ok: true, agent_id: agentId, location: { ipv4, ipv6, country_code: countryCode, country, city, source: provider, updated_at: now } };
 }
 

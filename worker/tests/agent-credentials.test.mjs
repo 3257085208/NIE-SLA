@@ -135,6 +135,10 @@ try {
     assert.ok(database.prepare(`SELECT token_hash FROM agent_credentials WHERE subject_type = 'agent' AND subject_id = ?`).get(canonicalAgentId));
   }
 
+  const rawIdToken = await getOrCreateAgentToken(env, 'agent', 'bitsflowcloud-lax-9929-cmin2');
+  assert.deepEqual(await requireAnyAgent(agentRequest(rawIdToken), env), { type: 'scoped', agent_id: 'bitsflowcloud-lax-9929-cmin2' });
+  assert.deepEqual(await requireAgentForId(agentRequest(rawIdToken), env, 'bitsflowcloud-lax-9929-cmin2'), { type: 'scoped', agent_id: 'bitsflowcloud-lax-9929-cmin2' });
+
   for (const id of ['collision&target', 'collision-target']) {
     database.prepare(`INSERT INTO targets
       (id, name, group_name, type, target_host, target_port, timeout_ms, interval_sec, probe_region, enabled, created_at, updated_at)

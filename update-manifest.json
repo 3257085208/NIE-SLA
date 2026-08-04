@@ -1,15 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.7",
-  "agent_version": "v1.1.7",
-  "source_ref": "app-v1.1.7",
-  "published_at": "2026-08-04T10:00:00Z",
-  "title": "NIE-SLA 1.1.7",
+  "version": "1.1.8",
+  "agent_version": "v1.1.8",
+  "source_ref": "app-v1.1.8",
+  "published_at": "2026-08-04T12:00:00Z",
+  "title": "NIE-SLA 1.1.8",
   "changelog": [
-    "Agent 上报接口改为先鉴权再读取请求体，未带凭据的请求不再消耗 JSON 解析，降低空请求刷 CPU 的风险",
-    "按 100 台/5 分钟与 200 台/10 分钟两种规模重新核算 Cloudflare 免费额度，并把结论固化为自动化测试，避免后续误判",
-    "清理全部源码注释，发布代码更简洁",
-    "前端缓存键升至 20260804-v1117，应用与 Agent 同步到 1.1.7 / v1.1.7"
+    "修复含 & 等特殊字符的目标 ID 在 Agent 上报指标与地理位置时被 401/404 拒绝的问题，统一原始 ID 与规范化运行 ID 的映射",
+    "定位上报现在会同步更新原始目标与 nodes 记录，不再只按规范化 ID 查找",
+    "前端缓存键升至 20260804-v1118，应用与 Agent 同步到 1.1.8 / v1.1.8"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
