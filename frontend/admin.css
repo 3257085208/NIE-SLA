@@ -1134,6 +1134,74 @@ body.admin-modal-open { overflow: hidden; }
 .targets-table td:nth-child(5) {
   width: 23%;
 }
+.targets-table tbody tr {
+  vertical-align: middle;
+}
+.targets-table tbody tr:not(.group-sep):nth-child(even) {
+  background: rgba(241, 245, 249, 0.42);
+}
+.targets-table tbody tr:not(.group-sep):hover {
+  background: #f4f8fc;
+}
+.targets-table td {
+  padding: 10px 8px;
+}
+.targets-table .target-summary {
+  gap: 5px;
+}
+.targets-table .target-summary > div {
+  flex-wrap: wrap;
+}
+.targets-table .target-summary code {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.targets-table .target-summary .group-cell {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.targets-table .monitoring-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px 9px;
+}
+@media (min-width: 1180px) {
+  .targets-table .monitoring-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.targets-table .monitoring-item {
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 5px;
+  align-items: start;
+  padding: 6px 7px;
+  background: rgba(148, 163, 184, 0.07);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 5px;
+}
+.targets-table .monitoring-item .status-stack {
+  gap: 3px;
+}
+.targets-table .monitoring-item .status-stack > div {
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.targets-table .actions {
+  align-items: flex-start;
+}
+.targets-table .target-action-main,
+.targets-table .beta-task-buttons {
+  gap: 4px;
+}
+.targets-table .beta-task-actions {
+  gap: 5px;
+  padding-top: 6px;
+}
 
 .target-order-bar {
   display: flex;
@@ -1900,6 +1968,20 @@ code,
   }
   .targets-table tbody tr:not(.group-sep) > td:nth-child(n + 2) {
     grid-column: 2;
+  }
+  .targets-table .monitoring-stack {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .targets-table .monitoring-item {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+  .targets-table .target-summary > span,
+  .targets-table .target-summary .group-cell {
+    white-space: normal;
+  }
+  .targets-table .beta-task-actions {
+    border-top: 0;
+    padding-top: 2px;
   }
   .targets-table .actions { margin-top: 2px; }
   .targets-table .btn-xs { min-height: 30px; }

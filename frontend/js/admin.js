@@ -1,9 +1,9 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260804-v1118";
-import { createAdminClient } from "./admin/api.js?v=20260804-v1118";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260804-v1118";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260804-v1118";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260804-v1119";
+import { createAdminClient } from "./admin/api.js?v=20260804-v1119";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260804-v1119";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260804-v1119";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260804-v1118";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260804-v1119";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -14,8 +14,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260804-v1118";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260804-v1118";
+} from "./shared/grouping.js?v=20260804-v1119";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260804-v1119";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -1007,7 +1007,7 @@ function targetRowHtml(target, index) {
       : `24h ${Number(status.uptime_24h).toFixed(2)}%`;
   const agentDetails = isWeb
     ? notApplicable
-    : `<div class="status-stack"><div>${agentTag}<code>${escapeHtml(status.agent_version || "-")}</code></div><small>${status.machine_uptime_sec ? `运行 ${escapeHtml(formatDuration(status.machine_uptime_sec))}` : "暂无运行时长"}</small></div>`;
+    : `<div class="status-stack"><div>${agentTag}<code>${escapeHtml(status.agent_version || "-")}</code></div><small>${status.machine_uptime_sec ? `运行 ${escapeHtml(formatDuration(status.machine_uptime_sec))}` : "暂无运行时长"}${status.last_metrics_at ? ` · 上报 ${escapeHtml(formatDateTime(status.last_metrics_at))}` : ""}</small></div>`;
   const cfDetails = noPublicIp
     ? ""
     : `<div class="monitoring-item"><span class="monitoring-label">CF</span><div class="status-stack"><div>${statusTag(state.text, state.className)}<strong>${status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`}</strong></div><small>${escapeHtml(probeUptime)}</small></div></div>`;

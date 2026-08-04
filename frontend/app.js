@@ -23,7 +23,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260804-v1118';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260804-v1119';
 import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
@@ -35,13 +35,13 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260804-v1118';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260804-v1119';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
 import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
 import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260729-beta23';
-import { readStorage, writeStorage } from './js/shared/storage.js?v=20260804-v1118';
+import { readStorage, writeStorage } from './js/shared/storage.js?v=20260804-v1119';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -85,6 +85,8 @@ const state = {
   latencyChartSamples: [],
   metricsCache: new Map(),
   pingsCache: new Map(),
+  metricsRequestSeq: 0,
+  pingsRequestSeq: 0,
   groupByMode: normalizeGroupByMode(readStorage('localStorage', 'nstatus.groupByMode', 'group')),
   statusRequestSeq: 0,
   statusController: null,
@@ -1085,16 +1087,15 @@ async function loadChecks(id, name, target = null, options = {}) {
     state.dailyPoints = [];
     state.checksSource = '';
     state.checksLoadedHours = 0;
-    state.targetMetrics = null;
-    state.pingData = null;
+    if (state.selectedId !== id) return;
     state.externalLatencySources = [];
     state.latencyChartSources = [];
     state.latencyChartSamples = [];
-
-    els.chartMeta.textContent = `检查记录加载失败：${err.message}`;
-    els.checks.innerHTML = `<div class="empty fail-text">${escapeHtml(err.message)}</div>`;
-
-    updateChart([], name);
+    if (state.selectedMetric === 'latency') {
+      els.chartMeta.textContent = `检查记录加载失败：${err.message}`;
+      els.checks.innerHTML = `<div class="empty fail-text">${escapeHtml(err.message)}</div>`;
+    }
+    updateChartForCurrentRange();
     updatePageInfo();
   }
 }
@@ -1120,14 +1121,18 @@ async function ensureTargetMetricsLoaded() {
   if (!state.selectedId) return;
   const id = state.selectedId;
   const metric = state.selectedMetric;
-  const hours = metricRangeHours(state.selectedMetricRange);
+  const range = state.selectedMetricRange;
+  const requestSeq = ++state.metricsRequestSeq;
+  const hours = metricRangeHours(range);
   const includeHistory = metric !== 'latency' && metric !== 'ping';
   const cacheKey = `${id}|${metric}|${hours}|${includeHistory ? 'history' : 'latest'}`;
   const cached = state.metricsCache.get(cacheKey);
   if (cached && Date.now() - cached.at < 30_000) {
-    state.targetMetrics = cached.data;
-    if (state.selectedMetric !== 'latency' && state.selectedMetric !== 'ping') updateMetricsChart();
-    renderVPSInfo();
+    if (requestSeq === state.metricsRequestSeq && state.selectedId === id && state.selectedMetric === metric && state.selectedMetricRange === range) {
+      state.targetMetrics = cached.data;
+      if (state.selectedMetric !== 'latency' && state.selectedMetric !== 'ping') updateMetricsChart();
+      renderVPSInfo();
+    }
     return;
   }
   try {
@@ -1138,19 +1143,20 @@ async function ensureTargetMetricsLoaded() {
     if (includeHistory) {
       params.set('metric', metric);
       params.set('format', 'columns');
-      params.set('max_points', String(({ '1h': 3600, '6h': 1800, '24h': 1200 }[state.selectedMetricRange] || 1200)));
+      params.set('max_points', String(({ '1h': 3600, '6h': 1800, '24h': 1200 }[range] || 1200)));
     } else {
       params.set('history', '0');
     }
     const res = await fetchWithTimeout(api(`/api/agent/metrics?${params}`), { cache: 'no-store' });
-    if (state.selectedId !== id) return;
+    if (requestSeq !== state.metricsRequestSeq || state.selectedId !== id || state.selectedMetric !== metric || state.selectedMetricRange !== range) return;
     const data = await res.json().catch(() => null);
+    if (requestSeq !== state.metricsRequestSeq || state.selectedId !== id || state.selectedMetric !== metric || state.selectedMetricRange !== range) return;
     state.targetMetrics = res.ok && data?.ok ? normalizeAgentMetricsPayload(data) : null;
     if (state.targetMetrics) state.metricsCache.set(cacheKey, { at: Date.now(), data: state.targetMetrics });
     if (state.selectedMetric !== 'latency' && state.selectedMetric !== 'ping') updateMetricsChart();
     renderVPSInfo();
   } catch (_) {
-    if (state.selectedId === id) state.targetMetrics = null;
+    if (requestSeq === state.metricsRequestSeq && state.selectedId === id && state.selectedMetric === metric && state.selectedMetricRange === range) state.targetMetrics = null;
   }
 }
 
@@ -1338,17 +1344,23 @@ async function updatePingChart() {
   els.chartTitle.textContent = 'TCP Ping';
   if (!state.selectedId) return;
 
+
+  const id = state.selectedId;
+  const requestSeq = ++state.pingsRequestSeq;
+
   const range = state.selectedMetricRange;
   const hours = { '1h': 1, '6h': 6, '24h': 24 }[range] || 24;
-  const cacheKey = `${state.selectedId}|${hours}`;
+  const cacheKey = `${id}|${hours}`;
+  const isStale = () => requestSeq !== state.pingsRequestSeq || state.selectedId !== id || state.selectedMetricRange !== range;
 
   try {
     const cached = state.pingsCache.get(cacheKey);
     if (cached && Date.now() - cached.at < 30_000) {
+      if (isStale()) return;
       state.pingData = cached.data;
     } else {
       const params = new URLSearchParams({
-        agent_id: state.selectedId,
+        agent_id: id,
         hours: String(hours),
         format: 'series',
         max_points_per_target: String(({ '1h': 360, '6h': 360, '24h': 480 }[range] || 360)),
@@ -1356,16 +1368,20 @@ async function updatePingChart() {
       const res = await fetchWithTimeout(api(`/api/agent/pings?${params}`), { cache: 'no-store' });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Ping 数据加载失败');
+      if (isStale()) return;
       state.pingData = normalizePingPayload(data);
       state.pingsCache.set(cacheKey, { at: Date.now(), data: state.pingData });
     }
   } catch (err) {
-    state.pingData = { pings: [] };
-    els.chartMeta.textContent = `Ping 数据加载失败：${err.message}`;
-    renderPingLossStats([]);
-    if (state.chart) { state.chart.data.datasets = []; state.chart.update(); }
+    if (!isStale()) {
+      state.pingData = { pings: [] };
+      els.chartMeta.textContent = `Ping 数据加载失败：${err.message}`;
+      renderPingLossStats([]);
+      if (state.chart) { state.chart.data.datasets = []; state.chart.update(); }
+    }
     return;
   }
+  if (isStale()) return;
 
   const pings = state.pingData.pings || [];
   const byTarget = new Map();
@@ -1399,7 +1415,7 @@ async function updatePingChart() {
       borderColor: color,
       borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 6,
       pointBackgroundColor: color,
-      tension: 0.3, fill: false, spanGaps: true,
+      tension: 0.3, fill: false, spanGaps: false,
       hidden: state.pingVisibleTargets instanceof Set && !state.pingVisibleTargets.has(String(tid)),
     });
     idx++;
@@ -1810,7 +1826,25 @@ function updateChartForCurrentRange() {
   els.chartMeta.innerHTML = chartMetaHtml(state.selectedRange, rangeChecks.length, '', mode);
 }
 
+function clearMetricChart() {
+  if (!state.chart) return;
+  state.chart.data.datasets = [];
+  delete state.chart.options.scales.y.title;
+  delete state.chart.options.scales.y.max;
+  delete state.chart.options.scales.y.beginAtZero;
+  delete state.chart.options.scales.y.grace;
+  delete state.chart.options.scales.y.suggestedMax;
+  delete state.chart.options.scales.packetLoss;
+  delete state.chart.options.scales.x.min;
+  delete state.chart.options.scales.x.max;
+  state.chartZoomFullMin = null;
+  state.chartZoomFullMax = null;
+  state.chart.update();
+  updateChartZoomButton();
+}
+
 function updateMetricsChart() {
+
   const m = state.targetMetrics;
   const metric = state.selectedMetric;
   const range = state.selectedMetricRange;
@@ -1822,10 +1856,21 @@ function updateMetricsChart() {
   els.chartTitle.textContent = metricLabel;
   els.chartServiceName.textContent = `${state.selectedName || '服务'} ${metricLabel}`;
 
+  if (state.chart) {
+    delete state.chart.options.scales.y.title;
+    delete state.chart.options.scales.y.max;
+    delete state.chart.options.scales.y.beginAtZero;
+    delete state.chart.options.scales.y.grace;
+    delete state.chart.options.scales.y.suggestedMax;
+    delete state.chart.options.scales.packetLoss;
+    state.chartZoomFullMin = null;
+    state.chartZoomFullMax = null;
+  }
+
   if (!m || !m.latest) {
     els.chartMeta.textContent = '暂无监控数据，请在此 VPS 上安装 nstatus-metrics Agent。';
-    updateChart([], state.selectedName || '服务');
-    els.chartServiceName.textContent = `${state.selectedName || '服务'} ${metricLabel}`;
+    els.chartAvg.textContent = '-';
+    clearMetricChart();
     return;
   }
 
@@ -1850,13 +1895,7 @@ function updateMetricsChart() {
     const latestText = latestTs ? `最后上报：${timeAgoSec(latestTs)}` : 'Agent 尚未上报';
     els.chartMeta.textContent = `${range}内暂无采样点。${latestText}。`;
     els.chartAvg.textContent = latestTs ? `最近：${new Date(latest.updated_at).toLocaleString('zh-CN', { hour12: false })}` : '-';
-    if (state.chart) {
-      state.chart.data.datasets = [];
-      delete state.chart.options.scales.x.min;
-      delete state.chart.options.scales.x.max;
-      state.chart.update();
-      updateChartZoomButton();
-    }
+    clearMetricChart();
     return;
   }
 
@@ -1878,10 +1917,7 @@ function updateMetricsChart() {
     if (!canShowTemperature(latest.vps_info || {})) {
       els.chartMeta.textContent = '虚拟化环境不显示硬件温度。';
       els.chartAvg.textContent = '-';
-      if (state.chart) {
-        state.chart.data.datasets = [];
-        state.chart.update();
-      }
+      clearMetricChart();
       return;
     }
     const definitions = [
@@ -2016,6 +2052,8 @@ function updateMetricsChart() {
   } else {
     delete state.chart.options.scales.x.min;
     delete state.chart.options.scales.x.max;
+    state.chartZoomFullMin = null;
+    state.chartZoomFullMax = null;
   }
   state.chart.options.scales.y.beginAtZero = metric !== 'load';
   state.chart.options.scales.y.grace = metric === 'load' ? '30%' : '18%';
@@ -2212,7 +2250,7 @@ function lineDataset({ label, data, color, fill, fillStrength = 1, order, source
     pointBorderWidth: 1.5,
     tension: 0.3,
     fill,
-    spanGaps: true,
+    spanGaps: false,
     order,
     latencySourceId: String(sourceId || ''),
     hidden,
