@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.9",
-  "agent_version": "v1.1.9",
-  "source_ref": "app-v1.1.9",
+  "version": "1.1.10",
+  "agent_version": "v1.1.10",
+  "source_ref": "app-v1.1.10",
   "published_at": "2026-08-04T12:00:00Z",
-  "title": "NIE-SLA 1.1.9",
+  "title": "NIE-SLA 1.1.10",
   "changelog": [
     "前端 Agent 指标与 TCP Ping 请求增加独立时序校验，快速切换 1h/6h/24h 或指标类型时不再偶发串成 Latency 图表",
     "TCP Ping 与 Latency 曲线在丢包样本处直接断开，不再跨空值连线",
     "后台探针列表重新排版，监控信息分块展示并补充最近指标上报时间",
-    "前端缓存键升至 20260804-v1119，应用与 Agent 同步到 1.1.9 / v1.1.9"
+    "前端缓存键升至 20260804-v11110，应用与 Agent 同步到 1.1.10 / v1.1.10"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

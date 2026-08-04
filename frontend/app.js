@@ -23,7 +23,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260804-v1119';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260804-v11110';
 import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
@@ -35,13 +35,13 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260804-v1119';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260804-v11110';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
 import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
 import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260729-beta23';
-import { readStorage, writeStorage } from './js/shared/storage.js?v=20260804-v1119';
+import { readStorage, writeStorage } from './js/shared/storage.js?v=20260804-v11110';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -87,6 +87,7 @@ const state = {
   pingsCache: new Map(),
   metricsRequestSeq: 0,
   pingsRequestSeq: 0,
+  continuousLine: readStorage('localStorage', 'nstatus.continuousLine', '0') === '1',
   groupByMode: normalizeGroupByMode(readStorage('localStorage', 'nstatus.groupByMode', 'group')),
   statusRequestSeq: 0,
   statusController: null,
@@ -104,6 +105,7 @@ const els = {
   inlineChartPanel: $('#inlineChartPanel'),
   chartCanvasWrap: $('#chartCanvasWrap'),
   chartReset: $('#chartReset'),
+  chartContinuous: $('#chartContinuous'),
   chartTitle: $('#chartTitle'),
   chartMeta: $('#chartMeta'),
   chartServiceName: $('#chartServiceName'),
@@ -222,6 +224,7 @@ document.querySelectorAll('.metric-tab').forEach((btn) => {
     document.querySelectorAll('.metric-tab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     state.selectedMetric = btn.dataset.metric;
+    syncContinuousButtonVisibility();
     const isLatency = state.selectedMetric === 'latency';
     const rangeTabs = document.getElementById('rangeTabs');
     const metricRangeTabs = document.getElementById('metricRangeTabs');
@@ -232,6 +235,20 @@ document.querySelectorAll('.metric-tab').forEach((btn) => {
     renderVPSInfo();
   });
 });
+
+const chartContinuousButton = els.chartContinuous;
+if (chartContinuousButton) {
+  chartContinuousButton.classList.toggle('active', state.continuousLine);
+  chartContinuousButton.setAttribute('aria-pressed', String(state.continuousLine));
+  chartContinuousButton.addEventListener('click', () => {
+    state.continuousLine = !state.continuousLine;
+    chartContinuousButton.classList.toggle('active', state.continuousLine);
+    chartContinuousButton.setAttribute('aria-pressed', String(state.continuousLine));
+    writeStorage('localStorage', 'nstatus.continuousLine', state.continuousLine ? '1' : '0');
+    updateChartForCurrentRange();
+  });
+}
+syncContinuousButtonVisibility();
 
 document.querySelectorAll('.metric-range-tab').forEach((btn) => {
   btn.addEventListener('click', (event) => {
@@ -1415,7 +1432,7 @@ async function updatePingChart() {
       borderColor: color,
       borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 4, pointHitRadius: 6,
       pointBackgroundColor: color,
-      tension: 0.3, fill: false, spanGaps: false,
+      tension: 0.3, fill: false, spanGaps: state.continuousLine,
       hidden: state.pingVisibleTargets instanceof Set && !state.pingVisibleTargets.has(String(tid)),
     });
     idx++;
@@ -1791,6 +1808,12 @@ function initChart() {
 
 function isMobileChartViewport() {
   return Number(window.innerWidth || 0) <= 760;
+}
+
+function syncContinuousButtonVisibility() {
+  const button = els.chartContinuous;
+  if (!button) return;
+  button.hidden = !['latency', 'ping'].includes(state.selectedMetric);
 }
 
 function updateChartForCurrentRange() {
@@ -2250,7 +2273,7 @@ function lineDataset({ label, data, color, fill, fillStrength = 1, order, source
     pointBorderWidth: 1.5,
     tension: 0.3,
     fill,
-    spanGaps: false,
+    spanGaps: state.continuousLine,
     order,
     latencySourceId: String(sourceId || ''),
     hidden,

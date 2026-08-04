@@ -509,6 +509,26 @@ button { border: 0; cursor: pointer; }
   border-color: var(--green);
   color: var(--green);
 }
+.chart-continuous {
+  min-width: 74px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #cfd6dd;
+  border-radius: 4px;
+  background: #fff;
+  color: var(--green-dark);
+  font-size: 13px;
+  font-weight: 600;
+}
+.chart-continuous:not(.active):hover {
+  border-color: var(--green);
+  color: var(--green);
+}
+.chart-continuous.active {
+  border-color: var(--green);
+  background: var(--green);
+  color: #fff;
+}
 .chart-card {
   background: #fff;
   border: 1px solid var(--line);
@@ -1909,6 +1929,7 @@ html, body { background-color: var(--appearance-bg, var(--bg)); }
     padding: 0 4px;
   }
   .chart-reset { min-width: 58px; height: 40px; }
+  .chart-continuous { min-width: 74px; height: 40px; }
   .chart-card { padding: 14px 6px 10px; }
   .chart-title-row { margin-bottom: 8px; }
   .chart-title-row span, .chart-title-row strong { display: block; font-size: 15px; line-height: 1.4; }
