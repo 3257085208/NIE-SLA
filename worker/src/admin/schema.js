@@ -5,7 +5,7 @@ import { nodeQualityUnlockData } from '../nodequality.js';
 let schemaEnsured = false;
 let schemaPromise = null;
 
-const SCHEMA_MARKER = 'schema:worker-v25-20260803-task-owner';
+const SCHEMA_MARKER = 'schema:worker-v26-20260810-quota';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -77,6 +77,7 @@ export async function ensureV6Schema(env) {
   }
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_check_buckets_day ON check_buckets(day)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_check_buckets_target_time ON check_buckets(target_id, bucket_at DESC)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_check_buckets_target_day ON check_buckets(target_id, day, bucket_at)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS incident_events (id TEXT PRIMARY KEY, target_id TEXT NOT NULL, started_at INTEGER NOT NULL, recovered_at INTEGER, last_checked_at INTEGER, start_colo TEXT, recover_colo TEXT, last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`).run();
   for (const stmt of ['ALTER TABLE incident_events ADD COLUMN recovered_at INTEGER', 'ALTER TABLE incident_events ADD COLUMN last_checked_at INTEGER', 'ALTER TABLE incident_events ADD COLUMN start_colo TEXT', 'ALTER TABLE incident_events ADD COLUMN recover_colo TEXT', 'ALTER TABLE incident_events ADD COLUMN last_error TEXT']) {

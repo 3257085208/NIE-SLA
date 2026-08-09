@@ -17,7 +17,10 @@ import { deleteTheme, getPublicTheme, getThemeFile, listManagedThemes, updateThe
 import { encryptionKeyStatus, migrateEncryptionMaterials } from './encryption-maintenance.js';
 import { createNodeQualityBrokerImages } from './nq-image-host.js';
 
-function deny() { return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429); }
+function deny(retryAfter = null) {
+  const headers = retryAfter == null ? null : { 'retry-after': String(Math.max(1, Math.ceil(Number(retryAfter) || 1))) };
+  return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429, null, headers);
+}
 function pathParam(v) { try { return decodeURIComponent(String(v || '')); } catch (_) { return String(v || ''); } }
 
 const adminSessionCache = new WeakMap();
@@ -236,6 +239,19 @@ async function dispatchStatic(env, url, request, ctx) {
     if (!target || target.type !== 'tcp' || Number(target.enabled || 0) !== 1) return new Response('Not found', { status: 404 });
     const imageSource = nodeQualityImageSource(target, tabId);
     if (!imageSource) return new Response('Not found', { status: 404 });
+    const cacheUrl = new URL(request.url);
+    cacheUrl.search = '';
+    cacheUrl.searchParams.set('v', String(Number(target.nq_updated_at || 0)));
+    const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
+    let cachedImage = null;
+    if (globalThis.caches?.default) {
+      cachedImage = await caches.default.match(cacheKey).catch(() => null);
+      if (cachedImage) {
+        const hit = new Response(cachedImage.body, { status: cachedImage.status, headers: new Headers(cachedImage.headers) });
+        hit.headers.set('x-nq-cache', 'hit');
+        return hit;
+      }
+    }
     let upstream;
     try {
       upstream = await fetchPublicHttpsWithValidatedRedirects(imageSource, {
@@ -273,7 +289,14 @@ async function dispatchStatic(env, url, request, ctx) {
       'x-content-type-options': 'nosniff',
     });
     headers.set('content-length', String(imageBytes.byteLength));
-    return new Response(imageBytes, { status: 200, headers });
+    const response = new Response(imageBytes, { status: 200, headers });
+    let cacheError = null;
+    if (globalThis.caches?.default) {
+      try { await caches.default.put(cacheKey, response.clone()); }
+      catch (error) { cacheError = String(error?.message || error); }
+    }
+    headers.set('x-nq-cache', cacheError ? `error:${cacheError.slice(0, 100)}` : 'miss');
+    return response;
   }
   const nqMatch = path.match(/^\/api\/(?:nq|nodequality)\/([^/]+)$/);
   if (nqMatch && m === 'GET') {
@@ -351,7 +374,8 @@ async function dispatchStatic(env, url, request, ctx) {
 
   if (path === '/api/auth/config' && m === 'GET') return json(await adminAuthConfig(env), 200, env, { 'cache-control': 'no-store' });
   if (path === '/api/auth/login' && m === 'POST') {
-    if (!await rateLimitByIp(request, env, 10, 300, { durable: true })) return deny();
+    if (!await rateLimitByIp(request, env, 1, 10, { durable: true, keyPrefix: 'login-ip-short' })) return deny(10);
+    if (!await rateLimitByIp(request, env, 5, 300, { durable: true, keyPrefix: 'login-ip-window' })) return deny(300);
     return json(await passwordLogin(request, env), 200, env, { 'cache-control': 'no-store' });
   }
   if (path === '/api/auth/account' && m === 'GET') { await withAdmin(request, env); return json(await getAdminAccount(env), 200, env, { 'cache-control': 'no-store' }); }

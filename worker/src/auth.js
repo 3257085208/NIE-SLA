@@ -131,7 +131,7 @@ export function constantTimeEqual(a, b) {
 }
 
 export class ApiError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  constructor(status, message, headers = null) { super(message); this.status = status; this.headers = headers; }
 }
 
 export async function safeJson(request, maxBytes = 256_000) {

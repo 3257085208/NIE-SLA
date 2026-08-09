@@ -3,6 +3,8 @@ import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatu
 import { readR2State, mergeR2StateUpdates, setDailySummary, cachedDailySummaryBefore, dailySummaryFromPoints, statsFromDailySummaries } from './storage.js';
 import { applyProbeWriteBatch, readCheckBucketDaySummary } from './admin.js';
 
+const daySummaryCache = new Map();
+
 
 
 export async function probeTarget(target, cf = {}) {
@@ -139,8 +141,15 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
   const bucketWrites = [...missedPoints, point].map(p => ({ day: dayFromSec(p.checked_at, env), point: p }));
   const incomingDayPoints = bucketWrites.map(item => item.point).filter(p => dayFromSec(p.checked_at, env) === day);
   const firstIncomingAt = Math.min(...incomingDayPoints.map(point => Number(point.checked_at || bucketAt)));
-  const storedSummary = cachedDailySummaryBefore(previous, day, firstIncomingAt)
-    || await readCheckBucketDaySummary(env, target.id, day, firstIncomingAt);
+  let storedSummary = cachedDailySummaryBefore(previous, day, firstIncomingAt);
+  if (!storedSummary) {
+    const daySummaryKey = `${target.id}|${day}`;
+    storedSummary = missedPoints.length
+      ? await readCheckBucketDaySummary(env, target.id, day, firstIncomingAt)
+      : daySummaryCache.get(daySummaryKey) || await readCheckBucketDaySummary(env, target.id, day, firstIncomingAt);
+    if (daySummaryCache.size > 5000) daySummaryCache.clear();
+    daySummaryCache.set(daySummaryKey, storedSummary);
+  }
   const incomingSummary = dailySummaryFromPoints(incomingDayPoints);
   const dailySummary = {
     ...incomingSummary,
@@ -148,6 +157,7 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
     ok_count: storedSummary.ok_count + incomingSummary.ok_count,
     sum_latency_ms: storedSummary.sum_latency_ms + incomingSummary.sum_latency_ms,
   };
+  daySummaryCache.set(`${target.id}|${day}`, dailySummary);
   const daily = setDailySummary(previous?.daily || {}, day, dailySummary);
   const stats24 = statsFromDailySummaries(daily, day, 1);
   const stats7 = statsFromDailySummaries(daily, day, 7);
@@ -212,6 +222,23 @@ export async function runDueTargets(env, options = {}) {
   }
 }
 
+export function fastStatusDueInterval(target, previous, now, baseIntervalSec, env = {}) {
+  const base = clamp(Number(baseIntervalSec || 60), 60, 300);
+  let dueSec = base;
+  const region = String(target?.probe_region || 'auto');
+  if (region !== 'auto') {
+    dueSec = Math.max(dueSec, clamp(Number(env.FAST_STATUS_REGION_INTERVAL_SEC || 180), 120, 600));
+  }
+  if (previous && Number(previous.ok) === 0) {
+    const outageAt = Number(previous.current_outage_started_at || 0);
+    const downAfterSec = clamp(Number(env.FAST_STATUS_DOWN_AFTER_SEC || 1500), 300, 7200);
+    if (outageAt && Number(now || 0) - outageAt >= downAfterSec) {
+      dueSec = Math.max(dueSec, clamp(Number(env.FAST_STATUS_DOWN_INTERVAL_SEC || 600), 300, 1800));
+    }
+  }
+  return dueSec;
+}
+
 export async function runFastStatusTargets(env, options = {}) {
   if (!parseBoolean(env.FAST_STATUS_ENABLED ?? true, true)) return { ok: true, skipped: true, reason: 'disabled', count: 0, results: [] };
   if (!env.DB || !env.ARCHIVE) return { ok: true, skipped: true, reason: 'r2_required', count: 0, results: [] };
@@ -223,7 +250,11 @@ export async function runFastStatusTargets(env, options = {}) {
   const d1Latest = await readLatestStatusMap(env, (rows.results || []).map((target) => target.id));
   const previousById = buildPreviousStateMap(rows.results || [], state, d1Latest);
   const targets = (rows.results || [])
-    .filter((target) => Number(previousById.get(target.id)?.checked_at || 0) <= now - intervalSec)
+    .filter((target) => {
+      const previous = previousById.get(target.id);
+      const dueSec = fastStatusDueInterval(target, previous, now, intervalSec, env);
+      return Number(previous?.checked_at || 0) <= now - dueSec;
+    })
     .sort((a, b) => Number(previousById.get(a.id)?.checked_at || 0) - Number(previousById.get(b.id)?.checked_at || 0))
     .slice(0, maxTargets);
   if (!targets.length) return { ok: true, count: 0, results: [] };

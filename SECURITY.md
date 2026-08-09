@@ -1,24 +1,24 @@
-# Security Policy
+# 安全政策
 
-## Supported Version
+## 受支持版本
 
-Security fixes target the current `main` branch and latest GitHub Release. Upgrade Worker, frontend, and Agent together before reporting an issue that only affects an older release.
+安全修复针对当前 `main` 分支与最新 GitHub Release。上报仅影响旧版本的问题前，请先升级 Worker、前端与 Agent 到同一版本。
 
-## Private Reporting
+## 私密上报
 
-Do not open a public Issue for a vulnerability that exposes authentication, another deployment, or private infrastructure. Use GitHub Security Advisories for this repository when available, or contact the repository owner through a private channel listed on their GitHub profile.
+涉及认证、他人部署或私有基础设施的漏洞，不要开公开 Issue。优先使用本仓库的 GitHub Security Advisories；不可用时，通过仓库所有者 GitHub 主页上的私密渠道联系。
 
-Include the affected commit/version, minimal reproduction, impact, and suggested mitigation. Remove real passwords, Session values, Token values, TOTP secrets, Telegram/Resend credentials, Cloudflare IDs, domains, IP addresses, Agent install commands, and production payloads.
+上报时附上：受影响的 commit/版本、最小复现、影响与建议修复。移除真实密码、Session、Token、TOTP secret、Telegram/Resend 凭据、Cloudflare ID、域名、IP、Agent 安装命令与生产数据。
 
-## Deployment Responsibilities
+## 部署方责任
 
-- Generate independent random values for `ADMIN_PASSWORD`, `AGENT_TOKEN`, and encryption keys.
-- Keep secrets in Wrangler Secrets, never `[vars]`, `.env`, source files, screenshots, or Issue logs.
-- Enable TOTP for administrative access.
-- Keep GitHub OAuth disabled unless a precise callback and explicit username allowlist are configured.
-- Use HTTPS for every public Worker, Pages, and Agent endpoint.
-- Use the scoped Token generated for each target; never distribute the global Agent Token.
-- Validate GitHub Release checksums and pin the manifest hash in generated install commands.
-- Review Cloudflare access logs, D1/R2 usage, and dependency updates regularly.
+- `ADMIN_PASSWORD`、Agent Token 与加密密钥使用独立随机值。
+- Secret 只放 Wrangler Secrets，不放入 `[vars]`、`.env`、源码、截图或 Issue 日志。
+- 管理面启用 TOTP。
+- 未配置精确 callback 与显式用户名白名单时，保持 GitHub OAuth 关闭。
+- 所有公开 Worker、Pages 与 Agent 端点使用 HTTPS。
+- 使用后台为每个目标生成的 scoped Token，不分发全局 Agent Token。
+- 校验 GitHub Release 校验和，并在安装命令中固定 manifest 哈希。
+- 定期查看 Cloudflare 访问日志、D1/R2 用量与依赖更新。
 
-The repository includes `tests/public-repo-safety.test.mjs` to detect common accidental disclosures. It supplements review and secret scanning; it is not proof that a deployment is secure.
+仓库自带 `tests/public-repo-safety.test.mjs` 检测常见误泄露。它辅助人工审查与 secret 扫描，不能证明部署绝对安全。

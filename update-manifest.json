@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.11",
-  "agent_version": "v1.1.11",
-  "source_ref": "app-v1.1.11",
-  "published_at": "2026-08-04T12:00:00Z",
-  "title": "NIE-SLA 1.1.11",
+  "version": "1.1.12",
+  "agent_version": "v1.1.12",
+  "source_ref": "app-v1.1.12",
+  "published_at": "2026-08-09T17:00:00Z",
+  "title": "NIE-SLA 1.1.12",
   "changelog": [
-    "前端 Agent 指标与 TCP Ping 请求增加独立时序校验，快速切换 1h/6h/24h 或指标类型时不再偶发串成 Latency 图表",
-    "TCP Ping 与 Latency 曲线在丢包样本处直接断开，不再跨空值连线",
-    "后台探针列表重新排版，监控信息分块展示并补充最近指标上报时间",
-    "前端缓存键升至 20260804-v11111，应用与 Agent 同步到 1.1.11 / v1.1.11"
+    "探测策略调整：单次超时降到 3 秒，状态快照每 2 分钟刷新，区域延迟每 3 分钟更新，连续失败的目标自动降频为 10 分钟一次，Cloudflare 免费额度占用大幅回落",
+    "NQ 报告图片接入边缘缓存并切换图床，二次打开网络与路由页不再等待 2-3 秒",
+    "Agent 任务取消轮询改为 5~10 秒退避，D1 汇总缓存与新索引上线",
+    "应用、Worker、Rust Agent、前端、教程与公开发布版本同步至 1.1.12 / v1.1.12"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

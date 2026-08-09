@@ -1,36 +1,38 @@
-# 12 External Latency Agents
+# External Latency Agents
 
-An external Latency Agent is a lightweight Python service that measures every eligible public TCP target from an additional Linux network. It is separate from the Rust VPS telemetry Agent and from Cloudflare's built-in probes.
+An External Latency Agent is a lightweight TCP probe separate from the VPS monitoring Agent. Run it on home broadband, cloud servers, or other provider networks to measure the same set of public TCP targets from multiple vantage points.
 
-## Data Sources
+## Data paths
 
-| Source | Runs on | Purpose |
+| Data | Initiator | Purpose |
 | --- | --- | --- |
-| Cloudflare Latency | Worker / Durable Object | Cloudflare-to-target TCP latency |
-| VPS telemetry Agent | Monitored VPS | CPU, memory, disk, traffic, uptime, and health |
-| Agent TCP Ping | Monitored VPS | VPS-to-managed-ping-target latency |
-| External Latency Agent | Independent Linux node | Additional-network-to-public-TCP-target latency |
+| CF latency | Worker / Durable Object | Cloudflare-to-target TCP latency |
+| VPS agent metrics | Rust agent on the monitored VPS | CPU, memory, disk, traffic, online state |
+| Agent TCP ping | Rust agent on the monitored VPS | latency from that VPS to configured targets |
+| External latency | Python service on an independent node | latency from extra networks to all public TCP targets |
 
-Creating a Latency node in the admin panel only creates its database identity. The node is not active until its service successfully submits results. The admin panel then receives a last-report timestamp, and the public Latency chart adds that source.
+Creating a latency node in the admin panel only records the node ID. The source appears in the public latency legend only after the node submits results.
 
 ## Requirements
 
 - Linux with systemd.
-- Python 3 and `curl`.
-- HTTPS access to the Worker site origin and API.
-- At least one enabled public TCP target with a host and port.
+- Python 3 and `curl` available.
+- HTTPS access to the Worker site and API.
+- Probes only targets that are enabled, type TCP, have complete public host/port, and do not hide the public address.
 
-The service does not install the Rust metrics Agent, report its own system metrics, or listen on a public port.
+The External Latency Agent does not install the Rust metrics agent, does not report its own CPU/memory/traffic, and opens no public port.
 
-## Installation
+## Create and deploy
 
-1. Open Admin -> Latency.
-2. Create a node with a stable location/network name.
-3. Click Deploy for that node.
-4. Run the complete generated command as root on the matching Linux node.
-5. Do not reuse another node's command; each command contains a node-scoped token.
+1. In the admin panel, open "Latency".
+2. Add a node with a stable, location-descriptive name.
+3. Click "Deploy" on the node.
+4. Copy the generated Linux command.
+5. Run it as root on the target node. Never reuse another node's command.
 
-A successful installation includes an initial one-shot probe:
+The command contains a node-scoped token; treat it as sensitive. The installer checks systemd and Python 3, stops and disables any existing `nstatus-latency-agent.service` plus leftover processes, downloads the versioned `latency-agent.py`, writes a `0600` env file, runs a `--once` preflight that submits the first results, starts the service, and verifies it is active. Reinstall or token rotation is just re-running the latest command.
+
+Successful output looks like:
 
 ```text
 Validating Latency API access and submitting an initial probe...
@@ -38,9 +40,7 @@ Validating Latency API access and submitting an initial probe...
 External Latency Agent installed: latency-example
 ```
 
-`targets` is the number of eligible targets returned by the Worker. `accepted` is the number of results validated and stored. A positive matching count confirms target retrieval, authentication, probing, and D1 writes.
-
-Re-running the current deployment command first disables and stops the existing systemd service, terminates residual processes still using the old script, and then starts one fresh instance. This makes the generated command the supported reinstall and token-refresh path.
+`targets` is the number of probe-able TCP targets returned by the Worker; `accepted` is how many results were accepted. Equal and greater than zero means fetch, probe, token validation, and write all worked.
 
 ## Verification
 
@@ -50,15 +50,15 @@ sudo systemctl status nstatus-latency-agent.service --no-pager
 sudo journalctl -u nstatus-latency-agent.service -n 100 --no-pager
 ```
 
-Run one cycle manually:
+Manual run:
 
 ```bash
 sudo sh -c 'set -a; . /etc/nstatus-latency-agent.env; set +a; /usr/bin/python3 /opt/nstatus-latency/latency-agent.py --once'
 ```
 
-After a successful report, Admin -> Latency should show a recent report time. The public page normally adds the source after the short Worker status cache refreshes.
+Back in the admin panel, the node should be enabled with a recent "last report" time. Open a qualifying VPS on the public page; the latency legend should show Cloudflare plus the external node name. The public status API only shows unexpired sources; new results usually appear within tens of seconds, and silent sources are hidden after the Worker's stale window.
 
-From the Worker directory, operators can verify D1:
+Query D1 from the Worker directory:
 
 ```bash
 npx wrangler d1 execute nstatus-db --remote --command \
@@ -68,44 +68,31 @@ npx wrangler d1 execute nstatus-db --remote --command \
   "SELECT node_id,COUNT(*) AS count,MAX(checked_at) AS newest FROM latency_results GROUP BY node_id;"
 ```
 
-## Automatic Updates
+## Auto-update
 
-The Agent automatic-update setting controls both the Rust telemetry Agent and external Latency Agents. Each Latency Agent authenticates with its node-scoped token and periodically reads `/api/latency-agent/update-policy`.
+The admin "Agent auto-update" toggle controls both the Rust agent and external latency agents. The latency agent polls `/api/latency-agent/update-policy` with its own node token:
 
-When enabled, it downloads the current script from the HTTPS Worker site origin, enforces a size limit, compares SHA-256, compiles the candidate, atomically replaces the installed script, and restarts itself with `exec`. Update failures are logged without stopping probe cycles. Re-run the latest deployment command once on older nodes to install the update origin and required systemd write permission.
+- Off: it only reads the policy and never modifies the script.
+- On: it downloads the current script from the HTTPS install base recorded in the install command, enforces a size limit, compares SHA-256, runs a Python compile check, then atomically replaces the script under `/opt/nstatus-latency` and restarts via `exec`.
+- Failed checks only write to the journal; probing continues and retries after an hour.
 
-## Upgrading Old Installations
+Enabling this for the first time requires re-running the latest install command to record the install base and update the systemd sandbox permissions.
 
-If an older node remains at "Never reported", generate a fresh command from the current admin panel and run the full installer again. Restarting the old service is not sufficient.
+## Upgrading old nodes
 
-Older Python `urllib` defaults may be rejected by Cloudflare Browser Integrity Check with error 1010 before the request reaches the Worker. The current script sends an explicit `NIE-SLA-Latency/1.0` User-Agent and runs `--once` during installation so API, token, or edge-policy failures are visible immediately.
+Nodes installed by older scripts may show "not yet reported" forever. Do not just restart the service: click "Deploy" again, copy the new command, and reinstall fully. Only a visible `{"ok":true,...,"accepted":...}` counts as upgraded.
 
-## Troubleshooting
+Old Python `urllib` default User-Agent can be blocked by Cloudflare Browser Integrity Check with error 1010 before reaching the Worker. The current script sends `NIE-SLA-Latency/1.0` explicitly and surfaces API, token, or edge policy problems immediately via `--once`.
 
-### The node exists but never reports
+## Common failures
 
-- Verify the latest command was run on the matching machine.
-- Require a successful `accepted` count, not only a systemd installation message.
-- Check service status and journal logs.
-- Check DNS, TLS, system time, and outbound HTTPS connectivity.
+- Node exists but "not yet reported": confirm the correct machine ran the node's latest full command, the install output showed `accepted`, the service is active, logs show no persistent 401/403/TLS/DNS errors, and system time is correct.
+- 401: token/node ID mismatch or a reused command from another node. Regenerate the command for the current node and reinstall; do not hand-assemble tokens.
+- Cloudflare 1010/403: confirm the script sends an explicit `User-Agent`; the fastest fix is re-running the latest install command.
+- `targets` or `accepted` is 0: the admin panel needs at least one enabled TCP target with complete host/port that does not hide its public address. HTTP targets are not distributed.
+- First success but the frontend still shows only Cloudflare: wait for the state cache refresh (tens of seconds), hard-refresh, confirm you are viewing a public TCP target, and check `latency_results` for fresh data.
+- Service restarts in a loop: inspect systemd and journal logs. Never paste the full contents of `/etc/nstatus-latency-agent.env` anywhere public; it contains the node token.
 
-### HTTP 401
+## Delete and disable
 
-The token and node ID do not match, or a command from another node was reused. Legacy deployments that still use a global `AGENT_TOKEN` will also invalidate old derived tokens if that secret changes. Generate a new command for this node and reinstall it instead of assembling a token manually.
-
-### Cloudflare 1010 or 403
-
-Reinstall with the current admin-generated command. Confirm the installed Python file sends an explicit `User-Agent` header.
-
-### `targets` or `accepted` is zero
-
-External nodes only receive enabled TCP targets with a public host and port. HTTP targets and targets configured to hide their public address are excluded.
-
-### Admin reports activity but the public chart only shows Cloudflare
-
-- Wait for the short status cache to refresh and reload the page.
-- Verify the selected target is an eligible public TCP target.
-- Confirm the service continues to report; stale sources are hidden.
-- Query `latency_results` for recent rows for that target.
-
-Do not publish `/etc/nstatus-latency-agent.env` or a generated install command. Both contain a scoped credential.
+Disabling keeps history but stops the source from being shown. Deleting removes the node and its result history irreversibly. Renaming needs no reinstall; changing the node ID requires deploying with a new command.

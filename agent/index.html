@@ -3,18 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NIE-SLA Agent — VPS Metrics</title>
+<title>NIE-SLA Agent — Linux VPS 采集与固定诊断</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f4f5f7;color:#0d1218;line-height:1.6}
-.wrap{max-width:720px;margin:0 auto;padding:40px 20px}
+.wrap{max-width:760px;margin:0 auto;padding:40px 20px}
 h1{font-size:28px;margin-bottom:8px}
 .sub{color:#57616d;margin-bottom:32px}
 .card{background:#fff;border:1px solid #dee3e8;border-radius:6px;padding:24px;margin-bottom:20px}
 .card h2{font-size:18px;margin-bottom:12px;color:#0d1218}
-.code{background:#1e1e2e;color:#cdd6f4;padding:14px 18px;border-radius:4px;font-family:"Fira Code",monospace;font-size:14px;overflow-x:auto;margin:12px 0;position:relative}
-.code .copy{position:absolute;top:8px;right:8px;background:rgba(255,255,255,.1);border:0;color:#cdd6f4;padding:4px 10px;border-radius:3px;cursor:pointer;font-size:12px}
-.code .copy:hover{background:rgba(255,255,255,.2)}
+.code{background:#1e1e2e;color:#cdd6f4;padding:14px 18px;border-radius:4px;font-family:"SFMono-Regular",Consolas,monospace;font-size:14px;overflow-x:auto;margin:12px 0}
 .tag{display:inline-block;background:#e8f7ef;color:#0f8449;padding:2px 8px;border-radius:3px;font-size:13px;font-weight:600;margin-right:6px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:16px 0}
 .metric{background:#f4f5f7;border-radius:4px;padding:12px;text-align:center}
@@ -22,74 +20,68 @@ h1{font-size:28px;margin-bottom:8px}
 .metric .l{font-size:12px;color:#57616d}
 footer{margin-top:40px;padding-top:16px;border-top:1px solid #dee3e8;color:#86909b;font-size:13px}
 a{color:#0f8449}
+ul{padding-left:20px}
+li{margin:6px 0}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>NIE-SLA Agent</h1>
-  <p class="sub">轻量 VPS 系统指标采集 — CPU / 内存 / 磁盘 / 负载</p>
+  <p class="sub">Rust 编写的 Linux VPS 采集器与固定诊断执行器 — 只主动 HTTPS 上报，不开放管理端口</p>
 
   <div class="card">
-    <h2>一键安装</h2>
-    <p>VPS 上执行以下命令，自动识别架构、下载二进制、安装 systemd 服务：</p>
-    <div class="code">
-      <button class="copy" onclick="copyCode(this)">Copy</button>
-      <span id="cmd">curl -fsSL <span id="base"></span>install.sh | sudo sh</span>
-    </div>
-    <p style="font-size:13px;color:#86909b;margin-top:8px">支持 amd64 / arm64 / arm，交互式填写 API 地址和 Token。</p>
+    <h2>安装方式</h2>
+    <p>在管理后台“探针”页新增 TCP/VPS 节点后，点击“部署 Agent”，复制该节点专属命令到 VPS 执行。命令包含节点独立 Token、Agent ID、下载地址、期望版本与 manifest 哈希，不要混用或公开。</p>
+    <div class="code"># 通用命令只用于理解流程，实际安装必须使用后台生成的完整命令
+curl -fsSL https://你的Worker域名/install.sh | sudo sh</div>
+    <p style="font-size:13px;color:#86909b;margin-top:8px">安装链依次校验 <code>install.sh</code>、<code>setup.sh</code>、<code>cftz</code>、<code>SHA256SUMS</code>、目标架构二进制与版本，用于发现传输损坏与产物错配。</p>
   </div>
 
   <div class="card">
-    <h2>一键卸载</h2>
-    <div class="code">
-      <button class="copy" onclick="copyCode(this)">Copy</button>
-      curl -fsSL <span class="dyn-base"></span>setup.sh | sudo bash -s -- uninstall
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>特性</h2>
+    <h2>发布形态</h2>
     <div class="grid">
-      <div class="metric"><div class="v">~5 MB</div><div class="l">二进制大小</div></div>
-      <div class="metric"><div class="v">0</div><div class="l">外部依赖</div></div>
-      <div class="metric"><div class="v">< 5 MB</div><div class="l">内存占用</div></div>
-      <div class="metric"><div class="v">3</div><div class="l">支持架构</div></div>
+      <div class="metric"><div class="v">5</div><div class="l">Linux 架构</div></div>
+      <div class="metric"><div class="v">0</div><div class="l">入站端口</div></div>
+      <div class="metric"><div class="v">2</div><div class="l">固定 Beta 动作</div></div>
+      <div class="metric"><div class="v">SHA-256</div><div class="l">发布校验</div></div>
     </div>
     <p style="margin-top:12px">
-      <span class="tag">Go</span>
-      <span class="tag">纯标准库</span>
-      <span class="tag">读 /proc</span>
-      <span class="tag">systemd</span>
+      <span class="tag">Rust</span>
+      <span class="tag">Linux amd64</span>
+      <span class="tag">arm64</span>
+      <span class="tag">armv7</span>
+      <span class="tag">armv6</span>
+      <span class="tag">386</span>
+      <span class="tag">systemd / OpenRC</span>
     </p>
+  </div>
+
+  <div class="card">
+    <h2>职责</h2>
+    <ul>
+      <li>低权限 <code>nstatus-metrics</code> 服务负责指标、TCP Ping、GeoIP 与校验后更新。</li>
+      <li>常驻 root Manager <code>nstatus-metrics-tasks</code> 只接受 <code>nodequality</code> 与 <code>ip_unlock</code> 两个固定动作。</li>
+      <li>固定动作入口脚本由当前站点分发已审计快照并校验 SHA-256，不接收任意命令、URL、参数、stdin、环境变量或计划。</li>
+      <li>NodeQuality 四项测试默认 <code>f/y/y/y</code>；IPv4 解锁运行 <code>-4 -n -p</code> 完整报告模式，保存有界完整报告与最终媒体解锁结果。</li>
+      <li>Agent 自动更新只接受更高语义版本，并校验 manifest 与二进制 SHA-256。</li>
+    </ul>
   </div>
 
   <div class="card">
     <h2>采集指标</h2>
     <table style="width:100%;font-size:14px">
-      <tr><td style="padding:6px 0"><strong>CPU</strong></td><td>/proc/stat 采样计算使用率</td></tr>
-      <tr><td style="padding:6px 0"><strong>Memory</strong></td><td>/proc/meminfo 总量/已用/Swap</td></tr>
-      <tr><td style="padding:6px 0"><strong>Disk</strong></td><td>syscall.Statfs 根分区使用率</td></tr>
-      <tr><td style="padding:6px 0"><strong>Load</strong></td><td>/proc/loadavg 1/5/15 分钟</td></tr>
-      <tr><td style="padding:6px 0"><strong>Uptime</strong></td><td>/proc/uptime 系统运行时间</td></tr>
+      <tr><td style="padding:6px 0"><strong>CPU</strong></td><td>使用率与核心信息</td></tr>
+      <tr><td style="padding:6px 0"><strong>Memory</strong></td><td>总量、已用、Swap</td></tr>
+      <tr><td style="padding:6px 0"><strong>Disk</strong></td><td>根文件系统容量与使用率</td></tr>
+      <tr><td style="padding:6px 0"><strong>Load</strong></td><td>1 / 5 / 15 分钟负载</td></tr>
+      <tr><td style="padding:6px 0"><strong>Network</strong></td><td>速率与累计字节，用于月度流量记账</td></tr>
+      <tr><td style="padding:6px 0"><strong>System</strong></td><td>进程、线程、磁盘 IO、运行时长、系统与虚拟化信息</td></tr>
     </table>
   </div>
 
   <footer>
-    <p>NIE-SLA Agent · <a href="https://github.com/3257085208/NIE-SLA-Agent">GitHub</a></p>
+    <p>NIE-SLA Agent · <a href="https://github.com/3257085208/NIE-SLA">公开仓库</a> · <a href="https://github.com/3257085208/NIE-SLA/releases">Releases</a></p>
   </footer>
 </div>
-<script>
-(function(){
-  var base = location.href.replace(/\/index\.html?$/,'').replace(/\/$/,'') + '/';
-  document.getElementById('base').textContent = base;
-  document.querySelectorAll('.dyn-base').forEach(function(el){ el.textContent = base; });
-})();
-function copyCode(btn){
-  var code = btn.parentElement.textContent.replace('Copy','').trim();
-  navigator.clipboard.writeText(code).then(function(){
-    btn.textContent='Copied!'; setTimeout(function(){ btn.textContent='Copy'; },1500);
-  });
-}
-</script>
 </body>
 </html>

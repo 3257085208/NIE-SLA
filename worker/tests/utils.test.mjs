@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, lastPersistedCheckAt, normalizeTarget, parseBoolean, publicCheckPoint, sanitizeId, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
+import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, lastPersistedCheckAt, normalizeTarget, parseBoolean, publicCachePrivacyVersion, publicCheckPoint, sanitizeId, sanitizePublicAgentMetrics, sanitizePublicStatusPayload, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
 import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, requireLatencyAgentForId, safeJson } from '../src/auth.js';
-import { rateLimitD1 } from '../src/ratelimit.js';
+import { clearRateLimitD1, rateLimitD1, rateLimitStatusD1 } from '../src/ratelimit.js';
 import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, normalizeAgentMetricState, normalizeAgentVpsInfo, pingLossPointsToRuns, pingLossRunsToPoints, pingPointsFromPayload, pingPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
 import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeAgentPublicBase, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
@@ -126,6 +126,52 @@ assert.deepEqual(checkBucketSummaryQueryPlan('2026-06-19', { targetIds: ['vps-a'
 assert.equal(await rateLimitD1({}, 'missing-db', 1, 60), false);
 const rateEnv = fakeRateLimitEnv();
 assert.deepEqual(await Promise.all(Array.from({ length: 8 }, () => rateLimitD1(rateEnv, 'login:1', 3, 60))), [true, true, true, false, false, false, false, false]);
+const limitedStatus = await rateLimitStatusD1(rateEnv, 'login:1', 3, 60);
+assert.equal(limitedStatus.limited, true);
+assert.equal(limitedStatus.count, 3);
+assert.ok(limitedStatus.retryAfter >= 1 && limitedStatus.retryAfter <= 61);
+assert.equal(await clearRateLimitD1(rateEnv, 'login:1'), true);
+assert.deepEqual(await rateLimitStatusD1(rateEnv, 'login:1', 3, 60), { limited: false, count: 0, retryAfter: 0 });
+
+const sensitiveMetrics = {
+  schema: 'nstatus-agent-metrics-v1', agent_id: 'vps-a', agent_label: 'VPS A', updated_at: '2026-08-07T00:00:00Z',
+  agent_version: 'v1.1.11', hostname: 'private-host', cpu_percent: 12.5, process_count: 99, thread_count: 500,
+  memory: { total_mb: 32768, used_mb: 16384, percent: 50, swap: { total_mb: 1024, percent: 10 } },
+  load: { load1: 0.2, load5: 0.3, load15: 0.4 }, disk: { total_gb: 900, used_gb: 450, percent: 50 },
+  net: { rx_bytes_sec: 100, tx_bytes_sec: 200, rx_bytes: 999999, tx_bytes: 888888, tcp_conns: 20 },
+  uptime_sec: 123456, vps_info: { cpu_model: 'private cpu', os: 'private os' }, traffic: { total_bytes: 42 },
+};
+assert.deepEqual(sanitizePublicAgentMetrics(sensitiveMetrics, {}), {
+  schema: 'nstatus-agent-metrics-v1', agent_id: 'vps-a', agent_label: 'VPS A', updated_at: '2026-08-07T00:00:00Z',
+  cpu_percent: 12.5, memory: { percent: 50 }, load: { load1: 0.2, load5: 0.3, load15: 0.4 },
+  disk: { percent: 50 }, net: { rx_bytes_sec: 100, tx_bytes_sec: 200 },
+});
+assert.equal(sanitizePublicAgentMetrics(sensitiveMetrics, { PUBLIC_STATUS_AGENT_DETAILS: 'true' }), sensitiveMetrics);
+
+const sensitiveStatus = sanitizePublicStatusPayload({
+  ok: true,
+  storage: { mode: 'd1+r2', status_snapshot_key: 'status/status.json' },
+  traffic: { total_bytes: 42 },
+  targets: [{
+    id: 'vps-a', type: 'tcp', target_host: '203.0.113.4', target_port: 443,
+    agent_version: 'v1.1.11', machine_uptime_sec: 123456, agent_metrics: sensitiveMetrics,
+    unlock: { services: [{ name: 'Netflix', status: 'unlocked' }] }, traffic_quota_gb: 1000,
+  }],
+}, {});
+assert.equal('storage' in sensitiveStatus, false);
+assert.equal('traffic' in sensitiveStatus, false);
+assert.equal('unlock' in sensitiveStatus.targets[0], false);
+assert.equal('agent_version' in sensitiveStatus.targets[0], false);
+assert.equal('machine_uptime_sec' in sensitiveStatus.targets[0], false);
+assert.equal('traffic_quota_gb' in sensitiveStatus.targets[0], false);
+assert.deepEqual(sensitiveStatus.targets[0].agent_metrics.memory, { percent: 50 });
+const compatibleStatus = sanitizePublicStatusPayload({ storage: { mode: 'd1+r2' }, traffic: { total_bytes: 42 }, targets: [{ type: 'tcp', unlock: { ok: true }, agent_metrics: sensitiveMetrics }] }, {
+  PUBLIC_STATUS_AGENT_DETAILS: 'true', PUBLIC_STATUS_UNLOCK_DETAILS: 'true', PUBLIC_STATUS_STORAGE_DETAILS: 'true',
+});
+assert.equal(compatibleStatus.targets[0].agent_metrics, sensitiveMetrics);
+assert.deepEqual(compatibleStatus.targets[0].unlock, { ok: true });
+assert.deepEqual(compatibleStatus.storage, { mode: 'd1+r2' });
+assert.notEqual(publicCachePrivacyVersion({}), publicCachePrivacyVersion({ PUBLIC_STATUS_AGENT_DETAILS: 'true' }));
 assert.equal(isAgentApiPath('/api/agent/metrics'), true);
 assert.equal(isAgentApiPath('/api/agent/ping-targets'), true);
 assert.equal(isAgentApiPath('/api/latency-agent/targets'), true);
@@ -602,7 +648,7 @@ function fakeRateLimitEnv() {
         return {
           bind(...values) { params = values; return this; },
           async run() {
-            if (sql.startsWith('DELETE FROM rate_limits WHERE key')) {
+            if (sql.startsWith('DELETE FROM rate_limits WHERE key = ? AND ts < ?')) {
               const [key, cutoff] = params;
               for (let i = rows.length - 1; i >= 0; i--) if (rows[i].key === key && rows[i].ts < cutoff) rows.splice(i, 1);
               return { meta: { changes: 0 } };
@@ -614,7 +660,20 @@ function fakeRateLimitEnv() {
               rows.push({ key, ts });
               return { meta: { changes: 1 } };
             }
+            if (sql.startsWith('DELETE FROM rate_limits WHERE key = ?')) {
+              const [key] = params;
+              for (let i = rows.length - 1; i >= 0; i--) if (rows[i].key === key) rows.splice(i, 1);
+              return { meta: { changes: 0 } };
+            }
             return { meta: { changes: 0 } };
+          },
+          async first() {
+            if (sql.startsWith('SELECT COUNT(*) AS count, MIN(ts) AS oldest_ts')) {
+              const [key, cutoff] = params;
+              const found = rows.filter(row => row.key === key && row.ts >= cutoff);
+              return { count: found.length, oldest_ts: found.length ? Math.min(...found.map(row => row.ts)) : null };
+            }
+            return null;
           },
         };
       },

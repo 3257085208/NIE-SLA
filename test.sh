@@ -72,6 +72,8 @@ run_check "cftz authentication handshake tests" node "$ROOT/worker/tests/cftz-au
 run_check "Agent task, GeoIP, and backup tests" node "$ROOT/worker/tests/agent-tasks-backup.test.mjs"
 run_check "NQ image host tests" node "$ROOT/worker/tests/nq-image-host.test.mjs"
 run_check "NQ public image broker route tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/nq-image-broker-route.test.mjs"
+run_check "login route hardening tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/login-route.test.mjs"
+run_check "fast-status probe cadence tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/probe-faststatus.test.mjs"
 run_check "durable telemetry buffer tests" node "$ROOT/worker/tests/telemetry-buffer.test.mjs"
 run_check "Cloudflare free-tier budget tests" node "$ROOT/worker/tests/free-tier-budget.test.mjs"
 run_check "bulk VPS target update tests" node "$ROOT/worker/tests/target-bulk.test.mjs"

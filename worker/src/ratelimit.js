@@ -1,4 +1,5 @@
 
+import { nowSec } from './utils.js';
 
 
 const buckets = new Map();
@@ -20,10 +21,11 @@ function check(key, limit, windowMs) {
 
 export async function rateLimitByIp(request, env, limit, windowSec = 60, options = {}) {
   const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+  const key = `${String(options.keyPrefix || 'ip')}:${ip}`;
   if (useD1RateLimit(env, options)) {
-    return await rateLimitD1(env, `ip:${ip}`, limit, windowSec);
+    return await rateLimitD1(env, key, limit, windowSec);
   }
-  return check(ip, limit, windowSec * 1000);
+  return check(key, limit, windowSec * 1000);
 }
 
 export async function rateLimitGlobal(request, env, limit, windowSec = 60, options = {}) {
@@ -64,6 +66,40 @@ export async function rateLimitD1(env, key, limit, windowSec = 60) {
   }
 }
 
+export async function rateLimitStatusD1(env, key, limit, windowSec = 60) {
+  if (!env.DB) return { limited: true, count: limit, retryAfter: windowSec };
+  const now = nowSec();
+  const windowStart = now - windowSec;
+  try {
+    await ensureD1RateLimitTable(env);
+    await env.DB.prepare(`DELETE FROM rate_limits WHERE key = ? AND ts < ?`).bind(key, windowStart).run();
+    const row = await env.DB.prepare(`SELECT COUNT(*) AS count, MIN(ts) AS oldest_ts
+      FROM rate_limits WHERE key = ? AND ts >= ?`).bind(key, windowStart).first();
+    const count = Number(row?.count || 0);
+    const oldest = Number(row?.oldest_ts || now);
+    return {
+      limited: count >= limit,
+      count,
+      retryAfter: count >= limit ? Math.max(1, oldest + windowSec - now + 1) : 0,
+    };
+  } catch (err) {
+    console.error('rateLimitStatusD1 failed:', String(err?.message || err));
+    return { limited: true, count: limit, retryAfter: windowSec };
+  }
+}
+
+export async function clearRateLimitD1(env, key) {
+  if (!env.DB) return false;
+  try {
+    await ensureD1RateLimitTable(env);
+    await env.DB.prepare(`DELETE FROM rate_limits WHERE key = ?`).bind(key).run();
+    return true;
+  } catch (err) {
+    console.error('clearRateLimitD1 failed:', String(err?.message || err));
+    return false;
+  }
+}
+
 async function ensureD1RateLimitTable(env) {
   if (d1TableReady) return;
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rate_limits (key TEXT NOT NULL, ts INTEGER NOT NULL)`).run();
@@ -82,5 +118,3 @@ export async function cleanupRateLimitsD1(env) {
     return { ok: false, error: message };
   }
 }
-
-function nowSec() { return Math.floor(Date.now() / 1000); }

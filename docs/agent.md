@@ -1,8 +1,6 @@
-# Agent / 探针
+# Agent 安装与维护
 
-This file is kept for compatibility. The full rewritten guides are split by language:
+完整指南：
 
-- 中文：[Agent 安装与维护](zh-CN/04-agent.md)
+- 中文：[Agent](zh-CN/04-agent.md)
 - English: [Agent](en/04-agent.md)
-
-For the full documentation index, see [README](../README.md).

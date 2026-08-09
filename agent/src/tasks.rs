@@ -582,7 +582,8 @@ fn collect_task_output(
     let stderr_reader = thread::spawn(move || {
         read_pipe_tail_bounded(stderr, MAX_OUTPUT_BYTES / 2, stderr_stop, hard_deadline)
     });
-    let mut last_cancel_check = Instant::now() - Duration::from_secs(5);
+    let mut last_cancel_check = Instant::now() - Duration::from_secs(10);
+    let mut cancel_check_interval = Duration::from_secs(5);
     let status = loop {
         if let Some(status) = child.try_wait().context("failed to poll fixed Beta task")? {
             break status;
@@ -596,8 +597,9 @@ fn collect_task_output(
                 .wait()
                 .context("failed to wait for timed-out fixed Beta task")?;
         }
-        if now.duration_since(last_cancel_check) >= Duration::from_secs(2) {
+        if now.duration_since(last_cancel_check) >= cancel_check_interval {
             last_cancel_check = now;
+            cancel_check_interval = (cancel_check_interval * 2).min(Duration::from_secs(10));
             if let Some(cancellation) = cancellation {
                 if cancellation.is_cancelled() {
                     if let Some(status) = terminate_task_process_group(child) {

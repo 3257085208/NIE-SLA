@@ -1468,7 +1468,7 @@ body.nq-modal-open { overflow: hidden; }
 .nq-media-title { display: block; margin: 1px 0 2px; color: #e5e7eb; font-weight: 400; }
 .nq-media-scroll { display: block; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; -ms-overflow-style: none; }
 .nq-media-scroll::-webkit-scrollbar { display: none; }
-.nq-media-grid { display: grid; width: max-content; min-width: 0; color: #a3e635; }
+.nq-media-grid { display: grid; width: max-content; min-width: 0; color: #a3e635; grid-template-columns: 58px repeat(var(--nq-media-cols, 1), 68px); }
 .nq-media-cell { display: flex; align-items: center; justify-content: center; min-height: 18px; padding: 1px 4px; color: #a3e635; text-align: center; white-space: nowrap; }
 .nq-media-label { justify-content: flex-start; color: #22d3ee; text-align: left; }
 .nq-media-head { color: #22d3ee; font-style: italic; }
@@ -1588,8 +1588,12 @@ body.nq-modal-open { overflow: hidden; }
   .nq-panels { padding: 5px; }
   .nq-ansi { font-size: 10px; line-height: 1.35; }
   .nq-media-block { font-size: 10px; }
-  .nq-media-cell { min-height: 17px; padding: 1px 3px; }
-  .nq-media-badge { min-width: 36px; padding: 2px 5px; font-size: 10px; }
+  .nq-media-grid {
+    width: 100%;
+    grid-template-columns: 58px repeat(var(--nq-media-cols, 1), minmax(0, 1fr));
+  }
+  .nq-media-cell { min-height: 17px; padding: 1px 3px; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+  .nq-media-badge { min-width: 0; max-width: 100%; padding: 2px 3px; font-size: 10px; white-space: normal; overflow-wrap: anywhere; }
   .nq-image-panel.active { padding: 4px 0 8px; }
   .nq-image { width: 100%; }
   .nq-report-pre { font-size: 9px; line-height: 1.4; }
@@ -1617,7 +1621,13 @@ body.nq-modal-open { overflow: hidden; }
 @media (max-width: 560px) {
   .nq-ansi-panel,
   .nq-network-scroll { overflow-x: auto; }
-  .nq-ansi-panel .nq-ansi,
+  .nq-ansi-panel .nq-ansi {
+    width: 100%;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
   .nq-report-pre {
     width: max-content;
     min-width: 100%;

@@ -64,7 +64,7 @@ export default {
     catch (err) {
       const status = err?.status || 500;
       const message = status === 500 ? '服务器内部错误' : String(err?.message || '请求失败');
-      return json({ ok: false, error: message }, status, env);
+      return json({ ok: false, error: message }, status, env, err?.headers || null);
     }
   },
 

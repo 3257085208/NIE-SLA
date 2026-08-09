@@ -1,3 +1,6 @@
+import { escapeHtml } from './html.js';
+export { escapeHtml };
+
 export function targetHasNodeQuality(target = {}) {
   return target?.type === 'tcp' && Boolean(target?.has_nq || target?.nq?.has_report);
 }
@@ -168,7 +171,7 @@ function renderNqMediaBlock(lines) {
   ].join('');
   return `<span class="nq-media-block">
     <span class="nq-media-title">五、流媒体解锁检测</span>
-    <span class="nq-media-scroll"><span class="nq-media-grid" style="grid-template-columns:58px repeat(${columnCount}, 68px);">
+    <span class="nq-media-scroll"><span class="nq-media-grid" style="--nq-media-cols:${columnCount};">
       ${row('服务商', providers, 'nq-media-head')}
       ${statusCells}
       ${row('地区', regions)}
@@ -380,15 +383,6 @@ export function renderNqRouteReportHtml(content = '') {
       ${renderNqRouteHops(chunk.hops)}
     </section>`;
   }).join('')}</div>`;
-}
-
-export function escapeHtml(value) {
-  return String(value ?? '')
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }
 
 export function normalizeNqReportLink(value) {

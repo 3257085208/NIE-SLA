@@ -1,4 +1,4 @@
-import { clamp, nowSec, parseBoolean, sanitizeAgentId, isPrivateHost } from './utils.js';
+import { clamp, nowSec, parseBoolean, sanitizeAgentId, isPrivateHost, bytesToBase64, base64ToBytes } from './utils.js';
 import { summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffic.js';
 import { ApiError, safeJson } from './auth.js';
 import { readR2State } from './storage.js';
@@ -1129,17 +1129,4 @@ function secretKeyMaterials(env) {
 async function importSecretKey(material, usages) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM', length: 256 }, false, usages);
-}
-
-function bytesToBase64(bytes) {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
-}
-
-function base64ToBytes(value) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }

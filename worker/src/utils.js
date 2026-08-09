@@ -14,7 +14,7 @@ export const REGION_LABELS = {
 };
 
 export const ALLOWED_REGIONS = new Set(Object.keys(REGION_LABELS));
-export const DEFAULT_TIMEOUT_MS = 5000;
+export const DEFAULT_TIMEOUT_MS = 3000;
 export const DEFAULT_INTERVAL_SEC = 300;
 export const MIN_INTERVAL_SEC = 300;
 export const BUCKET_SEC = 300;
@@ -368,7 +368,15 @@ export function publicHidePorts(env) {
 }
 
 export function publicCachePrivacyVersion(env) {
-  return [publicMaskIps(env) ? 'mask' : 'plain', publicHidePorts(env) ? 'noport' : 'port', parseBoolean(env?.PUBLIC_HIDE_URL_PATH ?? true, true) ? 'origin' : 'path', 'v2'].join('-');
+  return [
+    publicMaskIps(env) ? 'mask' : 'plain',
+    publicHidePorts(env) ? 'noport' : 'port',
+    parseBoolean(env?.PUBLIC_HIDE_URL_PATH ?? true, true) ? 'origin' : 'path',
+    parseBoolean(env?.PUBLIC_STATUS_AGENT_DETAILS ?? false, false) ? 'agent' : 'noagent',
+    parseBoolean(env?.PUBLIC_STATUS_UNLOCK_DETAILS ?? false, false) ? 'unlock' : 'nounlock',
+    parseBoolean(env?.PUBLIC_STATUS_STORAGE_DETAILS ?? false, false) ? 'storage' : 'nostorage',
+    'v3',
+  ].join('-');
 }
 
 function maskIpLikeHost(host) {
@@ -442,11 +450,57 @@ export function sanitizePublicStatusPayload(payload, env) {
   if (!payload || typeof payload !== 'object') return payload;
   const maskIps = publicMaskIps(env);
   const hidePorts = publicHidePorts(env);
+  const showAgentDetails = parseBoolean(env?.PUBLIC_STATUS_AGENT_DETAILS ?? false, false);
+  const showUnlockDetails = parseBoolean(env?.PUBLIC_STATUS_UNLOCK_DETAILS ?? false, false);
+  const showStorageDetails = parseBoolean(env?.PUBLIC_STATUS_STORAGE_DETAILS ?? false, false);
   const clean = { ...payload };
   clean.privacy = { ...(clean.privacy || {}), mask_ips: maskIps, hide_ports: hidePorts, hide_colo: true };
   if (Array.isArray(clean.targets)) clean.targets = clean.targets.map(row => sanitizePublicTarget(row, env, maskIps, hidePorts));
   if (Array.isArray(clean.incidents)) clean.incidents = clean.incidents.map(row => sanitizePublicTarget(row, env, maskIps, hidePorts));
+  if (!showAgentDetails) delete clean.traffic;
+  if (!showStorageDetails) delete clean.storage;
+  if (!showUnlockDetails && Array.isArray(clean.targets)) {
+    clean.targets = clean.targets.map((row) => {
+      if (!row || typeof row !== 'object') return row;
+      const target = { ...row };
+      delete target.unlock;
+      return target;
+    });
+  }
   return clean;
+}
+
+export function sanitizePublicAgentMetrics(metrics, env) {
+  if (!metrics || typeof metrics !== 'object' || Array.isArray(metrics)) return metrics;
+  if (parseBoolean(env?.PUBLIC_STATUS_AGENT_DETAILS ?? false, false)) return metrics;
+  const clean = {
+    schema: metrics.schema,
+    agent_id: metrics.agent_id,
+    agent_label: metrics.agent_label,
+    updated_at: metrics.updated_at,
+    cpu_percent: metrics.cpu_percent,
+    memory: publicCapacityPercent(metrics.memory),
+    load: metrics.load,
+    disk: publicCapacityPercent(metrics.disk),
+    net: publicNetworkRates(metrics.net),
+  };
+  return Object.fromEntries(Object.entries(clean).filter(([, value]) => value !== undefined && value !== null));
+}
+
+function publicCapacityPercent(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const percent = Number(value.percent);
+  return Number.isFinite(percent) ? { percent: clamp(percent, 0, 100) } : null;
+}
+
+function publicNetworkRates(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const clean = {};
+  for (const key of ['rx_bytes_sec', 'tx_bytes_sec']) {
+    const number = Number(value[key]);
+    if (Number.isFinite(number)) clean[key] = Math.max(0, number);
+  }
+  return Object.keys(clean).length ? clean : null;
 }
 
 export function sanitizePublicTarget(row, env, maskIps = publicMaskIps(env), hidePorts = publicHidePorts(env)) {
@@ -462,6 +516,15 @@ export function sanitizePublicTarget(row, env, maskIps = publicMaskIps(env), hid
   else { if (clean.target_host) clean.target_host = publicHost(clean.target_host, maskIps); if (clean.target) clean.target = publicTargetText(clean.target, maskIps); if (clean.target_display) clean.target_display = publicTargetText(clean.target_display, maskIps); }
   if ('error' in clean) clean.error = publicError(clean.error, clean.status_code);
   if ('last_error' in clean) clean.last_error = publicError(clean.last_error, clean.status_code);
+  delete clean.unlock_data;
+  delete clean.nq_unlock_data;
+  delete clean.nq_unlock_updated_at;
+  if (!parseBoolean(env?.PUBLIC_STATUS_AGENT_DETAILS ?? false, false)) {
+    delete clean.agent_version;
+    delete clean.machine_uptime_sec;
+    if ('agent_metrics' in clean) clean.agent_metrics = sanitizePublicAgentMetrics(clean.agent_metrics, env);
+    for (const key of ['traffic_enabled', 'traffic_quota_gb', 'traffic_mode', 'traffic_reset_day', 'alert_traffic_remaining_percent', 'alert_traffic_remaining_gb']) delete clean[key];
+  }
   clean.cf_colo = null; clean.start_colo = null; clean.recover_colo = null;
   clean.region_label = REGION_LABELS[clean.probe_region || 'auto'] || clean.probe_region || '自动';
   if (hidePorts) delete clean.target_port;
@@ -575,4 +638,19 @@ export async function sha256Hex(value) {
   const bytes = new TextEncoder().encode(String(value || ''));
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+export function bytesToBase64(bytes) {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+export function base64ToBytes(value) {
+  const binary = atob(String(value || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
 }

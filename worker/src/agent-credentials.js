@@ -1,4 +1,4 @@
-import { sanitizeAgentId, sha256Hex } from './utils.js';
+import { nowSec, sanitizeAgentId, sha256Hex, bytesToBase64, base64ToBytes } from './utils.js';
 
 const CIPHERTEXT_PREFIX = 'enc:v1:';
 const TOKEN_PREFIX = 'nst_';
@@ -275,19 +275,4 @@ function constantTimeEqual(a, b) {
   const length = Math.max(left.length, right.length);
   for (let index = 0; index < length; index++) diff |= (left.charCodeAt(index) || 0) ^ (right.charCodeAt(index) || 0);
   return diff === 0;
-}
-
-function bytesToBase64(bytes) {
-  let binary = '';
-  for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-  return btoa(binary);
-}
-
-function base64ToBytes(value) {
-  const binary = atob(String(value || ''));
-  return Uint8Array.from(binary, char => char.charCodeAt(0));
-}
-
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
 }

@@ -1,66 +1,19 @@
-# Deployment Guide
+# 部署指南
 
-## Prerequisites
+公开仓库 README 的 **Deploy to Cloudflare** 一键部署：Cloudflare 构建一个 Worker 应用，同时承载静态前端、管理后台、API、Agent 下载、D1、R2、Durable Objects 与每分钟 Cron。不需要单独创建 Pages。
 
-- Cloudflare account (free tier)
-- Node.js 18+
-- Domain (optional, workers.dev subdomain works)
+填写 `ADMIN_USERNAME`、`ADMIN_PASSWORD`、`ADMIN_PATH` 与 `TOTP_ENCRYPTION_KEY` 后，打开 `Worker 地址 + ADMIN_PATH`。
 
-## Step 1: Create Resources
+Agent Token 按节点生成，不要配置共享的 `AGENT_TOKEN`。
 
-```bash
-cd worker
-
-# Create D1 database
-npx wrangler d1 create nstatus-db
-# Copy database_id output → wrangler.toml [[d1_databases]]
-
-# Create R2 bucket
-npx wrangler r2 bucket create nstatus-archive
-
-# Set secrets
-npx wrangler secret put ADMIN_PASSWORD
-npx wrangler secret put AGENT_TOKEN
-npx wrangler secret put TOTP_ENCRYPTION_KEY
-
-# Optional: set CORS origin for frontend
-# Add to wrangler.toml [vars]:
-# ALLOWED_ORIGIN = "https://your-frontend.pages.dev"
-```
-
-## Step 2: Deploy Worker
+## 部署后检查
 
 ```bash
-npx wrangler deploy
+curl -fsSL https://你的域名/api/health
+curl -fsSL https://你的域名/bin/VERSION
+curl -fsSL https://你的域名/bin/SHA256SUMS
 ```
 
-Verify: `curl https://your-worker.workers.dev/` → `{"ok":true,"name":"NIE-SLA","version":"1.0.0"}`
+## 从 Pages + Worker 迁移
 
-## Step 3: Deploy Frontend
-
-```bash
-cd frontend
-echo "window.NSTATUS_API_BASE = 'https://your-worker.workers.dev';" > config.js
-npx wrangler pages deploy ./ --project-name=nstatus
-```
-
-## Step 4: Add Targets
-
-Open `/admin`, sign in with the configured username and password, add a target, and use its deployment button. The UI obtains an admin Session and never exposes the password to CRUD endpoints.
-
-## Step 5: Install Agent
-
-```bash
-curl -fsSL https://your-agent-deploy.pages.dev/install.sh | sudo sh
-```
-
-## TCP Ping Targets
-
-```sql
--- In D1 console, add ping targets for agents:
-INSERT INTO ping_targets (id, name, target, enabled) VALUES
-('ping-cf', 'Cloudflare DNS', '1.1.1.1:53', 1),
-('ping-google', 'Google DNS', '8.8.8.8:53', 1);
-```
-
-Then on VPS: `cftz set` → select ping targets.
+复用原 D1、R2、Agent API 域名、节点凭据与加密材料，验证公开页、后台、Cron、Agent 上报与告警后，再把站点域名切到新 Worker。旧 Pages 项目在验收完成前保留。

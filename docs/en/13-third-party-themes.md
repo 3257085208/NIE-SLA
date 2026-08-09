@@ -1,12 +1,10 @@
-# Third-Party Theme Specification
+# Third-party theme development
 
-NIE-SLA supports theme packages only. It does not expose plugins, admin scripts, or an arbitrary extension runtime. Upload a ZIP from **Admin -> Themes**. Every new or replacement upload is disabled until an administrator reviews its source and SHA-256. Only one theme can be active; disabling it restores the built-in frontend.
+The admin "Themes" page accepts ZIPs conforming to `nie-sla-theme-v1`. Uploads and overwrites stay inactive until an admin enables them; at most one theme is enabled at a time, and disabling restores the original UI immediately.
 
-## Theme modes
+## Theme types
 
-### CSS
-
-A CSS theme keeps the built-in HTML, data flow, and interactions and only changes public-page styling. JavaScript is not executed. Scope rules to the stable theme attribute:
+CSS themes keep the original HTML, data, and interactions and only restyle the public status page. No JavaScript runs. Scope selectors with the theme ID:
 
 ```css
 body[data-extension-theme="example-clean"] .system-banner {
@@ -14,19 +12,35 @@ body[data-extension-theme="example-clean"] .system-banner {
 }
 ```
 
-CSS applies only to the public status page, never the admin panel.
+CSS can read data already shown on the public page, so install only trusted sources. Themes never apply to the admin panel.
 
-### Canvas
+Canvas themes can replace the entire public layout. The entry HTML runs in an iframe with `sandbox="allow-scripts"` and no `allow-same-origin`, plus a dedicated CSP: no access to the parent DOM, cookies, local storage, or admin session; no forms, popups, object loading, or direct network access; data arrives only through the message protocol; and only the `status:read` permission may be declared. All HTML, CSS, JavaScript, fonts, and images must be inside the ZIP.
 
-A Canvas theme owns the complete public layout. Its entry document runs in an iframe with `sandbox="allow-scripts"`, without `allow-same-origin`, and with a restrictive CSP. It cannot access the parent DOM, cookies, storage, admin sessions, forms, child windows, or the network. It may declare only `status:read` and receive redacted public data through `postMessage`.
+## ZIP structure and limits
 
-All HTML, CSS, JavaScript, fonts, and images must be included in the ZIP.
+`manifest.json` must sit at the ZIP root:
 
-## ZIP and manifest
+```text
+my-theme.zip
+|-- manifest.json
+|-- theme.css
+|-- index.html
+|-- theme.js
+`-- assets/logo.webp
+```
 
-Place `manifest.json` at the ZIP root. Limits are 8 MB compressed, 16 MB expanded, 300 files, 4 MB per file, a 64 KiB manifest, and eight path levels. Absolute paths, backslashes, traversal segments, control characters, non-NFC names, duplicate paths, and unsupported extensions are rejected. The browser supplies a SHA-256 digest and the Worker recomputes it before storage.
+The Worker enforces:
 
-CSS manifest:
+- ZIP up to 8 MB; 16 MB unpacked.
+- Up to 300 files; 4 MB per file.
+- `manifest.json` up to 64 KiB.
+- Paths must be NFC Unicode, at most 8 levels; absolute paths, backslashes, empty segments, `.`, `..`, control characters, and duplicate paths are rejected.
+- Allowed types: `.css`, `.html`, `.js`, `.json`, common web images, WOFF/WOFF2 fonts.
+- The browser computes SHA-256 and the Worker recomputes and compares it.
+
+## Manifest
+
+CSS theme example:
 
 ```json
 {
@@ -44,7 +58,7 @@ CSS manifest:
 }
 ```
 
-Canvas themes use `"mode": "canvas"` and add:
+Canvas themes switch `mode` to `canvas` and add:
 
 ```json
 {
@@ -54,17 +68,44 @@ Canvas themes use `"mode": "canvas"` and add:
 }
 ```
 
-`id` must start with a lowercase letter and contain 3-49 lowercase letters, digits, or hyphens. Keep it stable across releases. `version` uses SemVer. CSS themes declare one to four package-local stylesheets. Canvas themes declare one package-local HTML entry and exactly the `status:read` permission. The optional `files` array must exactly match the archive, including `manifest.json`. Repository and homepage URLs must be credential-free HTTPS URLs; licenses should use SPDX identifiers.
+Field rules:
 
-## Canvas protocol
+| Field | Rule |
+| --- | --- |
+| `schema` | fixed `nie-sla-theme-v1` |
+| `id` | 3-49 lowercase letters, digits, or hyphens, starting with a letter; stable once published |
+| `name` | 1-64 characters |
+| `version` | SemVer, e.g. `1.2.0` or `1.2.0-beta.1` |
+| `type` | fixed `theme` |
+| `mode` | `css` or `canvas` |
+| `styles` | required for CSS mode; 1-4 in-package CSS files |
+| `entry` | required for canvas mode; in-package HTML |
+| `permissions` | canvas only; must be exactly `["status:read"]` |
+| `height` | canvas initial height, 400-12000 px; can be updated at runtime |
+| `files` | recommended; must match the ZIP exactly, including `manifest.json` |
+| `preview` | optional in-package image |
+| `repository` / `homepage` | optional; HTTPS URLs without credentials |
+| `license` | optional SPDX-style identifier |
 
-Signal readiness:
+## Canvas message protocol
+
+The theme announces readiness:
 
 ```js
 parent.postMessage({ type: "nie-sla:ready" }, "*");
 ```
 
-The parent publishes `{ type: "nie-sla:status", api_version: "v1", payload }`. A theme may request only `status`, `checks`, `metrics`, `pings`, or `latency`:
+The parent pushes the latest public state:
+
+```js
+{
+  type: "nie-sla:status",
+  api_version: "v1",
+  payload: { /* desensitized /api/status payload */ }
+}
+```
+
+To request other read-only data:
 
 ```js
 parent.postMessage({
@@ -75,24 +116,37 @@ parent.postMessage({
 }, "*");
 ```
 
-Responses use `nie-sla:response`, repeat `request_id`, and contain either `{ ok: true, payload }` or `{ ok: false, error }`. Resize the isolated canvas with:
+Allowed `resource` values: `status`, `checks`, `metrics`, `pings`, `latency`. The response:
+
+```js
+{
+  type: "nie-sla:response",
+  api_version: "v1",
+  request_id: "metrics-1",
+  ok: true,
+  payload: {}
+}
+```
+
+Failures return `ok: false` with a short error. After content changes, request a height update:
 
 ```js
 parent.postMessage({ type: "nie-sla:resize", height: document.documentElement.scrollHeight }, "*");
 ```
 
-Validate all received message fields and render untrusted values with DOM text APIs rather than `innerHTML`.
+Message receivers must validate `event.data`, the message type, and field types, and never inject public data via `innerHTML`.
 
 ## Release checklist
 
-- Test 390 px mobile, tablet, and desktop layouts without page-level horizontal overflow.
-- Preserve distinct online, failed, unknown, and packet-loss states; do not rely on color alone.
-- Support keyboard navigation, visible focus, semantic headings, and reduced motion.
-- Publish author, SemVer, license, source URL, and `shasum -a 256 theme.zip` output.
-- Keep the theme ID stable and increment the version. Replacement uploads require fresh administrator approval.
+1. Test at 390 px phone, tablet, and desktop widths with no horizontal overflow.
+2. Keep clear online/failure/unknown/packet-loss states; do not rely on color alone.
+3. Support keyboard operation, visible focus, semantic headings, and `prefers-reduced-motion`.
+4. Do not impersonate official themes; state the author, version, license, and source.
+5. Build the ZIP from a clean directory and publish its SHA-256: `shasum -a 256 theme.zip`.
+6. Keep `id` stable and raise SemVer on updates; re-enable after overwrite upload.
 
-Runnable sources are in `examples/themes/minimal-css/` and `examples/themes/minimal-canvas/`.
+Runnable examples live in `examples/themes/minimal-css/` and `examples/themes/minimal-canvas/`.
 
 ## Backup and migration
 
-Theme registry data lives in D1 and extracted package files live in R2. Portable JSON backups do not contain R2 objects. Reuse or copy the original R2 binding during migration, or upload the ZIP again in the new deployment.
+Theme registrations live in D1; extracted ZIP files live in R2. Portable JSON backups do not include R2 files. When migrating, reuse or copy the original R2; otherwise re-upload the theme ZIPs in the new environment.

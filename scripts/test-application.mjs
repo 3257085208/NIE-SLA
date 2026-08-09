@@ -27,7 +27,8 @@ for (const file of filesIn(path.join(root, 'worker', 'src'), '.js')) run(['--che
 for (const file of filesIn(path.join(root, 'frontend'), '.js')) run(['--check', file]);
 for (const file of filesIn(path.join(root, 'worker', 'tests'), '.mjs')) {
   if (file === socketsLoader) continue;
-  const args = file.endsWith(`${path.sep}nq-image-broker-route.test.mjs`)
+  const loaderTests = ['nq-image-broker-route.test.mjs', 'login-route.test.mjs', 'probe-faststatus.test.mjs'];
+  const args = loaderTests.some((name) => file.endsWith(`${path.sep}${name}`))
     ? ['--experimental-loader', socketsLoader, file]
     : [file];
   run(args);

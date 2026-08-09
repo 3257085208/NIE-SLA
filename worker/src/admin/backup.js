@@ -1,4 +1,5 @@
 import { ApiError, safeJson } from '../auth.js';
+import { bytesToBase64, base64ToBytes } from '../utils.js';
 import { exportAgentTokens, restoreAgentTokens } from '../agent-credentials.js';
 
 const BACKUP_SCHEMA = 'nie-sla-backup-v1';
@@ -297,15 +298,4 @@ async function decryptJson(envelope, password) {
 async function deriveBackupKey(password, salt, usages, iterations = BACKUP_PBKDF2_ITERATIONS) {
   const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt, iterations }, material, { name: 'AES-GCM', length: 256 }, false, usages);
-}
-
-function bytesToBase64(bytes) {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-function base64ToBytes(value) {
-  const binary = atob(String(value || ''));
-  return Uint8Array.from(binary, char => char.charCodeAt(0));
 }

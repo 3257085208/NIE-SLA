@@ -12,6 +12,7 @@ const probeSource = await readFile(new URL('../src/probe.js', import.meta.url), 
 const indexSource = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
 const metricsSource = await readFile(new URL('../src/metrics.js', import.meta.url), 'utf8');
 const wranglerSource = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
+const adminAuthSource = await readFile(new URL('../src/admin-auth.js', import.meta.url), 'utf8');
 assert.match(
   routesSource,
   /\/api\/settings\/geoip[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}'cache-control': 'no-store'/,
@@ -24,7 +25,7 @@ assert.match(routesSource, /if \(adminTaskCancelMatch && m === 'POST'\) \{ await
 assert.match(routesSource, /if \(agentTaskCancelStatusMatch && m === 'GET'\) \{ await ensureV6Schema\(env\);[\s\S]{0,260}requireAgentForId[\s\S]{0,200}agentTaskCancelStatus/, 'Agent cancel-status must require Agent credentials');
 assert.equal((routesSource.match(/path === '\/api\/agent\/tasks' && m === 'GET'/g) || []).length, 1, 'agent task claim route must be declared exactly once');
 assert.match(routesSource, /\/api\/agent\/tasks' && m === 'GET'[\s\S]{0,600}runner_instance_id/, 'agent task claim route must accept runner_instance_id');
-assert.match(schemaSource, /schema:worker-v25-20260803-task-owner/, 'schema marker must advance for task owner tracking');
+assert.match(schemaSource, /schema:worker-v26-20260810-quota/, 'schema marker must advance for task owner tracking');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN cancel_requested_at INTEGER/, 'running tasks must store a cancellation request timestamp');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN runner_instance_id TEXT/, 'running tasks must track the Agent Manager runner instance');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN runner_heartbeat_at INTEGER/, 'running tasks must track Manager heartbeats');
@@ -51,6 +52,15 @@ assert.match(metricsSource, /warnings\.push\('Latest Agent metrics unavailable'\
 assert.match(wranglerSource, /MAX_TARGETS_PER_RUN = "20"/, 'cron work must be spread across minute slots while retaining 100 targets per five minutes');
 assert.match(wranglerSource, /global_fetch_strictly_public/, 'signed cron dispatch must loop through the public Worker endpoint instead of bypassing the Worker route');
 assert.match(wranglerSource, /not_found_handling = "404-page"/, 'unknown browser routes must render the branded 404 asset');
+assert.doesNotMatch(adminAuthSource.slice(adminAuthSource.indexOf('export async function adminAuthConfig'), adminAuthSource.indexOf('export async function passwordLogin')), /admin_path/, 'anonymous auth config must not expose the admin path');
+assert.match(adminAuthSource, /if \(!githubEnabled\(env\)\) return new Response\(null, \{ status: 404/, 'a disabled OAuth callback must return 404 before resolving the admin path');
+assert.match(adminAuthSource, /throw new ApiError\(404, '未找到'\)/, 'disabled OAuth start and complete endpoints must return 404');
+assert.match(routesSource, /rateLimitByIp\(request, env, 1, 10,[\s\S]{0,180}rateLimitByIp\(request, env, 5, 300/, 'password login must enforce short and cumulative IP windows');
+assert.match(routesSource, /return deny\(10\)[\s\S]{0,180}return deny\(300\)/, 'password login rate limits must include Retry-After values');
+assert.match(metricsSource, /latest: sanitizePublicAgentMetrics\(latest, env\)/, 'public metrics must sanitize the latest Agent fingerprint');
+assert.match(wranglerSource, /PUBLIC_STATUS_AGENT_DETAILS = "true"/, 'production status page must keep public Agent details visible');
+assert.match(wranglerSource, /PUBLIC_STATUS_UNLOCK_DETAILS = "true"/, 'production status page must keep public unlock details visible');
+assert.match(wranglerSource, /PUBLIC_STATUS_STORAGE_DETAILS = "true"/, 'production status page must keep public storage details visible');
 
 function urlWith(qs) {
   return new URL('https://example.test/api/agent/metrics?' + qs);

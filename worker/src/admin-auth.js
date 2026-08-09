@@ -1,7 +1,8 @@
 import { ApiError, constantTimeEqual, json, safeJson } from './auth.js';
-import { sha256Hex } from './utils.js';
+import { nowSec, sha256Hex, bytesToBase64, base64ToBytes } from './utils.js';
 import { checkTOTP, createAdminSession, revokeAllAdminSessions, verifyActiveTOTP } from './totp.js';
 import { getAdminPath } from './admin-path.js';
+import { clearRateLimitD1, rateLimitD1, rateLimitStatusD1 } from './ratelimit.js';
 
 const OAUTH_STATES_KEY = 'github_oauth_states';
 const OAUTH_TICKETS_KEY = 'github_oauth_tickets';
@@ -11,6 +12,8 @@ const OAUTH_TICKET_TTL_SEC = 300;
 const MAX_PENDING_OAUTH = 10;
 const ADMIN_CREDENTIALS_KEY = 'admin_credentials_v1';
 const PASSWORD_ALGORITHM = 'pbkdf2-sha256';
+const PASSWORD_FAILURE_LIMIT = 10;
+const PASSWORD_FAILURE_WINDOW_SEC = 15 * 60;
 
 
 const PASSWORD_ITERATIONS = 50_000;
@@ -24,7 +27,6 @@ export async function adminAuthConfig(env) {
     ok: true,
     password_enabled: Boolean(credentials),
     github_enabled: githubEnabled(env),
-    admin_path: await getAdminPath(env),
   };
 }
 
@@ -33,10 +35,18 @@ export async function passwordLogin(request, env) {
   const body = await safeJson(request, 8_192);
   const username = String(body.username || '').trim();
   const password = String(body.password || '');
+  const accountKey = await passwordFailureKey(username);
+  const failureStatus = await rateLimitStatusD1(env, accountKey, PASSWORD_FAILURE_LIMIT, PASSWORD_FAILURE_WINDOW_SEC);
+  if (failureStatus.limited) throw passwordRateLimitError(failureStatus.retryAfter);
   const credentials = await resolveAdminCredentials(env);
   const usernameValid = credentials && constantTimeEqual(username, credentials.username);
   const passwordValid = credentials && await verifyPassword(password, credentials);
-  if (!usernameValid || !passwordValid) throw new ApiError(401, '账号或密码错误');
+  if (!usernameValid || !passwordValid) {
+    if (!await rateLimitD1(env, accountKey, PASSWORD_FAILURE_LIMIT, PASSWORD_FAILURE_WINDOW_SEC)) {
+      throw passwordRateLimitError(PASSWORD_FAILURE_WINDOW_SEC);
+    }
+    throw new ApiError(401, '账号或密码错误');
+  }
 
   const totp = await checkTOTP(env);
   if (totp.totp_enabled) {
@@ -46,6 +56,7 @@ export async function passwordLogin(request, env) {
   }
 
   const session = await createAdminSession(env, { provider: 'password', subject: username });
+  await clearRateLimitD1(env, accountKey);
   return loginResult(session, totp.totp_enabled, 'password', username);
 }
 
@@ -158,6 +169,7 @@ export async function startGitHubOAuth(request, env) {
 }
 
 export async function finishGitHubOAuth(request, env) {
+  if (!githubEnabled(env)) return new Response(null, { status: 404, headers: { 'cache-control': 'no-store' } });
   const site = publicSiteOrigin(request, env);
   try {
     assertGitHubEnabled(env);
@@ -320,17 +332,6 @@ function normalizeUsername(value) {
   return /^[A-Za-z0-9._@-]{3,64}$/.test(username) ? username : '';
 }
 
-function bytesToBase64(bytes) {
-  let binary = '';
-  for (const value of bytes) binary += String.fromCharCode(value);
-  return btoa(binary);
-}
-
-function base64ToBytes(value) {
-  const binary = atob(String(value || ''));
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-}
-
 function githubEnabled(env) {
   return Boolean(
     String(env.GITHUB_OAUTH_CLIENT_ID || '').trim()
@@ -340,7 +341,17 @@ function githubEnabled(env) {
 }
 
 function assertGitHubEnabled(env) {
-  if (!githubEnabled(env)) throw new ApiError(503, 'GitHub 登录尚未配置');
+  if (!githubEnabled(env)) throw new ApiError(404, '未找到');
+}
+
+async function passwordFailureKey(username) {
+  const normalized = normalizeUsername(username).toLowerCase();
+  return `login-account:${await sha256Hex(normalized)}`;
+}
+
+function passwordRateLimitError(retryAfter) {
+  const seconds = Math.max(1, Math.ceil(Number(retryAfter) || PASSWORD_FAILURE_WINDOW_SEC));
+  return new ApiError(429, '登录失败次数过多，请稍后重试。', { 'retry-after': String(seconds) });
 }
 
 function allowedGitHubUsers(env) {
@@ -468,8 +479,4 @@ async function setMeta(env, key, value) {
   await env.DB.prepare('INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at')
     .bind(key, String(value), nowSec())
     .run();
-}
-
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
 }

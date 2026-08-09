@@ -1,5 +1,5 @@
 import { json, safeJson, constantTimeEqual } from './auth.js';
-import { sha256Hex } from './utils.js';
+import { nowSec, sha256Hex, bytesToBase64, base64ToBytes } from './utils.js';
 
 const ACTIVE_SECRET_KEY = 'totp_secret';
 const PENDING_SECRET_KEY = 'totp_pending_secret';
@@ -326,23 +326,4 @@ async function setMeta(env, key, value) {
 
 async function deleteMeta(env, key) {
   await env.DB.prepare(`DELETE FROM app_meta WHERE key = ?`).bind(key).run();
-}
-
-function bytesToBase64(bytes) {
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  }
-  return btoa(binary);
-}
-
-function base64ToBytes(value) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
-
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
 }

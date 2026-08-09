@@ -1,6 +1,6 @@
 
 import { ApiError } from '../auth.js';
-import { clamp, sanitizeAgentId, sha256Hex } from '../utils.js';
+import { clamp, nowSec, sanitizeAgentId, sha256Hex } from '../utils.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
@@ -165,10 +165,6 @@ function randomInstallTicket() {
 function bearerToken(request) {
   const match = String(request?.headers?.get?.('authorization') || '').match(/^Bearer\s+(.+)$/i);
   return String(match?.[1] || '').trim();
-}
-
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
 }
 
 export async function agentApiBase(env, request = null, url = null, installBase = '') {

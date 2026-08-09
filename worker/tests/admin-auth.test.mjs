@@ -4,8 +4,10 @@ import { checkTOTP, disableTOTP, migrateTOTPEncryption, setupTOTP, validateAdmin
 
 function memoryDb() {
   const meta = new Map();
+  const rateLimits = [];
   return {
     meta,
+    rateLimits,
     prepare(sql) {
       return {
         values: [],
@@ -15,12 +17,35 @@ function memoryDb() {
             const value = meta.get(String(this.values[0]));
             return value === undefined ? null : { value };
           }
+          if (/SELECT COUNT\(\*\) AS count, MIN\(ts\) AS oldest_ts/i.test(sql)) {
+            const [key, cutoff] = this.values;
+            const rows = rateLimits.filter(row => row.key === key && row.ts >= cutoff);
+            return { count: rows.length, oldest_ts: rows.length ? Math.min(...rows.map(row => row.ts)) : null };
+          }
           return null;
         },
         async run() {
           if (/INSERT INTO app_meta/i.test(sql)) meta.set(String(this.values[0]), String(this.values[1]));
           if (/DELETE FROM app_meta/i.test(sql)) meta.delete(String(this.values[0]));
-          return { success: true };
+          if (/DELETE FROM rate_limits WHERE key = \? AND ts < \?/i.test(sql)) {
+            const [key, cutoff] = this.values;
+            for (let index = rateLimits.length - 1; index >= 0; index--) {
+              if (rateLimits[index].key === key && rateLimits[index].ts < cutoff) rateLimits.splice(index, 1);
+            }
+          } else if (/DELETE FROM rate_limits WHERE key = \?/i.test(sql)) {
+            const [key] = this.values;
+            for (let index = rateLimits.length - 1; index >= 0; index--) {
+              if (rateLimits[index].key === key) rateLimits.splice(index, 1);
+            }
+          }
+          if (/INSERT INTO rate_limits/i.test(sql)) {
+            const [key, ts, countKey, cutoff, limit] = this.values;
+            const count = rateLimits.filter(row => row.key === countKey && row.ts >= cutoff).length;
+            if (count >= limit) return { success: true, meta: { changes: 0 } };
+            rateLimits.push({ key, ts });
+            return { success: true, meta: { changes: 1 } };
+          }
+          return { success: true, meta: { changes: 0 } };
         },
       };
     },
@@ -55,7 +80,7 @@ async function encryptLegacySecret(secret, material) {
 {
   const env = { DB: memoryDb(), ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
   assert.deepEqual(await checkTOTP(env), { ok: true, totp_enabled: false });
-  assert.deepEqual(await adminAuthConfig(env), { ok: true, password_enabled: true, github_enabled: false, admin_path: '/admin' });
+  assert.deepEqual(await adminAuthConfig(env), { ok: true, password_enabled: true, github_enabled: false });
   const login = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
     username: 'owner',
     password: 'correct horse battery staple',
@@ -70,6 +95,57 @@ async function encryptLegacySecret(secret, material) {
   await assert.rejects(
     passwordLogin(jsonRequest('https://status.example/api/auth/login', { username: 'owner', password: 'wrong' }), env),
     /账号或密码错误/,
+  );
+}
+
+{
+  const db = memoryDb();
+  const env = { DB: db, ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const username = attempt % 2 ? 'OWNER' : 'owner';
+    await assert.rejects(
+      passwordLogin(jsonRequest('https://status.example/api/auth/login', { username, password: 'wrong' }), env),
+      error => error?.status === 401,
+    );
+  }
+  await assert.rejects(
+    passwordLogin(jsonRequest('https://status.example/api/auth/login', {
+      username: 'owner',
+      password: 'correct horse battery staple',
+    }), env),
+    error => error?.status === 429 && Number(error?.headers?.['retry-after']) > 0,
+  );
+  assert.equal(db.rateLimits.length, 10);
+  assert.ok(db.rateLimits.every(row => /^login-account:[a-f0-9]{64}$/.test(row.key)));
+  assert.ok(db.rateLimits.every(row => !row.key.includes('owner')));
+}
+
+{
+  const db = memoryDb();
+  const env = { DB: db, ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
+  await assert.rejects(
+    passwordLogin(jsonRequest('https://status.example/api/auth/login', { username: 'owner', password: 'wrong' }), env),
+    /账号或密码错误/,
+  );
+  assert.equal(db.rateLimits.length, 1);
+  const login = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
+    username: 'owner',
+    password: 'correct horse battery staple',
+  }), env);
+  assert.equal(login.session_valid, true);
+  assert.equal(db.rateLimits.length, 0, 'a completed password login must clear account failures');
+}
+
+{
+  const env = { DB: memoryDb(), ADMIN_PASSWORD: 'password' };
+  await assert.rejects(
+    startGitHubOAuth(new Request('https://status.example/api/auth/github/start'), env),
+    error => error?.status === 404,
+  );
+  assert.equal((await finishGitHubOAuth(new Request('https://status.example/api/auth/github/callback'), env)).status, 404);
+  await assert.rejects(
+    completeGitHubOAuth(jsonRequest('https://status.example/api/auth/github/complete', { ticket: 'unused' }), env),
+    error => error?.status === 404,
   );
 }
 

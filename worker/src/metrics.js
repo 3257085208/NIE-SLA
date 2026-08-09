@@ -1,4 +1,4 @@
-﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean } from './utils.js';
+﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean, publicCachePrivacyVersion, sanitizePublicAgentMetrics } from './utils.js';
 import { summarizeTraffic, summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffic.js';
 import { requireAgentForId, requireAnyAgent, safeJson, json } from './auth.js';
 import { readR2Json, writeR2Json } from './storage.js';
@@ -311,14 +311,14 @@ export async function getAgentMetrics(env, url, ctx = null) {
     : 'd1';
   const payload = {
     ok: true,
-    latest,
+    latest: sanitizePublicAgentMetrics(latest, env),
     history: responseFormat === 'columns' ? [] : history,
     history_raw_count: rawHistory.length,
     history_downsampled: rawHistory.length > history.length,
     source,
-    traffic: await readAgentTraffic(env, agentId),
     warnings,
   };
+  if (parseBoolean(env.PUBLIC_STATUS_AGENT_DETAILS ?? false, false)) payload.traffic = await readAgentTraffic(env, agentId);
   if (responseFormat === 'columns') payload.series = metricPointsToColumns(history, fields);
 
   return json(payload, 200, env, { 'cache-control': 'public, max-age=15' });
@@ -348,6 +348,7 @@ function normalizedMetricsCacheUrl(url, env) {
   normalized.searchParams.set('history', url.searchParams.get('history') === '0' ? '0' : '1');
   normalized.searchParams.set('format', String(url.searchParams.get('format') || '').toLowerCase() === 'columns' ? 'columns' : 'rows');
   normalized.searchParams.set('fields', (metricFieldsForRequest(url.searchParams.get('metric') || url.searchParams.get('fields') || '') || []).join(','));
+  normalized.searchParams.set('privacy', publicCachePrivacyVersion(env));
   return normalized;
 }
 
@@ -1352,4 +1353,3 @@ function mapPings(pings, fallbackTs) {
   }
   return [...byKey.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
 }
-

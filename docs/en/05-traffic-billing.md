@@ -1,26 +1,59 @@
-# 05 Traffic and Billing
+# Traffic and billing
 
-Traffic accounting is per VPS, not global. Each VPS can enable traffic, set a monthly quota, choose a billing mode, and configure an independent monthly reset day from 1 to 31. Counter deltas accumulate in the active period row, and the first report after a day boundary finalizes one daily ledger row.
+Traffic and billing settings belong to each VPS, not the whole deployment.
 
-## Billing Modes
+## Data source
 
-| Mode | Meaning |
+Agents report cumulative NIC received/transmitted bytes and instantaneous rates. The Worker computes deltas between consecutive cumulative values; the page and alerts merge the persisted D1 period row with the not-yet-persisted counter difference, so the display stays current at the 5-minute reporting cadence. Period rows persist at most every 30 minutes and immediately on day rollover, counter reset, or period change; the first persist after rollover seals the previous day into the daily ledger. Restarts, counter wraps, or NIC changes never subtract negative deltas:
+
+```text
+delta = max(0, current_cumulative - last_cumulative)
+```
+
+## Enabling
+
+1. Edit the target.
+2. Enable traffic accounting.
+3. Set the quota in GB; `0` means unlimited.
+4. Set the monthly reset day (1-31).
+5. Pick the accounting mode.
+6. Save and wait for the next Agent report.
+
+## Accounting modes
+
+| Mode | Formula |
 | --- | --- |
-| total | upload + download |
-| tx | upload/outbound only |
-| rx | download/inbound only |
-| max | larger of upload/download |
+| Both directions | `rx + tx` |
+| Download only | `rx` |
+| Upload only | `tx` |
+| Larger direction | `max(rx, tx)` |
 
-## Reset Day
+Choose per the provider's billing rules.
 
-The traffic reset day is independent of the VPS expiry date. Day 1 uses calendar months; day 24 creates periods from the 24th to the next 24th. Days 29–31 use the last valid day in shorter months. Extending or changing the expiry date does not change this period.
+## Period reset
 
-Changing the reset day switches the active period immediately. The Worker rebuilds the total from finalized daily rows in the new date range and includes the active, not-yet-finalized day. It preserves the raw counter baseline. The displayed total may increase or decrease because the new period includes a different set of dates.
+The reset day is independent of expiry. With `1`, periods follow calendar months; with `24`, the period runs from the 24th of the month to the 24th of the next. Days 29-31 fall back to the last day of shorter months. Expiry only drives expiry display and alerts.
 
-## Special Billing Cases
+Changing the reset day switches the current period immediately: the Worker recomputes sealed daily traffic inside the new period and adds today's unsealed traffic. Values may grow or shrink because the covered dates changed.
 
-Hourly cloud instances can leave expiry empty and use the hourly billing cycle. Lifetime or one-time VPS plans can leave expiry empty and use lifetime/onetime billing.
+## Billing fields
 
-## Accuracy
+`price`, `currency` (USD, CNY, ...), `billing_cycle` (monthly, yearly, one-time, hourly, ...), `expires_at`, `traffic_reset_day`, `location`, and `tags`. Exchange-rate display is an estimate, not a billing basis.
 
-Traffic is calculated from interface counter deltas. API responses and alerts combine the persisted period row with the latest unflushed counter delta, so visible totals still follow every five-minute Agent report. The D1 period row is persisted at most every 30 minutes and immediately at day, counter-reset, or billing-period boundaries. Reboots are handled conservatively, but a small amount of traffic between boot and the first report may not be counted. Each Agent normally adds only one daily row per day, and reset-day changes read roughly one period of daily rows.
+## Precision and limits
+
+- Accuracy depends on the reporting interval; packets are not written per event.
+- Multiple reports on the same day only update the current period row; one daily ledger row per agent per day is typical.
+- Changing the reset day reads roughly one month of daily records.
+- Traffic is not recorded while the Agent is offline; catch-up depends on counter continuity.
+- OS reinstalls or NIC resets break the cumulative baseline.
+- Container/veth virtual NICs can double-count; verify the Agent's interface selection.
+- The page total = persisted D1 value + latest counter difference; the instant rate shown in the frontend is not period traffic.
+
+## Alerts
+
+Supports remaining percent and remaining GB; percent only makes sense with a quota set. A single VPS can override the global traffic thresholds.
+
+## Troubleshooting
+
+Zero traffic: check Agent online state, traffic enabled, cumulative fields present in the latest report, period, and mode. Do not reset by deleting D1 rows unless you know the current period key and the consequences.

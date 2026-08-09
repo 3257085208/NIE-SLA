@@ -35,7 +35,7 @@ assert.ok(database.prepare(`PRAGMA table_info(agent_tasks)`).all().some(column =
 assert.ok(database.prepare(`PRAGMA table_info(targets)`).all().some(column => column.name === 'nq_unlock_data'));
 assert.ok(database.prepare(`PRAGMA table_info(targets)`).all().some(column => column.name === 'nq_unlock_updated_at'));
 assert.equal(
-  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v25-20260803-task-owner'`).get()?.value,
+  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v26-20260810-quota'`).get()?.value,
   '1',
 );
 const debugColumns = database.prepare(`PRAGMA table_info(debug_logs)`).all().map(column => column.name);

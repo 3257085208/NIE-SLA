@@ -16,6 +16,8 @@ import {
   displayGroupName as sharedDisplayGroupName,
 } from "./shared/grouping.js?v=20260804-v11111";
 import { readStorage, writeStorage } from "./shared/storage.js?v=20260804-v11111";
+import { escapeHtml } from "./shared/html.js";
+import { fmtBytes } from "./shared/format.js";
 
 const CONFIG = window.NSTATUS_CONFIG || {};
 const API = String(
@@ -27,18 +29,6 @@ function byId(id) {
   return document.getElementById(id);
 }
 
-const escapeHtml = (v) =>
-  String(v ?? "").replace(
-    /[&<>"']/g,
-    (c) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[c],
-  );
 const adminClient = createAdminClient({
   apiBase: API,
   onUnauthorized: (message) => showLogin(message),
@@ -590,18 +580,6 @@ function slaClassName(value) {
   if (value >= 95) return "sla-warn";
   return "sla-bad";
 }
-function formatBytes(b) {
-  b = Number(b || 0);
-  return b >= 1099511627776
-    ? (b / 1099511627776).toFixed(2) + " TB"
-    : b >= 1073741824
-      ? (b / 1073741824).toFixed(1) + " GB"
-      : b >= 1048576
-        ? (b / 1048576).toFixed(1) + " MB"
-        : b >= 1024
-          ? (b / 1024).toFixed(1) + " KB"
-          : b.toFixed(0) + " B";
-}
 function dateInput(sec) {
   const n = Number(sec || 0);
   if (!n) return "";
@@ -619,7 +597,7 @@ function trafficCell(t, s = {}) {
     resetDay = Number(tr.reset_day);
   const percentText = percent != null && Number.isFinite(percent) ? ` · ${percent}%` : "";
   const reset = Number.isInteger(resetDay) && resetDay >= 1 && resetDay <= 31 ? ` · ${resetDay}日重置` : "";
-  return `<span class="tag tag-on">已启用</span><br><small class="hint">${escapeHtml(formatBytes(total))}${quota ? " / " + escapeHtml(formatBytes(quota)) : ""}${escapeHtml(percentText)}${escapeHtml(reset)}</small>`;
+  return `<span class="tag tag-on">已启用</span><br><small class="hint">${escapeHtml(fmtBytes(total))}${quota ? " / " + escapeHtml(fmtBytes(quota)) : ""}${escapeHtml(percentText)}${escapeHtml(reset)}</small>`;
 }
 async function loadTargets() {
   loading(
@@ -944,7 +922,7 @@ function runAgentTask(target, action) {
   const label = action === "nodequality" ? "NodeQuality" : "IP 解锁";
   const detail = action === "nodequality"
     ? "Agent 将运行固定的 NodeQuality 官方脚本，通常需要数分钟，可能需要较高系统权限。"
-    : "Agent 将运行固定的 IP.Check.Place 脚本，只保存 IPv4 解锁结果，不保存纯净度。";
+    : "Agent 将运行固定的 IP.Check.Place 完整报告模式（-4 -n -p），保存有界完整报告与最终 IPv4 媒体解锁结果；隐私模式不向第三方上传报告。";
   byId("modal").className = "modal task-confirm-modal";
   byId("modal").innerHTML = `
     <h3>运行 ${escapeHtml(label)}</h3>

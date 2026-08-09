@@ -1,77 +1,11 @@
-# Agent Setup
+# Agent 指南
 
-## Rust VPS Metrics Agent
+Rust Agent 的完整说明见 `agent/README_zh.md`（中文）与 `agent/README.md`（英文）。系统级教程在 `docs/zh-CN/04-agent.md` 与 `docs/en/04-agent.md`。
 
-The NIE-SLA Agent is a small Rust binary that collects system metrics and sends them outbound to the Worker. It does not listen on any port.
+要点：
 
-### One-Line Install
-
-```bash
-curl -fsSL https://your-pages-domain.example/install.sh | sudo sh
-```
-
-The interactive installer asks for API URL, Agent token, target name, and ping target selection. Admin-generated commands can pass those values non-interactively.
-
-### Supported Binaries
-
-| File | Platform |
-|------|----------|
-| `nstatus-metrics-linux-amd64` | Linux x86_64 VPS |
-| `nstatus-metrics-linux-arm64` | Linux ARM64 / aarch64 |
-| `nstatus-metrics-linux-arm` | Linux ARMv7 hard-float |
-| `nstatus-metrics-linux-armv6` | Older ARM routers / embedded Linux |
-| `nstatus-metrics-linux-386` | 32-bit x86 Linux |
-
-OpenWrt/routers are supported when their CPU/ABI matches one of the Linux binaries. The installer needs `curl` or `wget`; the Agent runtime uses native Rust HTTPS and does not shell out to either tool.
-
-### What It Collects
-
-| Metric | Source | Sampling |
-|--------|--------|----------|
-| CPU | `sysinfo` / platform counters | Every 1s |
-| Memory + Swap | `sysinfo` | Every 1s |
-| System disk usage | Root filesystem / system volume from `sysinfo` | Every 1s |
-| Load | `sysinfo` load average | Every 1s |
-| Network rate | `/proc/net/dev` on Linux | Every 1s |
-| TCP/UDP connections | `/proc/net/tcp*`, `/proc/net/udp*` on Linux | Every 1s |
-| Disk IO | `/proc/diskstats` on Linux | Every 1s |
-| TCP Ping | Configured ping targets | Every 20s |
-| VPS info | CPU, OS, kernel, memory, disk, virtualization | Cached at start |
-
-The Agent samples locally every 1 second and uploads batches every 300 seconds by default. Uploads run in the background so slow network requests do not pause sampling.
-
-Disk capacity and usage describe the root filesystem on Unix and the system volume on Windows. Bind mounts and additional data volumes are not added together, so one underlying filesystem cannot be counted multiple times.
-
-### Management Commands
-
-```bash
-cftz install     # Fresh install
-cftz update      # Update local binary + cftz script
-cftz set         # Menu-based reconfiguration
-cftz log [N]     # View last N log lines
-cftz status      # Show service status
-cftz uninstall   # Complete removal
-```
-
-### Build from Source
-
-```bash
-cd agent
-cargo fmt -- --check
-cargo check
-./build-release.sh
-```
-
-`build-release.sh` uses Zig to build five statically linked Linux targets locally, then writes a matching `VERSION` and `SHA256SUMS`. GitHub Actions is not required to produce release artifacts.
-
-## External Probe Agent (Python)
-
-For running probes from a home network such as OrangePi:
-
-```bash
-scp agent_orangepi.py agent_orangepi.env.example user@orangepi:/opt/nstatus-agent/
-cp agent_orangepi.env.example agent_orangepi.env
-python3 /opt/nstatus-agent/agent_orangepi.py --once
-sudo cp nstatus-agent.service /etc/systemd/system/
-sudo systemctl enable --now nstatus-agent
-```
+- 每 1 秒采样，每 300 秒批量上报，离线样本进入本地有界队列。
+- 每 20 秒对后台配置的目标做 TCP Ping。
+- 安装命令由后台按节点生成，包含一次性安装票据与 scoped Token。
+- 自动更新由后台开关控制，更新前逐级校验哈希。
+- 固定 Beta 动作（NodeQuality、IPv4 解锁）由 root Manager 执行，遥测服务低权限运行。

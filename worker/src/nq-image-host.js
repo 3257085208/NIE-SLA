@@ -1,5 +1,5 @@
 import { ApiError } from './auth.js';
-import { assertPublicHttpUrl, nowSec } from './utils.js';
+import { assertPublicHttpUrl, nowSec, bytesToBase64, base64ToBytes } from './utils.js';
 import { sanitizeAnsiContent, stripAnsiSafe } from './nodequality.js';
 
 const SETTINGS_KEY = 'nq_image_host_settings';
@@ -692,17 +692,4 @@ async function importSecretKey(material, usages) {
   if (!material) throw new Error('缺少加密材料');
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
   return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM', length: 256 }, false, usages);
-}
-
-function base64ToBytes(value) {
-  const binary = atob(value);
-  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
-}
-
-function bytesToBase64(bytes) {
-  let binary = '';
-  for (let index = 0; index < bytes.length; index += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-  }
-  return btoa(binary);
 }
