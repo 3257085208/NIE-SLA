@@ -1,9 +1,9 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260804-v11111";
-import { createAdminClient } from "./admin/api.js?v=20260804-v11111";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260804-v11111";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260804-v11111";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260804-v11112";
+import { createAdminClient } from "./admin/api.js?v=20260804-v11112";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260804-v11112";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260804-v11112";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260804-v11111";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260804-v11112";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -14,8 +14,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260804-v11111";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260804-v11111";
+} from "./shared/grouping.js?v=20260804-v11112";
+import { readStorage, writeStorage } from "./shared/storage.js?v=20260804-v11112";
 import { escapeHtml } from "./shared/html.js";
 import { fmtBytes } from "./shared/format.js";
 

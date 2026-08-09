@@ -1675,7 +1675,7 @@ body.nq-modal-open { overflow: hidden; }
   .nq-route-note { font-size: 9px; }
 }
 
-@media (max-width: 560px) {
+@media (max-width: 760px) {
   .nq-ansi-panel,
   .nq-network-scroll { overflow-x: auto; }
   .nq-ansi-panel .nq-ansi {
