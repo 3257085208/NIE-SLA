@@ -58,6 +58,12 @@ export function renderNqAnsiHtml(content = '', wrapCharsArg = 0) {
   let lineCols = 0;
   let lineLeading = 0;
   let lineStarted = false;
+  let lineIndent = 0;
+  let firstSeen = false;
+  let colonSeen = false;
+  let colonCol = 0;
+  let colonGap = 0;
+  let afterColon = false;
   const style = () => [
     state.color && `color:${state.color}`,
     state.background && `background-color:${state.background}`,
@@ -71,14 +77,27 @@ export function renderNqAnsiHtml(content = '', wrapCharsArg = 0) {
     if (wrapChars > 0) {
       let out = '';
       for (const ch of text) {
-        if (ch === '\n') { lineCols = 0; lineLeading = 0; lineStarted = false; out += ch; continue; }
+        if (ch === '\n') {
+          lineCols = 0; lineLeading = 0; lineStarted = false; lineIndent = 0;
+          firstSeen = false; colonSeen = false; afterColon = false; colonGap = 0;
+          out += ch; continue;
+        }
         const cols = nqCharCols(ch);
-        if (!lineStarted && ch === ' ') lineLeading += 1;
-        else lineStarted = true;
+        if (!firstSeen) {
+          if (ch === ' ') { lineLeading += 1; lineCols += 1; out += ch; continue; }
+          firstSeen = true;
+          lineIndent = lineLeading;
+        }
+        if (afterColon) {
+          if (ch === ' ') colonGap += 1;
+          else { lineIndent = colonCol + colonGap; afterColon = false; }
+        } else if (!colonSeen && (ch === ':' || ch === '：')) {
+          colonSeen = true; colonCol = lineCols; afterColon = true; colonGap = 0;
+        }
         const nextCols = ch === '\t' ? (Math.floor(lineCols / 8) + 1) * 8 : lineCols + cols;
         if (nextCols > wrapChars) {
-          out += '\n' + ' '.repeat(lineLeading);
-          lineCols = lineLeading + cols;
+          out += '\n' + ' '.repeat(lineIndent);
+          lineCols = lineIndent + cols;
           lineStarted = true;
         } else {
           lineCols = nextCols;
