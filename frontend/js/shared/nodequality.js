@@ -38,8 +38,9 @@ export function nqTabTitle(tab = {}) {
   return ({ basic: '基本信息', ip: 'IP质量', network: '网络质量', route: '回程路由' })[id] || id || '报告';
 }
 
-export function renderNqAnsiHtml(content = '') {
+export function renderNqAnsiHtml(content = '', wrapCharsArg = 0) {
   const source = String(content || '');
+  const wrapChars = Number(wrapCharsArg) > 0 ? Number(wrapCharsArg) : 0;
   const sgr = /\u001b\[([0-9;]*)m/g;
   const colors = {
     30: '#111827', 31: '#ef4444', 32: '#65a30d', 33: '#eab308',
@@ -54,6 +55,9 @@ export function renderNqAnsiHtml(content = '') {
   let cursor = 0;
   let state = { color: '', background: '', bold: false, italic: false, underline: false };
   let html = '';
+  let lineChars = 0;
+  let lineLeading = 0;
+  let lineStarted = false;
   const style = () => [
     state.color && `color:${state.color}`,
     state.background && `background-color:${state.background}`,
@@ -63,7 +67,24 @@ export function renderNqAnsiHtml(content = '') {
   ].filter(Boolean).join(';');
   const append = (value) => {
     if (!value) return;
-    const safe = escapeHtml(value);
+    let text = value;
+    if (wrapChars > 0) {
+      let out = '';
+      for (const ch of text) {
+        if (ch === '\n') { lineChars = 0; lineLeading = 0; lineStarted = false; out += ch; continue; }
+        if (!lineStarted && ch === ' ') lineLeading += 1;
+        else lineStarted = true;
+        lineChars += 1;
+        if (lineChars > wrapChars) {
+          out += '\n' + ' '.repeat(lineLeading);
+          lineChars = lineLeading + 1;
+          lineStarted = true;
+        }
+        out += ch;
+      }
+      text = out;
+    }
+    const safe = escapeHtml(text);
     html += style() ? `<span style="${style()}">${safe}</span>` : safe;
   };
   let match;
@@ -150,13 +171,19 @@ function isNqMediaHeading(line) {
   return /^五、流媒体(?:服务|及AI服务)?解锁检测$/.test(stripNqAnsi(line).trim());
 }
 
-function renderNqMediaBlock(lines) {
+function mobileNqWrapChars() {
+  if (typeof window === 'undefined' || !window.innerWidth) return 0;
+  if (window.innerWidth > 760) return 0;
+  return Math.max(40, Math.floor((window.innerWidth - 24) / 6));
+}
+
+function renderNqMediaBlock(lines, wrapChars = 0) {
   const { names: providers, starts } = nqMediaHeader(lines);
   const statuses = nqMediaRow(lines, '状态：', starts);
   const regions = nqMediaRow(lines, '地区：', starts);
   const methods = nqMediaRow(lines, '方式：', starts);
   const columnCount = Math.max(providers.length, statuses.length, regions.length, methods.length);
-  if (!columnCount) return renderNqAnsiHtml(lines.join('\n'));
+  if (!columnCount) return renderNqAnsiHtml(lines.join('\n'), wrapChars);
   const cell = (value, className = '') => `<span class="nq-media-cell ${className}">${escapeHtml(value || '—')}</span>`;
   const row = (label, values, className = '') => [
     cell(label, 'nq-media-label'),
@@ -182,6 +209,7 @@ function renderNqMediaBlock(lines) {
 
 export function renderNqReportHtml(content = '') {
   const lines = String(content || '').split('\n');
+  const wrapChars = mobileNqWrapChars();
   let cursor = 0;
   let html = '';
   while (cursor < lines.length) {
@@ -189,11 +217,11 @@ export function renderNqReportHtml(content = '') {
     if (start < 0) break;
     const end = lines.findIndex((line, index) => index > start && stripNqAnsi(line).startsWith('六、邮局连通性及黑名单检测'));
     const mediaEnd = end < 0 ? lines.length : end;
-    html += renderNqAnsiHtml(lines.slice(cursor, start).join('\n'));
-    html += renderNqMediaBlock(lines.slice(start, mediaEnd));
+    html += renderNqAnsiHtml(lines.slice(cursor, start).join('\n'), wrapChars);
+    html += renderNqMediaBlock(lines.slice(start, mediaEnd), wrapChars);
     cursor = mediaEnd;
   }
-  return html + renderNqAnsiHtml(lines.slice(cursor).join('\n'));
+  return html + renderNqAnsiHtml(lines.slice(cursor).join('\n'), wrapChars);
 }
 
 export function renderUnlockServicesReportHtml(services = []) {
