@@ -421,6 +421,8 @@ assert.equal(unlockState({ status: '屏蔽' }), 'bad', 'blocked unlock status mu
 assert.match(renderNqAnsiHtml('\u001b[31mred\u001b[0m'), /color:#ef4444/);
 assert.equal(renderNqAnsiHtml('123456789012345678901234567890', 10), '1234567890\n1234567890\n1234567890', 'wrapped ANSI lines must break at the character budget');
 assert.match(renderNqAnsiHtml('  ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij', 20), /\n {2}/, 'wrapped continuation lines must keep the source leading indent');
+assert.equal(renderNqAnsiHtml('中文中文中文中文中文', 10), '中文中文中\n文中文中文', 'CJK characters must count as double-width columns when wrapping');
+assert.equal(renderNqAnsiHtml('AB中CD中EF中', 10), 'AB中CD中EF\n中', 'mixed ASCII and CJK lines must wrap at the display column budget');
 assert.equal(renderNqAnsiHtml('123456789012345678901234567890'), '123456789012345678901234567890', 'ANSI rendering must not wrap without a budget');
 assert.match(renderNqReportHtml('五、流媒体服务解锁检测\n服务商： TikTok Netflix\n状态： 解锁 失败\n地区： [TW] []\n方式： DNS\n六、邮局连通性及黑名单检测'), /nq-media-grid[\s\S]*nq-media-badge success[\s\S]*nq-media-badge danger/);
 const sparseUnlock = renderNqReportHtml('五、流媒体服务解锁检测\n服务商：  TikTok   Disney+  Netflix Youtube  AmazonPV  Reddit   Bilibili\n状态：     失败     失败     失败    失败     屏蔽     解锁     失败\n地区：                         []\n方式：                         DNS\n六、邮局连通性及黑名单检测');

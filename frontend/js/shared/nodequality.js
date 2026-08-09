@@ -55,7 +55,7 @@ export function renderNqAnsiHtml(content = '', wrapCharsArg = 0) {
   let cursor = 0;
   let state = { color: '', background: '', bold: false, italic: false, underline: false };
   let html = '';
-  let lineChars = 0;
+  let lineCols = 0;
   let lineLeading = 0;
   let lineStarted = false;
   const style = () => [
@@ -71,14 +71,17 @@ export function renderNqAnsiHtml(content = '', wrapCharsArg = 0) {
     if (wrapChars > 0) {
       let out = '';
       for (const ch of text) {
-        if (ch === '\n') { lineChars = 0; lineLeading = 0; lineStarted = false; out += ch; continue; }
+        if (ch === '\n') { lineCols = 0; lineLeading = 0; lineStarted = false; out += ch; continue; }
+        const cols = nqCharCols(ch);
         if (!lineStarted && ch === ' ') lineLeading += 1;
         else lineStarted = true;
-        lineChars += 1;
-        if (lineChars > wrapChars) {
+        const nextCols = ch === '\t' ? (Math.floor(lineCols / 8) + 1) * 8 : lineCols + cols;
+        if (nextCols > wrapChars) {
           out += '\n' + ' '.repeat(lineLeading);
-          lineChars = lineLeading + 1;
+          lineCols = lineLeading + cols;
           lineStarted = true;
+        } else {
+          lineCols = nextCols;
         }
         out += ch;
       }
@@ -171,10 +174,26 @@ function isNqMediaHeading(line) {
   return /^五、流媒体(?:服务|及AI服务)?解锁检测$/.test(stripNqAnsi(line).trim());
 }
 
+function nqCharCols(ch) {
+  if (ch === '\t') return 8;
+  const code = ch.codePointAt(0);
+  if (
+    code >= 0x1100 && (code <= 0x115f || code === 0x2329 || code === 0x232a ||
+    (0x2e80 <= code && code <= 0xa4cf && code !== 0x303f) ||
+    (0xac00 <= code && code <= 0xd7a3) ||
+    (0xf900 <= code && code <= 0xfaff) ||
+    (0xfe30 <= code && code <= 0xfe4f) ||
+    (0xff00 <= code && code <= 0xff60) ||
+    (0xffe0 <= code && code <= 0xffe6) ||
+    (0x1f300 <= code && code <= 0x1faff))
+  ) return 2;
+  return 1;
+}
+
 function mobileNqWrapChars() {
   if (typeof window === 'undefined' || !window.innerWidth) return 0;
   if (window.innerWidth > 760) return 0;
-  return Math.max(40, Math.floor((window.innerWidth - 24) / 6));
+  return Math.max(40, Math.floor((window.innerWidth - 24) / 6) - 2);
 }
 
 function renderNqMediaBlock(lines, wrapChars = 0) {
