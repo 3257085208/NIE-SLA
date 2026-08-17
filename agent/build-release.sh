@@ -20,11 +20,11 @@ targets=(
   i686-unknown-linux-musl
 )
 outputs=(
-  nstatus-metrics-linux-amd64
-  nstatus-metrics-linux-arm64
-  nstatus-metrics-linux-arm
-  nstatus-metrics-linux-armv6
-  nstatus-metrics-linux-386
+  nie-sla-agent-linux-amd64
+  nie-sla-agent-linux-arm64
+  nie-sla-agent-linux-arm
+  nie-sla-agent-linux-armv6
+  nie-sla-agent-linux-386
 )
 jq_assets=(
   jq-linux-amd64
@@ -59,9 +59,16 @@ for index in "${!targets[@]}"; do
   else
     cargo "+$TOOLCHAIN" zigbuild --locked --release --target "$target" --target-dir "$TARGET_DIR"
   fi
-  source="$TARGET_DIR/$target/release/nstatus-metrics"
+  source="$TARGET_DIR/$target/release/nie-sla-agent"
   [[ -s "$source" ]] || { echo "missing build output: $source" >&2; exit 1; }
   cp "$source" "$staging/$output"
+done
+
+legacy_outputs=()
+for arch in amd64 arm64 arm armv6 386; do
+  legacy="nstatus-metrics-linux-$arch"
+  cp "$staging/nie-sla-agent-linux-$arch" "$staging/$legacy"
+  legacy_outputs+=("$legacy")
 done
 
 for index in "${!jq_assets[@]}"; do
@@ -80,7 +87,7 @@ for index in "${!jq_assets[@]}"; do
   chmod 755 "$staging/$asset"
 done
 
-release_files=("${outputs[@]}" "${jq_assets[@]}")
+release_files=("${outputs[@]}" "${legacy_outputs[@]}" "${jq_assets[@]}")
 
 version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT/Cargo.toml" | head -n 1)"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "invalid Cargo package version: $version" >&2; exit 1; }

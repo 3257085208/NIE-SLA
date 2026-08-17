@@ -1,4 +1,4 @@
-﻿BIN := nstatus-metrics
+﻿BIN := nie-sla-agent
 BIN_DIR := bin
 CARGO ?= cargo
 RELEASE := --release
@@ -17,11 +17,11 @@ build-all: build-linux
 build-linux:
 	@set -e; mkdir -p $(BIN_DIR); \
 	for item in \
-	  "x86_64-unknown-linux-musl nstatus-metrics-linux-amd64" \
-	  "aarch64-unknown-linux-musl nstatus-metrics-linux-arm64" \
-	  "armv7-unknown-linux-musleabihf nstatus-metrics-linux-arm" \
-	  "arm-unknown-linux-musleabi nstatus-metrics-linux-armv6" \
-	  "i686-unknown-linux-musl nstatus-metrics-linux-386"; do \
+	  "x86_64-unknown-linux-musl nie-sla-agent-linux-amd64" \
+	  "aarch64-unknown-linux-musl nie-sla-agent-linux-arm64" \
+	  "armv7-unknown-linux-musleabihf nie-sla-agent-linux-arm" \
+	  "arm-unknown-linux-musleabi nie-sla-agent-linux-armv6" \
+	  "i686-unknown-linux-musl nie-sla-agent-linux-386"; do \
 	    set -- $$item; \
 	    $(CARGO) build $(RELEASE) --target $$1; \
 	    cp target/$$1/release/$(BIN) $(BIN_DIR)/$$2; \
@@ -29,4 +29,4 @@ build-linux:
 
 clean:
 	$(CARGO) clean
-	rm -f $(BIN_DIR)/nstatus-metrics-*
+	rm -f $(BIN_DIR)/nie-sla-agent-* $(BIN_DIR)/nstatus-metrics-*

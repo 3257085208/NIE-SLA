@@ -1,11 +1,42 @@
 import { connect } from 'cloudflare:sockets';
 import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatus, withTimeout, ALLOWED_REGIONS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC, BUCKET_SEC, isPrivateHost, buildMissedPoints, lastPersistedCheckAt } from './utils.js';
+import { internalRequestHeaders } from './auth.js';
 import { readR2State, mergeR2StateUpdates, setDailySummary, cachedDailySummaryBefore, dailySummaryFromPoints, statsFromDailySummaries } from './storage.js';
 import { applyProbeWriteBatch, readCheckBucketDaySummary } from './admin.js';
 
 const daySummaryCache = new Map();
 
+export function groupTargetsByRegion(targets = []) {
+  const groups = new Map();
+  for (const target of targets || []) {
+    const region = String(target?.probe_region || 'auto');
+    if (!groups.has(region)) groups.set(region, []);
+    groups.get(region).push(target);
+  }
+  return [...groups.entries()].map(([region, regionTargets]) => ({ region, targets: regionTargets }));
+}
 
+function regionBatchEnabled(env = {}) {
+  return parseBoolean(env.REGION_PROXY_BATCH_ENABLED ?? true, true);
+}
+
+function regionBatchObjectId(region, env = {}) {
+  const version = sanitizeId(env.REGION_PROXY_VERSION || 'v9');
+  return `probe-region-batch-${sanitizeId(region)}-${version}`;
+}
+
+function regionBatchTimeoutMs(env = {}, targets = []) {
+  const maxTimeout = (targets || []).reduce((max, target) => Math.max(max, clamp(Number(target?.timeout_ms || DEFAULT_TIMEOUT_MS), 500, 30000)), 0);
+  const extra = clamp(Number(env.REGION_PROXY_EXTRA_TIMEOUT_MS || 1500), 250, 10000);
+  return clamp(maxTimeout + extra + 3000, 5000, 65000);
+}
+
+function previousStateMapObject(previousById) {
+  if (!previousById) return {};
+  if (previousById instanceof Map) return Object.fromEntries(previousById);
+  if (typeof previousById === 'object' && !Array.isArray(previousById)) return previousById;
+  return {};
+}
 
 export async function probeTarget(target, cf = {}) {
   if (Number(target?.no_public_ip || 0) === 1) {
@@ -55,6 +86,42 @@ async function probeTcp(target, cf) {
 
 
 
+export async function probeAndSaveTargetsViaRegionBatch(env, targets, previousById = null, checkedAt = nowSec()) {
+  const region = String(targets?.[0]?.probe_region || 'auto');
+  const id = env.REGION_PROXY.idFromName(regionBatchObjectId(region, env));
+  const stub = env.REGION_PROXY.get(id, { locationHint: region });
+  const response = await withTimeout(
+    stub.fetch('https://nie-sla.internal/batch-probe-and-save', {
+      method: 'POST',
+      headers: internalRequestHeaders(env),
+      body: JSON.stringify({ targets, previous: previousStateMapObject(previousById), checked_at: checkedAt }),
+    }),
+    regionBatchTimeoutMs(env, targets),
+  );
+  if (!response.ok) throw new Error(`Region batch proxy error: HTTP ${response.status}`);
+  const body = await response.json();
+  if (!body?.ok || !Array.isArray(body?.results)) throw new Error('Region batch proxy returned an invalid response');
+  return body.results;
+}
+
+export async function probeCurrentStatusTargetsViaRegionBatch(env, targets) {
+  const region = String(targets?.[0]?.probe_region || 'auto');
+  const id = env.REGION_PROXY.idFromName(regionBatchObjectId(region, env));
+  const stub = env.REGION_PROXY.get(id, { locationHint: region });
+  const response = await withTimeout(
+    stub.fetch('https://nie-sla.internal/batch-current-status', {
+      method: 'POST',
+      headers: internalRequestHeaders(env),
+      body: JSON.stringify({ targets }),
+    }),
+    regionBatchTimeoutMs(env, targets),
+  );
+  if (!response.ok) throw new Error(`Region batch proxy error: HTTP ${response.status}`);
+  const body = await response.json();
+  if (!body?.ok || !Array.isArray(body?.results)) throw new Error('Region batch proxy returned an invalid response');
+  return body.results;
+}
+
 export async function probeAndSaveTargetViaRegion(env, target, checkedAt, previousState = null) {
   if (Number(target?.no_public_ip || 0) === 1) {
     const result = await probeTarget(target);
@@ -69,7 +136,7 @@ export async function probeAndSaveTargetViaRegion(env, target, checkedAt, previo
     const stub = env.REGION_PROXY.get(id, { locationHint: region });
     const timeoutMs = clamp(Number(target.timeout_ms || DEFAULT_TIMEOUT_MS), 500, 30000) + clamp(Number(env.REGION_PROXY_EXTRA_TIMEOUT_MS || 1500), 250, 10000);
     const res = await withTimeout(
-      stub.fetch('https://nstatus.internal/probe-and-save', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target, checked_at: checkedAt, previous: previousState }) }),
+      stub.fetch('https://nie-sla.internal/probe-and-save', { method: 'POST', headers: internalRequestHeaders(env), body: JSON.stringify({ target, checked_at: checkedAt, previous: previousState }) }),
       timeoutMs,
     );
     if (!res.ok) { throw new Error(`Region proxy error: HTTP ${res.status}`); }
@@ -200,7 +267,8 @@ export async function runDueTargets(env, options = {}) {
       WHERE t.enabled = 1
         AND COALESCE(t.no_public_ip, 0) = 0
         AND (COALESCE(s.checked_at, t.last_checked_at) IS NULL
-          OR COALESCE(s.checked_at, t.last_checked_at) <= ? - CASE WHEN t.interval_sec < ? THEN ? ELSE t.interval_sec END)
+          OR CAST((COALESCE(s.checked_at, t.last_checked_at)) / 300 AS INTEGER) * 300
+            <= CAST((? - CASE WHEN t.interval_sec < ? THEN ? ELSE t.interval_sec END) / 300 AS INTEGER) * 300)
       ORDER BY t.group_name, t.name`
   ).bind(now, MIN_INTERVAL_SEC, MIN_INTERVAL_SEC).all();
   const allTargets = rows.results || [];
@@ -213,7 +281,7 @@ export async function runDueTargets(env, options = {}) {
     const previousById = buildHistoryPreviousStateMap(allTargets, state, d1Latest);
     const targets = allTargets
       .map(target => ({ target, lastCheckedAt: lastPersistedCheckAt(target, d1Latest.get(String(target.id))) }))
-      .filter(item => item.lastCheckedAt <= now - Math.max(Number(item.target.interval_sec || DEFAULT_INTERVAL_SEC), MIN_INTERVAL_SEC))
+      .filter(item => item.lastCheckedAt <= now - historyDueIntervalSec(item.target, env))
       .sort((a, b) => a.lastCheckedAt - b.lastCheckedAt).slice(0, maxTargets).map(item => item.target);
     if (!targets.length) return { ok: true, count: 0, results: [] };
     return { ok: true, count: targets.length, results: await runTargetBatch(env, targets, previousById) };
@@ -222,12 +290,20 @@ export async function runDueTargets(env, options = {}) {
   }
 }
 
+export function historyDueIntervalSec(target, env = {}) {
+  const base = clamp(Number(target?.interval_sec || DEFAULT_INTERVAL_SEC), MIN_INTERVAL_SEC, 86400);
+  if (String(target?.probe_region || 'auto') !== 'auto') {
+    return Math.max(base, clamp(Number(env.HISTORY_PROBE_REGION_INTERVAL_SEC || 300), 300, 3600));
+  }
+  return base;
+}
+
 export function fastStatusDueInterval(target, previous, now, baseIntervalSec, env = {}) {
   const base = clamp(Number(baseIntervalSec || 60), 60, 300);
   let dueSec = base;
   const region = String(target?.probe_region || 'auto');
   if (region !== 'auto') {
-    dueSec = Math.max(dueSec, clamp(Number(env.FAST_STATUS_REGION_INTERVAL_SEC || 180), 120, 600));
+    dueSec = Math.max(dueSec, clamp(Number(env.FAST_STATUS_REGION_INTERVAL_SEC || 600), 300, 1800));
   }
   if (previous && Number(previous.ok) === 0) {
     const outageAt = Number(previous.current_outage_started_at || 0);
@@ -264,10 +340,29 @@ export async function runFastStatusTargets(env, options = {}) {
   try {
     const concurrency = clamp(Number(env.CONCURRENCY || 40), 1, 40);
     const results = [];
-    for (let i = 0; i < targets.length; i += concurrency) {
-      const chunk = targets.slice(i, i + concurrency);
-      const settled = await Promise.allSettled(chunk.map((target) => runFastStatusTarget(env, target, previousById.get(target.id) || null)));
-      for (const item of settled) results.push(item.status === 'fulfilled' ? item.value : { ok: false, error: String(item.reason?.message || item.reason) });
+    const checkedAt = nowSec();
+    for (const group of groupTargetsByRegion(targets)) {
+      if (regionBatchEnabled(env) && group.region !== 'auto' && env.REGION_PROXY && ALLOWED_REGIONS.has(group.region)) {
+        try {
+          const rawResults = await probeCurrentStatusTargetsViaRegionBatch(env, group.targets);
+          for (const raw of rawResults) {
+            const target = group.targets.find(item => String(item.id) === String(raw?.target_id));
+            if (!target) {
+              results.push({ ok: false, error: 'region batch result missing target' });
+              continue;
+            }
+            results.push(buildFastStatusResult(target, previousById.get(target.id) || null, raw, checkedAt));
+          }
+          continue;
+        } catch (error) {
+          console.error('region batch fast-status failed, falling back per target:', String(error?.message || error));
+        }
+      }
+      for (let i = 0; i < group.targets.length; i += concurrency) {
+        const chunk = group.targets.slice(i, i + concurrency);
+        const settled = await Promise.allSettled(chunk.map((target) => runFastStatusTarget(env, target, previousById.get(target.id) || null)));
+        for (const item of settled) results.push(item.status === 'fulfilled' ? item.value : { ok: false, error: String(item.reason?.message || item.reason) });
+      }
     }
     await mergeR2StateUpdates(env, results.map((item) => item.state_update).filter(Boolean));
     return {
@@ -284,6 +379,10 @@ export async function runFastStatusTargets(env, options = {}) {
 async function runFastStatusTarget(env, target, previous) {
   const checkedAt = nowSec();
   const result = await probeTargetForCurrentStatus(env, target);
+  return buildFastStatusResult(target, previous, result, checkedAt);
+}
+
+function buildFastStatusResult(target, previous, result, checkedAt) {
   const ok = result.ok ? 1 : 0;
   const wasDown = previous && Number(previous.ok) === 0;
   const isDown = ok === 0;
@@ -314,7 +413,7 @@ async function probeTargetForCurrentStatus(env, target) {
     const stub = env.REGION_PROXY.get(id, { locationHint: region });
     const timeoutMs = clamp(Number(target.timeout_ms || DEFAULT_TIMEOUT_MS), 500, 30000) + clamp(Number(env.REGION_PROXY_EXTRA_TIMEOUT_MS || 1500), 250, 10000);
     const response = await withTimeout(
-      stub.fetch('https://nstatus.internal/probe-current-status', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ target }) }),
+      stub.fetch('https://nie-sla.internal/probe-current-status', { method: 'POST', headers: internalRequestHeaders(env), body: JSON.stringify({ target }) }),
       timeoutMs,
     );
     if (!response.ok) throw new Error(`Region proxy error: HTTP ${response.status}`);
@@ -350,10 +449,21 @@ export async function runTargetBatch(env, targets, previousById = null) {
     previousById = buildPreviousStateMap(targets, state, await readLatestStatusMap(env, targets.map(target => target.id)));
   }
   const out = [];
-  for (let i = 0; i < targets.length; i += concurrency) {
-    const chunk = targets.slice(i, i + concurrency);
-    const settled = await Promise.allSettled(chunk.map(target => runSingleTarget(env, target, previousById.get(target.id) || null)));
-    for (const item of settled) out.push(item.status === 'fulfilled' ? item.value : { ok: false, error: String(item.reason?.message || item.reason) });
+  const checkedAt = nowSec();
+  for (const group of groupTargetsByRegion(targets)) {
+    if (regionBatchEnabled(env) && group.region !== 'auto' && env.REGION_PROXY && ALLOWED_REGIONS.has(group.region)) {
+      try {
+        out.push(...await probeAndSaveTargetsViaRegionBatch(env, group.targets, previousById, checkedAt));
+        continue;
+      } catch (error) {
+        console.error('region batch probe failed, falling back per target:', String(error?.message || error));
+      }
+    }
+    for (let i = 0; i < group.targets.length; i += concurrency) {
+      const chunk = group.targets.slice(i, i + concurrency);
+      const settled = await Promise.allSettled(chunk.map(target => runSingleTarget(env, target, previousById.get(target.id) || null)));
+      for (const item of settled) out.push(item.status === 'fulfilled' ? item.value : { ok: false, error: String(item.reason?.message || item.reason) });
+    }
   }
   let stateSyncWarning = '';
   try {

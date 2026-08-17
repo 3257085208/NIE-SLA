@@ -11,10 +11,10 @@ Agent 是 VPS 侧的 Rust 采集器，只主动访问 Worker，不监听端口�
 安装后：
 
 ```text
-/opt/nstatus-metrics/nstatus-metrics
-/opt/nstatus-metrics/nstatus-metrics.env
+/opt/nie-sla-agent/nie-sla-agent
+/opt/nie-sla-agent/nie-sla-agent.env
 /usr/local/bin/cftz
-systemd 或 OpenRC 服务 nstatus-metrics
+systemd 或 OpenRC 服务 nie-sla-agent / nie-sla-agent-manager
 ```
 
 ## 数据流
@@ -39,14 +39,14 @@ Agent 离线：检查服务状态、Token、API 域名与 HTTPS 连通性。
 ```bash
 sudo cftz status
 sudo cftz log 100
-sudo systemctl status nstatus-metrics --no-pager
+sudo systemctl status nie-sla-agent --no-pager
 ```
 
 Beta 按钮长期排队：Agent 版本过旧、root 通道未就绪、或 API 域名不可达。重新执行该节点最新部署命令后再看：
 
 ```bash
 sudo cftz status
-sudo journalctl -u nstatus-metrics -n 100 --no-pager
+sudo journalctl -u nie-sla-agent -n 100 --no-pager
 ```
 
 NQ 失败常见原因：系统权限、缺少依赖、上游脚本不可用。IP 解锁失败常见原因：上游返回格式变化、VPS 没有可用 IPv4。

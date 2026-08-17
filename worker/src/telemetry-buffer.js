@@ -1,4 +1,5 @@
 import { nowSec, sanitizeAgentId } from './utils.js';
+import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
 import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
 
 const HOUR_SEC = 3600;
@@ -16,6 +17,7 @@ export class TelemetryBuffer {
 
   async fetch(request) {
     const url = new URL(request.url);
+    if (!internalRequestAuthorized(request, this.env)) return new Response(JSON.stringify({ ok: false, error: '未授权' }), { status: 401, headers: { 'content-type': 'application/json' } });
     if (request.method === 'POST' && url.pathname === '/append') {
       const body = await request.json();
       return Response.json(await this.append(body));
@@ -172,7 +174,7 @@ export async function appendBufferedAgentTelemetry(env, agentId, points, pings) 
   const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(`agent:${id}`));
   const response = await stub.fetch('https://nie-sla.internal/append', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: internalRequestHeaders(env),
     body: JSON.stringify({ agent_id: id, points, pings }),
   });
   if (!response.ok) throw new Error(`遥测缓冲写入失败：HTTP ${response.status}`);
@@ -186,7 +188,7 @@ export async function readBufferedAgentTelemetry(env, agentId, since, until) {
   const url = new URL('https://nie-sla.internal/read');
   url.searchParams.set('since', String(Math.floor(Number(since) || 0)));
   url.searchParams.set('until', String(Math.floor(Number(until) || nowSec())));
-  const response = await stub.fetch(url.toString());
+  const response = await stub.fetch(url.toString(), { headers: internalRequestHeaders(env) });
   if (!response.ok) return { points: [], pings: [] };
   const body = await response.json().catch(() => ({}));
   return {
@@ -200,7 +202,7 @@ export async function deleteBufferedAgentTelemetry(env, agentId) {
   const id = sanitizeAgentId(agentId);
   if (!id) return { ok: true, skipped: true };
   const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(`agent:${id}`));
-  const response = await stub.fetch('https://nie-sla.internal/delete', { method: 'POST' });
+  const response = await stub.fetch('https://nie-sla.internal/delete', { method: 'POST', headers: internalRequestHeaders(env) });
   if (!response.ok) throw new Error(`遥测缓冲删除失败：HTTP ${response.status}`);
   return response.json();
 }
@@ -258,16 +260,16 @@ async function flushHour(env, buffered) {
   }, buffered, agentId, hour, HOUR_SEC);
   const dayHour = utcDayHour(hour);
   await env.ARCHIVE.put(key, JSON.stringify({
-    schema: 'nstatus-agent-telemetry-hour-v1',
+    schema: 'nie-sla-agent-telemetry-hour-v1',
     agent_id: agentId,
     day: dayHour.day,
     hour: dayHour.hour,
     updated_at: new Date().toISOString(),
-    metrics: { schema: 'nstatus-agent-metrics-hour-v2', series: metricPointsToColumns(merged.points) },
-    pings: { schema: 'nstatus-agent-pings-hour-v2', series: pingPointsToSeries(merged.pings) },
+    metrics: { schema: 'nie-sla-agent-metrics-hour-v2', series: metricPointsToColumns(merged.points) },
+    pings: { schema: 'nie-sla-agent-pings-hour-v2', series: pingPointsToSeries(merged.pings) },
   }), {
     httpMetadata: { contentType: 'application/json; charset=utf-8' },
-    customMetadata: { schema: 'nstatus-agent-telemetry-hour-v1', agent_id: agentId, day: dayHour.day, hour: dayHour.hour },
+    customMetadata: { schema: 'nie-sla-agent-telemetry-hour-v1', agent_id: agentId, day: dayHour.day, hour: dayHour.hour },
   });
 }
 

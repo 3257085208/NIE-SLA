@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolvePublicMetricsQuery, defaultMetricsMaxPointsForHours } from '../src/metrics.js';
 import { isPrivateHost, assertPublicHttpUrl, buildOpenMissedPoints, fetchPublicHttpsWithValidatedRedirects } from '../src/utils.js';
-import { resolveCorsOrigin } from '../src/auth.js';
+import { resolveCorsOrigin, internalRequestAuthorized, internalRequestHeaders } from '../src/auth.js';
 import { getDeveloperApiManifest, resolveDeveloperApiOrigin, withDeveloperApiHeaders } from '../src/developer-api.js';
 
 const routesSource = await readFile(new URL('../src/routes.js', import.meta.url), 'utf8');
@@ -13,6 +13,7 @@ const indexSource = await readFile(new URL('../src/index.js', import.meta.url), 
 const metricsSource = await readFile(new URL('../src/metrics.js', import.meta.url), 'utf8');
 const wranglerSource = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
 const adminAuthSource = await readFile(new URL('../src/admin-auth.js', import.meta.url), 'utf8');
+const telemetrySource = await readFile(new URL('../src/telemetry-buffer.js', import.meta.url), 'utf8');
 assert.match(
   routesSource,
   /\/api\/settings\/geoip[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}'cache-control': 'no-store'/,
@@ -44,6 +45,16 @@ assert.match(indexSource, /signInternalSchedule[\s\S]{0,500}HMAC[\s\S]{0,100}SHA
 assert.match(indexSource, /historyProbeCount > 0[\s\S]{0,180}history_probe_completed/, 'a full history probe must suppress the duplicate fast probe');
 assert.doesNotMatch(probeSource, /FROM latest_status[\s\S]{0,240}\.all\(\)\.catch\(\(\) => \(\{ results: \[\] \}\)\)/, 'latest probe state read failures must not be treated as an empty database');
 assert.match(probeSource, /stateSyncWarning = 'r2_state_sync_failed'/, 'D1 probe success with an R2 sync failure must return a warning');
+assert.match(probeSource, /groupTargetsByRegion/, 'region probes must be grouped by region before dispatch');
+assert.match(probeSource, /batch-probe-and-save/, 'history probes must support one Durable Object per region');
+assert.match(probeSource, /batch-current-status/, 'fast status must support one Durable Object per region');
+assert.match(indexSource, /batchProbeAndSave/, 'ProbeRegion must handle history batches');
+assert.match(indexSource, /batchProbeCurrentStatus/, 'ProbeRegion must handle fast status batches');
+assert.match(indexSource, /if \(!internalRequestAuthorized\(request, this\.env\)\)/, 'ProbeRegion must require the internal request secret');
+assert.match(probeSource, /headers: internalRequestHeaders\(env\)/, 'region probe calls must carry the internal request secret');
+assert.match(routesSource, /\/debug-colo[\s\S]{0,400}internalRequestHeaders\(env\)/, 'debug-colo must pass the internal request secret to the Durable Object');
+assert.match(telemetrySource, /internalRequestAuthorized\(request, this\.env\)/, 'TelemetryBuffer must require the internal request secret');
+assert.match(wranglerSource, /REGION_PROXY_BATCH_ENABLED = "true"/, 'production config must enable region batching');
 assert.match(indexSource, /out\.probe\.results\.map\(item => item\?\.warning\)/, 'scheduled probe diagnostics must retain state sync warnings');
 assert.match(statusSource, /optionalQuery[\s\S]{0,220}warnings\.push\(warning\)/, 'partial status query failures must be visible in the status warnings');
 assert.match(statusSource, /Live status overlay unavailable/, 'snapshot overlay failures must remain visible to status consumers');
@@ -153,6 +164,18 @@ console.log('cors tests passed');
   assert.ok(manifest.endpoints.every(endpoint => endpoint.method === 'GET' && endpoint.url.startsWith('https://api.example.test/api/v1/')));
   const response = withDeveloperApiHeaders(new Response('{}'), request, env);
   assert.equal(response.headers.get('access-control-allow-origin'), 'https://theme.example.test');
+  assert.equal(response.headers.get('x-nie-sla-api-version'), 'v1');
   assert.equal(response.headers.get('x-nstatus-api-version'), 'v1');
 }
 console.log('developer API tests passed');
+
+{
+  const secret = 'internal-test-secret';
+  const env = { INTERNAL_CRON_SECRET: secret };
+  assert.equal(internalRequestAuthorized(new Request('https://nie-sla.internal/', { headers: { 'x-nie-sla-internal-secret': secret } }), env), true);
+  assert.equal(internalRequestAuthorized(new Request('https://nstatus.internal/', { headers: { 'x-nstatus-internal-secret': secret } }), env), true);
+  assert.equal(internalRequestAuthorized(new Request('https://nstatus.internal/', { headers: { 'x-nstatus-internal-secret': 'wrong-secret' } }), env), false);
+  assert.equal(internalRequestAuthorized(new Request('https://nstatus.internal/'), {}), true);
+  assert.deepEqual(internalRequestHeaders(env), { 'content-type': 'application/json', 'x-nie-sla-internal-secret': secret, 'x-nstatus-internal-secret': secret });
+}
+console.log('internal DO auth tests passed');

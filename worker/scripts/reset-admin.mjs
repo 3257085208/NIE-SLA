@@ -10,15 +10,16 @@ import { createAdminCredentialRecord } from '../src/admin-auth.js';
 const args = new Set(process.argv.slice(2));
 const local = args.has('--local');
 const disableTotp = args.has('--disable-totp');
-const database = argumentValue('--database') || 'nstatus-db';
+const database = argumentValue('--database') || 'nie-sla-db';
 const username = String(
   argumentValue('--username')
+  || process.env.NIE_SLA_ADMIN_USERNAME
   || process.env.NSTATUS_ADMIN_USERNAME
   || await ask('新管理员账号 [admin]: ')
   || 'admin',
 ).trim();
-const password = process.env.NSTATUS_ADMIN_PASSWORD || await askHidden('新管理员密码: ');
-const confirmation = process.env.NSTATUS_ADMIN_PASSWORD || await askHidden('再次输入新密码: ');
+const password = process.env.NIE_SLA_ADMIN_PASSWORD || process.env.NSTATUS_ADMIN_PASSWORD || await askHidden('新管理员密码: ');
+const confirmation = process.env.NIE_SLA_ADMIN_PASSWORD || process.env.NSTATUS_ADMIN_PASSWORD || await askHidden('再次输入新密码: ');
 
 if (password !== confirmation) fail('两次输入的密码不一致');
 
@@ -45,7 +46,7 @@ const sql = [
   `DELETE FROM app_meta WHERE key IN (${quotedKeys});`,
 ].join('\n');
 
-const directory = await mkdtemp(path.join(tmpdir(), 'nstatus-admin-reset-'));
+const directory = await mkdtemp(path.join(tmpdir(), 'nie-sla-admin-reset-'));
 const sqlFile = path.join(directory, 'reset.sql');
 const workerDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 try {
@@ -76,7 +77,7 @@ async function ask(prompt) {
 }
 
 async function askHidden(prompt) {
-  if (!process.stdin.isTTY || !process.stdin.setRawMode) fail('非交互环境请设置 NSTATUS_ADMIN_PASSWORD');
+  if (!process.stdin.isTTY || !process.stdin.setRawMode) fail('非交互环境请设置 NIE_SLA_ADMIN_PASSWORD');
   process.stdout.write(prompt);
   process.stdin.setRawMode(true);
   process.stdin.resume();

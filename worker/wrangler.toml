@@ -1,4 +1,4 @@
-name = "nstatus"
+name = "nie-sla"
 main = "src/index.js"
 compatibility_date = "2026-07-24"
 compatibility_flags = ["global_fetch_strictly_public"]
@@ -13,7 +13,7 @@ not_found_handling = "404-page"
 crons = ["* * * * *"]
 
 [vars]
-PUBLIC_SITE_NAME = "聶.NET"
+PUBLIC_SITE_NAME = "NIE-SLA"
 ALLOWED_ORIGIN = "https://status.example.com"
 PUBLIC_SITE_ORIGIN = "https://status.example.com"
 PUBLIC_WORKER_URL = "https://api.example.com"
@@ -52,20 +52,22 @@ MISSED_WRITE_BACKFILL_MAX_BUCKETS = "6"
 ALERT_MAX_MESSAGES_PER_RUN = "30"
 FAST_STATUS_ENABLED = "true"
 FAST_STATUS_INTERVAL_SEC = "120"
-FAST_STATUS_REGION_INTERVAL_SEC = "180"
+FAST_STATUS_REGION_INTERVAL_SEC = "600"
 FAST_STATUS_DOWN_INTERVAL_SEC = "600"
 FAST_STATUS_DOWN_AFTER_SEC = "1500"
+HISTORY_PROBE_REGION_INTERVAL_SEC = "300"
+REGION_PROXY_BATCH_ENABLED = "true"
 FAST_STATUS_MAX_TARGETS = "50"
 AGENT_AUTO_UPDATE_DEFAULT = "true"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "nstatus-db"
+database_name = "nie-sla-db"
 database_id = "00000000-0000-0000-0000-000000000000"
 
 [[r2_buckets]]
 binding = "ARCHIVE"
-bucket_name = "nstatus-archive"
+bucket_name = "nie-sla-archive"
 
 [[durable_objects.bindings]]
 name = "REGION_PROXY"

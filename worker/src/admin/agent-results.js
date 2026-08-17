@@ -1,7 +1,7 @@
 
 import { nowSec, clamp, sanitizeAgentId, dayFromSec, parseExpectedStatus, BUCKET_SEC, publicCheckPoint } from '../utils.js';
 import { safeJson } from '../auth.js';
-import { readR2State, mergeR2StateUpdates, appendAgentR2HistoryPoints, setDailySummary, dailySummaryFromPoints, statsFromDailySummaries } from '../storage.js';
+import { readR2State, mergeR2StateUpdates, appendAgentR2HistoryPoints, acquireAgentHistoryLock, releaseAgentHistoryLock, setDailySummary, dailySummaryFromPoints, statsFromDailySummaries } from '../storage.js';
 import { readCheckBuckets, applyProbeWriteBatch } from './check-buckets.js';
 
 async function getTargetsById(env, ids) {
@@ -156,6 +156,9 @@ export async function submitAgentResults(request, env, parsedBody = null) {
   }
   let accepted = 0;
   const writes = [];
+  const lock = await acquireAgentHistoryLock(env, agentId);
+  if (env.DB && !lock) return { ok: false, error: 'Agent 历史数据正在写入，请重试本次上报', retryable: true };
+  try {
   const r2State = await readR2State(env);
   const mergedBuckets = [];
   const bucketWritesByTarget = new Map();
@@ -185,4 +188,7 @@ export async function submitAgentResults(request, env, parsedBody = null) {
     }
   }
   return { ok: true, agent_id: agentId, accepted, rejected, writes, state_updates: stateUpdates.length };
+  } finally {
+    await releaseAgentHistoryLock(env, lock);
+  }
 }

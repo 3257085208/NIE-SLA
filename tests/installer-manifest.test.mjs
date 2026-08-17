@@ -32,7 +32,7 @@ for (const area of ['agent', 'frontend']) {
 }
 
 const commandSource = await readFile(path.join(root, 'worker', 'src', 'admin', 'install-command.js'), 'utf8');
-assert.ok(commandSource.includes("env.NSTATUS_SHA256SUMS_SHA256 || ''"), 'public install command requires deployment-time release metadata');
-assert.doesNotMatch(commandSource, /env\.NSTATUS_SHA256SUMS_SHA256\s*\|\|\s*'[a-f0-9]{64}'/i, 'public source must not pin a private manifest');
+assert.ok(commandSource.includes("env.NIE_SLA_SHA256SUMS_SHA256 || env.NSTATUS_SHA256SUMS_SHA256 || ''"), 'public install command requires deployment-time release metadata');
+assert.doesNotMatch(commandSource, /env\.(?:NIE_SLA|NSTATUS)_SHA256SUMS_SHA256[^\n]*\|\|\s*'[a-f0-9]{64}'/i, 'public source must not pin a private manifest');
 
 console.log('installer manifest tests passed');

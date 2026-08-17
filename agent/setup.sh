@@ -4,22 +4,28 @@ set -euo pipefail
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 CFTZ_URL_BASE="${CFTZ_URL_BASE:-$DOWNLOAD_BASE}"
 DEFAULT_SHA256SUMS_SHA256=""
-DEFAULT_CFTZ_SHA256="3632df3856e33e22d02a07a0e4043e9583dd0d08c975f2aa41ff3c4f8bd8fe26"
+DEFAULT_CFTZ_SHA256="40975e710f0c6f9a3115630d36d6431bb2a71ed615c1fc5c19fd7c8af9fb5e16"
 DEFAULT_EXPECTED_VERSION=""
-BIN_NAME="nstatus-metrics"
-SERVICE_NAME="nstatus-metrics"
-TASK_SERVICE_NAME="${SERVICE_NAME}-tasks"
+BIN_NAME="nie-sla-agent"
+SERVICE_NAME="nie-sla-agent"
+TASK_SERVICE_NAME="nie-sla-agent-manager"
 INSTALL_DIR="/usr/local/bin"
-WORK_DIR="/opt/nstatus-metrics"
-STATE_DIR="/var/lib/nstatus-metrics"
-ENV_FILE="$WORK_DIR/nstatus-metrics.env"
+WORK_DIR="/opt/nie-sla-agent"
+STATE_DIR="/var/lib/nie-sla-agent"
+MANAGER_STATE_DIR="/var/lib/nie-sla-agent-manager"
+ENV_FILE="$WORK_DIR/nie-sla-agent.env"
 CFTZ_BIN="$INSTALL_DIR/cftz"
-AGENT_USER="nstatus"
+AGENT_USER="nie-sla"
+LEGACY_SERVICE_NAME="nstatus-metrics"
+LEGACY_TASK_SERVICE_NAME="nstatus-metrics-tasks"
+LEGACY_WORK_DIR="/opt/nstatus-metrics"
+LEGACY_STATE_DIR="/var/lib/nstatus-metrics"
+LEGACY_MANAGER_STATE_DIR="/var/lib/nstatus-manager"
 LEGACY_TASK_USER="nstatus-task"
-CACHE_KEY="$(printf '%s' "${NSTATUS_SHA256SUMS_SHA256:-$(date +%s)}" | tr -cd 'A-Za-z0-9._-')"
+CACHE_KEY="$(printf '%s' "${NIE_SLA_SHA256SUMS_SHA256:-${NSTATUS_SHA256SUMS_SHA256:-$(date +%s)}}" | tr -cd 'A-Za-z0-9._-')"
 [[ -n "$CACHE_KEY" ]] || CACHE_KEY="$(date +%s)"
 INSTALL_STARTED_AT="$(date +%s)"
-HEALTH_CHECK_TIMEOUT_SEC="${NSTATUS_INSTALL_HEALTH_TIMEOUT_SEC:-75}"
+HEALTH_CHECK_TIMEOUT_SEC="${NIE_SLA_INSTALL_HEALTH_TIMEOUT_SEC:-${NSTATUS_INSTALL_HEALTH_TIMEOUT_SEC:-75}}"
 case "$HEALTH_CHECK_TIMEOUT_SEC" in ''|*[!0-9]*) HEALTH_CHECK_TIMEOUT_SEC=75 ;; esac
 if (( HEALTH_CHECK_TIMEOUT_SEC < 10 || HEALTH_CHECK_TIMEOUT_SEC > 300 )); then HEALTH_CHECK_TIMEOUT_SEC=75; fi
 
@@ -75,10 +81,10 @@ sha256_file() {
 }
 
 verify_binary_checksum() {
-  local file="$1" name="$2" sums="$3" expected="${NSTATUS_EXPECTED_SHA256:-}"
+  local file="$1" name="$2" sums="$3" expected="${NIE_SLA_EXPECTED_SHA256:-${NSTATUS_EXPECTED_SHA256:-}}"
   if [[ -z "$expected" ]]; then
     download_to "${DOWNLOAD_BASE%/}/bin/SHA256SUMS?v=${CACHE_KEY}" "$sums"
-    local sums_expected="${NSTATUS_SHA256SUMS_SHA256:-$DEFAULT_SHA256SUMS_SHA256}" sums_actual
+    local sums_expected="${NIE_SLA_SHA256SUMS_SHA256:-${NSTATUS_SHA256SUMS_SHA256:-$DEFAULT_SHA256SUMS_SHA256}}" sums_actual
     sums_actual="$(sha256_file "$sums")"
     if [[ -n "$sums_expected" && "${sums_actual,,}" != "${sums_expected,,}" ]]; then
       err "校验清单验证失败"
@@ -101,7 +107,7 @@ verify_binary_checksum() {
 }
 
 verify_agent_version() {
-  local file="$1" expected="${NSTATUS_EXPECTED_VERSION:-$DEFAULT_EXPECTED_VERSION}" actual
+  local file="$1" expected="${NIE_SLA_EXPECTED_VERSION:-${NSTATUS_EXPECTED_VERSION:-$DEFAULT_EXPECTED_VERSION}}" actual
   actual="$($file --version 2>&1)" || { err "Agent 版本检查失败"; exit 1; }
   if [[ -n "$expected" && "$actual" != *"$expected"* ]]; then
     err "Agent 版本不匹配，期望 $expected，实际 $actual"
@@ -112,11 +118,22 @@ verify_agent_version() {
 
 stop_existing_agent() {
   case "$INIT" in
-    systemd) systemctl stop "$SERVICE_NAME" "$TASK_SERVICE_NAME" 2>/dev/null || true ;;
-    openrc) rc-service "$SERVICE_NAME" stop 2>/dev/null || true; rc-service "$TASK_SERVICE_NAME" stop 2>/dev/null || true ;;
+    systemd)
+      systemctl disable --now "$LEGACY_SERVICE_NAME" "$LEGACY_TASK_SERVICE_NAME" "${LEGACY_SERVICE_NAME}-update.timer" 2>/dev/null || true
+      systemctl stop "$SERVICE_NAME" "$TASK_SERVICE_NAME" 2>/dev/null || true
+      ;;
+    openrc)
+      rc-service "$LEGACY_SERVICE_NAME" stop 2>/dev/null || true
+      rc-service "$LEGACY_TASK_SERVICE_NAME" stop 2>/dev/null || true
+      rc-update del "$LEGACY_SERVICE_NAME" default 2>/dev/null || true
+      rc-update del "$LEGACY_TASK_SERVICE_NAME" default 2>/dev/null || true
+      rc-service "$SERVICE_NAME" stop 2>/dev/null || true
+      rc-service "$TASK_SERVICE_NAME" stop 2>/dev/null || true
+      ;;
   esac
   if command -v pkill >/dev/null 2>&1; then
     pkill -x "$BIN_NAME" 2>/dev/null || true
+    pkill -x "$LEGACY_SERVICE_NAME" 2>/dev/null || true
   fi
 }
 
@@ -148,6 +165,22 @@ create_users() {
   create_system_user "$AGENT_USER"
 }
 
+migrate_legacy_state() {
+  mkdir -p "$STATE_DIR" "$MANAGER_STATE_DIR"
+  if [[ -d "$LEGACY_STATE_DIR" && ! -L "$LEGACY_STATE_DIR" ]]; then
+    for name in samples-queue.json; do
+      if [[ -f "${LEGACY_STATE_DIR}/${name}" && ! -L "${LEGACY_STATE_DIR}/${name}" && ! -e "${STATE_DIR}/${name}" ]]; then
+        cp -p "${LEGACY_STATE_DIR}/${name}" "${STATE_DIR}/${name}"
+      fi
+    done
+  fi
+  if [[ -d "$LEGACY_MANAGER_STATE_DIR" && ! -L "$LEGACY_MANAGER_STATE_DIR" ]]; then
+    if [[ -f "${LEGACY_MANAGER_STATE_DIR}/update-confirmed" && ! -L "${LEGACY_MANAGER_STATE_DIR}/update-confirmed" && ! -e "${MANAGER_STATE_DIR}/update-confirmed" ]]; then
+      cp -p "${LEGACY_MANAGER_STATE_DIR}/update-confirmed" "${MANAGER_STATE_DIR}/update-confirmed"
+    fi
+  fi
+}
+
 assert_safe_install_paths() {
   local path
   for path in "$WORK_DIR" "$STATE_DIR" "$ENV_FILE" "${WORK_DIR}/${BIN_NAME}"; do
@@ -161,7 +194,7 @@ assert_safe_install_paths() {
 secure_install_permissions() {
   local agent_group
   agent_group="$(id -gn "$AGENT_USER" 2>/dev/null || printf '%s' "$AGENT_USER")"
-  mkdir -p "$WORK_DIR" "$STATE_DIR"
+  mkdir -p "$WORK_DIR" "$STATE_DIR" "$MANAGER_STATE_DIR"
   if [[ -f "${WORK_DIR}/samples-queue.json" && ! -e "${STATE_DIR}/samples-queue.json" ]]; then
     mv "${WORK_DIR}/samples-queue.json" "${STATE_DIR}/samples-queue.json"
   fi
@@ -171,6 +204,8 @@ secure_install_permissions() {
   chmod 0640 "$ENV_FILE"
   chown -R "${AGENT_USER}:${agent_group}" "$STATE_DIR"
   chmod 0750 "$STATE_DIR"
+  chown -R root:root "$MANAGER_STATE_DIR"
+  chmod 0755 "$MANAGER_STATE_DIR"
   if [[ -f "$CFTZ_BIN" ]]; then
     chown root:root "$CFTZ_BIN"
     chmod 0755 "$CFTZ_BIN"
@@ -181,16 +216,16 @@ write_env_file() {
   local api="$1" token="$2" agent_id="$3" label="$4" interval="$5" ping_targets="$6" ping_sec="$7"
   mkdir -p "$WORK_DIR"
   {
-    printf 'NSTATUS_API_BASE=%s\n' "$(shell_quote "$api")"
-    printf 'NSTATUS_AGENT_TOKEN=%s\n' "$(shell_quote "$token")"
-    printf 'NSTATUS_AGENT_ID=%s\n' "$(shell_quote "$agent_id")"
-    printf 'NSTATUS_AGENT_LABEL=%s\n' "$(shell_quote "$label")"
-    printf 'NSTATUS_INTERVAL_SEC=%s\n' "$(shell_quote "$interval")"
-    printf 'NSTATUS_SAMPLE_SEC=1\n'
-    printf 'NSTATUS_QUEUE_FILE=%s\n' "$(shell_quote "${STATE_DIR}/samples-queue.json")"
-    printf 'NSTATUS_PRIVILEGED_UPDATER=1\n'
-    printf 'NSTATUS_PING_TARGETS=%s\n' "$(shell_quote "$ping_targets")"
-    printf 'NSTATUS_PING_SEC=%s\n' "$(shell_quote "$ping_sec")"
+    printf 'NIE_SLA_API_BASE=%s\n' "$(shell_quote "$api")"
+    printf 'NIE_SLA_AGENT_TOKEN=%s\n' "$(shell_quote "$token")"
+    printf 'NIE_SLA_AGENT_ID=%s\n' "$(shell_quote "$agent_id")"
+    printf 'NIE_SLA_AGENT_LABEL=%s\n' "$(shell_quote "$label")"
+    printf 'NIE_SLA_INTERVAL_SEC=%s\n' "$(shell_quote "$interval")"
+    printf 'NIE_SLA_SAMPLE_SEC=1\n'
+    printf 'NIE_SLA_QUEUE_FILE=%s\n' "$(shell_quote "${STATE_DIR}/samples-queue.json")"
+    printf 'NIE_SLA_PRIVILEGED_UPDATER=1\n'
+    printf 'NIE_SLA_PING_TARGETS=%s\n' "$(shell_quote "$ping_targets")"
+    printf 'NIE_SLA_PING_SEC=%s\n' "$(shell_quote "$ping_sec")"
   } > "$ENV_FILE"
   chmod 0600 "$ENV_FILE"
 }
@@ -198,7 +233,7 @@ write_env_file() {
 install_systemd_service() {
   cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
-Description=聶.NET VPS Metrics Agent
+Description=NIE-SLA VPS Metrics Agent
 After=network-online.target
 Wants=network-online.target
 
@@ -231,7 +266,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=${STATE_DIR}
 EnvironmentFile=${ENV_FILE}
-Environment=NSTATUS_TASK_RUNNER_ONLY=1
+Environment=NIE_SLA_TASK_RUNNER_ONLY=1
 ExecStart=${WORK_DIR}/${BIN_NAME} --task-runner-only
 Restart=always
 RestartSec=20
@@ -247,7 +282,7 @@ WantedBy=multi-user.target
 EOF
   cat > "/etc/systemd/system/${SERVICE_NAME}-update.service" <<EOF
 [Unit]
-Description=聶.NET Agent privileged recovery update
+Description=NIE-SLA Agent privileged recovery update
 After=network-online.target
 
 [Service]
@@ -257,7 +292,7 @@ ExecStart=${CFTZ_BIN} update --automatic
 EOF
   cat > "/etc/systemd/system/${SERVICE_NAME}-update.timer" <<EOF
 [Unit]
-Description=Recover 聶.NET Agent manager and verified updates
+Description=Recover NIE-SLA Agent manager and verified updates
 
 [Timer]
 OnBootSec=5min
@@ -367,7 +402,7 @@ install_openrc_service() {
   cat > "/etc/init.d/${SERVICE_NAME}" <<EOF
 #!/sbin/openrc-run
 name="${SERVICE_NAME}"
-description="聶.NET VPS Metrics Agent"
+description="NIE-SLA VPS Metrics Agent"
 
 start() {
     ebegin "Starting ${SERVICE_NAME}"
@@ -400,7 +435,7 @@ start() {
     start-stop-daemon --start --background --make-pidfile \
         --pidfile /run/${TASK_SERVICE_NAME}.pid \
         --exec /bin/sh -- \
-        -c 'cd "${STATE_DIR}"; set -a; . "${ENV_FILE}"; set +a; export NSTATUS_TASK_RUNNER_ONLY=1; exec "${WORK_DIR}/${BIN_NAME}" --task-runner-only >>"/var/log/${TASK_SERVICE_NAME}.log" 2>&1'
+        -c 'cd "${STATE_DIR}"; set -a; . "${ENV_FILE}"; set +a; export NIE_SLA_TASK_RUNNER_ONLY=1; exec "${WORK_DIR}/${BIN_NAME}" --task-runner-only >>"/var/log/${TASK_SERVICE_NAME}.log" 2>&1'
     eend \$?
 }
 
@@ -422,7 +457,7 @@ EOF
 
 do_uninstall() {
   need_root
-  title "卸载 聶.NET Agent"
+  title "卸载 NIE-SLA Agent"
   case "$(detect_init)" in
     systemd)
       systemctl stop "$SERVICE_NAME" 2>/dev/null || true
@@ -443,9 +478,8 @@ do_uninstall() {
       rm -f "/etc/periodic/hourly/${SERVICE_NAME}-update" "/etc/cron.hourly/${SERVICE_NAME}-update"
       ;;
   esac
-  rm -f "${INSTALL_DIR}/${BIN_NAME}" "$CFTZ_BIN"
-  rm -rf "$WORK_DIR" "$STATE_DIR"
-  rm -rf "/var/lib/nstatus-manager"
+  rm -f "${INSTALL_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${LEGACY_SERVICE_NAME}" "$CFTZ_BIN"
+  rm -rf "$WORK_DIR" "$STATE_DIR" "$MANAGER_STATE_DIR"
   userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
   userdel "$LEGACY_TASK_USER" 2>/dev/null || deluser "$LEGACY_TASK_USER" 2>/dev/null || true
   ok "已卸载"
@@ -455,13 +489,13 @@ NON_INTERACTIVE=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     uninstall) do_uninstall; exit 0 ;;
-    --api) NSTATUS_API_BASE="$2"; shift 2 ;;
-    --token) NSTATUS_AGENT_TOKEN="$2"; shift 2 ;;
-    --target) NSTATUS_AGENT_ID="$2"; shift 2 ;;
-    --label) NSTATUS_AGENT_LABEL="$2"; shift 2 ;;
-    --interval) NSTATUS_INTERVAL_SEC="$2"; shift 2 ;;
-    --ping-targets) NSTATUS_PING_TARGETS="$2"; shift 2 ;;
-    --ping-sec) NSTATUS_PING_SEC="$2"; shift 2 ;;
+    --api) NIE_SLA_API_BASE="$2"; shift 2 ;;
+    --token) NIE_SLA_AGENT_TOKEN="$2"; shift 2 ;;
+    --target) NIE_SLA_AGENT_ID="$2"; shift 2 ;;
+    --label) NIE_SLA_AGENT_LABEL="$2"; shift 2 ;;
+    --interval) NIE_SLA_INTERVAL_SEC="$2"; shift 2 ;;
+    --ping-targets) NIE_SLA_PING_TARGETS="$2"; shift 2 ;;
+    --ping-sec) NIE_SLA_PING_SEC="$2"; shift 2 ;;
     --non-interactive|-y) NON_INTERACTIVE=true; shift ;;
     *) shift ;;
   esac
@@ -469,23 +503,23 @@ done
 
 need_root
 
-API_BASE="${NSTATUS_API_BASE:-}"
-TOKEN="${NSTATUS_AGENT_TOKEN:-}"
-AGENT_ID="${NSTATUS_AGENT_ID:-}"
-AGENT_LABEL="${NSTATUS_AGENT_LABEL:-}"
-INTERVAL="${NSTATUS_INTERVAL_SEC:-300}"
-PING_TARGETS="${NSTATUS_PING_TARGETS:-*}"
-PING_SEC="${NSTATUS_PING_SEC:-20}"
+API_BASE="${NIE_SLA_API_BASE:-${NSTATUS_API_BASE:-}}"
+TOKEN="${NIE_SLA_AGENT_TOKEN:-${NSTATUS_AGENT_TOKEN:-}}"
+AGENT_ID="${NIE_SLA_AGENT_ID:-${NSTATUS_AGENT_ID:-}}"
+AGENT_LABEL="${NIE_SLA_AGENT_LABEL:-${NSTATUS_AGENT_LABEL:-}}"
+INTERVAL="${NIE_SLA_INTERVAL_SEC:-${NSTATUS_INTERVAL_SEC:-300}}"
+PING_TARGETS="${NIE_SLA_PING_TARGETS:-${NSTATUS_PING_TARGETS:-*}}"
+PING_SEC="${NIE_SLA_PING_SEC:-${NSTATUS_PING_SEC:-20}}"
 
 if [[ "$NON_INTERACTIVE" != "true" ]]; then
-  title "聶.NET Agent 配置"
+  title "NIE-SLA Agent 配置"
   if [[ -z "$API_BASE" ]]; then read -r -p "API base URL: " API_BASE </dev/tty; fi
   if [[ -z "$TOKEN" ]]; then read -r -s -p "Agent Token：" TOKEN </dev/tty; echo; fi
   if [[ -z "$AGENT_ID" ]]; then read -r -p "Target ID [$(hostname)]: " AGENT_ID </dev/tty; AGENT_ID="${AGENT_ID:-$(hostname)}"; fi
 fi
 
-if [[ -z "$API_BASE" ]]; then err "missing NSTATUS_API_BASE or --api"; exit 2; fi
-if [[ -z "$TOKEN" ]]; then err "missing NSTATUS_AGENT_TOKEN or --token"; exit 2; fi
+if [[ -z "$API_BASE" ]]; then err "missing NIE_SLA_API_BASE or --api"; exit 2; fi
+if [[ -z "$TOKEN" ]]; then err "missing NIE_SLA_AGENT_TOKEN or --token"; exit 2; fi
 if [[ -z "$AGENT_ID" ]]; then AGENT_ID="$(hostname 2>/dev/null || echo vps)"; fi
 if [[ -z "$AGENT_LABEL" ]]; then AGENT_LABEL="$AGENT_ID"; fi
 
@@ -497,7 +531,7 @@ TMPBIN="$(mktemp)"
 TMPSUMS="$(mktemp)"
 trap 'rm -f "$TMPBIN" "$TMPSUMS" "${CFTZ_TMP:-}"' EXIT INT TERM
 
-title "安装 聶.NET Agent"
+title "安装 NIE-SLA Agent"
 info "api: $API_BASE"
 info "target: $AGENT_ID"
 info "arch: $ARCH"
@@ -509,14 +543,16 @@ verify_agent_version "$TMPBIN"
 stop_existing_agent
 create_users
 assert_safe_install_paths
+migrate_legacy_state
 mkdir -p "$WORK_DIR" "$INSTALL_DIR"
 install -m 0755 "$TMPBIN" "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || { cp "$TMPBIN" "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"; }
 ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
+ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${LEGACY_SERVICE_NAME}"
 
 CFTZ_URL="${CFTZ_URL_BASE%/}/cftz?v=${CACHE_KEY}"
 CFTZ_TMP="$(mktemp)"
 download_to "$CFTZ_URL" "$CFTZ_TMP" >/dev/null 2>&1 || { err "cftz 下载失败"; exit 1; }
-CFTZ_EXPECTED_SHA256="${NSTATUS_CFTZ_SHA256:-$DEFAULT_CFTZ_SHA256}"
+CFTZ_EXPECTED_SHA256="${NIE_SLA_CFTZ_SHA256:-${NSTATUS_CFTZ_SHA256:-$DEFAULT_CFTZ_SHA256}}"
 if [[ ! "$CFTZ_EXPECTED_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]]; then
   err "cftz 缺少有效的 SHA-256"
   exit 1
@@ -549,7 +585,7 @@ case "$INIT" in
     set -a; . "$ENV_FILE"; set +a
     : > "/var/log/${SERVICE_NAME}.log"
     "${WORK_DIR}/${BIN_NAME}" >"/var/log/${SERVICE_NAME}.log" 2>&1 &
-    NSTATUS_TASK_RUNNER_ONLY=1 "${WORK_DIR}/${BIN_NAME}" --task-runner-only >"/var/log/${TASK_SERVICE_NAME}.log" 2>&1 &
+    NIE_SLA_TASK_RUNNER_ONLY=1 "${WORK_DIR}/${BIN_NAME}" --task-runner-only >"/var/log/${TASK_SERVICE_NAME}.log" 2>&1 &
     verify_file_logged_agent_health "/var/log/${SERVICE_NAME}.log" 0 "后台"
     ;;
 esac

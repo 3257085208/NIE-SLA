@@ -16,6 +16,16 @@ export function readStorage(name, key, fallback = null) {
   }
 }
 
+export function readMigratedStorage(name, key, legacyKey, fallback = null) {
+  const current = readStorage(name, key, null);
+  if (current !== null) return current;
+  const legacy = readStorage(name, legacyKey, null);
+  if (legacy === null) return fallback;
+  writeStorage(name, key, legacy);
+  removeStorage(name, legacyKey);
+  return legacy;
+}
+
 export function writeStorage(name, key, value) {
   try {
     const storage = storageArea(name);

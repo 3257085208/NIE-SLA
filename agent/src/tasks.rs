@@ -22,8 +22,8 @@ const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const MAX_NODEQUALITY_ARTIFACT_BYTES: usize = 24 * 1024;
 const MAX_NODEQUALITY_CAPTURE_CHARS: usize = 180 * 1024;
 const IP_UNLOCK_TIMEOUT_SEC: u64 = 600;
-const NODEQUALITY_CAPTURE_BEGIN: &str = "__NSTATUS_NQ_ARTIFACTS_V1_BEGIN__";
-const NODEQUALITY_CAPTURE_END: &str = "__NSTATUS_NQ_ARTIFACTS_V1_END__";
+const NODEQUALITY_CAPTURE_BEGIN: &str = "__NIE_SLA_NQ_ARTIFACTS_V1_BEGIN__";
+const NODEQUALITY_CAPTURE_END: &str = "__NIE_SLA_NQ_ARTIFACTS_V1_END__";
 
 pub(crate) fn runner_instance_id() -> &'static str {
     static RUNNER_INSTANCE_ID: OnceLock<String> = OnceLock::new();
@@ -45,9 +45,9 @@ const IP_UNLOCK_ARGS: [&str; 3] = ["-4", "-n", "-p"];
 const MAX_IP_UNLOCK_REPORT_CHARS: usize = 64 * 1024;
 const SYSTEM_TASK_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 const OPTIONAL_DIG_HELPER: &[u8] =
-    b"#!/bin/sh\nexec \"$NSTATUS_DNS_COMPAT_EXECUTABLE\" --dns-compat dig \"$@\"\n";
+    b"#!/bin/sh\nexec \"$NIE_SLA_DNS_COMPAT_EXECUTABLE\" --dns-compat dig \"$@\"\n";
 const OPTIONAL_NSLOOKUP_HELPER: &[u8] =
-    b"#!/bin/sh\nexec \"$NSTATUS_DNS_COMPAT_EXECUTABLE\" --dns-compat nslookup \"$@\"\n";
+    b"#!/bin/sh\nexec \"$NIE_SLA_DNS_COMPAT_EXECUTABLE\" --dns-compat nslookup \"$@\"\n";
 const JQ_RELEASE_BASE: &str = "https://github.com/jqlang/jq/releases/download/jq-1.8.1";
 const MAX_JQ_BYTES: usize = 4 * 1024 * 1024;
 const NODEQUALITY_SCRIPT_SHA256: &str =
@@ -433,7 +433,7 @@ fn run_fixed_remote_script(
         .env("PATH", task_path)
         .env("HOME", &task_dir)
         .env("LANG", "C.UTF-8")
-        .env("NSTATUS_DNS_COMPAT_EXECUTABLE", agent_executable)
+        .env("NIE_SLA_DNS_COMPAT_EXECUTABLE", agent_executable)
         .envs(envs.iter().copied())
         .stdin(if stdin.is_some() {
             Stdio::piped()
@@ -443,7 +443,7 @@ fn run_fixed_remote_script(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if let Some(path) = &nodequality_result_dir {
-        command.env("NSTATUS_NQ_RESULTS_DIR", path);
+        command.env("NIE_SLA_NQ_RESULTS_DIR", path);
     }
     #[cfg(unix)]
     {
@@ -641,19 +641,19 @@ fn inject_nodequality_capture(script: &[u8]) -> Result<Vec<u8>> {
     let source = String::from_utf8(script.to_vec()).context("NodeQuality script is not UTF-8")?;
     let marker = "    upload_result\n";
     let capture = concat!(
-        "    if [[ -n \"${NSTATUS_NQ_RESULTS_DIR:-}\" ]]; then\n",
-        "        cp \"$result_directory\"/header_info.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
-        "        cp \"$result_directory\"/hardware_quality.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
-        "        cp \"$result_directory\"/ip_quality.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
-        "        cp \"$result_directory\"/net_quality.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
-        "        cp \"$result_directory\"/backroute_trace.log \"$NSTATUS_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
-        "        printf '\\n__NSTATUS_NQ_ARTIFACTS_V1_BEGIN__\\n'\n",
+        "    if [[ -n \"${NIE_SLA_NQ_RESULTS_DIR:-}\" ]]; then\n",
+        "        cp \"$result_directory\"/header_info.log \"$NIE_SLA_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "        cp \"$result_directory\"/hardware_quality.log \"$NIE_SLA_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "        cp \"$result_directory\"/ip_quality.log \"$NIE_SLA_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "        cp \"$result_directory\"/net_quality.log \"$NIE_SLA_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "        cp \"$result_directory\"/backroute_trace.log \"$NIE_SLA_NQ_RESULTS_DIR\"/ 2>/dev/null || true\n",
+        "        printf '\\n__NIE_SLA_NQ_ARTIFACTS_V1_BEGIN__\\n'\n",
         "        printf 'header:'; [[ -f \"$result_directory\"/header_info.log ]] && head -c 24576 \"$result_directory\"/header_info.log | base64 | tr -d '\\r\\n'; printf '\\n'\n",
         "        printf 'hardware:'; [[ -f \"$result_directory\"/hardware_quality.log ]] && head -c 24576 \"$result_directory\"/hardware_quality.log | base64 | tr -d '\\r\\n'; printf '\\n'\n",
         "        printf 'ip:'; [[ -f \"$result_directory\"/ip_quality.log ]] && head -c 24576 \"$result_directory\"/ip_quality.log | base64 | tr -d '\\r\\n'; printf '\\n'\n",
         "        printf 'network:'; [[ -f \"$result_directory\"/net_quality.log ]] && head -c 24576 \"$result_directory\"/net_quality.log | base64 | tr -d '\\r\\n'; printf '\\n'\n",
         "        printf 'route:'; [[ -f \"$result_directory\"/backroute_trace.log ]] && head -c 24576 \"$result_directory\"/backroute_trace.log | base64 | tr -d '\\r\\n'; printf '\\n'\n",
-        "        printf '__NSTATUS_NQ_ARTIFACTS_V1_END__\\n'\n",
+        "        printf '__NIE_SLA_NQ_ARTIFACTS_V1_END__\\n'\n",
         "    fi\n",
         "    upload_result\n",
     );
@@ -1001,12 +1001,12 @@ fn secure_task_directory(_cfg: &Config) -> Result<PathBuf> {
 #[cfg(any(target_os = "linux", test))]
 fn task_runtime_directory(queue_file: &Path, uid: u32) -> PathBuf {
     if uid == 0 {
-        return PathBuf::from("/var/lib/nstatus-manager/tasks");
+        return PathBuf::from("/var/lib/nie-sla-agent-manager/tasks");
     }
     queue_file
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("/var/lib/nstatus-metrics"))
+        .unwrap_or_else(|| Path::new("/var/lib/nie-sla-agent"))
         .join("tasks")
 }
 
@@ -1427,7 +1427,7 @@ mod tests {
         let output = Command::new("bash")
             .args(["-c", &patched, "--"])
             .arg(&results)
-            .env("NSTATUS_NQ_RESULTS_DIR", &captured)
+            .env("NIE_SLA_NQ_RESULTS_DIR", &captured)
             .output()
             .unwrap();
         assert!(output.status.success());
@@ -1737,14 +1737,14 @@ mod tests {
 
     #[test]
     fn task_runtime_directory_separates_manager_and_telemetry_state() {
-        let queue = Path::new("/var/lib/nstatus-metrics/samples-queue.json");
+        let queue = Path::new("/var/lib/nie-sla-agent/samples-queue.json");
         assert_eq!(
             task_runtime_directory(queue, 1000),
-            PathBuf::from("/var/lib/nstatus-metrics/tasks")
+            PathBuf::from("/var/lib/nie-sla-agent/tasks")
         );
         assert_eq!(
             task_runtime_directory(queue, 0),
-            PathBuf::from("/var/lib/nstatus-manager/tasks")
+            PathBuf::from("/var/lib/nie-sla-agent-manager/tasks")
         );
     }
 
@@ -1808,7 +1808,7 @@ mod tests {
             0o700
         );
         let output = Command::new(&dig)
-            .env("NSTATUS_DNS_COMPAT_EXECUTABLE", "/bin/echo")
+            .env("NIE_SLA_DNS_COMPAT_EXECUTABLE", "/bin/echo")
             .arg("example.com")
             .output()
             .unwrap();

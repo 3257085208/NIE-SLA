@@ -53,8 +53,8 @@ The `TELEMETRY_BUFFER` Durable Object binding is required for the default archit
 | --- | --- |
 | `PUBLIC_AGENT_INSTALL_BASE` | public HTTPS base for install scripts and `bin/` |
 | `PUBLIC_AGENT_API_BASE` | Agent reporting API base |
-| `AGENT_LATEST_VERSION` | latest version reported by the Worker, e.g. `v1.1.12` |
-| `NSTATUS_SHA256SUMS_SHA256` | SHA-256 of the release manifest itself |
+| `AGENT_LATEST_VERSION` | latest version reported by the Worker, e.g. `v1.1.13` |
+| `NIE_SLA_SHA256SUMS_SHA256` | SHA-256 of the release manifest; the old `NSTATUS_SHA256SUMS_SHA256` remains readable |
 | `AGENT_AUTO_UPDATE_DEFAULT` | default policy when the admin has no setting; `true` by default |
 | `AGENT_UPDATE_CHECK_SEC` | suggested policy check interval |
 | `AGENT_PING_SEC` | default ping interval in install commands |
@@ -105,19 +105,21 @@ GitHub login requires Client ID, Client Secret, and a non-empty allowlist; other
 
 | Name | Default | Purpose |
 | --- | --- | --- |
-| `NSTATUS_API_BASE` | none | required HTTPS API |
-| `NSTATUS_AGENT_TOKEN` | none | required scoped token |
-| `NSTATUS_AGENT_ID` | hostname | target ID |
-| `NSTATUS_AGENT_LABEL` | hostname | display name |
-| `NSTATUS_SAMPLE_SEC` | `1` | sampling interval |
-| `NSTATUS_INTERVAL_SEC` | `300` | upload interval |
-| `NSTATUS_PING_SEC` | `20` | ping interval |
-| `NSTATUS_PING_TARGET_REFRESH_SEC` | `600` | ping target refresh, 60-3600 |
-| `NSTATUS_PING_TARGETS` | `*` | managed targets |
-| `NSTATUS_QUEUE_FILE` | platform path | queue file |
-| `NSTATUS_QUEUE_MAX_SAMPLES` | `86400` | queue cap |
-| `NSTATUS_UPDATE_CHECK_SEC` | `3600` | update check interval, 900-86400 |
-| `NSTATUS_ALLOW_INSECURE_HTTP` | off | trusted private-network debugging only |
+| `NIE_SLA_API_BASE` | none | required HTTPS API |
+| `NIE_SLA_AGENT_TOKEN` | none | required scoped token |
+| `NIE_SLA_AGENT_ID` | hostname | target ID |
+| `NIE_SLA_AGENT_LABEL` | hostname | display name |
+| `NIE_SLA_SAMPLE_SEC` | `1` | sampling interval |
+| `NIE_SLA_INTERVAL_SEC` | `300` | upload interval |
+| `NIE_SLA_PING_SEC` | `20` | ping interval |
+| `NIE_SLA_PING_TARGET_REFRESH_SEC` | `600` | ping target refresh, 60-3600 |
+| `NIE_SLA_PING_TARGETS` | `*` | managed targets |
+| `NIE_SLA_QUEUE_FILE` | platform path | queue file |
+| `NIE_SLA_QUEUE_MAX_SAMPLES` | `86400` | queue cap |
+| `NIE_SLA_UPDATE_CHECK_SEC` | `3600` | update check interval, 900-86400 |
+| `NIE_SLA_ALLOW_INSECURE_HTTP` | off | trusted private-network debugging only |
+
+The corresponding legacy `NSTATUS_*` variables remain readable; the new name wins when both are set.
 
 ## Changing configuration
 

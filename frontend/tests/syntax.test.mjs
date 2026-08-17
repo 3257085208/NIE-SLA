@@ -15,13 +15,14 @@ for (const file of files) {
   assert.equal(result.status, 0, `${path.relative(root, file)} syntax failed:\n${result.stderr}`);
 }
 
-const [appSource, adminSource, adminBootstrapSource, adminCss, adminHtml, indexHtml, apiProxySource, themeSource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
+const [appSource, adminSource, adminBootstrapSource, adminCss, adminHtml, indexHtml, notFoundHtml, apiProxySource, themeSource, latencyAgentSource, latencyInstallerSource] = await Promise.all([
   readFile(path.join(root, 'app.js'), 'utf8'),
   readFile(path.join(root, 'js', 'admin.js'), 'utf8'),
   readFile(path.join(root, 'js', 'admin-bootstrap.js'), 'utf8'),
   readFile(path.join(root, 'admin.css'), 'utf8'),
   readFile(path.join(root, 'admin.html'), 'utf8'),
   readFile(path.join(root, 'index.html'), 'utf8'),
+  readFile(path.join(root, '404.html'), 'utf8'),
   readFile(path.join(root, 'functions', 'api', '[[path]].js'), 'utf8'),
   readFile(path.join(root, 'js', 'themes.js'), 'utf8'),
   readFile(path.join(root, 'latency-agent.py'), 'utf8'),
@@ -33,7 +34,10 @@ const nodeQualitySource = await readFile(path.join(root, 'js', 'shared', 'nodequ
 const installCommandSource = await readFile(path.join(root, 'js', 'install-command.js'), 'utf8');
 const adminApiSource = await readFile(path.join(root, 'js', 'admin', 'api.js'), 'utf8');
 const nqOptionsSource = await readFile(path.join(root, 'js', 'admin', 'nq-options.js'), 'utf8');
-assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260804-v11113"/, 'admin must import the configurable NodeQuality option helpers');
+assert.match(notFoundHtml, /<title>页面不存在 - NIE-SLA<\/title>/, '404 responses must retain the branded page title');
+assert.match(notFoundHtml, /class="not-found-code">404<\/div>/, '404 responses must visibly identify the status code');
+assert.match(notFoundHtml, /href="\/">返回状态页<\/a>[\s\S]*href="\/admin\.html">管理入口<\/a>/, '404 responses must retain both recovery links');
+assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260810-nqfix1"/, 'admin must import the configurable NodeQuality option helpers');
 assert.match(nqOptionsSource, /data-nq-option="/, 'NodeQuality options must use stable data attributes for each select');
 assert.match(nqOptionsSource, /运行 HardwareQuality 测试/, 'NodeQuality options must expose the four upstream questions');
 assert.match(nqOptionsSource, /加速源/, 'NodeQuality options must expose the accelerator selector');
@@ -43,7 +47,7 @@ assert.match(adminSource, /agentInstallCommandFromPayload\(d, t\.id\);\s*await c
 assert.match(adminSource, /含一次性凭据/, 'successful copy feedback must identify the one-time credential');
 assert.match(installCommandSource, /credential_bound !== true[\s\S]*one_time_install_token/, 'copy validation must require a credential-bound one-time token');
 assert.ok(installCommandSource.includes('Authorization:\\s*Bearer\\s+nsi_'), 'copy validation must require the one-time token in the command');
-assert.ok(installCommandSource.includes('NSTATUS_AGENT_TOKEN\\s*='), 'copy validation must reject long-lived Agent tokens');
+assert.ok(installCommandSource.includes('(?:NIE_SLA|NSTATUS)_AGENT_TOKEN\\s*='), 'copy validation must reject new and legacy long-lived Agent tokens');
 assert.match(adminSource, /data-target-id=/, 'deploy buttons must carry a stable target id');
 assert.match(adminSource, /button\?\.dataset\.targetId \|\| button\?\.closest\("tr"\)\?\.dataset\.id/, 'deploy actions must resolve the stable button target id first');
 assert.match(adminSource, /targetGroupOptions\(type, target\.group_name\)/, 'target grouping must be a VPS/Web selector');
@@ -74,11 +78,11 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /href="\/admin\.css\?v=20260804-v11113"/, 'custom admin paths must load CSS from the site root');
+assert.match(adminHtml, /href="\/admin\.css\?v=20260810-nqfix1"/, 'custom admin paths must load CSS from the site root');
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
-assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260804-v11113"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260804-v11113"/, 'custom admin paths must load the admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260810-nqfix1"/, 'admin login must install a startup failure guard');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260810-nqfix1"/, 'custom admin paths must load the admin module from the site root');
 assert.match(adminBootstrapSource, /后台脚本加载失败，请刷新页面/, 'admin startup failures must be visible on the login form');
 assert.match(adminBootstrapSource, /loginButton\.onclick = \(event\)/, 'the admin module must replace the startup guard only after it loads');
 assert.match(adminSource, /window\.__NIE_ADMIN_READY__ = true;[\s\S]*nie-admin-ready/, 'the admin module must dismiss its startup guard after binding controls');
@@ -117,7 +121,7 @@ assert.match(adminApiSource, /请求可能仍在服务端继续执行，请稍�
 assert.match(adminSource, /任务状态刷新失败[\s\S]*task-load-warning/, 'task polling failures must surface a visible warning');
 assert.match(adminSource, /async function queueAgentTask[\s\S]*catch \(error\) \{[\s\S]*await loadAgentTasks\(\)/, 'single-machine queue failures must refresh task state');
 assert.match(adminSource, /id="backupStatus"[\s\S]*正在加密 Agent Token/, 'protected backup must expose persistent progress next to its controls');
-assert.match(adminSource, /install-command\.js\?v=20260804-v11113/, 'Agent and Latency install clipboard fixes must use the current cache key');
+assert.match(adminSource, /install-command\.js\?v=20260810-nqfix1/, 'Agent and Latency install clipboard fixes must use the current cache key');
 assert.match(adminSource, /latencyInstallCommandFromPayload\(data, node\.id\);\s*await copyText\(command\)/, 'Latency deploy must validate and copy the one-time command without opening a dialog');
 const latencyDeploySource = adminSource.slice(adminSource.indexOf('async function deployLatencyNode'), adminSource.indexOf('async function loadPings'));
 assert.doesNotMatch(latencyDeploySource, /openModal\(\)/, 'Latency deploy must not open an install-command dialog');
@@ -136,8 +140,8 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260804-v11113/, 'frontend cache key must publish the current release');
-assert.match(indexHtml, /style\.css\?v=20260804-v11113/, 'frontend CSS cache key must publish the current release');
+assert.match(indexHtml, /app\.js\?v=20260810-nqfix1/, 'frontend cache key must publish the current release');
+assert.match(indexHtml, /style\.css\?v=20260810-nqfix1/, 'frontend CSS cache key must publish the current release');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /class="theme-pending"[\s\S]*id="themeBoot"[\s\S]*id="themeCanvas"/, 'theme runtime must wait behind a first-paint shell');
@@ -205,7 +209,7 @@ assert.match(appSource, /function lineDataset[\s\S]*spanGaps:\s*state\.continuou
 assert.match(appSource, /function metricDataset[\s\S]*spanGaps:\s*false/, 'metric chart lines must keep packet-loss breaks');
 assert.match(appSource, /function netDataset[\s\S]*spanGaps:\s*false/, 'network and IO chart lines must keep packet-loss breaks');
 assert.match(indexHtml, /id="chartContinuous"[\s\S]*端点连续/, 'chart toolbar must expose the endpoint continuity toggle');
-assert.match(appSource, /continuousLine:\s*readStorage\(['"]localStorage['"], ['"]nstatus\.continuousLine['"], ['"]0['"]\)\s*===\s*['"]1['"]/, 'endpoint continuity preference must persist locally');
+assert.match(appSource, /continuousLine:\s*readMigratedStorage\(['"]localStorage['"], ['"]nie-sla\.continuousLine['"], ['"]nstatus\.continuousLine['"], ['"]0['"]\)\s*===\s*['"]1['"]/, 'endpoint continuity preference must migrate and persist locally');
 assert.match(appSource, /chartContinuousButton[\s\S]*addEventListener\('click', \(\) => \{[\s\S]*state\.continuousLine[\s\S]*updateChartForCurrentRange\(\)/, 'endpoint continuity toggle must re-render the active chart');
 assert.match(appSource, /function syncContinuousButtonVisibility[\s\S]*\[['"]latency['"],\s*['"]ping['"]\]\.includes\(state\.selectedMetric\)/, 'endpoint continuity toggle must only show for Latency and TCP Ping');
 assert.match(styleSource, /\.chart-continuous\.active\s*\{[\s\S]*background:\s*var\(--green\)/, 'active endpoint continuity toggle must use the green state');
@@ -257,7 +261,7 @@ assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-image\s*\{\
 assert.doesNotMatch(styleSource, /@media \(max-width: 420px\) \{[\s\S]*\.nq-image\s*\{\s*width:\s*88%/, 'compact iPhones must not waste NQ image width');
 assert.doesNotMatch(styleSource, /\.nq-modal-backdrop\s*\{\s*padding:\s*4px/, 'compact NQ dialogs must retain visible breathing room at the viewport edge');
 assert.match(styleSource, /\.nq-ansi-panel\s*\{[\s\S]*-webkit-overflow-scrolling:\s*touch/, 'ANSI reports must support touch scrolling on iPhone');
-assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-ansi-panel,[\s\S]*\.nq-network-scroll\s*\{\s*overflow-x:\s*auto[\s\S]*\.nq-ansi-panel \.nq-ansi\s*\{[\s\S]*white-space:\s*pre-wrap[\s\S]*word-break:\s*break-word/, 'mobile ANSI panels must wrap adaptively instead of forcing horizontal scrolling');
+assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-ansi-panel,[\s\S]*\.nq-network-scroll\s*\{\s*overflow-x:\s*auto[\s\S]*\.nq-ansi-panel \.nq-ansi\s*\{[\s\S]*width:\s*max-content[\s\S]*white-space:\s*pre[\s\S]*word-break:\s*normal/, 'mobile ANSI panels must preserve terminal columns inside a local horizontal scroller');
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.nq-report-pre\s*\{[\s\S]*white-space:\s*pre[\s\S]*word-break:\s*normal/, 'mobile text reports must preserve terminal columns inside local horizontal scrollers');
 assert.match(styleSource, /\.nq-panels\s*\{[^}]*flex:\s*1 1 auto[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*overflow-x:\s*hidden[^}]*overflow-y:\s*auto/, 'NQ report content must constrain horizontal scrolling to the active panel');
 assert.match(styleSource, /\.nq-ansi-panel\s*\{[^}]*width:\s*100%[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/, 'ANSI reports must own their horizontal scrolling region');
@@ -276,7 +280,7 @@ assert.match(adminSource, /apiPublic\(`\/api\/nq\/\$\{encodeURIComponent\(target
 assert.match(adminSource, /catch \(error\) \{[\s\S]*root\.innerHTML = `<div class="nq-modal-backdrop">[\s\S]*这条任务没有可展示的完整报告，请重新运行 NQ/, 'missing legacy reports must remain in the NodeQuality dialog with an actionable message');
 assert.doesNotMatch(adminSource, /catch \(error\) \{\s*closeAdminNodeQualityReport\(\);\s*showAgentTaskDiagnostic/, 'successful NQ tasks must not fall back to raw JSON when the report is unavailable');
 assert.match(adminCss, /\.nq-modal\s*\{[\s\S]*width:\s*min\(640px[\s\S]*\.nq-ansi-panel\s*\{[\s\S]*width:\s*100%[\s\S]*-webkit-overflow-scrolling:\s*touch[\s\S]*@media \(max-width: 420px\) \{[\s\S]*\.nq-ansi\s*\{\s*font-size:\s*10px/, 'admin must preserve the desktop and readable compact iPhone NQ report layout');
-assert.match(adminCss, /@media \(max-width: 760px\) \{[\s\S]*\.nq-ansi-panel,[\s\S]*\.nq-network-scroll\s*\{\s*overflow-x:\s*auto[\s\S]*\.nq-ansi-panel \.nq-ansi\s*\{[\s\S]*white-space:\s*pre-wrap[\s\S]*word-break:\s*break-word/, 'admin mobile ANSI panels must wrap adaptively instead of forcing horizontal scrolling');
+assert.match(adminCss, /@media \(max-width: 760px\) \{[\s\S]*\.nq-ansi-panel,[\s\S]*\.nq-network-scroll\s*\{\s*overflow-x:\s*auto[\s\S]*\.nq-ansi-panel \.nq-ansi\s*\{[\s\S]*width:\s*max-content[\s\S]*white-space:\s*pre[\s\S]*word-break:\s*normal/, 'admin mobile ANSI panels must preserve terminal columns inside a local horizontal scroller');
 assert.match(adminCss, /@media \(max-width: 760px\) \{[\s\S]*\.nq-report-pre\s*\{[\s\S]*white-space:\s*pre[\s\S]*word-break:\s*normal/, 'admin mobile text reports must preserve terminal columns inside local horizontal scrollers');
 assert.match(adminCss, /@media \(max-width: 420px\) \{[\s\S]*\.nq-modal-backdrop\s*\{[\s\S]*safe-area-inset-bottom[\s\S]*\.nq-modal\s*\{[^}]*safe-area-inset-top/, 'admin compact NQ dialog must preserve safe-area spacing');
 assert.match(styleSource, /\.nq-modal \.nq-tabs \{\s*justify-content:\s*center/, 'NQ tab bars must center their tab groups');
@@ -306,9 +310,9 @@ assert.match(latencyAgentSource, /PROBE_TIMEOUT_SEC = 1\.0/, 'external Latency p
 assert.match(latencyAgentSource, /socket\.getaddrinfo[\s\S]*threading\.Thread[\s\S]*daemon=True/, 'external Latency probes must race resolved addresses without accumulating per-address timeouts');
 assert.match(latencyInstallerSource, /stop_existing_latency_agent\(\)/, 'Latency reinstall must stop all existing agent processes');
 assert.match(latencyInstallerSource, /systemctl disable --now nstatus-latency-agent\.service/, 'Latency reinstall must stop and disable the old service');
-assert.match(latencyInstallerSource, /pgrep -f '\/opt\/nstatus-latency\/latency-agent\.py'/, 'Latency reinstall must find residual agent processes');
-assert.match(latencyInstallerSource, /ReadWritePaths=\/opt\/nstatus-latency/, 'Latency service must allow atomic self-updates inside its sandbox');
-assert.match(latencyInstallerSource, /systemctl is-active --quiet nstatus-latency-agent\.service/, 'Latency installer must verify the service is running');
+assert.match(latencyInstallerSource, /pgrep -f '[^']*\/opt\/nstatus-latency\/latency-agent\.py'/, 'Latency reinstall must find residual legacy agent processes');
+assert.match(latencyInstallerSource, /ReadWritePaths=\/opt\/nie-sla-latency/, 'Latency service must allow atomic self-updates inside its sandbox');
+assert.match(latencyInstallerSource, /systemctl is-active --quiet nie-sla-latency-agent\.service/, 'Latency installer must verify the service is running');
 
 console.log(`frontend syntax tests passed (${files.length} files)`);
 

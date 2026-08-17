@@ -1,4 +1,4 @@
-const API_BASE_KEYS = ['NSTATUS_API_BASE', 'API_BASE', 'WORKER_URL'];
+const API_BASE_KEYS = ['NIE_SLA_API_BASE', 'NSTATUS_API_BASE', 'API_BASE', 'WORKER_URL'];
 
 function getApiBase(env) {
   for (const key of API_BASE_KEYS) {
@@ -37,7 +37,7 @@ export async function onRequest(context) {
   if (!apiBase) {
     return Response.json({
       ok: false,
-      error: 'Pages API proxy is missing NSTATUS_API_BASE',
+      error: 'Pages API proxy is missing NIE_SLA_API_BASE',
     }, { status: 500 });
   }
 

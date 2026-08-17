@@ -38,13 +38,16 @@ for (const file of textFiles) {
   if (/wrangler\.(?:toml|jsonc?)$/i.test(file)) {
     const ids = [...source.matchAll(/database_id["']?\s*(?:=|:)\s*"([0-9a-f-]{36})"/gi)].map((match) => match[1]);
     if (!deploymentValidation && ids.some((id) => id !== '00000000-0000-0000-0000-000000000000')) findings.push(`Cloudflare database ID: ${file}`);
-    if (!deploymentValidation && /nie-sla-(?:private|db|archive)/i.test(source)) findings.push(`official Cloudflare resource name: ${file}`);
+    if (!deploymentValidation && /nie-sla-private/i.test(source)) findings.push(`private Cloudflare Worker name: ${file}`);
   }
 }
 
 const publicWorkerWrangler = readFileSync(path.join(root, 'worker', 'wrangler.toml'), 'utf8');
 assert.doesNotMatch(publicWorkerWrangler, /^NQ_PUBLIC_BROKER_ENABLED\s*=/m, 'public examples must not expose the official broker endpoint');
-assert.doesNotMatch(publicWorkerWrangler, /nie-sla-(?:private|db|archive)/, 'public examples must not inherit official resource names');
+assert.doesNotMatch(publicWorkerWrangler, /nie-sla-private/, 'public examples must not inherit the private Worker name');
+assert.match(publicWorkerWrangler, /^name = "nie-sla"$/m, 'new public deployments must use the NIE-SLA Worker name');
+assert.match(publicWorkerWrangler, /database_name = "nie-sla-db"/, 'new public deployments must use the NIE-SLA D1 name');
+assert.match(publicWorkerWrangler, /bucket_name = "nie-sla-archive"/, 'new public deployments must use the NIE-SLA R2 name');
 
 assert.deepEqual(findings, [], `public repository contains sensitive deployment data:\n${findings.join('\n')}`);
 console.log(`public repository safety scan passed (${textFiles.length} text files)`);

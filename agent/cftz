@@ -5,14 +5,18 @@
 set -euo pipefail
 
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
-SERVICE_NAME="nstatus-metrics"
-TASK_SERVICE_NAME="${SERVICE_NAME}-tasks"
+SERVICE_NAME="nie-sla-agent"
+TASK_SERVICE_NAME="nie-sla-agent-manager"
 INSTALL_DIR="/usr/local/bin"
-WORK_DIR="/opt/nstatus-metrics"
-STATE_DIR="/var/lib/nstatus-metrics"
-ENV_FILE="${WORK_DIR}/nstatus-metrics.env"
-BIN_NAME="nstatus-metrics"
-AGENT_USER="nstatus"
+WORK_DIR="/opt/nie-sla-agent"
+STATE_DIR="/var/lib/nie-sla-agent"
+MANAGER_STATE_DIR="/var/lib/nie-sla-agent-manager"
+ENV_FILE="${WORK_DIR}/nie-sla-agent.env"
+BIN_NAME="nie-sla-agent"
+AGENT_USER="nie-sla"
+LEGACY_BIN_NAME="nstatus-metrics"
+LEGACY_SERVICE_NAME="nstatus-metrics"
+LEGACY_TASK_SERVICE_NAME="nstatus-metrics-tasks"
 LEGACY_TASK_USER="nstatus-task"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; RED='\033[0;31m'; BOLD='\033[1m'; NC='\033[0m'
@@ -115,19 +119,19 @@ write_env_file() {
     local api="$1" tok="$2" aid="$3" label="$4" interval="$5" ping_targets="${6:-}" ping_sec="${7:-}"
     mkdir -p "$WORK_DIR"
     {
-        printf 'NSTATUS_API_BASE=%s\n' "$(shell_quote "$api")"
-        printf 'NSTATUS_AGENT_TOKEN=%s\n' "$(shell_quote "$tok")"
-        printf 'NSTATUS_AGENT_ID=%s\n' "$(shell_quote "$aid")"
-        printf 'NSTATUS_AGENT_LABEL=%s\n' "$(shell_quote "$label")"
-        printf 'NSTATUS_INTERVAL_SEC=%s\n' "$(shell_quote "$interval")"
-        printf 'NSTATUS_SAMPLE_SEC=1\n'
-        printf 'NSTATUS_QUEUE_FILE=%s\n' "$(shell_quote "${STATE_DIR}/samples-queue.json")"
-        printf 'NSTATUS_PRIVILEGED_UPDATER=1\n'
+        printf 'NIE_SLA_API_BASE=%s\n' "$(shell_quote "$api")"
+        printf 'NIE_SLA_AGENT_TOKEN=%s\n' "$(shell_quote "$tok")"
+        printf 'NIE_SLA_AGENT_ID=%s\n' "$(shell_quote "$aid")"
+        printf 'NIE_SLA_AGENT_LABEL=%s\n' "$(shell_quote "$label")"
+        printf 'NIE_SLA_INTERVAL_SEC=%s\n' "$(shell_quote "$interval")"
+        printf 'NIE_SLA_SAMPLE_SEC=1\n'
+        printf 'NIE_SLA_QUEUE_FILE=%s\n' "$(shell_quote "${STATE_DIR}/samples-queue.json")"
+        printf 'NIE_SLA_PRIVILEGED_UPDATER=1\n'
         if [[ -n "${ping_targets}" ]]; then
-            printf 'NSTATUS_PING_TARGETS=%s\n' "$(shell_quote "$ping_targets")"
+            printf 'NIE_SLA_PING_TARGETS=%s\n' "$(shell_quote "$ping_targets")"
         fi
         if [[ -n "${ping_sec}" ]]; then
-            printf 'NSTATUS_PING_SEC=%s\n' "$(shell_quote "$ping_sec")"
+            printf 'NIE_SLA_PING_SEC=%s\n' "$(shell_quote "$ping_sec")"
         fi
     } > "$ENV_FILE"
     chmod 0600 "$ENV_FILE"
@@ -154,11 +158,11 @@ secure_install_permissions() {
     chown root:root "$WORK_DIR"
     chmod 0755 "$WORK_DIR"
     if [[ -f "$ENV_FILE" ]]; then
-        if ! grep -q '^NSTATUS_QUEUE_FILE=' "$ENV_FILE"; then
-            printf 'NSTATUS_QUEUE_FILE=%s\n' "$(shell_quote "${STATE_DIR}/samples-queue.json")" >> "$ENV_FILE"
+        if ! grep -q '^NIE_SLA_QUEUE_FILE=' "$ENV_FILE"; then
+            printf 'NIE_SLA_QUEUE_FILE=%s\n' "$(shell_quote "${STATE_DIR}/samples-queue.json")" >> "$ENV_FILE"
         fi
-        if ! grep -q '^NSTATUS_PRIVILEGED_UPDATER=' "$ENV_FILE"; then
-            printf 'NSTATUS_PRIVILEGED_UPDATER=1\n' >> "$ENV_FILE"
+        if ! grep -q '^NIE_SLA_PRIVILEGED_UPDATER=' "$ENV_FILE"; then
+            printf 'NIE_SLA_PRIVILEGED_UPDATER=1\n' >> "$ENV_FILE"
         fi
         chown "root:${agent_group}" "$ENV_FILE"
         chmod 0640 "$ENV_FILE"
@@ -338,7 +342,7 @@ write_service_unit() {
         systemd)
             cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
-Description=聶.NET VPS Metrics Agent
+Description=NIE-SLA VPS Metrics Agent
 After=network-online.target
 Wants=network-online.target
 
@@ -371,7 +375,7 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=${STATE_DIR}
 EnvironmentFile=${ENV_FILE}
-Environment=NSTATUS_TASK_RUNNER_ONLY=1
+Environment=NIE_SLA_TASK_RUNNER_ONLY=1
 ExecStart=${WORK_DIR}/${BIN_NAME} --task-runner-only
 Restart=always
 RestartSec=20
@@ -387,7 +391,7 @@ WantedBy=multi-user.target
 EOF
             cat > "/etc/systemd/system/${SERVICE_NAME}-update.service" <<EOF
 [Unit]
-Description=聶.NET Agent privileged recovery update
+Description=NIE-SLA Agent privileged recovery update
 After=network-online.target
 
 [Service]
@@ -397,7 +401,7 @@ ExecStart=${INSTALL_DIR}/cftz update --automatic
 EOF
             cat > "/etc/systemd/system/${SERVICE_NAME}-update.timer" <<EOF
 [Unit]
-Description=Recover 聶.NET Agent manager and verified updates
+Description=Recover NIE-SLA Agent manager and verified updates
 
 [Timer]
 OnBootSec=5min
@@ -413,7 +417,7 @@ EOF
             cat > "/etc/init.d/${SERVICE_NAME}" <<EOF
 #!/sbin/openrc-run
 name="${SERVICE_NAME}"
-description="聶.NET VPS Metrics Agent"
+description="NIE-SLA VPS Metrics Agent"
 
 start() {
     ebegin "Starting ${SERVICE_NAME}"
@@ -446,7 +450,7 @@ start() {
     start-stop-daemon --start --background --make-pidfile \
         --pidfile /run/${TASK_SERVICE_NAME}.pid \
         --exec /bin/sh -- \
-        -c 'cd "${STATE_DIR}"; set -a; . "${ENV_FILE}"; set +a; export NSTATUS_TASK_RUNNER_ONLY=1; exec "${WORK_DIR}/${BIN_NAME}" --task-runner-only >>"/var/log/${TASK_SERVICE_NAME}.log" 2>&1'
+        -c 'cd "${STATE_DIR}"; set -a; . "${ENV_FILE}"; set +a; export NIE_SLA_TASK_RUNNER_ONLY=1; exec "${WORK_DIR}/${BIN_NAME}" --task-runner-only >>"/var/log/${TASK_SERVICE_NAME}.log" 2>&1'
     eend \$?
 }
 
@@ -517,17 +521,17 @@ detect_init() {
 do_install() {
     [[ $EUID -ne 0 ]] && { err "请使用 root 权限: sudo cftz install"; exit 1; }
 
-    echo -e "\n${BOLD}正在安装 聶.NET Metrics Agent${NC}\n"
+    echo -e "\n${BOLD}正在安装 NIE-SLA Agent${NC}\n"
 
     local arch=$(detect_arch)
     info "架构: ${arch}"
 
-    local api="${NSTATUS_API_BASE:-}"
-    local tok="${NSTATUS_AGENT_TOKEN:-}"
-    local aid="${NSTATUS_AGENT_ID:-$(hostname)}"
-    local interval="${NSTATUS_INTERVAL_SEC:-300}"
-    local ping_targets="${NSTATUS_PING_TARGETS:-*}"
-    local ping_sec="${NSTATUS_PING_SEC:-20}"
+    local api="${NIE_SLA_API_BASE:-${NSTATUS_API_BASE:-}}"
+    local tok="${NIE_SLA_AGENT_TOKEN:-${NSTATUS_AGENT_TOKEN:-}}"
+    local aid="${NIE_SLA_AGENT_ID:-${NSTATUS_AGENT_ID:-$(hostname)}}"
+    local interval="${NIE_SLA_INTERVAL_SEC:-${NSTATUS_INTERVAL_SEC:-300}}"
+    local ping_targets="${NIE_SLA_PING_TARGETS:-${NSTATUS_PING_TARGETS:-*}}"
+    local ping_sec="${NIE_SLA_PING_SEC:-${NSTATUS_PING_SEC:-20}}"
 
     [[ -z "$api" ]] && read -rp "  API URL: " api </dev/tty
     [[ -z "$tok" ]] && { read -rsp "  Token: " tok </dev/tty; echo; }
@@ -548,6 +552,7 @@ do_install() {
         cp "$tmpbin" "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"
     fi
     ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
+    ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${LEGACY_BIN_NAME}"
     rm -f "$tmpbin"
 
     write_env_file "$api" "$tok" "$aid" "$aid" "$interval" "$ping_targets" "$ping_sec"
@@ -565,7 +570,7 @@ do_install() {
 do_uninstall() {
     [[ $EUID -ne 0 ]] && { err "请使用 root 权限: sudo cftz uninstall"; exit 1; }
 
-    echo -e "\n${BOLD}正在卸载 聶.NET Metrics Agent${NC}\n"
+    echo -e "\n${BOLD}正在卸载 NIE-SLA Agent${NC}\n"
 
     local init=$(detect_init)
     case "$init" in
@@ -588,10 +593,10 @@ do_uninstall() {
             rm -f "/etc/periodic/hourly/${SERVICE_NAME}-update" "/etc/cron.hourly/${SERVICE_NAME}-update"
             ;;
     esac
-    rm -f "${INSTALL_DIR}/${BIN_NAME}"
+    rm -f "${INSTALL_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${LEGACY_BIN_NAME}"
     rm -f "${INSTALL_DIR}/cftz"
     rm -rf "$WORK_DIR" "$STATE_DIR"
-    rm -rf "/var/lib/nstatus-manager"
+    rm -rf "$MANAGER_STATE_DIR"
     userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
     userdel "$LEGACY_TASK_USER" 2>/dev/null || deluser "$LEGACY_TASK_USER" 2>/dev/null || true
 
@@ -601,7 +606,7 @@ do_uninstall() {
 do_update() {
     [[ $EUID -ne 0 ]] && { err "请使用 root 权限: sudo cftz update"; exit 1; }
 
-    echo -e "\n${BOLD}正在更新 聶.NET Metrics Agent${NC}\n"
+    echo -e "\n${BOLD}正在更新 NIE-SLA Agent${NC}\n"
 
     if [[ ! -f "${WORK_DIR}/${BIN_NAME}" && ! -f "${INSTALL_DIR}/${BIN_NAME}" ]]; then
         err "Agent 未安装，请先运行: cftz install"
@@ -612,7 +617,7 @@ do_update() {
     [[ "${1:-}" == "--automatic" ]] && automatic=1
     secure_install_permissions
     read_env
-    local api="${NSTATUS_API_BASE:-}" tok="${NSTATUS_AGENT_TOKEN:-}" aid="${NSTATUS_AGENT_ID:-}" tmpbin backup
+    local api="${NIE_SLA_API_BASE:-${NSTATUS_API_BASE:-}}" tok="${NIE_SLA_AGENT_TOKEN:-${NSTATUS_AGENT_TOKEN:-}}" aid="${NIE_SLA_AGENT_ID:-${NSTATUS_AGENT_ID:-}}" tmpbin backup
     [[ -n "$api" && -n "$tok" && -n "$aid" ]] || { err "Agent 配置不完整，无法获取可信更新策略"; exit 1; }
     tmpbin="$(download_binary "$api" "$tok" "$aid" "$automatic")"
     if [[ "$tmpbin" == "__AUTO_UPDATE_DISABLED__" ]]; then
@@ -639,6 +644,7 @@ do_update() {
         cp "$tmpbin" "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"
     fi
     ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
+    ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${LEGACY_BIN_NAME}"
     rm -f "$tmpbin"
     secure_install_permissions
     write_service_unit
@@ -693,12 +699,12 @@ do_set() {
 
     secure_install_permissions
     read_env
-    local api="${NSTATUS_API_BASE:-}"
-    local tok="${NSTATUS_AGENT_TOKEN:-}"
-    local aid="${NSTATUS_AGENT_ID:-}"
-    local interval="${NSTATUS_INTERVAL_SEC:-300}"
-    local ping_targets="${NSTATUS_PING_TARGETS:-*}"
-    local ping_sec="${NSTATUS_PING_SEC:-20}"
+    local api="${NIE_SLA_API_BASE:-${NSTATUS_API_BASE:-}}"
+    local tok="${NIE_SLA_AGENT_TOKEN:-${NSTATUS_AGENT_TOKEN:-}}"
+    local aid="${NIE_SLA_AGENT_ID:-${NSTATUS_AGENT_ID:-}}"
+    local interval="${NIE_SLA_INTERVAL_SEC:-${NSTATUS_INTERVAL_SEC:-300}}"
+    local ping_targets="${NIE_SLA_PING_TARGETS:-${NSTATUS_PING_TARGETS:-*}}"
+    local ping_sec="${NIE_SLA_PING_SEC:-${NSTATUS_PING_SEC:-20}}"
 
     while true; do
         echo -e "\n${BOLD}Agent 配置${NC}\n"
@@ -875,7 +881,7 @@ do_status() {
 
 do_admin() {
     read_env
-    local api="${NSTATUS_API_BASE:-}"
+    local api="${NIE_SLA_API_BASE:-${NSTATUS_API_BASE:-}}"
     local username="admin" password="" session=""
     local totp=""
     read -rp "  管理员账号 [admin]: " username </dev/tty
@@ -1136,7 +1142,7 @@ do_admin_pings() {
 
 do_totp_setup() {
     read_env
-    local api="${NSTATUS_API_BASE:-}"
+    local api="${NIE_SLA_API_BASE:-${NSTATUS_API_BASE:-}}"
     local username="admin" password="" session=""
     read -rp "  管理员账号 [admin]: " username </dev/tty
     username="${username:-admin}"
@@ -1165,7 +1171,7 @@ do_totp_setup() {
 
     echo
     printf "  ${BOLD}密钥:${NC}  ${CYAN}%s${NC}\n" "$secret"
-    echo "  账号: 聶.NET:admin"
+    echo "  账号: NIE-SLA:admin"
     echo "  位数: 6"
     echo
     read -rp "  输入当前验证码确认: " code </dev/tty
@@ -1193,7 +1199,7 @@ case "${1:-}" in
     admin)     do_admin ;;
     totp-setup) do_totp_setup ;;
     *)
-        echo -e "${BOLD}cftz${NC} - 聶.NET VPS Agent 管理工具"
+        echo -e "${BOLD}cftz${NC} - NIE-SLA VPS Agent 管理工具"
         echo
         echo "  cftz install    安装 Agent"
         echo "  cftz uninstall  完全移除 Agent"

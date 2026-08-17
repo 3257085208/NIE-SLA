@@ -6,7 +6,8 @@ import { clearRateLimitD1, rateLimitD1, rateLimitStatusD1 } from './ratelimit.js
 
 const OAUTH_STATES_KEY = 'github_oauth_states';
 const OAUTH_TICKETS_KEY = 'github_oauth_tickets';
-const OAUTH_STATE_COOKIE = 'nstatus_oauth_state';
+const OAUTH_STATE_COOKIE = 'nie_sla_oauth_state';
+const LEGACY_OAUTH_STATE_COOKIE = 'nstatus_oauth_state';
 const OAUTH_STATE_TTL_SEC = 600;
 const OAUTH_TICKET_TTL_SEC = 300;
 const MAX_PENDING_OAUTH = 10;
@@ -180,7 +181,7 @@ export async function finishGitHubOAuth(request, env) {
 
     const state = String(url.searchParams.get('state') || '').trim();
     const code = String(url.searchParams.get('code') || '').trim();
-    const cookieState = readCookie(request, OAUTH_STATE_COOKIE);
+    const cookieState = readCookie(request, OAUTH_STATE_COOKIE) || readCookie(request, LEGACY_OAUTH_STATE_COOKIE);
     if (!state || !code || !cookieState || !constantTimeEqual(state, cookieState)) {
       throw new ApiError(401, 'GitHub 登录状态无效或已过期');
     }

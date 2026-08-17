@@ -15,15 +15,15 @@ Complete documentation: [中文完整文档](../README.zh-CN.md) / [Agent 指南
 ## Layout after install
 
 ```text
-/opt/nstatus-metrics/nstatus-metrics
-/opt/nstatus-metrics/nstatus-metrics.env
+/opt/nie-sla-agent/nie-sla-agent
+/opt/nie-sla-agent/nie-sla-agent.env
 /usr/local/bin/cftz
-systemd or OpenRC service nstatus-metrics
+systemd or OpenRC services nie-sla-agent and nie-sla-agent-manager
 ```
 
 ## Runtime security
 
-The agent talks to the Worker with native Rust HTTPS (`ureq` + `rustls`). Each node uses its own scoped token. The telemetry service runs as the unprivileged `nstatus` user; the two fixed Beta actions (NodeQuality, IPv4 unlock check) run under the root-only Manager, which accepts only compiled-in action identifiers.
+The agent talks to the Worker with native Rust HTTPS (`ureq` + `rustls`). Each node uses its own scoped token. The telemetry service runs as the unprivileged `nie-sla` user; the two fixed Beta actions (NodeQuality, IPv4 unlock check) run under the root-only Manager, which accepts only compiled-in action identifiers. Existing `nstatus-metrics` installations are migrated without deleting their old state, and the old command remains a compatibility symlink.
 
 ## Build
 

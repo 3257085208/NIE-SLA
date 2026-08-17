@@ -1,9 +1,9 @@
 #!/bin/sh
 set -eu
 
-BASE_URL="${NSTATUS_AGENT_BASE_URL:-https://status.example.com}"
+BASE_URL="${NIE_SLA_AGENT_BASE_URL:-${NSTATUS_AGENT_BASE_URL:-https://status.example.com}}"
 BASE_URL="${BASE_URL%/}"
-DEFAULT_SETUP_SHA256="b3110310124d0d78fcb9966ecdf519e9c9b403721451ad425690df42d9347628"
+DEFAULT_SETUP_SHA256="885dc3569ac97cb1e5f95e0293acab64030e38b2a084a1401e9633f07722ee2d"
 
 need_root() {
   if [ "$(id -u 2>/dev/null || echo 1)" != "0" ]; then
@@ -60,13 +60,13 @@ need_root
 if ! command -v bash >/dev/null 2>&1; then
   install_pkg bash
 fi
-tmp="$(mktemp "${TMPDIR:-/tmp}/nstatus-setup.XXXXXX")"
+tmp="$(mktemp "${TMPDIR:-/tmp}/nie-sla-setup.XXXXXX")"
 chmod 0600 "$tmp"
 trap 'rm -f "$tmp"' EXIT INT TERM
-cache_key="$(printf '%s' "${NSTATUS_SHA256SUMS_SHA256:-$(date +%s)}" | tr -cd 'A-Za-z0-9._-')"
+cache_key="$(printf '%s' "${NIE_SLA_SHA256SUMS_SHA256:-${NSTATUS_SHA256SUMS_SHA256:-$(date +%s)}}" | tr -cd 'A-Za-z0-9._-')"
 [ -n "$cache_key" ] || cache_key="$(date +%s)"
 download_to "${BASE_URL}/setup.sh?v=${cache_key}" "$tmp"
-expected_setup_sha256="${NSTATUS_SETUP_SHA256:-$DEFAULT_SETUP_SHA256}"
+expected_setup_sha256="${NIE_SLA_SETUP_SHA256:-${NSTATUS_SETUP_SHA256:-$DEFAULT_SETUP_SHA256}}"
 case "$expected_setup_sha256" in
   *[!0-9A-Fa-f]*|'') echo "Invalid setup.sh SHA-256." >&2; exit 1 ;;
 esac
@@ -77,6 +77,6 @@ expected_setup_sha256="$(printf '%s' "$expected_setup_sha256" | tr 'A-F' 'a-f')"
 
 export DOWNLOAD_BASE="${DOWNLOAD_BASE:-$BASE_URL}"
 export CFTZ_URL_BASE="${CFTZ_URL_BASE:-$BASE_URL}"
-export NSTATUS_PING_TARGETS="${NSTATUS_PING_TARGETS:-*}"
-export NSTATUS_PING_SEC="${NSTATUS_PING_SEC:-20}"
+export NIE_SLA_PING_TARGETS="${NIE_SLA_PING_TARGETS:-${NSTATUS_PING_TARGETS:-*}}"
+export NIE_SLA_PING_SEC="${NIE_SLA_PING_SEC:-${NSTATUS_PING_SEC:-20}}"
 bash "$tmp" "$@"

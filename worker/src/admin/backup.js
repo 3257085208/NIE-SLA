@@ -178,17 +178,31 @@ async function replaceRestoreState(env, state) {
 async function clearRuntimeState(env) {
   await env.DB.batch(RUNTIME_TABLES.map(table => env.DB.prepare(`DELETE FROM ${table}`)));
   if (!env.ARCHIVE) return { d1_cleared: true, r2_cleared: false, warnings: ['missing_r2'] };
+  const warnings = [];
   const keys = [
     String(env.R2_STATE_KEY || 'state/status.json').replace(/^\/+/, ''),
     String(env.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, ''),
   ];
-  try {
-    await env.ARCHIVE.delete(keys);
-    return { d1_cleared: true, r2_cleared: true, warnings: [] };
-  } catch (error) {
-    console.error('restore runtime R2 cleanup failed:', String(error?.message || error));
-    return { d1_cleared: true, r2_cleared: false, warnings: ['r2_cleanup_failed'] };
+  try { await env.ARCHIVE.delete(keys); } catch (error) {
+    warnings.push(`runtime key cleanup failed: ${String(error?.message || error)}`);
   }
+  const metricsPrefix = `${String(env.AGENT_METRICS_R2_PREFIX || 'agent-metrics-v1').replace(/^\/+|\/+$/g, '')}/`;
+  for (const prefix of ['history/', 'agent-history/', 'agent-state/', 'latency/v1/', metricsPrefix]) {
+    try { await deleteR2Prefix(env, prefix); } catch (error) {
+      warnings.push(`${prefix} cleanup failed: ${String(error?.message || error)}`);
+    }
+  }
+  return { d1_cleared: true, r2_cleared: warnings.length === 0, warnings };
+}
+
+async function deleteR2Prefix(env, prefix) {
+  let cursor;
+  do {
+    const page = await env.ARCHIVE.list({ prefix, cursor, limit: 1000 });
+    const keys = (page.objects || []).map(item => item.key);
+    for (let offset = 0; offset < keys.length; offset += 100) await env.ARCHIVE.delete(keys.slice(offset, offset + 100));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
 }
 
 function restoreSnapshotMaterial(env) {

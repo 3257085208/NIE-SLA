@@ -98,7 +98,7 @@ async function handleThemeRequest(record, message) {
       query.set(key, String(value).slice(0, 200));
     }
     const suffix = query.size ? `?${query}` : '';
-    const apiBase = String(window.NSTATUS_API_BASE || '').replace(/\/+$/, '');
+    const apiBase = String(window.NIE_SLA_API_BASE || window.NSTATUS_API_BASE || '').replace(/\/+$/, '');
     const response = await fetch(`${apiBase}/api/v1/${resource}${suffix}`, {
       cache: 'no-store',
       credentials: 'omit',

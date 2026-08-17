@@ -3,8 +3,29 @@ import { clamp, nowSec, sanitizeId, sanitizeAgentId, dayFromSec, dayStartSec, ti
 
 
 export async function readR2Json(env, key, fallback) {
-  if (!env.ARCHIVE) return fallback;
-  try { const object = await env.ARCHIVE.get(key); if (!object) return fallback; return (await object.json()) || fallback; } catch (_) { return fallback; }
+  const result = await readR2JsonResult(env, key);
+  return result.ok ? (result.found ? result.value : fallback) : fallback;
+}
+
+export async function readR2JsonResult(env, key) {
+  if (!env.ARCHIVE) return { ok: false, error: 'missing_archive', key };
+  let object;
+  try { object = await env.ARCHIVE.get(key); } catch (error) {
+    return { ok: false, error: String(error?.message || error), key };
+  }
+  if (!object) return { ok: true, found: false, value: null, key };
+  try {
+    const value = await object.json();
+    return { ok: true, found: true, value: value || null, key };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error), key };
+  }
+}
+
+export async function readR2JsonStrict(env, key) {
+  const result = await readR2JsonResult(env, key);
+  if (!result.ok) throw new Error(`R2 read failed (${result.key || key}): ${result.error}`);
+  return result.found ? result.value : null;
 }
 
 export async function writeR2Json(env, key, value, metadata = {}) {
@@ -17,7 +38,9 @@ export async function writeR2Json(env, key, value, metadata = {}) {
 function r2StateKey(env) { return String(env.R2_STATE_KEY || 'state/status.json').replace(/^\/+/, ''); }
 
 export async function readR2State(env) {
-  const state = await readR2Json(env, r2StateKey(env), { schema: R2_STATE_SCHEMA, updated_at: null, targets: {} });
+  const result = await readR2JsonResult(env, r2StateKey(env));
+  if (!result.ok) throw new Error(`R2 state read failed (${result.key}): ${result.error}`);
+  const state = result.found ? result.value : { schema: R2_STATE_SCHEMA, updated_at: null, targets: {} };
   return { schema: state.schema || R2_STATE_SCHEMA, updated_at: state.updated_at || null, targets: state.targets && typeof state.targets === 'object' ? state.targets : {} };
 }
 
@@ -27,7 +50,7 @@ export async function writeR2State(env, state) {
 
 export async function removeTargetFromR2State(env, targetId) {
   if (!env.ARCHIVE) return;
-  const lock = await acquireR2Lock(env, 10);
+  const lock = await acquireR2Lock(env, r2LockTtlSec(env));
   if (env.DB && !lock) throw new Error('R2 状态正在写入，请重试删除操作');
   try {
     const state = await readR2State(env);
@@ -40,8 +63,12 @@ export async function removeTargetFromR2State(env, targetId) {
   }
 }
 
+function r2LockTtlSec(env) {
+  return clamp(Number(env?.R2_LOCK_TTL_SEC || 30), 15, 120);
+}
 
-async function acquireR2Lock(env, timeoutSec = 10, attempts = 8) {
+async function acquireR2Lock(env, timeoutSec = null, attempts = 12) {
+  if (!timeoutSec) timeoutSec = r2LockTtlSec(env);
   if (!env.DB) return null;
   const lockKey = 'r2_state_lock';
 
@@ -75,11 +102,28 @@ async function releaseR2Lock(env, lock) {
   }
 }
 
+export async function acquireAgentHistoryLock(env, agentId, ttlSec = 90) {
+  if (!env.DB) return null;
+  const key = `agent_history_lock:${sanitizeAgentId(agentId)}`;
+  const now = nowSec();
+  const token = `${now + ttlSec}:${crypto.randomUUID()}`;
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+    WHERE CAST(substr(app_meta.value, 1, instr(app_meta.value, ':') - 1) AS INTEGER) < ?`)
+    .bind(key, token, now, now).run();
+  const row = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(key).first();
+  return row?.value === token ? { key, token } : null;
+}
+
+export async function releaseAgentHistoryLock(env, lock) {
+  if (!env.DB || !lock) return;
+  await env.DB.prepare(`DELETE FROM app_meta WHERE key = ? AND value = ?`).bind(lock.key, lock.token).run().catch(() => {});
+}
+
 export async function mergeR2StateUpdates(env, updates) {
   if (!updates.length) return { ok: true, skipped: true };
 
-
-  const lock = await acquireR2Lock(env, 10);
+  const lock = await acquireR2Lock(env, r2LockTtlSec(env));
   if (!lock) {
     console.warn('Failed to acquire R2 lock, skipping state update to prevent race condition');
     return { ok: false, error: 'lock_failed', skipped: true };
@@ -120,7 +164,8 @@ export async function writeR2History(env, target, day, points) {
 }
 
 export async function appendR2HistoryPoints(env, target, day, newPoints) {
-  const points = await readR2History(env, target.id, day);
+  const payload = await readR2JsonStrict(env, r2HistoryKey(target.id, day, env));
+  const points = payload ? (Array.isArray(payload.points) ? payload.points : Array.isArray(payload.records) ? payload.records : []).map(normalizeHistoryPoint).filter(p => Number(p.checked_at) > 0) : [];
   const byBucket = new Map(points.map(p => [Number(p.checked_at), p]));
   for (const point of newPoints || []) { if (point) byBucket.set(Number(point.checked_at), normalizeHistoryPoint(point)); }
   const retentionPoints = clamp(Number(env.R2_HISTORY_POINTS_PER_DAY || 288), 24, 2000);
@@ -157,7 +202,8 @@ export async function writeAgentR2History(env, agentId, target, day, points) {
 }
 
 export async function appendAgentR2HistoryPoints(env, agentId, target, day, newPoints) {
-  const points = await readAgentR2History(env, agentId, target.id, day);
+  const payload = await readR2JsonStrict(env, agentR2HistoryKey(agentId, target.id, day, env));
+  const points = payload ? (Array.isArray(payload.points) ? payload.points : Array.isArray(payload.records) ? payload.records : []).map(normalizeHistoryPoint).filter(p => Number(p.checked_at) > 0) : [];
   const byBucket = new Map(points.map(p => [Number(p.checked_at), p]));
   for (const point of newPoints || []) { if (point) byBucket.set(Number(point.checked_at), normalizeHistoryPoint(point)); }
   const retentionPoints = clamp(Number(env.R2_HISTORY_POINTS_PER_DAY || 288), 24, 2000);
@@ -174,7 +220,7 @@ export async function getAgentR2HistoryRange(env, agentId, targetId, days) {
 
 export async function writeAgentState(env, agentId, state) {
   if (!env.ARCHIVE) return;
-  await writeR2Json(env, agentR2StateKey(agentId, env), { schema: 'nstatus-agent-state-v1', updated_at: new Date().toISOString(), ...state }, { schema: 'nstatus-agent-state-v1', agent_id: sanitizeAgentId(agentId) });
+  await writeR2Json(env, agentR2StateKey(agentId, env), { schema: 'nie-sla-agent-state-v1', updated_at: new Date().toISOString(), ...state }, { schema: 'nie-sla-agent-state-v1', agent_id: sanitizeAgentId(agentId) });
 }
 
 export async function getAgentSeriesForTarget(env, targetId, days, since, limit) {
@@ -190,7 +236,59 @@ export async function getAgentSeriesForTarget(env, targetId, days, since, limit)
   return out;
 }
 
-
+export async function deleteTargetR2Data(env, targetId) {
+  if (!env.ARCHIVE) return { deleted: 0, updated_agent_states: 0, warnings: [] };
+  const id = sanitizeId(targetId);
+  const warnings = [];
+  let deleted = 0;
+  const historyPrefix = `${String(env.R2_HISTORY_PREFIX || 'history').replace(/^\/+|\/+$/g, '')}/`;
+  const agentHistoryPrefix = `${String(env.AGENT_R2_HISTORY_PREFIX || 'agent-history').replace(/^\/+|\/+$/g, '')}/`;
+  for (const prefix of [historyPrefix, agentHistoryPrefix]) {
+    let cursor;
+    try {
+      do {
+        const page = await env.ARCHIVE.list({ prefix, cursor, limit: 1000 });
+        const keys = (page.objects || []).filter(item => String(item.key).endsWith(`/${id}.json`)).map(item => item.key);
+        for (let offset = 0; offset < keys.length; offset += 100) await env.ARCHIVE.delete(keys.slice(offset, offset + 100));
+        deleted += keys.length;
+        cursor = page.truncated ? page.cursor : undefined;
+      } while (cursor);
+    } catch (error) {
+      warnings.push(`history cleanup failed for ${prefix}: ${String(error?.message || error)}`);
+    }
+  }
+  let updatedAgentStates = 0;
+  const statePrefix = `${String(env.AGENT_R2_STATE_PREFIX || 'agent-state').replace(/^\/+|\/+$/g, '')}/`;
+  try {
+    let cursor;
+    do {
+      const page = await env.ARCHIVE.list({ prefix: statePrefix, cursor, limit: 1000 });
+      for (const object of page.objects || []) {
+        try {
+          const data = await readR2JsonStrict(env, object.key);
+          if (!data || typeof data !== 'object' || Array.isArray(data)) continue;
+          const copy = JSON.parse(JSON.stringify(data));
+          let changed = false;
+          if (copy[id] && typeof copy[id] === 'object') { delete copy[id]; changed = true; }
+          for (const sectionName of ['targets', 'daily', 'series', 'latest']) {
+            const section = copy[sectionName];
+            if (section && typeof section === 'object' && !Array.isArray(section) && Object.prototype.hasOwnProperty.call(section, id)) {
+              delete section[id];
+              changed = true;
+            }
+          }
+          if (changed) { await writeR2Json(env, object.key, copy); updatedAgentStates++; }
+        } catch (error) {
+          warnings.push(`agent-state cleanup failed for ${object.key}: ${String(error?.message || error)}`);
+        }
+      }
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+  } catch (error) {
+    warnings.push(`agent-state list failed: ${String(error?.message || error)}`);
+  }
+  return { deleted, updated_agent_states: updatedAgentStates, warnings };
+}
 
 export async function getStatusSnapshotGeneratedAt(env, key) {
   try { const object = await env.ARCHIVE.get(key); if (!object) return 0; const payload = await object.json(); const generatedAt = Math.floor(new Date(payload?.generated_at || payload?.now || 0).getTime() / 1000); return Number.isFinite(generatedAt) ? generatedAt : 0; } catch (_) { return 0; }

@@ -54,7 +54,6 @@ export async function rateLimitD1(env, key, limit, windowSec = 60) {
   const windowStart = now - windowSec;
   try {
     await ensureD1RateLimitTable(env);
-    await env.DB.prepare(`DELETE FROM rate_limits WHERE key = ? AND ts < ?`).bind(key, windowStart).run();
     const result = await env.DB.prepare(`INSERT INTO rate_limits (key, ts)
       SELECT ?, ?
       WHERE (SELECT COUNT(*) FROM rate_limits WHERE key = ? AND ts >= ?) < ?`)

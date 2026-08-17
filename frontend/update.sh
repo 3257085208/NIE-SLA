@@ -30,10 +30,10 @@ sha256_file() {
 }
 
 verify_binary_checksum() {
-    local file="$1" name="$2" sums="$3" expected="${NSTATUS_EXPECTED_SHA256:-}"
+    local file="$1" name="$2" sums="$3" expected="${NIE_SLA_EXPECTED_SHA256:-${NSTATUS_EXPECTED_SHA256:-}}"
     if [[ -z "$expected" ]]; then
         download_to "$CHECKSUM_URL" "$sums"
-        local sums_expected="${NSTATUS_SHA256SUMS_SHA256:-$DEFAULT_SHA256SUMS_SHA256}" sums_actual
+        local sums_expected="${NIE_SLA_SHA256SUMS_SHA256:-${NSTATUS_SHA256SUMS_SHA256:-$DEFAULT_SHA256SUMS_SHA256}}" sums_actual
         sums_actual="$(sha256_file "$sums")"
         if [[ -n "$sums_expected" && "${sums_actual,,}" != "${sums_expected,,}" ]]; then
             err "校验清单验证失败"
@@ -74,10 +74,13 @@ case "$(uname -m)" in
 esac
 
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
-DOWNLOAD_URL="${DOWNLOAD_URL:-${DOWNLOAD_BASE%/}/bin/nstatus-metrics-linux-${ARCH}}"
+DOWNLOAD_URL="${DOWNLOAD_URL:-${DOWNLOAD_BASE%/}/bin/nie-sla-agent-linux-${ARCH}}"
 CHECKSUM_URL="${CHECKSUM_URL:-${DOWNLOAD_BASE%/}/bin/SHA256SUMS}"
-BINARY_NAME="nstatus-metrics-linux-${ARCH}"
-BINARY_PATH="${NSTATUS_BINARY_PATH:-/opt/nstatus-metrics/nstatus-metrics}"
+BINARY_NAME="nie-sla-agent-linux-${ARCH}"
+BINARY_PATH="${NIE_SLA_BINARY_PATH:-${NSTATUS_BINARY_PATH:-/opt/nie-sla-agent/nie-sla-agent}}"
+if [[ ! -f "$BINARY_PATH" && -f "/opt/nstatus-metrics/nstatus-metrics" && ! -L "/opt/nstatus-metrics/nstatus-metrics" ]]; then
+    BINARY_PATH="/opt/nstatus-metrics/nstatus-metrics"
+fi
 if [[ ! -f "$BINARY_PATH" && -f "/usr/local/bin/nstatus-metrics" && ! -L "/usr/local/bin/nstatus-metrics" ]]; then
     BINARY_PATH="/usr/local/bin/nstatus-metrics"
 fi
@@ -90,17 +93,17 @@ secure_binary_permissions() {
 
 restart_service() {
     if command -v systemctl &>/dev/null; then
-        systemctl restart nstatus-metrics
+        systemctl restart nie-sla-agent
     elif command -v rc-service &>/dev/null; then
-        rc-service nstatus-metrics restart
+        rc-service nie-sla-agent restart
     fi
 }
 
 service_is_healthy() {
     if command -v systemctl &>/dev/null; then
-        systemctl is-active --quiet nstatus-metrics
+        systemctl is-active --quiet nie-sla-agent
     elif command -v rc-service &>/dev/null; then
-        rc-service nstatus-metrics status >/dev/null 2>&1
+        rc-service nie-sla-agent status >/dev/null 2>&1
     else
         "$BINARY_PATH" --version >/dev/null 2>&1
     fi
@@ -145,6 +148,7 @@ if download_to "$DOWNLOAD_URL" "${BINARY_PATH}.tmp"; then
     chmod 0755 "${BINARY_PATH}.tmp"
     mv "${BINARY_PATH}.tmp" "$BINARY_PATH"
     secure_binary_permissions
+    ln -sf "$BINARY_PATH" /usr/local/bin/nie-sla-agent 2>/dev/null || true
     ln -sf "$BINARY_PATH" /usr/local/bin/nstatus-metrics 2>/dev/null || true
     ok "下载完成"
 else
@@ -174,9 +178,9 @@ title "更新完成！"
 echo ""
 info "查看服务状态:"
 if command -v systemctl &>/dev/null; then
-    systemctl status nstatus-metrics --no-pager || true
+    systemctl status nie-sla-agent --no-pager || true
 else
-    rc-service nstatus-metrics status || true
+    rc-service nie-sla-agent status || true
 fi
 
 echo ""

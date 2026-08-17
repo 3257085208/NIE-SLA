@@ -22,11 +22,11 @@ NIE-SLA Agent 是 VPS 侧的 Rust 采集器，只主动向 Worker 发起 HTTPS �
 
 | 文件 | 平台 |
 | --- | --- |
-| `nstatus-metrics-linux-amd64` | x86_64 Linux |
-| `nstatus-metrics-linux-386` | 32 位 x86 Linux |
-| `nstatus-metrics-linux-arm64` | ARM64/aarch64 Linux |
-| `nstatus-metrics-linux-arm` | ARMv7 hard-float |
-| `nstatus-metrics-linux-armv6` | ARMv6 |
+| `nie-sla-agent-linux-amd64` | x86_64 Linux |
+| `nie-sla-agent-linux-386` | 32 位 x86 Linux |
+| `nie-sla-agent-linux-arm64` | ARM64/aarch64 Linux |
+| `nie-sla-agent-linux-arm` | ARMv7 hard-float |
+| `nie-sla-agent-linux-armv6` | ARMv6 |
 
 ## 安装
 
@@ -35,13 +35,13 @@ NIE-SLA Agent 是 VPS 侧的 Rust 采集器，只主动向 Worker 发起 HTTPS �
 安装结果：
 
 ```text
-/opt/nstatus-metrics/nstatus-metrics
-/opt/nstatus-metrics/nstatus-metrics.env
+/opt/nie-sla-agent/nie-sla-agent
+/opt/nie-sla-agent/nie-sla-agent.env
 /usr/local/bin/cftz
-systemd 或 OpenRC 服务 nstatus-metrics
+systemd 或 OpenRC 服务 nie-sla-agent / nie-sla-agent-manager
 ```
 
-安装器识别架构、校验 manifest 与二进制、验证版本、停止旧进程，再安装服务。重复运行最新命令可以安全更新并清理旧版残留。
+安装器识别架构、校验 manifest 与二进制、验证版本、停止旧进程，再安装服务。升级旧节点时会保留旧状态数据，并保留 `nstatus-metrics` 命令软链接作为兼容入口。
 
 ## 常用命令
 
@@ -61,19 +61,21 @@ sudo cftz uninstall    # 卸载 Agent
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `NSTATUS_API_BASE` | 必填 | Worker 的 HTTPS API Base |
-| `NSTATUS_AGENT_TOKEN` | 必填 | 节点 scoped Token |
-| `NSTATUS_AGENT_ID` | 主机名 | 必须与后台目标 ID 一致 |
-| `NSTATUS_AGENT_LABEL` | 主机名 | 展示名称 |
-| `NSTATUS_SAMPLE_SEC` | `1` | 本地采样间隔 |
-| `NSTATUS_INTERVAL_SEC` | `300` | 指标上传间隔 |
-| `NSTATUS_PING_SEC` | `20` | Ping 间隔 |
-| `NSTATUS_PING_TARGET_REFRESH_SEC` | `600` | 后台 Ping 目标刷新间隔（60–3600 秒） |
-| `NSTATUS_PING_TARGETS` | `*` | 使用的后台目标 |
-| `NSTATUS_QUEUE_FILE` | 平台默认 | 队列文件路径 |
-| `NSTATUS_QUEUE_MAX_SAMPLES` | `86400` | 队列上限 |
-| `NSTATUS_UPDATE_CHECK_SEC` | `3600` | 更新策略检查间隔（900–86400 秒） |
-| `NSTATUS_ALLOW_INSECURE_HTTP` | 关闭 | 仅限可信私网调试，公网必须 HTTPS |
+| `NIE_SLA_API_BASE` | 必填 | Worker 的 HTTPS API Base |
+| `NIE_SLA_AGENT_TOKEN` | 必填 | 节点 scoped Token |
+| `NIE_SLA_AGENT_ID` | 主机名 | 必须与后台目标 ID 一致 |
+| `NIE_SLA_AGENT_LABEL` | 主机名 | 展示名称 |
+| `NIE_SLA_SAMPLE_SEC` | `1` | 本地采样间隔 |
+| `NIE_SLA_INTERVAL_SEC` | `300` | 指标上传间隔 |
+| `NIE_SLA_PING_SEC` | `20` | Ping 间隔 |
+| `NIE_SLA_PING_TARGET_REFRESH_SEC` | `600` | 后台 Ping 目标刷新间隔（60–3600 秒） |
+| `NIE_SLA_PING_TARGETS` | `*` | 使用的后台目标 |
+| `NIE_SLA_QUEUE_FILE` | 平台默认 | 队列文件路径 |
+| `NIE_SLA_QUEUE_MAX_SAMPLES` | `86400` | 队列上限 |
+| `NIE_SLA_UPDATE_CHECK_SEC` | `3600` | 更新策略检查间隔（900–86400 秒） |
+| `NIE_SLA_ALLOW_INSECURE_HTTP` | 关闭 | 仅限可信私网调试，公网必须 HTTPS |
+
+旧 `NSTATUS_*` 变量仍可读取；同时设置新旧变量时以 `NIE_SLA_*` 为准。
 
 单批上报最多 300 个采样点、5000 条 Ping；Ping 队列容量 200–10000，并发上限 32，单次 TCP 探测超时 1 秒，最多解析 8 个地址。
 

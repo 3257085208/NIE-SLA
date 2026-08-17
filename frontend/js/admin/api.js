@@ -1,7 +1,9 @@
-import { readStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260804-v11113";
+import { readMigratedStorage, readStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260810-nqfix1";
 
-const SESSION_KEY = "nstatus_admin_session";
-const SESSION_EXP_KEY = "nstatus_admin_session_exp";
+const SESSION_KEY = "nie_sla_admin_session";
+const SESSION_EXP_KEY = "nie_sla_admin_session_exp";
+const LEGACY_SESSION_KEY = "nstatus_admin_session";
+const LEGACY_SESSION_EXP_KEY = "nstatus_admin_session_exp";
 
 export function createAdminClient({ apiBase, onUnauthorized, defaultTimeoutMs = 12_000 }) {
   for (const name of ["sessionStorage", "localStorage"]) {
@@ -10,8 +12,8 @@ export function createAdminClient({ apiBase, onUnauthorized, defaultTimeoutMs = 
   }
 
   function activeSessionId() {
-    const session = readStorage("sessionStorage", SESSION_KEY, "");
-    const expiresAt = Number(readStorage("sessionStorage", SESSION_EXP_KEY, 0));
+    const session = readMigratedStorage("sessionStorage", SESSION_KEY, LEGACY_SESSION_KEY, "");
+    const expiresAt = Number(readMigratedStorage("sessionStorage", SESSION_EXP_KEY, LEGACY_SESSION_EXP_KEY, 0));
     if (session && expiresAt && Date.now() < expiresAt) return session;
     removeStorage("sessionStorage", SESSION_KEY);
     removeStorage("sessionStorage", SESSION_EXP_KEY);

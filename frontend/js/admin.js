@@ -1,9 +1,9 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260804-v11113";
-import { createAdminClient } from "./admin/api.js?v=20260804-v11113";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260804-v11113";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260804-v11113";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260810-nqfix1";
+import { createAdminClient } from "./admin/api.js?v=20260810-nqfix1";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260810-nqfix1";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260810-nqfix1";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260804-v11113";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260810-nqfix1";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -14,14 +14,15 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260804-v11113";
-import { readStorage, writeStorage } from "./shared/storage.js?v=20260804-v11113";
+} from "./shared/grouping.js?v=20260810-nqfix1";
+import { readMigratedStorage, readStorage, writeStorage } from "./shared/storage.js?v=20260810-nqfix1";
 import { escapeHtml } from "./shared/html.js";
 import { fmtBytes } from "./shared/format.js";
 
-const CONFIG = window.NSTATUS_CONFIG || {};
+const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
   CONFIG.apiBase ||
+    window.NIE_SLA_API_BASE ||
     window.NSTATUS_API_BASE ||
     "",
 ).replace(/\/+$/, "");
@@ -46,7 +47,7 @@ const {
 let githubTicket = "";
 let appUpdateInfo = null;
 let targets = [],
-  adminGroupBy = normalizeGroupByMode(readStorage("localStorage", "nstatus.adminGroupBy", "group")),
+  adminGroupBy = normalizeGroupByMode(readMigratedStorage("localStorage", "nie-sla.adminGroupBy", "nstatus.adminGroupBy", "group")),
   statusMap = new Map(),
   latencyNodes = [],
   latencyBuiltin = null,
@@ -1188,7 +1189,7 @@ function bindAdminGroupBy() {
   };
   const choose = value => {
     adminGroupBy = normalizeGroupByMode(value);
-    writeStorage("localStorage", "nstatus.adminGroupBy", adminGroupBy);
+    writeStorage("localStorage", "nie-sla.adminGroupBy", adminGroupBy);
     renderTargets();
   };
 
@@ -2849,7 +2850,7 @@ async function loadSysInfo() {
   try {
     const [d, health] = await Promise.all([api("/api/status?days=1"), api("/api/health")]);
     byId("sInfo").innerHTML =
-      infoRow("名称", d.name || "聶.NET") +
+      infoRow("名称", d.name || "NIE-SLA") +
       infoRow("版本", health.version ? `v${health.version}` : "-") +
       infoRow("时区", d.timezone?.label || "UTC+8") +
       infoRow("目标数", d.targets?.length || 0) +
@@ -3018,7 +3019,7 @@ function setupSettingsTabs() {
   const buttons = [...document.querySelectorAll("[data-settings-tab]")];
   const panels = [...document.querySelectorAll("[data-settings-panel]")];
   const validTabs = new Set(buttons.map((button) => button.dataset.settingsTab));
-  const savedTab = readStorage("localStorage", "nstatus.settingsTab", "");
+  const savedTab = readMigratedStorage("localStorage", "nie-sla.settingsTab", "nstatus.settingsTab", "");
   const initial = validTabs.has(savedTab)
     ? savedTab
     : "appearance";
@@ -3034,7 +3035,7 @@ function setupSettingsTabs() {
       panel.classList.toggle("on", active);
       panel.hidden = !active;
     }
-    writeStorage("localStorage", "nstatus.settingsTab", tab);
+    writeStorage("localStorage", "nie-sla.settingsTab", tab);
   };
   for (const button of buttons) button.onclick = () => activate(button.dataset.settingsTab);
   activate(initial);

@@ -1679,11 +1679,11 @@ body.nq-modal-open { overflow: hidden; }
   .nq-ansi-panel,
   .nq-network-scroll { overflow-x: auto; }
   .nq-ansi-panel .nq-ansi {
-    width: 100%;
-    min-width: 0;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    word-break: break-word;
+    width: max-content;
+    min-width: 100%;
+    white-space: pre;
+    overflow-wrap: normal;
+    word-break: normal;
   }
   .nq-report-pre {
     width: max-content;

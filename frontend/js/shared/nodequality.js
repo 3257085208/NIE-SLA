@@ -210,9 +210,9 @@ function nqCharCols(ch) {
 }
 
 function mobileNqWrapChars() {
-  if (typeof window === 'undefined' || !window.innerWidth) return 0;
-  if (window.innerWidth > 760) return 0;
-  return Math.max(40, Math.floor((window.innerWidth - 24) / 6) - 2);
+  // ANSI output is a fixed-column terminal report. Let its panel scroll on
+  // narrow screens instead of inserting browser-dependent continuation lines.
+  return 0;
 }
 
 function renderNqMediaBlock(lines, wrapChars = 0) {

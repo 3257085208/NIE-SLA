@@ -1,5 +1,5 @@
 export const DEFAULT_APPEARANCE = Object.freeze({
-  site_name: '聶.NET',
+  site_name: 'NIE-SLA',
   site_subtitle: '',
   hero_subtitle: '',
   page_title: '',

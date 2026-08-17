@@ -35,11 +35,11 @@ npx wrangler deploy
 ```text
 VERSION
 SHA256SUMS
-nstatus-metrics-linux-amd64
-nstatus-metrics-linux-arm64
-nstatus-metrics-linux-arm
-nstatus-metrics-linux-armv6
-nstatus-metrics-linux-386
+nie-sla-agent-linux-amd64
+nie-sla-agent-linux-arm64
+nie-sla-agent-linux-arm
+nie-sla-agent-linux-armv6
+nie-sla-agent-linux-386
 ```
 
 更新步骤：

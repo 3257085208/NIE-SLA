@@ -1,7 +1,7 @@
 ﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean, publicCachePrivacyVersion, sanitizePublicAgentMetrics } from './utils.js';
 import { summarizeTraffic, summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffic.js';
 import { requireAgentForId, requireAnyAgent, safeJson, json } from './auth.js';
-import { readR2Json, writeR2Json } from './storage.js';
+import { readR2Json, readR2JsonStrict, writeR2Json } from './storage.js';
 import { rateLimitByIp } from './ratelimit.js';
 import { recordAgentAvailability } from './agent-availability.js';
 import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn } from './admin/schema.js';
@@ -274,7 +274,7 @@ export async function getAgentMetrics(env, url, ctx = null) {
       const net = parseJsonSafe(row.net);
       if (net) { delete net.rx_raw; delete net.tx_raw; delete net.rx_bytes; delete net.tx_bytes; }
       latest = {
-        schema: 'nstatus-agent-metrics-v1', agent_id: row.agent_id, agent_label: row.agent_label,
+        schema: 'nie-sla-agent-metrics-v1', agent_id: row.agent_id, agent_label: row.agent_label,
         agent_version: row.agent_version || null,
         updated_at: row.updated_at, cpu_percent: row.cpu_percent,
         process_count: Number(row.process_count || 0) || 0,
@@ -663,10 +663,10 @@ export async function writeAgentTelemetryR2History(env, agentId, points = [], pi
   let pingWritten = 0;
   for (const [hour, hourData] of byHour.entries()) {
     const telemetryKey = agentTelemetryHourKey(env, agentId, hour);
-    const existingTelemetry = await readR2Json(env, telemetryKey, null);
+    const existingTelemetry = await readR2JsonStrict(env, telemetryKey);
     const [legacyMetrics, legacyPings] = existingTelemetry ? [null, null] : await Promise.all([
-      readR2Json(env, agentMetricsHourKey(env, agentId, hour), null),
-      readR2Json(env, agentPingsHourKey(env, agentId, hour), null),
+      readR2JsonStrict(env, agentMetricsHourKey(env, agentId, hour)),
+      readR2JsonStrict(env, agentPingsHourKey(env, agentId, hour)),
     ]);
     const existingMetrics = existingTelemetry?.metrics || legacyMetrics;
     const existingMetricPoints = metricPointsFromPayload(existingMetrics);
@@ -689,14 +689,14 @@ export async function writeAgentTelemetryR2History(env, agentId, points = [], pi
     const mergedPings = [...byPing.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
     const dayHour = utcDayHour(hour);
     await writeR2Json(env, telemetryKey, {
-      schema: 'nstatus-agent-telemetry-hour-v1',
+      schema: 'nie-sla-agent-telemetry-hour-v1',
       agent_id: sanitizeAgentId(agentId),
       day: dayHour.day,
       hour: dayHour.hour,
       updated_at: new Date().toISOString(),
-      metrics: { schema: 'nstatus-agent-metrics-hour-v2', series: metricPointsToColumns(merged) },
-      pings: { schema: 'nstatus-agent-pings-hour-v2', series: pingPointsToSeries(mergedPings) },
-    }, { schema: 'nstatus-agent-telemetry-hour-v1', agent_id: sanitizeAgentId(agentId), day: dayHour.day, hour: dayHour.hour });
+      metrics: { schema: 'nie-sla-agent-metrics-hour-v2', series: metricPointsToColumns(merged) },
+      pings: { schema: 'nie-sla-agent-pings-hour-v2', series: pingPointsToSeries(mergedPings) },
+    }, { schema: 'nie-sla-agent-telemetry-hour-v1', agent_id: sanitizeAgentId(agentId), day: dayHour.day, hour: dayHour.hour });
     written += merged.length;
     pingWritten += mergedPings.length;
   }
@@ -827,13 +827,13 @@ function scheduleMetricPayloadUpgrade(env, agentId, hour, payload, ctx = null) {
   if (!ctx || typeof ctx.waitUntil !== 'function' || !Array.isArray(payload?.points) || payload.series || hour >= hourStartSec(nowSec())) return;
   const dh = utcDayHour(hour);
   const task = writeR2Json(env, agentMetricsHourKey(env, agentId, hour), {
-    schema: 'nstatus-agent-metrics-hour-v2',
+    schema: 'nie-sla-agent-metrics-hour-v2',
     agent_id: sanitizeAgentId(agentId),
     day: dh.day,
     hour: dh.hour,
     updated_at: new Date().toISOString(),
     series: metricPointsToColumns(payload.points),
-  }, { schema: 'nstatus-agent-metrics-hour-v2', agent_id: sanitizeAgentId(agentId), day: dh.day, hour: dh.hour }).catch(() => {});
+  }, { schema: 'nie-sla-agent-metrics-hour-v2', agent_id: sanitizeAgentId(agentId), day: dh.day, hour: dh.hour }).catch(() => {});
   ctx.waitUntil(task);
 }
 
@@ -841,13 +841,13 @@ function schedulePingPayloadUpgrade(env, agentId, hour, payload, ctx = null) {
   if (!ctx || typeof ctx.waitUntil !== 'function' || !Array.isArray(payload?.pings) || payload.series || hour >= hourStartSec(nowSec())) return;
   const dh = utcDayHour(hour);
   const task = writeR2Json(env, agentPingsHourKey(env, agentId, hour), {
-    schema: 'nstatus-agent-pings-hour-v2',
+    schema: 'nie-sla-agent-pings-hour-v2',
     agent_id: sanitizeAgentId(agentId),
     day: dh.day,
     hour: dh.hour,
     updated_at: new Date().toISOString(),
     series: pingPointsToSeries(payload.pings),
-  }, { schema: 'nstatus-agent-pings-hour-v2', agent_id: sanitizeAgentId(agentId), day: dh.day, hour: dh.hour }).catch(() => {});
+  }, { schema: 'nie-sla-agent-pings-hour-v2', agent_id: sanitizeAgentId(agentId), day: dh.day, hour: dh.hour }).catch(() => {});
   ctx.waitUntil(task);
 }
 

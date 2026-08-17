@@ -30,7 +30,7 @@ The External Latency Agent does not install the Rust metrics agent, does not rep
 4. Copy the generated Linux command.
 5. Run it as root on the target node. Never reuse another node's command.
 
-The command contains a node-scoped token; treat it as sensitive. The installer checks systemd and Python 3, stops and disables any existing `nstatus-latency-agent.service` plus leftover processes, downloads the versioned `latency-agent.py`, writes a `0600` env file, runs a `--once` preflight that submits the first results, starts the service, and verifies it is active. Reinstall or token rotation is just re-running the latest command.
+The command contains a node-scoped token; treat it as sensitive. The installer checks systemd and Python 3, stops the current service plus the legacy `nstatus-latency-agent.service` and leftover processes, downloads the versioned `latency-agent.py`, writes a `0600` env file, runs a `--once` preflight that submits the first results, starts `nie-sla-latency-agent.service`, and verifies it is active. Reinstall or token rotation is just re-running the latest command.
 
 Successful output looks like:
 
@@ -45,15 +45,15 @@ External Latency Agent installed: latency-example
 ## Verification
 
 ```bash
-sudo systemctl is-active nstatus-latency-agent.service
-sudo systemctl status nstatus-latency-agent.service --no-pager
-sudo journalctl -u nstatus-latency-agent.service -n 100 --no-pager
+sudo systemctl is-active nie-sla-latency-agent.service
+sudo systemctl status nie-sla-latency-agent.service --no-pager
+sudo journalctl -u nie-sla-latency-agent.service -n 100 --no-pager
 ```
 
 Manual run:
 
 ```bash
-sudo sh -c 'set -a; . /etc/nstatus-latency-agent.env; set +a; /usr/bin/python3 /opt/nstatus-latency/latency-agent.py --once'
+sudo sh -c 'set -a; . /etc/nie-sla-latency-agent.env; set +a; /usr/bin/python3 /opt/nie-sla-latency/latency-agent.py --once'
 ```
 
 Back in the admin panel, the node should be enabled with a recent "last report" time. Open a qualifying VPS on the public page; the latency legend should show Cloudflare plus the external node name. The public status API only shows unexpired sources; new results usually appear within tens of seconds, and silent sources are hidden after the Worker's stale window.
@@ -61,10 +61,10 @@ Back in the admin panel, the node should be enabled with a recent "last report" 
 Query D1 from the Worker directory:
 
 ```bash
-npx wrangler d1 execute nstatus-db --remote --command \
+npx wrangler d1 execute nie-sla-db --remote --command \
   "SELECT id,name,last_seen_at FROM latency_agents ORDER BY name;"
 
-npx wrangler d1 execute nstatus-db --remote --command \
+npx wrangler d1 execute nie-sla-db --remote --command \
   "SELECT node_id,COUNT(*) AS count,MAX(checked_at) AS newest FROM latency_results GROUP BY node_id;"
 ```
 
@@ -73,7 +73,7 @@ npx wrangler d1 execute nstatus-db --remote --command \
 The admin "Agent auto-update" toggle controls both the Rust agent and external latency agents. The latency agent polls `/api/latency-agent/update-policy` with its own node token:
 
 - Off: it only reads the policy and never modifies the script.
-- On: it downloads the current script from the HTTPS install base recorded in the install command, enforces a size limit, compares SHA-256, runs a Python compile check, then atomically replaces the script under `/opt/nstatus-latency` and restarts via `exec`.
+- On: it downloads the current script from the HTTPS install base recorded in the install command, enforces a size limit, compares SHA-256, runs a Python compile check, then atomically replaces the script under `/opt/nie-sla-latency` and restarts via `exec`.
 - Failed checks only write to the journal; probing continues and retries after an hour.
 
 Enabling this for the first time requires re-running the latest install command to record the install base and update the systemd sandbox permissions.
@@ -91,7 +91,7 @@ Old Python `urllib` default User-Agent can be blocked by Cloudflare Browser Inte
 - Cloudflare 1010/403: confirm the script sends an explicit `User-Agent`; the fastest fix is re-running the latest install command.
 - `targets` or `accepted` is 0: the admin panel needs at least one enabled TCP target with complete host/port that does not hide its public address. HTTP targets are not distributed.
 - First success but the frontend still shows only Cloudflare: wait for the state cache refresh (tens of seconds), hard-refresh, confirm you are viewing a public TCP target, and check `latency_results` for fresh data.
-- Service restarts in a loop: inspect systemd and journal logs. Never paste the full contents of `/etc/nstatus-latency-agent.env` anywhere public; it contains the node token.
+- Service restarts in a loop: inspect systemd and journal logs. Never paste the full contents of `/etc/nie-sla-latency-agent.env` anywhere public; it contains the node token.
 
 ## Delete and disable
 

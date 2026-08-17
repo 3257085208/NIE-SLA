@@ -39,7 +39,7 @@ export async function archiveDay(env, day) {
   const dayEnd = dayStart + 86400;
   const incidents = await env.DB.prepare(`SELECT * FROM incident_events WHERE (started_at >= ? AND started_at < ?) OR (recovered_at >= ? AND recovered_at < ?) OR (started_at < ? AND recovered_at IS NULL) ORDER BY COALESCE(recovered_at, started_at) ASC`).bind(dayStart, dayEnd, dayStart, dayEnd, dayEnd).all();
   const key = `daily-summary/${day}.json`;
-  await env.ARCHIVE.put(key, JSON.stringify({ schema: 'nstatus-daily-summary-v6', day, exported_at: new Date().toISOString(), summaries, incidents: incidents.results || [] }), { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: { day, rows: String(summaries.length) } });
+  await env.ARCHIVE.put(key, JSON.stringify({ schema: 'nie-sla-daily-summary-v6', day, exported_at: new Date().toISOString(), summaries, incidents: incidents.results || [] }), { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: { day, rows: String(summaries.length) } });
   return { ok: true, key, summary_rows: summaries.length, incident_rows: (incidents.results || []).length };
 }
 
@@ -86,7 +86,7 @@ export async function getStats(env) {
     const pingTargetsCount = (await env.DB.prepare(`SELECT COUNT(*) as cnt FROM ping_targets WHERE enabled = 1`).first())?.cnt || 0;
     const trafficAgentCount = (await env.DB.prepare(`SELECT COUNT(*) as cnt FROM targets WHERE enabled = 1 AND traffic_enabled = 1`).first())?.cnt || 0;
     const agentReportsPerDay = agentCount * 288;
-    const pingIntervalSec = clamp(Number(env.NSTATUS_PING_SEC || env.AGENT_PING_SEC || 20), 5, 600);
+    const pingIntervalSec = clamp(Number(env.NIE_SLA_PING_SEC || env.NSTATUS_PING_SEC || env.AGENT_PING_SEC || 20), 5, 600);
     results.estimated_daily = {
       check_bucket_writes: targetsCount * 288,
       agent_state_writes: agentReportsPerDay,

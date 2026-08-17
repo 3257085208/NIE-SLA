@@ -23,7 +23,7 @@ import {
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260804-v11113';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260810-nqfix1';
 import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
 import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
 import {
@@ -35,13 +35,13 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260804-v11113';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260810-nqfix1';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
 import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
 import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260729-beta23';
-import { readStorage, writeStorage } from './js/shared/storage.js?v=20260804-v11113';
+import { readMigratedStorage, readStorage, writeStorage } from './js/shared/storage.js?v=20260810-nqfix1';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -53,7 +53,7 @@ const normalizeChecksPageSize = (value) => {
 requestAnimationFrame(() => document.body.classList.add('is-loaded'));
 
 const state = {
-  apiBase: window.NSTATUS_API_BASE || '',
+  apiBase: window.NIE_SLA_API_BASE || window.NSTATUS_API_BASE || '',
   data: null,
   filteredText: '',
   selectedId: null,
@@ -72,7 +72,7 @@ const state = {
   dailyPoints: [],
   checksSource: '',
   checksPage: 1,
-  checksPageSize: normalizeChecksPageSize(readStorage('localStorage', 'nstatus.pageSize', 5)),
+  checksPageSize: normalizeChecksPageSize(readMigratedStorage('localStorage', 'nie-sla.pageSize', 'nstatus.pageSize', 5)),
   incidentsOpen: false,
   selectedMetric: 'latency',
   selectedMetricRange: '1h',
@@ -87,8 +87,8 @@ const state = {
   pingsCache: new Map(),
   metricsRequestSeq: 0,
   pingsRequestSeq: 0,
-  continuousLine: readStorage('localStorage', 'nstatus.continuousLine', '0') === '1',
-  groupByMode: normalizeGroupByMode(readStorage('localStorage', 'nstatus.groupByMode', 'group')),
+  continuousLine: readMigratedStorage('localStorage', 'nie-sla.continuousLine', 'nstatus.continuousLine', '0') === '1',
+  groupByMode: normalizeGroupByMode(readMigratedStorage('localStorage', 'nie-sla.groupByMode', 'nstatus.groupByMode', 'group')),
   statusRequestSeq: 0,
   statusController: null,
   lastGroupsRenderKey: '',
@@ -194,7 +194,7 @@ if (els.pageSize) {
   els.pageSize.addEventListener('change', () => {
     state.checksPageSize = normalizeChecksPageSize(els.pageSize.value);
     state.checksPage = 1;
-    writeStorage('localStorage', 'nstatus.pageSize', state.checksPageSize);
+    writeStorage('localStorage', 'nie-sla.pageSize', state.checksPageSize);
     renderChecksPage();
   });
 }
@@ -244,7 +244,7 @@ if (chartContinuousButton) {
     state.continuousLine = !state.continuousLine;
     chartContinuousButton.classList.toggle('active', state.continuousLine);
     chartContinuousButton.setAttribute('aria-pressed', String(state.continuousLine));
-    writeStorage('localStorage', 'nstatus.continuousLine', state.continuousLine ? '1' : '0');
+    writeStorage('localStorage', 'nie-sla.continuousLine', state.continuousLine ? '1' : '0');
     updateChartForCurrentRange();
   });
 }
@@ -276,11 +276,14 @@ document.querySelectorAll('.range-tab').forEach((btn) => {
 });
 
 initChart();
-window.addEventListener('nstatus:chartjs-ready', () => {
+window.addEventListener('nie-sla:chartjs-ready', () => {
   if (!state.chart && window.Chart) {
     initChart();
     if (state.selectedId) updateChartForCurrentRange();
   }
+});
+window.addEventListener('nstatus:chartjs-ready', () => {
+  window.dispatchEvent(new Event('nie-sla:chartjs-ready'));
 });
 initializeFrontendTheme();
 loadStatus();
@@ -665,7 +668,7 @@ function ensurePublicGroupByBar() {
       const nextMode = normalizeGroupByMode(button.dataset.groupBy);
       if (nextMode === state.groupByMode) return;
       state.groupByMode = nextMode;
-      writeStorage('localStorage', 'nstatus.groupByMode', nextMode);
+      writeStorage('localStorage', 'nie-sla.groupByMode', nextMode);
       state.lastGroupsRenderKey = '';
       if (state.data) renderGroups(state.data);
     });
@@ -1069,7 +1072,7 @@ async function loadChecks(id, name, target = null, options = {}) {
   try {
     const intervalSec = Math.max(300, Number(target?.interval_sec || state.selectedTargetIntervalSec || 300));
     state.selectedTargetIntervalSec = intervalSec;
-    const checksHours = Math.max(requestedHours, Number(window.NSTATUS_CHECKS_MIN_HOURS || 0) || 0);
+    const checksHours = Math.max(requestedHours, Number(window.NIE_SLA_CHECKS_MIN_HOURS || window.NSTATUS_CHECKS_MIN_HOURS || 0) || 0);
     const checksLimit = Math.min(20000, Math.max(864, Math.ceil((checksHours * 3600) / intervalSec) + 120));
 
     const [checksRes, latencyRes] = await Promise.all([
@@ -1891,7 +1894,7 @@ function updateMetricsChart() {
   }
 
   if (!m || !m.latest) {
-    els.chartMeta.textContent = '暂无监控数据，请在此 VPS 上安装 nstatus-metrics Agent。';
+    els.chartMeta.textContent = '暂无监控数据，请在此 VPS 上安装 NIE-SLA Agent。';
     els.chartAvg.textContent = '-';
     clearMetricChart();
     return;
@@ -2282,7 +2285,7 @@ function lineDataset({ label, data, color, fill, fillStrength = 1, order, source
 
 function chartHoverLinePlugin() {
   return {
-    id: 'nstatusHoverLine',
+    id: 'nieSlaHoverLine',
     afterEvent(chart, args) {
       const event = args.event;
       const area = chart.chartArea;

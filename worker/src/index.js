@@ -6,8 +6,8 @@ import { cleanupAgentMetricsR2 } from './metrics.js';
 import { runAlertChecks } from './alerts.js';
 import { VERSION } from './version.js';
 import { handleRequest } from './routes.js';
-import { constantTimeEqual, json } from './auth.js';
-import { parseBoolean, shouldRunScheduledFollowups } from './utils.js';
+import { constantTimeEqual, internalRequestAuthorized, internalRequestHeaders, internalScheduleSecret, json } from './auth.js';
+import { clamp, parseBoolean, shouldRunScheduledFollowups } from './utils.js';
 import { routeStaticAssets } from './static-assets.js';
 export { TelemetryBuffer } from './telemetry-buffer.js';
 
@@ -20,10 +20,11 @@ export class ProbeRegion {
 
   async fetch(request) {
     if (request.method !== 'POST') return json({ ok: false, error: '不支持该请求方法' }, 405);
+    if (!internalRequestAuthorized(request, this.env)) return json({ ok: false, error: '未授权' }, 401, this.env);
     const url = new URL(request.url);
     if (url.pathname === '/scheduled') {
       const expected = internalScheduleSecret(this.env);
-      const presented = String(request.headers.get('x-nstatus-internal-secret') || '');
+      const presented = String(request.headers.get('x-nie-sla-internal-secret') || request.headers.get('x-nstatus-internal-secret') || '');
       if (!expected || !constantTimeEqual(expected, presented)) return json({ ok: false, error: '未授权' }, 401, this.env);
       const body = await request.json().catch(() => ({}));
       if (this.scheduledRun) return json({ ok: true, skipped: true, reason: 'scheduled_run_in_progress' }, 200, this.env);
@@ -37,6 +38,8 @@ export class ProbeRegion {
       return json({ ok: true, region: meta.region || null, version: meta.version || null, objectName: meta.objectName || null, colo: cf.colo, echo_colo: cf.echo_colo, trace_colo: null, request_colo: cf.request_colo });
     }
     const body = await request.json();
+    if (url.pathname === '/batch-probe-and-save') return json(await this.batchProbeAndSave(body, request.cf || {}), 200, this.env);
+    if (url.pathname === '/batch-current-status') return json(await this.batchProbeCurrentStatus(body, request.cf || {}), 200, this.env);
     const target = body?.target || body;
     const checkedAt = Number(body?.checked_at || Math.floor(Date.now() / 1000));
     const result = await probeTarget(target, await enrichCfContext(request.cf || {}, this.env));
@@ -45,6 +48,45 @@ export class ProbeRegion {
       return json({ target_id: target.id, name: target.name, ...result, saved, state_update: saved.state_update });
     }
     return json(result);
+  }
+
+  async batchProbeAndSave(body, cf = {}) {
+    const targets = Array.isArray(body?.targets) ? body.targets : [];
+    const previous = body?.previous && typeof body.previous === 'object' && !Array.isArray(body.previous) ? body.previous : {};
+    const checkedAt = Number(body?.checked_at || Math.floor(Date.now() / 1000));
+    const concurrency = clamp(Number(this.env.CONCURRENCY || 20), 1, 40);
+    const results = [];
+    for (let i = 0; i < targets.length; i += concurrency) {
+      const chunk = targets.slice(i, i + concurrency);
+      const settled = await Promise.allSettled(chunk.map(async (target) => {
+        const result = await probeTarget(target, await enrichCfContext(cf, this.env));
+        const saved = await saveCheck(this.env, target, checkedAt, result, previous[target.id] || null);
+        return { target_id: target.id, name: target.name, ...result, saved, state_update: saved.state_update };
+      }));
+      for (const item of settled) {
+        if (item.status === 'fulfilled') results.push(item.value);
+        else results.push({ ok: false, target_id: null, error: String(item.reason?.message || item.reason) });
+      }
+    }
+    return { ok: true, count: results.length, results };
+  }
+
+  async batchProbeCurrentStatus(body, cf = {}) {
+    const targets = Array.isArray(body?.targets) ? body.targets : [];
+    const concurrency = clamp(Number(this.env.CONCURRENCY || 20), 1, 40);
+    const results = [];
+    for (let i = 0; i < targets.length; i += concurrency) {
+      const chunk = targets.slice(i, i + concurrency);
+      const settled = await Promise.allSettled(chunk.map(async (target) => {
+        const result = await probeTarget(target, await enrichCfContext(cf, this.env));
+        return { target_id: target.id, name: target.name, ...result };
+      }));
+      for (const item of settled) {
+        if (item.status === 'fulfilled') results.push(item.value);
+        else results.push({ ok: false, target_id: null, error: String(item.reason?.message || item.reason) });
+      }
+    }
+    return { ok: true, count: results.length, results };
   }
 }
 
@@ -130,7 +172,7 @@ async function dispatchScheduledTasks(env, cron) {
     const id = env.REGION_PROXY.idFromName('nie-sla-scheduled-runner');
     const response = await env.REGION_PROXY.get(id).fetch('https://nie-sla.internal/scheduled', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-nstatus-internal-secret': secret },
+      headers: internalRequestHeaders(env),
       body: JSON.stringify({ cron }),
     });
     if (!response.ok) console.error('scheduled durable dispatch failed', response.status, await response.text());
@@ -172,10 +214,6 @@ async function handleInternalScheduledRequest(request, env) {
   if (!constantTimeEqual(signature, expected)) return new Response(null, { status: 404 });
   await runScheduledTasks(env, cron);
   return new Response(null, { status: 204 });
-}
-
-function internalScheduleSecret(env) {
-  return String(env.INTERNAL_CRON_SECRET || env.ADMIN_PASSWORD || env.ADMIN_TOKEN || env.AGENT_TOKEN || '').trim();
 }
 
 async function signInternalSchedule(secret, timestamp, cron) {
@@ -234,10 +272,12 @@ async function claimHourlyMaintenanceSlot(env, cron = '') {
   if (!env.DB) return new Date().getUTCMinutes() < 5;
   const hour = Math.floor(Date.now() / 3600000);
   const key = 'maintenance:hourly';
-  const row = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(key).first().catch(() => null);
-  if (Number(row?.value || -1) >= hour) return false;
-  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
-    .bind(key, String(hour), Math.floor(Date.now() / 1000))
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+    WHERE CAST(app_meta.value AS INTEGER) < ?`)
+    .bind(key, String(hour), now, hour)
     .run();
-  return true;
+  const row = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(key).first().catch(() => null);
+  return row?.value === String(hour);
 }

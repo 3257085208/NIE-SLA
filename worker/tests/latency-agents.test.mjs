@@ -35,7 +35,7 @@ assert.deepEqual(await getLatencyAgentUpdatePolicy(env), {
   auto_update: true,
   check_interval_sec: 3600,
   script_version: 6,
-  script_sha256: '572822759ae0e370f6ca916bf2cd0b866b77e93abb159b5fbf368c199d9cfa88',
+  script_sha256: 'a76f1e06835aa37965fe60b46bf7f94f6b65ef36083597ab11995ec00238958a',
 });
 database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES ('agent_auto_update', 'false', ?)`).run(now);
 assert.equal((await getLatencyAgentUpdatePolicy(env)).auto_update, false);
@@ -61,8 +61,8 @@ assert.match(command.linux_command, /\/api\/latency-agent\/install-script/);
 assert.match(command.linux_command, /Authorization: Bearer nsi_[a-f0-9]{48}/);
 assert.equal(command.credential_bound, true);
 assert.equal(command.credential_type, 'one_time_latency_install_token');
-assert.doesNotMatch(command.linux_command, /NSTATUS_LATENCY_TOKEN=|\bnst_[a-f0-9]{32,}\b/);
-assert.doesNotMatch(command.linux_command, /NSTATUS_AGENT_ID=/);
+assert.doesNotMatch(command.linux_command, /(?:NIE_SLA|NSTATUS)_LATENCY_TOKEN=|\bnst_[a-f0-9]{32,}\b/);
+assert.doesNotMatch(command.linux_command, /(?:NIE_SLA|NSTATUS)_AGENT_ID=/);
 assert.ok(command.linux_command.length < 380);
 const installTicket = command.linux_command.match(/Bearer (nsi_[a-f0-9]{48})/)?.[1];
 assert.ok(installTicket);
@@ -70,9 +70,9 @@ const installScript = await getLatencyAgentInstallScript(env, new Request('https
 assert.equal(installScript.status, 200);
 assert.equal(installScript.headers.get('content-type'), 'text/x-shellscript; charset=utf-8');
 const installScriptText = await installScript.text();
-assert.match(installScriptText, /NSTATUS_LATENCY_TOKEN='nst_[a-f0-9]{48}'/);
+assert.match(installScriptText, /NIE_SLA_LATENCY_TOKEN='nst_[a-f0-9]{48}'/);
 assert.match(installScriptText, /install-latency\.sh\?v=6/);
-assert.match(installScriptText, /3f5c6845d162f5bd817ff557d500d1f9e1606c382a397e326f6f06ca6e5f1fe8/);
+assert.match(installScriptText, /c95ec9798502b27e59146a4e97a66cd81e0273e06ce4fc85a7b0a84061c55b5a/);
 await assert.rejects(
   () => getLatencyAgentInstallScript(env, new Request('https://api.example.test/api/latency-agent/install-script', { headers: { authorization: `Bearer ${installTicket}` } })),
   /无效|已使用/,

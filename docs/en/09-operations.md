@@ -42,7 +42,7 @@ Setting "Settings → Agent → Agent connection domain" to an HTTPS origin rout
 Buttons stuck queued: outdated Agent, missing root channel, or unreachable API hostname. Re-run the node's latest install command, then check:
 
 ```bash
-sudo systemctl status nstatus-metrics --no-pager
+sudo systemctl status nie-sla-agent --no-pager
 sudo cftz status
 sudo cftz log 100
 ```

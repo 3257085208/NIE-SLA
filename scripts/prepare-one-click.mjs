@@ -29,10 +29,10 @@ await prepareAgentRelease(path.join(outputRoot, 'bin'));
 console.log(`One-click assets prepared in ${path.relative(root, outputRoot)}`);
 
 async function prepareAgentRelease(binRoot) {
-  const localReleaseDir = String(process.env.NSTATUS_AGENT_RELEASE_DIR || '').trim();
+  const localReleaseDir = String(process.env.NIE_SLA_AGENT_RELEASE_DIR || process.env.NSTATUS_AGENT_RELEASE_DIR || '').trim();
   if (localReleaseDir) return prepareLocalAgentRelease(binRoot, path.resolve(localReleaseDir));
   const updateManifest = JSON.parse(await readFile(path.join(root, 'update-manifest.json'), 'utf8'));
-  const requestedTag = String(process.env.NSTATUS_AGENT_RELEASE_TAG || '').trim();
+  const requestedTag = String(process.env.NIE_SLA_AGENT_RELEASE_TAG || process.env.NSTATUS_AGENT_RELEASE_TAG || '').trim();
   const releaseTag = requestedTag || String(updateManifest.agent_version || '').trim();
   if (!/^v\d+\.\d+\.\d+$/.test(releaseTag)) {
     throw new Error(`Agent release tag is invalid: ${releaseTag || '(empty)'}`);
@@ -47,6 +47,7 @@ async function prepareAgentRelease(binRoot) {
 
   const files = parseManifest(manifest);
   for (const required of [
+    'nie-sla-agent-linux-amd64', 'nie-sla-agent-linux-arm64',
     'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64',
     'jq-linux-amd64', 'jq-linux-arm64', 'jq-linux-i386', 'jq-linux-armhf', 'jq-linux-armel',
   ]) {
@@ -71,6 +72,7 @@ async function prepareLocalAgentRelease(binRoot, releaseRoot) {
   if (!/^v\d+\.\d+\.\d+$/.test(version)) throw new Error(`Local release VERSION is invalid: ${version || '(empty)'}`);
   const files = parseManifest(manifest);
   for (const required of [
+    'nie-sla-agent-linux-amd64', 'nie-sla-agent-linux-arm64',
     'nstatus-metrics-linux-amd64', 'nstatus-metrics-linux-arm64',
     'jq-linux-amd64', 'jq-linux-arm64', 'jq-linux-i386', 'jq-linux-armhf', 'jq-linux-armel',
   ]) {
@@ -91,7 +93,7 @@ function parseManifest(source) {
   const files = new Map();
   for (const line of String(source || '').split(/\r?\n/)) {
     if (!line.trim()) continue;
-    const match = line.match(/^([a-f0-9]{64})\s+\*?((?:nstatus-metrics|jq)-[A-Za-z0-9._-]+)$/i);
+    const match = line.match(/^([a-f0-9]{64})\s+\*?((?:nie-sla-agent|nstatus-metrics|jq)-[A-Za-z0-9._-]+)$/i);
     if (!match || path.basename(match[2]) !== match[2]) throw new Error(`Invalid SHA256SUMS line: ${line}`);
     files.set(match[2], match[1].toLowerCase());
   }

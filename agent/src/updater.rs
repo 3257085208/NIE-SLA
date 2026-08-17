@@ -111,7 +111,8 @@ fn check_for_update(
         ));
     }
     #[cfg(target_os = "linux")]
-    let privileged_updater = env::var("NSTATUS_PRIVILEGED_UPDATER")
+    let privileged_updater = env::var("NIE_SLA_PRIVILEGED_UPDATER")
+        .or_else(|_| env::var("NSTATUS_PRIVILEGED_UPDATER"))
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     #[cfg(not(target_os = "linux"))]
@@ -210,8 +211,15 @@ fn install_linux_update(policy: &UpdatePolicy, http: &HttpClient) -> Result<Path
     }
 
     let binary_name = linux_binary_name()?;
-    let expected_binary_hash = checksum_for_binary(&manifest, &binary_name)?;
-    let binary_url = format!("{}/bin/{}", policy.download_base, binary_name);
+    let legacy_binary_name = binary_name.replace("nie-sla-agent", "nstatus-metrics");
+    let (asset_name, expected_binary_hash) = match checksum_for_binary(&manifest, &binary_name) {
+        Ok(hash) => (binary_name, hash),
+        Err(_) => (
+            legacy_binary_name.clone(),
+            checksum_for_binary(&manifest, &legacy_binary_name)?,
+        ),
+    };
+    let binary_url = format!("{}/bin/{}", policy.download_base, asset_name);
     let binary = http.get_public_bytes(&binary_url)?;
     let actual_binary_hash = sha256_hex(&binary);
     if actual_binary_hash != expected_binary_hash {
@@ -321,7 +329,7 @@ fn linux_binary_name() -> Result<String> {
         value if value.starts_with("armv7") || value == "arm" => "arm",
         _ => return Err(anyhow!("unsupported update architecture: {}", machine)),
     };
-    Ok(format!("nstatus-metrics-linux-{}", arch))
+    Ok(format!("nie-sla-agent-linux-{}", arch))
 }
 
 #[cfg(any(target_os = "linux", test))]

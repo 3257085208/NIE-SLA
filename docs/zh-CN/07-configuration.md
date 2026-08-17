@@ -53,8 +53,8 @@
 | --- | --- |
 | `PUBLIC_AGENT_INSTALL_BASE` | 安装脚本与 `bin/` 的公开 HTTPS Base |
 | `PUBLIC_AGENT_API_BASE` | Agent 上报 API Base |
-| `AGENT_LATEST_VERSION` | Worker 返回的最新版本，如 `v1.1.12` |
-| `NSTATUS_SHA256SUMS_SHA256` | 发布 manifest 自身的 SHA-256 |
+| `AGENT_LATEST_VERSION` | Worker 返回的最新版本，如 `v1.1.13` |
+| `NIE_SLA_SHA256SUMS_SHA256` | 发布 manifest 自身的 SHA-256；兼容读取旧 `NSTATUS_SHA256SUMS_SHA256` |
 | `AGENT_AUTO_UPDATE_DEFAULT` | 后台无设置时的默认策略，默认 `true` |
 | `AGENT_UPDATE_CHECK_SEC` | Agent 策略检查建议间隔 |
 | `AGENT_PING_SEC` | 安装命令默认 Ping 间隔 |
@@ -107,19 +107,21 @@ GitHub 登录必须同时配置 Client ID、Client Secret 与非空白名单，�
 
 | 名称 | 默认 | 说明 |
 | --- | --- | --- |
-| `NSTATUS_API_BASE` | 无 | 必填 HTTPS API |
-| `NSTATUS_AGENT_TOKEN` | 无 | 必填 scoped Token |
-| `NSTATUS_AGENT_ID` | 主机名 | 目标 ID |
-| `NSTATUS_AGENT_LABEL` | 主机名 | 展示名 |
-| `NSTATUS_SAMPLE_SEC` | `1` | 本地采样秒数 |
-| `NSTATUS_INTERVAL_SEC` | `300` | 上报秒数 |
-| `NSTATUS_PING_SEC` | `20` | Ping 秒数 |
-| `NSTATUS_PING_TARGET_REFRESH_SEC` | `600` | Ping 目标配置刷新秒数，限 60–3600 |
-| `NSTATUS_PING_TARGETS` | `*` | 后台受管目标 |
-| `NSTATUS_QUEUE_FILE` | 平台路径 | 队列文件 |
-| `NSTATUS_QUEUE_MAX_SAMPLES` | `86400` | 队列上限 |
-| `NSTATUS_UPDATE_CHECK_SEC` | `3600` | 更新检查秒数，限 900–86400 |
-| `NSTATUS_ALLOW_INSECURE_HTTP` | 未启用 | 仅可信私网调试 |
+| `NIE_SLA_API_BASE` | 无 | 必填 HTTPS API |
+| `NIE_SLA_AGENT_TOKEN` | 无 | 必填 scoped Token |
+| `NIE_SLA_AGENT_ID` | 主机名 | 目标 ID |
+| `NIE_SLA_AGENT_LABEL` | 主机名 | 展示名 |
+| `NIE_SLA_SAMPLE_SEC` | `1` | 本地采样秒数 |
+| `NIE_SLA_INTERVAL_SEC` | `300` | 上报秒数 |
+| `NIE_SLA_PING_SEC` | `20` | Ping 秒数 |
+| `NIE_SLA_PING_TARGET_REFRESH_SEC` | `600` | Ping 目标配置刷新秒数，限 60–3600 |
+| `NIE_SLA_PING_TARGETS` | `*` | 后台受管目标 |
+| `NIE_SLA_QUEUE_FILE` | 平台路径 | 队列文件 |
+| `NIE_SLA_QUEUE_MAX_SAMPLES` | `86400` | 队列上限 |
+| `NIE_SLA_UPDATE_CHECK_SEC` | `3600` | 更新检查秒数，限 900–86400 |
+| `NIE_SLA_ALLOW_INSECURE_HTTP` | 未启用 | 仅可信私网调试 |
+
+Agent 继续兼容读取对应的旧 `NSTATUS_*` 变量；新旧同时存在时，新变量优先。
 
 ## 修改配置
 

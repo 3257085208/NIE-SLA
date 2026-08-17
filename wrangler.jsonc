@@ -17,14 +17,14 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "nstatus-db",
+      "database_name": "nie-sla-db",
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
   ],
   "r2_buckets": [
     {
       "binding": "ARCHIVE",
-      "bucket_name": "nstatus-archive"
+      "bucket_name": "nie-sla-archive"
     }
   ],
   "durable_objects": {

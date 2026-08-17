@@ -39,7 +39,7 @@ globalThis.document = {
   createElement() { return new ElementStub(); },
 };
 globalThis.window = globalThis;
-window.NSTATUS_API_BASE = '';
+window.NIE_SLA_API_BASE = '';
 window.location = { search: '', href: 'https://status.example/' };
 window.addEventListener = () => {};
 globalThis.requestAnimationFrame = (fn) => fn();

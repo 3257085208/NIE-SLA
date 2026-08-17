@@ -11,10 +11,10 @@ The installer detects the architecture, verifies the manifest and binary, valida
 Resulting layout:
 
 ```text
-/opt/nstatus-metrics/nstatus-metrics
-/opt/nstatus-metrics/nstatus-metrics.env
+/opt/nie-sla-agent/nie-sla-agent
+/opt/nie-sla-agent/nie-sla-agent.env
 /usr/local/bin/cftz
-systemd or OpenRC service nstatus-metrics
+systemd or OpenRC services nie-sla-agent and nie-sla-agent-manager
 ```
 
 ## Data flow
@@ -39,7 +39,7 @@ Agent offline: check service state, token, API hostname, and HTTPS reachability.
 ```bash
 sudo cftz status
 sudo cftz log 100
-sudo systemctl status nstatus-metrics --no-pager
+sudo systemctl status nie-sla-agent --no-pager
 ```
 
 Beta buttons stuck queued: outdated Agent, missing root channel, or unreachable API hostname. Re-run the latest install command for that node, then inspect the logs. NQ failures usually come from system permissions, missing dependencies, or upstream unavailability; IP unlock failures from upstream format changes or a VPS without usable IPv4.

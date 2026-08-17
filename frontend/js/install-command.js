@@ -9,7 +9,7 @@ export function latencyInstallCommandFromPayload(payload, expectedNodeId) {
   }
 
   const command = String(payload.linux_command || payload.command || '').trim();
-  if (/NSTATUS_(?:LATENCY_TOKEN|AGENT_TOKEN)\s*=|\bnst_[a-f0-9]{32,}\b/i.test(command)) {
+  if (/(?:NIE_SLA|NSTATUS)_(?:LATENCY_TOKEN|AGENT_TOKEN)\s*=|\bnst_[a-f0-9]{32,}\b/i.test(command)) {
     throw new Error('安装命令包含长期节点凭据，已拒绝复制');
   }
   const apiBase = String(payload.api_base || '').replace(/\/+$/, '');
@@ -37,7 +37,7 @@ export function agentInstallCommandFromPayload(payload, expectedTargetId) {
   }
 
   const command = String(payload.linux_command || payload.command || '').trim();
-  if (/NSTATUS_AGENT_TOKEN\s*=|\bnst_[a-f0-9]{32,}\b/i.test(command)) {
+  if (/(?:NIE_SLA|NSTATUS)_AGENT_TOKEN\s*=|\bnst_[a-f0-9]{32,}\b/i.test(command)) {
     throw new Error('安装命令包含长期节点凭据，已拒绝复制');
   }
   const apiBase = String(payload.api_base || '').replace(/\/+$/, '');

@@ -16,6 +16,7 @@ assert.doesNotMatch(buildSource, /cp\(frontendRoot, outputRoot, \{[\s\S]*recursi
 
 for (const relative of [
   'index.html', 'admin.html', 'config.js', 'js/theme-bootstrap.js', 'js/themes.js', 'update-manifest.json', 'bin/VERSION', 'bin/SHA256SUMS',
+  'bin/nie-sla-agent-linux-amd64', 'bin/nie-sla-agent-linux-arm64',
   'bin/nstatus-metrics-linux-amd64', 'bin/nstatus-metrics-linux-arm64',
   'bin/jq-linux-amd64', 'bin/jq-linux-arm64', 'bin/jq-linux-i386', 'bin/jq-linux-armhf', 'bin/jq-linux-armel',
 ]) {
@@ -31,7 +32,7 @@ for (const relative of [
 }
 
 const frontendConfig = await readFile(path.join(output, 'config.js'), 'utf8');
-assert.match(frontendConfig, /window\.NSTATUS_API_BASE\s*=\s*config\.apiBase\s*\|\|\s*window\.NSTATUS_API_BASE\s*\|\|\s*''/);
+assert.match(frontendConfig, /window\.NIE_SLA_API_BASE\s*=\s*config\.apiBase\s*\|\|\s*window\.NIE_SLA_API_BASE\s*\|\|\s*window\.NSTATUS_API_BASE\s*\|\|\s*''/);
 assert.doesNotMatch(frontendConfig, /https?:\/\//, 'one-click frontend must use the same-origin API');
 
 const version = (await readFile(path.join(output, 'bin/VERSION'), 'utf8')).trim();
@@ -48,7 +49,7 @@ const manifest = await readFile(path.join(output, 'bin/SHA256SUMS'), 'utf8');
 let verified = 0;
 for (const line of manifest.split(/\r?\n/)) {
   if (!line.trim()) continue;
-  const match = line.match(/^([a-f0-9]{64})\s+\*?((?:nstatus-metrics|jq)-[A-Za-z0-9._-]+)$/i);
+  const match = line.match(/^([a-f0-9]{64})\s+\*?((?:nie-sla-agent|nstatus-metrics|jq)-[A-Za-z0-9._-]+)$/i);
   assert.ok(match, `invalid SHA256SUMS line: ${line}`);
   const bytes = await readFile(path.join(output, 'bin', match[2]));
   assert.equal(createHash('sha256').update(bytes).digest('hex'), match[1].toLowerCase(), `checksum mismatch: ${match[2]}`);

@@ -1,5 +1,5 @@
 {
-  "name": "nstatus-worker",
+  "name": "nie-sla-worker",
   "private": true,
   "type": "module",
   "dependencies": {

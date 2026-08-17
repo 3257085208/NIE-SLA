@@ -12,18 +12,18 @@ const HEARTBEAT_MAX_AGE_SEC: u64 = 180;
 const HEARTBEAT_INTERVAL_SEC: u64 = 15;
 const TASK_POLL_SEC: u64 = crate::tasks::TASK_POLL_SEC;
 const SERVICE_RECONCILE_SEC: u64 = 3600;
-const AGENT_BINARY: &str = "/opt/nstatus-metrics/nstatus-metrics";
+const AGENT_BINARY: &str = "/opt/nie-sla-agent/nie-sla-agent";
 const CFTZ_BINARY: &str = "/usr/local/bin/cftz";
-const ENV_FILE: &str = "/opt/nstatus-metrics/nstatus-metrics.env";
-const STATE_DIR: &str = "/var/lib/nstatus-metrics";
-const MANAGER_STATE_DIR: &str = "/var/lib/nstatus-manager";
-const MANAGER_HEARTBEAT: &str = "/var/lib/nstatus-manager/manager-heartbeat";
-const TELEMETRY_SERVICE: &str = "nstatus-metrics";
-const MANAGER_SERVICE: &str = "nstatus-metrics-tasks";
-const UPDATE_TIMER: &str = "nstatus-metrics-update.timer";
-const UPDATE_BACKUP: &str = "/opt/nstatus-metrics/nstatus-metrics.bak";
-const UPDATE_FAILED: &str = "/opt/nstatus-metrics/nstatus-metrics.failed";
-const UPDATE_CONFIRMATION: &str = "/var/lib/nstatus-manager/update-confirmed";
+const ENV_FILE: &str = "/opt/nie-sla-agent/nie-sla-agent.env";
+const STATE_DIR: &str = "/var/lib/nie-sla-agent";
+const MANAGER_STATE_DIR: &str = "/var/lib/nie-sla-agent-manager";
+const MANAGER_HEARTBEAT: &str = "/var/lib/nie-sla-agent-manager/manager-heartbeat";
+const TELEMETRY_SERVICE: &str = "nie-sla-agent";
+const MANAGER_SERVICE: &str = "nie-sla-agent-manager";
+const UPDATE_TIMER: &str = "nie-sla-agent-update.timer";
+const UPDATE_BACKUP: &str = "/opt/nie-sla-agent/nie-sla-agent.bak";
+const UPDATE_FAILED: &str = "/opt/nie-sla-agent/nie-sla-agent.failed";
+const UPDATE_CONFIRMATION: &str = "/var/lib/nie-sla-agent-manager/update-confirmed";
 const UPDATE_CONFIRM_AFTER_SEC: u64 = 60;
 const UPDATE_TELEMETRY_STABILITY_SEC: u64 = 30;
 const UPDATE_WATCHDOG_TIMEOUT_SEC: u64 = 180;
@@ -151,7 +151,7 @@ pub(crate) fn spawn_update_watchdog(expected_version: &str) -> Result<()> {
     let _ = fs::remove_file(UPDATE_CONFIRMATION);
 
     if Path::new("/run/systemd/system").is_dir() && command_exists("systemd-run") {
-        let unit = format!("nstatus-metrics-update-watchdog-{}", std::process::id());
+        let unit = format!("nie-sla-agent-update-watchdog-{}", std::process::id());
         run_checked(
             Command::new("systemd-run")
                 .arg("--quiet")
@@ -446,16 +446,16 @@ fn reconcile_service_layout() -> Result<()> {
         let recovery_service = systemd_recovery_update_service();
         let recovery_timer = systemd_recovery_update_timer();
         let changed = write_if_changed(
-            Path::new("/etc/systemd/system/nstatus-metrics.service"),
+            Path::new("/etc/systemd/system/nie-sla-agent.service"),
             telemetry.as_bytes(),
         )? | write_if_changed(
-            Path::new("/etc/systemd/system/nstatus-metrics-tasks.service"),
+            Path::new("/etc/systemd/system/nie-sla-agent-manager.service"),
             manager.as_bytes(),
         )? | write_if_changed(
-            Path::new("/etc/systemd/system/nstatus-metrics-update.service"),
+            Path::new("/etc/systemd/system/nie-sla-agent-update.service"),
             recovery_service.as_bytes(),
         )? | write_if_changed(
-            Path::new("/etc/systemd/system/nstatus-metrics-update.timer"),
+            Path::new("/etc/systemd/system/nie-sla-agent-update.timer"),
             recovery_timer.as_bytes(),
         )?;
         if changed {
@@ -469,15 +469,15 @@ fn reconcile_service_layout() -> Result<()> {
             .status();
     } else if Path::new("/etc/init.d").is_dir() && command_exists("rc-service") {
         write_if_changed(
-            Path::new("/etc/init.d/nstatus-metrics"),
+            Path::new("/etc/init.d/nie-sla-agent"),
             openrc_telemetry_service().as_bytes(),
         )?;
         write_if_changed(
-            Path::new("/etc/init.d/nstatus-metrics-tasks"),
+            Path::new("/etc/init.d/nie-sla-agent-manager"),
             openrc_manager_service().as_bytes(),
         )?;
-        set_executable(Path::new("/etc/init.d/nstatus-metrics"))?;
-        set_executable(Path::new("/etc/init.d/nstatus-metrics-tasks"))?;
+        set_executable(Path::new("/etc/init.d/nie-sla-agent"))?;
+        set_executable(Path::new("/etc/init.d/nie-sla-agent-manager"))?;
         let _ = Command::new("rc-update")
             .args(["add", TELEMETRY_SERVICE, "default"])
             .status();
@@ -573,13 +573,13 @@ fn set_executable(_path: &Path) -> Result<()> {
 
 fn systemd_telemetry_unit() -> String {
     format!(
-        "[Unit]\nDescription=NIE-SLA VPS Metrics Agent\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nExecStart={AGENT_BINARY}\nRestart=always\nRestartSec=15\nUser=nstatus\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths={STATE_DIR}\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=NIE-SLA VPS Metrics Agent\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nExecStart={AGENT_BINARY}\nRestart=always\nRestartSec=15\nUser=nie-sla\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths={STATE_DIR}\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
     )
 }
 
 fn systemd_manager_unit() -> String {
     format!(
-        "[Unit]\nDescription=NIE-SLA privileged Agent manager\nAfter=network-online.target {TELEMETRY_SERVICE}.service\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nEnvironment=NSTATUS_TASK_RUNNER_ONLY=1\nExecStart={AGENT_BINARY} --task-runner-only\nRestart=always\nRestartSec=20\nUser=root\nPrivateTmp=true\nProtectHome=true\nUMask=0027\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=NIE-SLA privileged Agent manager\nAfter=network-online.target {TELEMETRY_SERVICE}.service\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nEnvironment=NIE_SLA_TASK_RUNNER_ONLY=1\nExecStart={AGENT_BINARY} --task-runner-only\nRestart=always\nRestartSec=20\nUser=root\nPrivateTmp=true\nProtectHome=true\nUMask=0027\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
     )
 }
 
@@ -595,20 +595,20 @@ fn systemd_recovery_update_timer() -> String {
 
 fn openrc_telemetry_service() -> String {
     format!(
-        "#!/sbin/openrc-run\nname=\"{TELEMETRY_SERVICE}\"\ndescription=\"NIE-SLA VPS Metrics Agent\"\n\nstart() {{\n    ebegin \"Starting {TELEMETRY_SERVICE}\"\n    touch \"/var/log/{TELEMETRY_SERVICE}.log\"\n    chown nstatus \"/var/log/{TELEMETRY_SERVICE}.log\" 2>/dev/null || true\n    start-stop-daemon --start --background --make-pidfile \\\n        --pidfile /run/{TELEMETRY_SERVICE}.pid \\\n        --user nstatus \\\n        --exec /bin/sh -- \\\n        -c 'cd \"{STATE_DIR}\"; set -a; . \"{ENV_FILE}\"; set +a; exec \"{AGENT_BINARY}\" >>\"/var/log/{TELEMETRY_SERVICE}.log\" 2>&1'\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping {TELEMETRY_SERVICE}\"\n    start-stop-daemon --stop --pidfile /run/{TELEMETRY_SERVICE}.pid\n    eend $?\n}}\n\ndepend() {{ need net; }}\n"
+        "#!/sbin/openrc-run\nname=\"{TELEMETRY_SERVICE}\"\ndescription=\"NIE-SLA VPS Metrics Agent\"\n\nstart() {{\n    ebegin \"Starting {TELEMETRY_SERVICE}\"\n    touch \"/var/log/{TELEMETRY_SERVICE}.log\"\n    chown nie-sla \"/var/log/{TELEMETRY_SERVICE}.log\" 2>/dev/null || true\n    start-stop-daemon --start --background --make-pidfile \\\n        --pidfile /run/{TELEMETRY_SERVICE}.pid \\\n        --user nie-sla \\\n        --exec /bin/sh -- \\\n        -c 'cd \"{STATE_DIR}\"; set -a; . \"{ENV_FILE}\"; set +a; exec \"{AGENT_BINARY}\" >>\"/var/log/{TELEMETRY_SERVICE}.log\" 2>&1'\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping {TELEMETRY_SERVICE}\"\n    start-stop-daemon --stop --pidfile /run/{TELEMETRY_SERVICE}.pid\n    eend $?\n}}\n\ndepend() {{ need net; }}\n"
     )
 }
 
 fn openrc_manager_service() -> String {
     format!(
-        "#!/sbin/openrc-run\nname=\"{MANAGER_SERVICE}\"\ndescription=\"NIE-SLA privileged Agent manager\"\n\nstart() {{\n    ebegin \"Starting {MANAGER_SERVICE}\"\n    start-stop-daemon --start --background --make-pidfile \\\n        --pidfile /run/{MANAGER_SERVICE}.pid \\\n        --exec /bin/sh -- \\\n        -c 'cd \"{STATE_DIR}\"; set -a; . \"{ENV_FILE}\"; set +a; export NSTATUS_TASK_RUNNER_ONLY=1; exec \"{AGENT_BINARY}\" --task-runner-only >>\"/var/log/{MANAGER_SERVICE}.log\" 2>&1'\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping {MANAGER_SERVICE}\"\n    start-stop-daemon --stop --pidfile /run/{MANAGER_SERVICE}.pid\n    eend $?\n}}\n\ndepend() {{ need net; after {TELEMETRY_SERVICE}; }}\n"
+        "#!/sbin/openrc-run\nname=\"{MANAGER_SERVICE}\"\ndescription=\"NIE-SLA privileged Agent manager\"\n\nstart() {{\n    ebegin \"Starting {MANAGER_SERVICE}\"\n    start-stop-daemon --start --background --make-pidfile \\\n        --pidfile /run/{MANAGER_SERVICE}.pid \\\n        --exec /bin/sh -- \\\n        -c 'cd \"{STATE_DIR}\"; set -a; . \"{ENV_FILE}\"; set +a; export NIE_SLA_TASK_RUNNER_ONLY=1; exec \"{AGENT_BINARY}\" --task-runner-only >>\"/var/log/{MANAGER_SERVICE}.log\" 2>&1'\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping {MANAGER_SERVICE}\"\n    start-stop-daemon --stop --pidfile /run/{MANAGER_SERVICE}.pid\n    eend $?\n}}\n\ndepend() {{ need net; after {TELEMETRY_SERVICE}; }}\n"
     )
 }
 
 fn install_openrc_recovery_job() -> Result<()> {
     let path = [
-        Path::new("/etc/periodic/hourly/nstatus-metrics-update"),
-        Path::new("/etc/cron.hourly/nstatus-metrics-update"),
+        Path::new("/etc/periodic/hourly/nie-sla-agent-update"),
+        Path::new("/etc/cron.hourly/nie-sla-agent-update"),
     ]
     .into_iter()
     .find(|path| path.parent().is_some_and(Path::is_dir));
@@ -621,7 +621,7 @@ fn install_openrc_recovery_job() -> Result<()> {
 
 fn openrc_recovery_update_job() -> String {
     format!(
-        "#!/bin/sh\nif rc-service {MANAGER_SERVICE} status >/dev/null 2>&1; then\n  exit 0\nfi\nexec {CFTZ_BINARY} update --automatic >>/var/log/nstatus-metrics-update.log 2>&1\n"
+        "#!/bin/sh\nif rc-service {MANAGER_SERVICE} status >/dev/null 2>&1; then\n  exit 0\nfi\nexec {CFTZ_BINARY} update --automatic >>/var/log/nie-sla-agent-update.log 2>&1\n"
     )
 }
 
@@ -690,15 +690,15 @@ mod tests {
     #[test]
     fn manager_unit_has_a_fixed_command_surface() {
         let unit = systemd_manager_unit();
-        assert!(unit.contains("ExecStart=/opt/nstatus-metrics/nstatus-metrics --task-runner-only"));
+        assert!(unit.contains("ExecStart=/opt/nie-sla-agent/nie-sla-agent --task-runner-only"));
         assert!(unit.contains("User=root"));
         assert!(!unit.contains("$NSTATUS_TASK"));
         assert!(!unit.contains("curl"));
 
         let openrc = openrc_manager_service();
         assert!(openrc.contains("start-stop-daemon --start --background --make-pidfile"));
-        assert!(openrc.contains("exec \"/opt/nstatus-metrics/nstatus-metrics\" --task-runner-only"));
-        assert!(!openrc.contains("--user nstatus"));
+        assert!(openrc.contains("exec \"/opt/nie-sla-agent/nie-sla-agent\" --task-runner-only"));
+        assert!(!openrc.contains("--user nie-sla"));
 
         let path = std::env::temp_dir().join(format!(
             "nie-sla-openrc-manager-{}-{}",
@@ -715,12 +715,12 @@ mod tests {
     fn privileged_recovery_jobs_run_only_while_manager_is_down() {
         let systemd = systemd_recovery_update_service();
         assert!(systemd.contains(
-            "ExecCondition=/bin/sh -c '! systemctl is-active --quiet nstatus-metrics-tasks'"
+            "ExecCondition=/bin/sh -c '! systemctl is-active --quiet nie-sla-agent-manager'"
         ));
         assert!(systemd.contains("ExecStart=/usr/local/bin/cftz update --automatic"));
 
         let openrc = openrc_recovery_update_job();
-        assert!(openrc.contains("rc-service nstatus-metrics-tasks status"));
+        assert!(openrc.contains("rc-service nie-sla-agent-manager status"));
         assert!(openrc.contains("exec /usr/local/bin/cftz update --automatic"));
     }
 

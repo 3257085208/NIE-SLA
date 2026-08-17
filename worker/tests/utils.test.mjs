@@ -7,7 +7,7 @@ import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History
 import { runAlertChecks } from '../src/alerts.js';
 import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeAgentPublicBase, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
-import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates } from '../src/storage.js';
+import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates, readR2JsonResult, readR2JsonStrict } from '../src/storage.js';
 import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
 import { isAgentApiPath } from '../src/route-policy.js';
 import { compactStatusPayload, refreshLatencySources } from '../src/status-payload.js';
@@ -28,9 +28,20 @@ assert.equal(parseBoolean('enabled', false), false);
 assert.equal(shouldRunScheduledFollowups({ count: 38 }), true);
 assert.equal(shouldRunScheduledFollowups({ count: 0 }), false);
 assert.equal(shouldRunScheduledFollowups(null), false);
-assert.equal(lastPersistedCheckAt({ last_checked_at: 100 }, { checked_at: 120 }), 120);
-assert.equal(lastPersistedCheckAt({ last_checked_at: 140 }, { checked_at: 120 }), 140);
+assert.equal(lastPersistedCheckAt({ last_checked_at: 300 }, { checked_at: 320 }), 300);
+assert.equal(lastPersistedCheckAt({ last_checked_at: 620 }, { checked_at: 600 }), 600);
+assert.equal(lastPersistedCheckAt({ last_checked_at: 900 }, { checked_at: 920 }), 900);
 assert.equal(lastPersistedCheckAt({ last_checked_at: null }, null), 0);
+
+{
+  const strictEnv = fakeR2Env();
+  await strictEnv.ARCHIVE.put('strict/key.json', JSON.stringify({ ok: 1 }));
+  assert.deepEqual(await readR2JsonResult(strictEnv, 'strict/key.json'), { ok: true, found: true, value: { ok: 1 }, key: 'strict/key.json' });
+  assert.deepEqual(await readR2JsonResult(strictEnv, 'strict/missing.json'), { ok: true, found: false, value: null, key: 'strict/missing.json' });
+  assert.deepEqual(await readR2JsonStrict(strictEnv, 'strict/key.json'), { ok: 1 });
+  assert.equal(await readR2JsonStrict(strictEnv, 'strict/missing.json'), null);
+  await assert.rejects(() => readR2JsonStrict({ ARCHIVE: { async get() { throw new Error('simulated R2 failure'); } } }, 'strict/broken.json'), /R2 read failed/);
+}
 
 const emptyId = sanitizeId('');
 assert.equal(emptyId, sanitizeId(''));

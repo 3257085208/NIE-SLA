@@ -1,4 +1,4 @@
-const API_BASE_KEYS = ['NSTATUS_API_BASE', 'API_BASE', 'WORKER_URL'];
+const API_BASE_KEYS = ['NIE_SLA_API_BASE', 'NSTATUS_API_BASE', 'API_BASE', 'WORKER_URL'];
 const DEFAULT_ADMIN_PATH = '/admin';
 const ADMIN_HTML_PATH = '/admin.html';
 const ADMIN_CANDIDATE = /^\/[A-Za-z0-9][A-Za-z0-9_-]{2,63}\/?$/;

@@ -1,4 +1,4 @@
-import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA } from './utils.js';
+import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA, LEGACY_STATUS_SNAPSHOT_SCHEMA } from './utils.js';
 import { json } from './auth.js';
 import { validateAdminSession } from './totp.js';
 import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
@@ -31,6 +31,7 @@ export async function getStatusCached(request, env, url, ctx = null) {
 function withCacheState(response, ttl, state) {
   const headers = new Headers(response.headers);
   headers.set('cache-control', `public, max-age=${ttl}`);
+  headers.set('x-nie-sla-cache', state);
   headers.set('x-nstatus-cache', state);
   return new Response(response.body, {
     status: response.status,
@@ -89,7 +90,11 @@ async function buildStatusPayload(env, url = null) {
   const latestPromise = optionalQuery(env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo, uptime_24h, uptime_7d, avg_latency_24h, last_fail_at, current_outage_started_at, last_recover_at, status_changed_at FROM latest_status`).all(), 'Latest probe status unavailable');
   const pingTargetsPromise = optionalQuery(env.DB.prepare(`SELECT id, name, color FROM ping_targets WHERE enabled = 1 ORDER BY name`).all(), 'Ping target metadata unavailable');
   const [targets, metricsResult, agentAvailabilityResult, latestResult, pingTargetsResult] = await Promise.all([targetsPromise, metricsPromise, agentAvailabilityPromise, latestPromise, pingTargetsPromise]);
-  const r2State = await readR2State(env);
+  const r2State = await readR2State(env).catch((error) => {
+    console.error('R2 state unavailable:', String(error?.message || error));
+    warnings.push('R2 state unavailable; using D1 fallback');
+    return { targets: {} };
+  });
   const r2SummaryRows = getSummaryRowsFromState(r2State, startDay);
   const latestMap = {};
   for (const row of latestResult.results || []) latestMap[row.target_id] = row;
@@ -356,14 +361,14 @@ export async function getStatusSnapshot(env, url) {
     if (!object) return null;
     let payload = await object.json();
     const generatedAt = Math.floor(new Date(payload?.generated_at || payload?.now || 0).getTime() / 1000);
-    if (!payload?.ok || payload?.schema !== STATUS_SNAPSHOT_SCHEMA || !Number.isFinite(generatedAt) || !generatedAt || generatedAt < nowSec() - clamp(Number(env.STATUS_SNAPSHOT_MAX_AGE_SEC || 150), 60, 86400)) return null;
+    if (!payload?.ok || ![STATUS_SNAPSHOT_SCHEMA, LEGACY_STATUS_SNAPSHOT_SCHEMA].includes(payload?.schema) || !Number.isFinite(generatedAt) || !generatedAt || generatedAt < nowSec() - clamp(Number(env.STATUS_SNAPSHOT_MAX_AGE_SEC || 150), 60, 86400)) return null;
     payload = await overlayLiveTargetStatus(env, payload);
     const frontend = await publicFrontend(env);
     payload.frontend_theme = frontend.theme;
     payload.frontend = { ...(payload.frontend || {}), ...frontend };
     await attachAgentState(payload, env);
     if (url?.searchParams?.get('lite') === '1') payload = compactStatusPayload(payload);
-    return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300)}`, 'x-nstatus-source': 'r2-status-snapshot' });
+    return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300)}`, 'x-nie-sla-source': 'r2-status-snapshot', 'x-nstatus-source': 'r2-status-snapshot' });
   } catch (error) {
     console.error('Status snapshot read failed:', String(error?.message || error));
     return null;
@@ -422,7 +427,7 @@ export async function writeStatusSnapshot(env) {
   const key = String(env.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, '');
   const last = await getStatusSnapshotGeneratedAt(env, key);
   if (last && last > nowSec() - every) return { ok: true, skipped: true, reason: 'too_soon', last_write_at: last };
-  const url = new URL('https://nstatus.internal/api/status');
+  const url = new URL('https://nie-sla.internal/api/status');
   url.searchParams.set('days', String(DEFAULT_STATUS_DAYS));
   const payload = await buildStatusPayload(env, url);
   payload.schema = STATUS_SNAPSHOT_SCHEMA;

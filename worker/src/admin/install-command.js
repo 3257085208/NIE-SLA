@@ -5,9 +5,9 @@ import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
 
-const INSTALLER_SHA256 = 'b7cf397c449815e232134f3efb92000e43f2aff403ffb15e116c2d4b1ca0924d';
-const SETUP_SHA256 = 'b3110310124d0d78fcb9966ecdf519e9c9b403721451ad425690df42d9347628';
-const CFTZ_SHA256 = '3632df3856e33e22d02a07a0e4043e9583dd0d08c975f2aa41ff3c4f8bd8fe26';
+const INSTALLER_SHA256 = '903f80ccdecda0f735f216e602ad84f018c01be1741a2902fd5a6ee386af8365';
+const SETUP_SHA256 = '885dc3569ac97cb1e5f95e0293acab64030e38b2a084a1401e9633f07722ee2d';
+const CFTZ_SHA256 = '40975e710f0c6f9a3115630d36d6431bb2a71ed615c1fc5c19fd7c8af9fb5e16';
 const INSTALL_TICKET_PREFIX = 'nsi_';
 const INSTALL_TICKET_BYTES = 24;
 const INSTALL_TICKET_TTL_SEC = 600;
@@ -31,7 +31,7 @@ export async function getAgentInstallCommand(env, url, request = null) {
   const apiBase = await agentApiBase(env, request, url, installBase);
   const pingSec = String(await getPingIntervalSec(env));
   const release = await loadAgentRelease(env, request).catch(() => null);
-  const sha256SumsSha256 = String(env.NSTATUS_SHA256SUMS_SHA256 || '').trim() || String(release?.manifest_sha256 || '').trim();
+  const sha256SumsSha256 = String(env.NIE_SLA_SHA256SUMS_SHA256 || env.NSTATUS_SHA256SUMS_SHA256 || '').trim() || String(release?.manifest_sha256 || '').trim();
 const expectedVersion = String(env.AGENT_LATEST_VERSION || '').trim() || String(release?.latest_version || '').trim();
   const installTicket = randomInstallTicket();
   const now = nowSec();
@@ -117,19 +117,19 @@ async function hasAgentIdCollision(env, targetId, agentId) {
 
 function buildAgentInstallScript(config) {
   const linuxEnv = [
-    ['NSTATUS_AGENT_BASE_URL', config.installBase],
+    ['NIE_SLA_AGENT_BASE_URL', config.installBase],
     ['DOWNLOAD_BASE', config.installBase],
     ['CFTZ_URL_BASE', config.installBase],
-    ['NSTATUS_API_BASE', config.apiBase],
-    ['NSTATUS_AGENT_TOKEN', config.agentToken],
-    ['NSTATUS_AGENT_ID', config.targetId],
-    ['NSTATUS_AGENT_LABEL', config.label],
-    ['NSTATUS_PING_SEC', String(clamp(Number(config.pingSec || 20), MIN_PING_INTERVAL_SEC, MAX_PING_INTERVAL_SEC))],
-    ['NSTATUS_INSTALLER_SHA256', INSTALLER_SHA256],
-    ['NSTATUS_SETUP_SHA256', SETUP_SHA256],
-    ['NSTATUS_CFTZ_SHA256', CFTZ_SHA256],
-    ['NSTATUS_SHA256SUMS_SHA256', config.sha256SumsSha256],
-    ['NSTATUS_EXPECTED_VERSION', config.expectedVersion],
+    ['NIE_SLA_API_BASE', config.apiBase],
+    ['NIE_SLA_AGENT_TOKEN', config.agentToken],
+    ['NIE_SLA_AGENT_ID', config.targetId],
+    ['NIE_SLA_AGENT_LABEL', config.label],
+    ['NIE_SLA_PING_SEC', String(clamp(Number(config.pingSec || 20), MIN_PING_INTERVAL_SEC, MAX_PING_INTERVAL_SEC))],
+    ['NIE_SLA_INSTALLER_SHA256', INSTALLER_SHA256],
+    ['NIE_SLA_SETUP_SHA256', SETUP_SHA256],
+    ['NIE_SLA_CFTZ_SHA256', CFTZ_SHA256],
+    ['NIE_SLA_SHA256SUMS_SHA256', config.sha256SumsSha256],
+    ['NIE_SLA_EXPECTED_VERSION', config.expectedVersion],
   ];
   const linuxEnvNames = linuxEnv.map(([key]) => key);
   const preserveEnv = linuxEnvNames.join(',');
@@ -143,7 +143,7 @@ function buildAgentInstallScript(config) {
     `trap 'rm -f "$tmp"' EXIT INT TERM`,
     `curl -fsSL ${shellQuote(`${config.installBase}/install.sh?v=${encodeURIComponent(config.sha256SumsSha256)}`)} -o "$tmp"`,
     `actual=$(if command -v sha256sum >/dev/null 2>&1; then sha256sum "$tmp" | awk '{print $1}'; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$tmp" | awk '{print $1}'; elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$tmp" | awk '{print $NF}'; else exit 127; fi)`,
-    '[ "$actual" = "$NSTATUS_INSTALLER_SHA256" ]',
+    '[ "$actual" = "$NIE_SLA_INSTALLER_SHA256" ]',
     `if [ "$(id -u)" -eq 0 ]; then sh "$tmp" --non-interactive; else sudo --preserve-env=${preserveEnv} sh "$tmp" --non-interactive; fi`,
     '',
   ].join('\n');

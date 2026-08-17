@@ -2,7 +2,7 @@
 import { clamp, nowSec, sanitizeId, sanitizeAgentId, parseBoolean, normalizeTarget, parseExpectedStatus, REGION_LABELS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC } from '../utils.js';
 import { normalizeTrafficMode, normalizeTrafficQuotaGb, normalizeTrafficResetDay, summarizeTrafficWithPending, trafficSettingsFromTarget } from '../traffic.js';
 import { safeJson } from '../auth.js';
-import { removeTargetFromR2State } from '../storage.js';
+import { removeTargetFromR2State, deleteTargetR2Data } from '../storage.js';
 import { runTargetBatch } from '../probe.js';
 import { deleteAgentTelemetry, rebuildAgentTrafficPeriod } from '../metrics.js';
 import { ensureV6Schema, isMissingAgentCapabilitiesColumn } from './schema.js';
@@ -254,9 +254,10 @@ export async function deleteTarget(id, env) {
     env.DB.prepare(`DELETE FROM targets WHERE id = ?`).bind(id),
   ]);
   await removeTargetFromR2State(env, id);
+  const r2Cleanup = await deleteTargetR2Data(env, id);
   const telemetry = await deleteAgentTelemetry(env, id);
   await setMeta(env, 'targets_last_sync_at', String(nowSec()));
-  return { ok: true, id, telemetry };
+  return { ok: true, id, telemetry, r2_cleanup: r2Cleanup };
 }
 
 export async function syncTargetCompatibility(env, id) {

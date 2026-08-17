@@ -130,6 +130,22 @@ export function constantTimeEqual(a, b) {
   return diff === 0;
 }
 
+export function internalScheduleSecret(env) {
+  return String(env?.INTERNAL_CRON_SECRET || env?.ADMIN_PASSWORD || env?.ADMIN_TOKEN || env?.AGENT_TOKEN || '').trim();
+}
+
+export function internalRequestHeaders(env) {
+  const secret = internalScheduleSecret(env);
+  return { 'content-type': 'application/json', ...(secret ? { 'x-nie-sla-internal-secret': secret, 'x-nstatus-internal-secret': secret } : {}) };
+}
+
+export function internalRequestAuthorized(request, env) {
+  const expected = internalScheduleSecret(env);
+  if (!expected) return true;
+  const presented = String(request.headers.get('x-nie-sla-internal-secret') || request.headers.get('x-nstatus-internal-secret') || '');
+  return constantTimeEqual(expected, presented);
+}
+
 export class ApiError extends Error {
   constructor(status, message, headers = null) { super(message); this.status = status; this.headers = headers; }
 }

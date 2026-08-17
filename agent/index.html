@@ -59,8 +59,8 @@ curl -fsSL https://你的Worker域名/install.sh | sudo sh</div>
   <div class="card">
     <h2>职责</h2>
     <ul>
-      <li>低权限 <code>nstatus-metrics</code> 服务负责指标、TCP Ping、GeoIP 与校验后更新。</li>
-      <li>常驻 root Manager <code>nstatus-metrics-tasks</code> 只接受 <code>nodequality</code> 与 <code>ip_unlock</code> 两个固定动作。</li>
+      <li>低权限 <code>nie-sla-agent</code> 服务负责指标、TCP Ping、GeoIP 与校验后更新。</li>
+      <li>常驻 root Manager <code>nie-sla-agent-manager</code> 只接受 <code>nodequality</code> 与 <code>ip_unlock</code> 两个固定动作。</li>
       <li>固定动作入口脚本由当前站点分发已审计快照并校验 SHA-256，不接收任意命令、URL、参数、stdin、环境变量或计划。</li>
       <li>NodeQuality 四项测试默认 <code>f/y/y/y</code>；IPv4 解锁运行 <code>-4 -n -p</code> 完整报告模式，保存有界完整报告与最终媒体解锁结果。</li>
       <li>Agent 自动更新只接受更高语义版本，并校验 manifest 与二进制 SHA-256。</li>

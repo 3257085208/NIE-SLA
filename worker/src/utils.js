@@ -19,9 +19,10 @@ export const DEFAULT_INTERVAL_SEC = 300;
 export const MIN_INTERVAL_SEC = 300;
 export const BUCKET_SEC = 300;
 export const DEFAULT_STATUS_DAYS = 30;
-export const STATUS_SNAPSHOT_SCHEMA = 'nstatus-status-snapshot-v1';
-export const R2_STATE_SCHEMA = 'nstatus-r2-state-v1';
-export const R2_HISTORY_SCHEMA = 'nstatus-r2-history-v1';
+export const STATUS_SNAPSHOT_SCHEMA = 'nie-sla-status-snapshot-v1';
+export const LEGACY_STATUS_SNAPSHOT_SCHEMA = 'nstatus-status-snapshot-v1';
+export const R2_STATE_SCHEMA = 'nie-sla-r2-state-v1';
+export const R2_HISTORY_SCHEMA = 'nie-sla-r2-history-v1';
 export const DEFAULT_PUBLIC_WORKER_URL = '';
 
 
@@ -44,10 +45,10 @@ export function shouldRunScheduledFollowups(probe) {
 }
 
 export function lastPersistedCheckAt(target, latestStatus) {
-  return Math.max(
+  return Math.floor(Math.max(
     Number(target?.last_checked_at || 0),
     Number(latestStatus?.checked_at || 0),
-  );
+  ) / BUCKET_SEC) * BUCKET_SEC;
 }
 
 function pad2(n) {

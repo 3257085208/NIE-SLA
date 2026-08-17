@@ -58,6 +58,16 @@ const env = {
   ARCHIVE: {
     objects: new Map(),
     async put(key, value) { this.objects.set(key, value); },
+    async list({ prefix = '', cursor, limit = 1000 } = {}) {
+      const keys = [...this.objects.keys()].filter(key => key.startsWith(prefix));
+      const offset = cursor ? Number(cursor) || 0 : 0;
+      const pageKeys = keys.slice(offset, offset + limit);
+      return {
+        objects: pageKeys.map(key => ({ key })),
+        truncated: offset + pageKeys.length < keys.length,
+        cursor: offset + pageKeys.length < keys.length ? String(offset + pageKeys.length) : undefined,
+      };
+    },
     async delete(keys) {
       for (const key of Array.isArray(keys) ? keys : [keys]) this.objects.delete(key);
     },

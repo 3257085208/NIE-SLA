@@ -79,7 +79,7 @@ try {
   assert.ok(agentCommand.linux_command.length < 360, `short install command is ${agentCommand.linux_command.length} characters`);
   assert.match(agentCommand.linux_command, /Authorization: Bearer nsi_[a-f0-9]{48}/);
   assert.match(agentCommand.linux_command, /\/api\/agent\/install-script' -o "\$t" && sh "\$t"\)$/);
-  assert.doesNotMatch(agentCommand.linux_command, /NSTATUS_AGENT_TOKEN|\bnst_[a-f0-9]{32,}\b/);
+  assert.doesNotMatch(agentCommand.linux_command, /(?:NIE_SLA|NSTATUS)_AGENT_TOKEN|\bnst_[a-f0-9]{32,}\b/);
 
   const installTicket = agentCommand.linux_command.match(/Bearer (nsi_[a-f0-9]{48})/)?.[1];
   assert.ok(installTicket);
@@ -92,13 +92,13 @@ try {
   assert.equal(scriptResponse.status, 200);
   assert.equal(scriptResponse.headers.get('cache-control'), 'no-store, max-age=0');
   const installScript = await scriptResponse.text();
-  assert.match(installScript, new RegExp(`NSTATUS_AGENT_TOKEN='${token}'`));
-  assert.match(installScript, /NSTATUS_AGENT_LABEL='VPS A'/);
-  assert.match(installScript, /NSTATUS_EXPECTED_VERSION='v1\.2\.3'/);
-  assert.match(installScript, /NSTATUS_INSTALLER_SHA256='[a-f0-9]{64}'/);
-  assert.match(installScript, /NSTATUS_SETUP_SHA256='[a-f0-9]{64}'/);
-  assert.match(installScript, /NSTATUS_CFTZ_SHA256='[a-f0-9]{64}'/);
-  assert.match(installScript, /\[ "\$actual" = "\$NSTATUS_INSTALLER_SHA256" \]/);
+  assert.match(installScript, new RegExp(`NIE_SLA_AGENT_TOKEN='${token}'`));
+  assert.match(installScript, /NIE_SLA_AGENT_LABEL='VPS A'/);
+  assert.match(installScript, /NIE_SLA_EXPECTED_VERSION='v1\.2\.3'/);
+  assert.match(installScript, /NIE_SLA_INSTALLER_SHA256='[a-f0-9]{64}'/);
+  assert.match(installScript, /NIE_SLA_SETUP_SHA256='[a-f0-9]{64}'/);
+  assert.match(installScript, /NIE_SLA_CFTZ_SHA256='[a-f0-9]{64}'/);
+  assert.match(installScript, /\[ "\$actual" = "\$NIE_SLA_INSTALLER_SHA256" \]/);
   await assert.rejects(
     () => getAgentInstallScript(commandEnv, agentRequest(installTicket)),
     error => error?.status === 401 && /已过期或已使用/.test(error.message),
@@ -131,7 +131,7 @@ try {
     assert.ok(legacyIdTicket);
     assert.ok(database.prepare(`SELECT token_hash FROM agent_install_tickets WHERE target_id = ? AND used_at IS NULL`).get(rawTargetId));
     const legacyIdScript = await (await getAgentInstallScript(commandEnv, agentRequest(legacyIdTicket))).text();
-    assert.match(legacyIdScript, new RegExp(`NSTATUS_AGENT_ID='${canonicalAgentId}'`));
+    assert.match(legacyIdScript, new RegExp(`NIE_SLA_AGENT_ID='${canonicalAgentId}'`));
     assert.ok(database.prepare(`SELECT token_hash FROM agent_credentials WHERE subject_type = 'agent' AND subject_id = ?`).get(canonicalAgentId));
   }
 
@@ -161,12 +161,12 @@ try {
   assert.equal(latencyCommand.ok, true);
   assert.equal(latencyCommand.credential_bound, true);
   assert.equal(latencyCommand.credential_type, 'one_time_latency_install_token');
-  assert.doesNotMatch(latencyCommand.linux_command, /NSTATUS_LATENCY_TOKEN|\bnst_[a-f0-9]{32,}\b/);
+  assert.doesNotMatch(latencyCommand.linux_command, /(?:NIE_SLA|NSTATUS)_LATENCY_TOKEN|\bnst_[a-f0-9]{32,}\b/);
   const latencyInstallTicket = latencyCommand.linux_command.match(/Bearer (nsi_[a-f0-9]{48})/)?.[1];
   assert.ok(latencyInstallTicket);
   const latencyScript = await getLatencyAgentInstallScript(commandEnv, new Request('https://api.example.test/api/latency-agent/install-script', { headers: { authorization: `Bearer ${latencyInstallTicket}` } }));
   assert.equal(latencyScript.status, 200);
-  assert.match(await latencyScript.text(), new RegExp(`NSTATUS_LATENCY_TOKEN='${latencyToken}'`));
+  assert.match(await latencyScript.text(), new RegExp(`NIE_SLA_LATENCY_TOKEN='${latencyToken}'`));
 
   database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)

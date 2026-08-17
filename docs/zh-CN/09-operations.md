@@ -42,7 +42,7 @@ curl -fsSL https://你的域名/bin/SHA256SUMS
 按钮长期排队：Agent 版本过旧、root 通道未就绪、API 域名不可达。重新执行该节点最新部署命令，然后检查：
 
 ```bash
-sudo systemctl status nstatus-metrics --no-pager
+sudo systemctl status nie-sla-agent --no-pager
 sudo cftz status
 sudo cftz log 100
 ```

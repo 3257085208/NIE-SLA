@@ -32,7 +32,7 @@
 
 命令包含节点专用 scoped Token，属于敏感凭据，不要发到公开 Issue、聊天记录、截图或 shell 教程。
 
-安装器会：检查 systemd 与 Python 3；停止并禁用已有的 `nstatus-latency-agent.service`，终止引用旧脚本的残留进程；下载带版本参数的最新 `latency-agent.py`；写入权限 `0600` 的环境文件；执行一次 `--once` 预检并提交首批结果；创建并启动服务；验证 active 状态。同一节点重装或换 Token 时直接执行后台当前生成的新命令即可。
+安装器会：检查 systemd 与 Python 3；停止当前服务及兼容迁移用的旧 `nstatus-latency-agent.service`，终止残留进程；下载带版本参数的最新 `latency-agent.py`；写入权限 `0600` 的环境文件；执行一次 `--once` 预检并提交首批结果；创建并启动 `nie-sla-latency-agent.service`；验证 active 状态。同一节点重装或换 Token 时直接执行后台当前生成的新命令即可。
 
 成功输出类似：
 
@@ -47,15 +47,15 @@ External Latency Agent installed: latency-example
 ## 部署后验证
 
 ```bash
-sudo systemctl is-active nstatus-latency-agent.service
-sudo systemctl status nstatus-latency-agent.service --no-pager
-sudo journalctl -u nstatus-latency-agent.service -n 100 --no-pager
+sudo systemctl is-active nie-sla-latency-agent.service
+sudo systemctl status nie-sla-latency-agent.service --no-pager
+sudo journalctl -u nie-sla-latency-agent.service -n 100 --no-pager
 ```
 
 手动再跑一次：
 
 ```bash
-sudo sh -c 'set -a; . /etc/nstatus-latency-agent.env; set +a; /usr/bin/python3 /opt/nstatus-latency/latency-agent.py --once'
+sudo sh -c 'set -a; . /etc/nie-sla-latency-agent.env; set +a; /usr/bin/python3 /opt/nie-sla-latency/latency-agent.py --once'
 ```
 
 回到后台确认节点已启用、“最近上报”有时间；公开页打开任一符合条件的 VPS，Latency 图例出现 Cloudflare 与外部节点名称。公开状态接口只展示未过期的最新来源，正常上报后几十秒内可见，长时间无新结果的来源按 stale 窗口暂时隐藏。
@@ -63,10 +63,10 @@ sudo sh -c 'set -a; . /etc/nstatus-latency-agent.env; set +a; /usr/bin/python3 /
 从 Worker 目录查询 D1：
 
 ```bash
-npx wrangler d1 execute nstatus-db --remote --command \
+npx wrangler d1 execute nie-sla-db --remote --command \
   "SELECT id,name,last_seen_at FROM latency_agents ORDER BY name;"
 
-npx wrangler d1 execute nstatus-db --remote --command \
+npx wrangler d1 execute nie-sla-db --remote --command \
   "SELECT node_id,COUNT(*) AS count,MAX(checked_at) AS newest FROM latency_results GROUP BY node_id;"
 ```
 
@@ -75,7 +75,7 @@ npx wrangler d1 execute nstatus-db --remote --command \
 后台“Agent 自动更新”开关同时控制普通 Rust Agent 与外部 Latency Agent。Latency Agent 用节点 scoped Token 定期读取 `/api/latency-agent/update-policy`：
 
 - 关闭时只读策略，不修改本地脚本。
-- 开启时从安装命令记录的 HTTPS 地址下载当前脚本，限制大小、比较 SHA-256、执行 Python 编译检查，通过后在 `/opt/nstatus-latency` 内原子替换并 `exec` 重启。
+- 开启时从安装命令记录的 HTTPS 地址下载当前脚本，限制大小、比较 SHA-256、执行 Python 编译检查，通过后在 `/opt/nie-sla-latency` 内原子替换并 `exec` 重启。
 - 更新检查失败只写 journal，不中止延迟探测，默认一小时后重试。
 
 首次启用需要重新执行一次后台生成的最新部署命令，以写入安装源并更新 systemd 沙箱权限。
@@ -93,7 +93,7 @@ npx wrangler d1 execute nstatus-db --remote --command \
 - Cloudflare 1010/403：确认脚本带有明确的 `User-Agent` 请求头，重新执行最新安装命令。
 - `targets` 或 `accepted` 为 0：后台至少需要一个已启用、地址与端口完整、未隐藏的 TCP 目标。HTTP 目标不下发。
 - 首次成功但前端只有 Cloudflare：等待状态缓存刷新（几十秒）、强制刷新、确认查看的是公开 TCP 目标、查询 `latency_results` 是否有最新数据。
-- 服务反复重启：看 systemd 与 journal 日志。不要把 `/etc/nstatus-latency-agent.env` 完整内容贴到公开场所，其中包含节点 Token。
+- 服务反复重启：看 systemd 与 journal 日志。不要把 `/etc/nie-sla-latency-agent.env` 完整内容贴到公开场所，其中包含节点 Token。
 
 ## 删除与停用
 

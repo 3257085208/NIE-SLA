@@ -9,8 +9,8 @@ const D1_FALLBACK_BUCKET_SEC = 300;
 const ARCHIVE_SEGMENT_SEC = 6 * 3600;
 const ARCHIVE_SCHEMA = 'nie-sla-latency-segment-v1';
 const LATENCY_SCRIPT_VERSION = 6;
-const LATENCY_SCRIPT_SHA256 = '572822759ae0e370f6ca916bf2cd0b866b77e93abb159b5fbf368c199d9cfa88';
-const LATENCY_INSTALLER_SHA256 = '3f5c6845d162f5bd817ff557d500d1f9e1606c382a397e326f6f06ca6e5f1fe8';
+const LATENCY_SCRIPT_SHA256 = 'a76f1e06835aa37965fe60b46bf7f94f6b65ef36083597ab11995ec00238958a';
+const LATENCY_INSTALLER_SHA256 = 'c95ec9798502b27e59146a4e97a66cd81e0273e06ce4fc85a7b0a84061c55b5a';
 const INSTALL_TICKET_PREFIX = 'nsi_';
 const INSTALL_TICKET_BYTES = 24;
 const INSTALL_TICKET_TTL_SEC = 600;
@@ -149,12 +149,12 @@ export async function getLatencyAgentInstallScript(env, request) {
 
 function buildLatencyInstallScript(config) {
   const envValues = [
-    ['NSTATUS_LATENCY_INSTALL_BASE', config.installBase],
-    ['NSTATUS_LATENCY_API_BASE', config.apiBase],
-    ['NSTATUS_LATENCY_TOKEN', config.token],
-    ['NSTATUS_LATENCY_NODE_ID', config.nodeId],
-    ['NSTATUS_LATENCY_INTERVAL_SEC', String(clamp(Number(config.intervalSec || 60), 30, 600))],
-    ['NSTATUS_LATENCY_SCRIPT_SHA256', config.scriptSha256],
+    ['NIE_SLA_LATENCY_INSTALL_BASE', config.installBase],
+    ['NIE_SLA_LATENCY_API_BASE', config.apiBase],
+    ['NIE_SLA_LATENCY_TOKEN', config.token],
+    ['NIE_SLA_LATENCY_NODE_ID', config.nodeId],
+    ['NIE_SLA_LATENCY_INTERVAL_SEC', String(clamp(Number(config.intervalSec || 60), 30, 600))],
+    ['NIE_SLA_LATENCY_SCRIPT_SHA256', config.scriptSha256],
   ];
   const envNames = envValues.map(([key]) => key);
   const preserveEnv = envNames.join(',');

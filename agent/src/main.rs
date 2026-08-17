@@ -309,10 +309,10 @@ fn run() -> Result<()> {
     }
     let cfg = Config::parse()?;
     if cfg.token.is_empty() {
-        return Err(anyhow!("NSTATUS_AGENT_TOKEN or --token is required"));
+        return Err(anyhow!("NIE_SLA_AGENT_TOKEN or --token is required"));
     }
     if cfg.api.is_empty() {
-        return Err(anyhow!("NSTATUS_API_BASE or --api is required"));
+        return Err(anyhow!("NIE_SLA_API_BASE or --api is required"));
     }
 
     let http = HttpClient::new();
@@ -522,26 +522,52 @@ fn run() -> Result<()> {
 impl Config {
     fn parse() -> Result<Self> {
         let mut cfg = Config {
-            api: env_or("NSTATUS_API_BASE", ""),
-            token: env_or("NSTATUS_AGENT_TOKEN", ""),
-            agent_id: env_or("NSTATUS_AGENT_ID", &hostname_string()),
-            agent_label: env_or("NSTATUS_AGENT_LABEL", &hostname_string()),
-            sample_sec: env_u64("NSTATUS_SAMPLE_SEC", DEFAULT_SAMPLE_SEC),
-            report_sec: env_u64("NSTATUS_INTERVAL_SEC", DEFAULT_REPORT_SEC),
-            ping_sec: env_u64("NSTATUS_PING_SEC", DEFAULT_PING_SEC),
-            ping_target_refresh_sec: env_u64(
+            api: env_compat("NIE_SLA_API_BASE", "NSTATUS_API_BASE", ""),
+            token: env_compat("NIE_SLA_AGENT_TOKEN", "NSTATUS_AGENT_TOKEN", ""),
+            agent_id: env_compat("NIE_SLA_AGENT_ID", "NSTATUS_AGENT_ID", &hostname_string()),
+            agent_label: env_compat(
+                "NIE_SLA_AGENT_LABEL",
+                "NSTATUS_AGENT_LABEL",
+                &hostname_string(),
+            ),
+            sample_sec: env_u64_compat(
+                "NIE_SLA_SAMPLE_SEC",
+                "NSTATUS_SAMPLE_SEC",
+                DEFAULT_SAMPLE_SEC,
+            ),
+            report_sec: env_u64_compat(
+                "NIE_SLA_INTERVAL_SEC",
+                "NSTATUS_INTERVAL_SEC",
+                DEFAULT_REPORT_SEC,
+            ),
+            ping_sec: env_u64_compat("NIE_SLA_PING_SEC", "NSTATUS_PING_SEC", DEFAULT_PING_SEC),
+            ping_target_refresh_sec: env_u64_compat(
+                "NIE_SLA_PING_TARGET_REFRESH_SEC",
                 "NSTATUS_PING_TARGET_REFRESH_SEC",
                 DEFAULT_PING_TARGET_REFRESH_SEC,
             ),
-            ping_targets: env_or("NSTATUS_PING_TARGETS", "*"),
-            queue_file: PathBuf::from(env_or("NSTATUS_QUEUE_FILE", &default_queue_file())),
-            queue_max_samples: env_u64(
+            ping_targets: env_compat("NIE_SLA_PING_TARGETS", "NSTATUS_PING_TARGETS", "*"),
+            queue_file: PathBuf::from(env_compat(
+                "NIE_SLA_QUEUE_FILE",
+                "NSTATUS_QUEUE_FILE",
+                &default_queue_file(),
+            )),
+            queue_max_samples: env_u64_compat(
+                "NIE_SLA_QUEUE_MAX_SAMPLES",
                 "NSTATUS_QUEUE_MAX_SAMPLES",
                 DEFAULT_QUEUE_MAX_SAMPLES as u64,
             ) as usize,
-            update_check_sec: env_u64("NSTATUS_UPDATE_CHECK_SEC", DEFAULT_UPDATE_CHECK_SEC),
+            update_check_sec: env_u64_compat(
+                "NIE_SLA_UPDATE_CHECK_SEC",
+                "NSTATUS_UPDATE_CHECK_SEC",
+                DEFAULT_UPDATE_CHECK_SEC,
+            ),
             once: false,
-            task_runner_only: env_or("NSTATUS_TASK_RUNNER_ONLY", "") == "1",
+            task_runner_only: env_compat(
+                "NIE_SLA_TASK_RUNNER_ONLY",
+                "NSTATUS_TASK_RUNNER_ONLY",
+                "",
+            ) == "1",
         };
 
         let mut args = env::args().skip(1);
@@ -595,7 +621,14 @@ impl Config {
         if cfg.agent_label.is_empty() {
             cfg.agent_label = cfg.agent_id.clone();
         }
-        cfg.api = normalize_api_base(&cfg.api, env_or("NSTATUS_ALLOW_INSECURE_HTTP", "") == "1")?;
+        cfg.api = normalize_api_base(
+            &cfg.api,
+            env_compat(
+                "NIE_SLA_ALLOW_INSECURE_HTTP",
+                "NSTATUS_ALLOW_INSECURE_HTTP",
+                "",
+            ) == "1",
+        )?;
         cfg.agent_id = normalize_agent_id(&cfg.agent_id)?;
         cfg.agent_label = cfg.agent_label.chars().take(128).collect();
         Ok(cfg)
@@ -1521,10 +1554,7 @@ mod tests {
         let mount_points = [Path::new("/"), Path::new("/srv"), Path::new("/srv/agent")];
 
         assert_eq!(
-            select_mount_index(
-                &mount_points,
-                &[Path::new("/srv/agent/bin/nstatus-metrics")]
-            ),
+            select_mount_index(&mount_points, &[Path::new("/srv/agent/bin/nie-sla-agent")]),
             Some(2)
         );
     }
@@ -1776,7 +1806,7 @@ fn trim_ascii(value: impl AsRef<str>) -> String {
 fn normalize_api_base(value: &str, allow_insecure_http: bool) -> Result<String> {
     let base = value.trim().trim_end_matches('/');
     if base.is_empty() {
-        return Err(anyhow!("NSTATUS_API_BASE or --api is required"));
+        return Err(anyhow!("NIE_SLA_API_BASE or --api is required"));
     }
     if base.chars().any(char::is_whitespace) || base.contains('?') || base.contains('#') {
         return Err(anyhow!(
@@ -1807,7 +1837,7 @@ fn normalize_api_base(value: &str, allow_insecure_http: bool) -> Result<String> 
         return Ok(base.to_string());
     }
     Err(anyhow!(
-        "Agent API base must use HTTPS; set NSTATUS_ALLOW_INSECURE_HTTP=1 only for trusted private networks"
+        "Agent API base must use HTTPS; set NIE_SLA_ALLOW_INSECURE_HTTP=1 only for trusted private networks"
     ))
 }
 
@@ -1829,7 +1859,7 @@ fn normalize_agent_id(value: &str) -> Result<String> {
     let normalized = normalized.trim_matches('-').to_string();
     if normalized.is_empty() {
         return Err(anyhow!(
-            "NSTATUS_AGENT_ID must contain an ASCII letter or number"
+            "NIE_SLA_AGENT_ID must contain an ASCII letter or number"
         ));
     }
     Ok(normalized)
@@ -1901,7 +1931,12 @@ fn os_label() -> String {
 }
 
 fn hostname_string() -> String {
-    for key in ["NSTATUS_HOSTNAME", "HOSTNAME", "COMPUTERNAME"] {
+    for key in [
+        "NIE_SLA_HOSTNAME",
+        "NSTATUS_HOSTNAME",
+        "HOSTNAME",
+        "COMPUTERNAME",
+    ] {
         if let Ok(value) = env::var(key) {
             let value = trim_ascii(value);
             if !value.is_empty() {
@@ -1923,15 +1958,18 @@ fn hostname_string() -> String {
             }
         }
     }
-    "nstatus-agent".to_string()
+    "nie-sla-agent".to_string()
 }
 
-fn env_or(key: &str, default: &str) -> String {
-    env::var(key).unwrap_or_else(|_| default.to_string())
+fn env_compat(primary: &str, legacy: &str, default: &str) -> String {
+    env::var(primary)
+        .or_else(|_| env::var(legacy))
+        .unwrap_or_else(|_| default.to_string())
 }
 
-fn env_u64(key: &str, default: u64) -> u64 {
-    env::var(key)
+fn env_u64_compat(primary: &str, legacy: &str, default: u64) -> u64 {
+    env::var(primary)
+        .or_else(|_| env::var(legacy))
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(default)
@@ -1974,9 +2012,9 @@ fn json_string(value: &str) -> String {
 
 fn print_help() {
     println!("NIE-SLA Agent v{}", AGENT_VERSION);
-    println!("Usage: nstatus-metrics --api URL --token TOKEN [--once|--task-runner-only]");
+    println!("Usage: nie-sla-agent --api URL --token TOKEN [--once|--task-runner-only]");
     println!("  --task-runner-only  Run the privileged fixed-action Manager service");
     println!(
-        "Environment: NSTATUS_API_BASE, NSTATUS_AGENT_TOKEN, NSTATUS_AGENT_ID, NSTATUS_AGENT_LABEL, NSTATUS_PING_TARGET_REFRESH_SEC"
+        "Environment: NIE_SLA_API_BASE, NIE_SLA_AGENT_TOKEN, NIE_SLA_AGENT_ID, NIE_SLA_AGENT_LABEL, NIE_SLA_PING_TARGET_REFRESH_SEC (legacy NSTATUS_* aliases remain supported)"
     );
 }

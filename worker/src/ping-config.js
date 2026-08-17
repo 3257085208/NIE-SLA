@@ -22,7 +22,7 @@ export async function getPingIntervalSec(env) {
   }
   return normalizePingIntervalSec(
     stored?.value,
-    normalizePingIntervalSec(env.NSTATUS_PING_SEC ?? env.AGENT_PING_SEC, DEFAULT_PING_INTERVAL_SEC),
+    normalizePingIntervalSec(env.NIE_SLA_PING_SEC ?? env.NSTATUS_PING_SEC ?? env.AGENT_PING_SEC, DEFAULT_PING_INTERVAL_SEC),
   );
 }
 

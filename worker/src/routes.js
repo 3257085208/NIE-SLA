@@ -1,5 +1,5 @@
 import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValidatedRedirects, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
-import { requireAgentForId, requireAnyAgent, requireAnyLatencyAgent, requireAgentIdentity, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, constantTimeEqual } from './auth.js';
+import { requireAgentForId, requireAnyAgent, requireAnyLatencyAgent, requireAgentIdentity, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, constantTimeEqual, internalRequestHeaders } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
 import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation } from './admin.js';
@@ -357,7 +357,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/agent/pings' && m === 'POST') return json(await submitAgentPings(request, env), 200, env, { 'cache-control': 'no-store' });
   if (path === '/api/agent/config' && m === 'GET') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); return json(await getAgentRuntimeConfig(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent/location' && m === 'POST') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); return json(await submitAgentLocation(request, env, agentId), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/agent/tasks' && m === 'GET') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); const runnerInstanceId = url.searchParams.get('runner_instance_id') || request.headers.get('x-nstatus-runner-instance') || ''; return json(await claimAgentTask(env, agentId, url.searchParams.get('actions') || '', runnerInstanceId), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/agent/tasks' && m === 'GET') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); const runnerInstanceId = url.searchParams.get('runner_instance_id') || request.headers.get('x-nie-sla-runner-instance') || request.headers.get('x-nstatus-runner-instance') || ''; return json(await claimAgentTask(env, agentId, url.searchParams.get('actions') || '', runnerInstanceId), 200, env, { 'cache-control': 'no-store' }); }
   const agentTaskCancelStatusMatch = path.match(/^\/api\/agent\/tasks\/([^/]+)\/cancel-status$/);
   if (agentTaskCancelStatusMatch && m === 'GET') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await agentTaskCancelStatus(env, agentId, pathParam(agentTaskCancelStatusMatch[1])), 200, env, { 'cache-control': 'no-store' }); }
   const agentTaskResultMatch = path.match(/^\/api\/agent\/tasks\/([^/]+)$/);
@@ -503,7 +503,7 @@ async function getPublicLatencyCached(env, url, ctx = null) {
     const cached = await cache.match(cacheKey);
     if (cached) return cached;
   }
-  const response = json(await getPublicLatency(env, cacheUrl), 200, env, { 'cache-control': 'public, max-age=30', 'x-nstatus-cache': 'miss' });
+  const response = json(await getPublicLatency(env, cacheUrl), 200, env, { 'cache-control': 'public, max-age=30', 'x-nie-sla-cache': 'miss', 'x-nstatus-cache': 'miss' });
   if (cache && response.ok) {
     const task = cache.put(cacheKey, response.clone()).catch(error => console.error('latency cache put failed:', String(error?.message || error)));
     if (ctx?.waitUntil) ctx.waitUntil(task); else await task;
@@ -594,7 +594,7 @@ async function debugColo(env, url) {
     const objectName = `probe-region-${region}-${version}-${targetKey}`;
     const id = env.REGION_PROXY.idFromName(objectName);
     const stub = env.REGION_PROXY.get(id, { locationHint: region });
-    const res = await stub.fetch('https://nstatus.internal/debug-colo', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ region, version, objectName }) });
+    const res = await stub.fetch('https://nie-sla.internal/debug-colo', { method: 'POST', headers: internalRequestHeaders(env), body: JSON.stringify({ region, version, objectName }) });
     const body = await res.json();
     return json({ ok: true, region, version, objectName, via: 'durable_object', ...body }, 200, env);
   }

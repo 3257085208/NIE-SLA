@@ -14,13 +14,20 @@ import urllib.parse
 import urllib.request
 
 
-API_BASE = os.environ["NSTATUS_LATENCY_API_BASE"].rstrip("/")
-TOKEN = os.environ["NSTATUS_LATENCY_TOKEN"]
-NODE_ID = os.environ["NSTATUS_LATENCY_NODE_ID"]
-INTERVAL = max(30, min(600, int(os.environ.get("NSTATUS_LATENCY_INTERVAL_SEC", "60"))))
-UPDATE_INTERVAL = max(300, min(86400, int(os.environ.get("NSTATUS_LATENCY_UPDATE_CHECK_SEC", "3600"))))
-INSTALL_BASE = os.environ["NSTATUS_LATENCY_INSTALL_BASE"].rstrip("/")
-USER_AGENT = os.environ.get("NSTATUS_LATENCY_USER_AGENT", "NIE-SLA-Latency/1.0")
+def env_compat(primary, legacy, default=None):
+    value = os.environ.get(primary, os.environ.get(legacy, default))
+    if value is None:
+        raise KeyError(primary)
+    return value
+
+
+API_BASE = env_compat("NIE_SLA_LATENCY_API_BASE", "NSTATUS_LATENCY_API_BASE").rstrip("/")
+TOKEN = env_compat("NIE_SLA_LATENCY_TOKEN", "NSTATUS_LATENCY_TOKEN")
+NODE_ID = env_compat("NIE_SLA_LATENCY_NODE_ID", "NSTATUS_LATENCY_NODE_ID")
+INTERVAL = max(30, min(600, int(env_compat("NIE_SLA_LATENCY_INTERVAL_SEC", "NSTATUS_LATENCY_INTERVAL_SEC", "60"))))
+UPDATE_INTERVAL = max(300, min(86400, int(env_compat("NIE_SLA_LATENCY_UPDATE_CHECK_SEC", "NSTATUS_LATENCY_UPDATE_CHECK_SEC", "3600"))))
+INSTALL_BASE = env_compat("NIE_SLA_LATENCY_INSTALL_BASE", "NSTATUS_LATENCY_INSTALL_BASE").rstrip("/")
+USER_AGENT = env_compat("NIE_SLA_LATENCY_USER_AGENT", "NSTATUS_LATENCY_USER_AGENT", "NIE-SLA-Latency/1.0")
 SCRIPT_PATH = os.path.realpath(__file__)
 SCRIPT_VERSION = "6"
 PROBE_TIMEOUT_SEC = 1.0

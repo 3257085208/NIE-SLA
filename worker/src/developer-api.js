@@ -36,6 +36,7 @@ export function withDeveloperApiHeaders(response, request, env) {
   headers.set('access-control-allow-origin', resolveDeveloperApiOrigin(request, env) || 'null');
   headers.set('access-control-allow-methods', 'GET,OPTIONS');
   headers.set('access-control-allow-headers', 'content-type');
+  headers.set('x-nie-sla-api-version', DEVELOPER_API_VERSION);
   headers.set('x-nstatus-api-version', DEVELOPER_API_VERSION);
   headers.append('vary', 'Origin');
   return new Response(response.body, {
