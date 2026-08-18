@@ -69,7 +69,8 @@ assert.ok(bigD1Writes >= 100_000, '200-node ten-minute D1 writes must stay outsi
 
 const wrangler = await readFile(new URL('../wrangler.toml', import.meta.url), 'utf8');
 assert.match(wrangler, /name = "TELEMETRY_BUFFER"/);
-assert.match(wrangler, /STATUS_SNAPSHOT_EVERY_SEC = "300"/);
+assert.match(wrangler, /STATUS_SNAPSHOT_EVERY_SEC = "900"/);
+assert.match(wrangler, /AGENT_UPDATE_CHECK_SEC = "86400"/);
 assert.match(wrangler, /AGENT_CREDENTIAL_TOUCH_SEC = "21600"/);
 assert.match(wrangler, /TRAFFIC_PERSIST_INTERVAL_SEC = "1800"/);
 

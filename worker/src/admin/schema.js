@@ -6,6 +6,7 @@ let schemaEnsured = false;
 let schemaPromise = null;
 
 const SCHEMA_MARKER = 'schema:worker-v26-20260810-quota';
+const NEXT_PROBE_SCHEMA_MARKER = 'schema:worker-v27-next-probe';
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -40,9 +41,10 @@ export async function ensureV6Schema(env) {
 
 
   const installed = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(SCHEMA_MARKER).first().catch(() => null);
-  if (installed?.value === '1') { schemaEnsured = true; return; }
+  const nextProbeInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(NEXT_PROBE_SCHEMA_MARKER).first().catch(() => null);
+  if (installed?.value === '1' && nextProbeInstalled?.value === '1') { schemaEnsured = true; return; }
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, no_public_ip INTEGER NOT NULL DEFAULT 0, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', city TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', traffic_reset_day INTEGER NOT NULL DEFAULT 1, alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '', nq_report TEXT DEFAULT '', nq_updated_at INTEGER)`).run();
-  for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN traffic_reset_day INTEGER', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN no_public_ip INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN city TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_report TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_updated_at INTEGER']) {
+  for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN traffic_reset_day INTEGER', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN no_public_ip INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN city TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_report TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_updated_at INTEGER', 'ALTER TABLE targets ADD COLUMN next_probe_at INTEGER']) {
     await runOptionalSchemaChange(env, stmt);
   }
   for (const stmt of ['ALTER TABLE targets ADD COLUMN nq_unlock_data TEXT', 'ALTER TABLE targets ADD COLUMN nq_unlock_updated_at INTEGER']) {
@@ -61,7 +63,10 @@ export async function ensureV6Schema(env) {
   }
   await env.DB.prepare(`UPDATE targets SET traffic_reset_day = CASE WHEN expires_at IS NOT NULL AND expires_at > 0 THEN CAST(strftime('%d', expires_at + ?, 'unixepoch') AS INTEGER) ELSE 1 END WHERE traffic_reset_day IS NULL`)
     .bind(timezoneOffsetMin(env) * 60).run();
+  await env.DB.prepare(`UPDATE targets SET next_probe_at = COALESCE(next_probe_at, COALESCE(last_checked_at, ?)) WHERE next_probe_at IS NULL`)
+    .bind(nowSec()).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_due ON targets(enabled, last_checked_at, interval_sec)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_next_probe ON targets(enabled, next_probe_at, group_name, name)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_group ON targets(group_name, name)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_sort_order ON targets(sort_order)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_targets_provider ON targets(provider, name)`).run();
@@ -388,6 +393,8 @@ export async function ensureV6Schema(env) {
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_runner_stale ON agent_tasks(status, runner_heartbeat_at)`).run();
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
     .bind(SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+    .bind(NEXT_PROBE_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   schemaEnsured = true;
   } catch (e) { schemaPromise = null; throw e; }
   })();

@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.13",
-  "agent_version": "v1.1.13",
-  "source_ref": "app-v1.1.13",
-  "published_at": "2026-08-17T14:45:00Z",
-  "title": "NIE-SLA 1.1.13",
+  "version": "1.1.15",
+  "agent_version": "v1.1.15",
+  "source_ref": "app-v1.1.15",
+  "published_at": "2026-08-19T00:00:00Z",
+  "title": "NIE-SLA 1.1.15",
   "changelog": [
     "正式项目名、界面、配置、安装服务、路径、持久化 schema 与新发布资产全面统一为 NIE-SLA / nie-sla",
     "旧 nstatus 环境变量、节点状态、服务、下载资产、API v1 响应头与历史主题继续通过兼容层工作",
     "浏览器偏好与后台 Session 首次读取旧键后无感迁移到 nie-sla 命名空间",
-    "应用、Worker、Rust Agent、前端、教程与公开发布版本同步至 1.1.13 / v1.1.13"
+    "经济模式：健康目标默认 15 分钟、故障目标约 2 分钟恢复探测；Agent 指标 15 分钟批量上报、任务 10 分钟领取、普通升级检查 24 小时一次。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

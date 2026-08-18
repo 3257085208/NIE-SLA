@@ -58,6 +58,15 @@ function targetLastCheckedStatement(env, targetId, checkedAt) {
   return env.DB.prepare(`UPDATE targets SET last_checked_at = CASE WHEN last_checked_at IS NULL OR last_checked_at < ? THEN ? ELSE last_checked_at END WHERE id = ?`).bind(checkedAt, checkedAt, targetId);
 }
 
+function targetProbeScheduleStatement(env, targetId, checkedAt, nextProbeAt) {
+  const next = Number(nextProbeAt);
+  if (!Number.isFinite(next) || next <= 0) return null;
+  return env.DB.prepare(`UPDATE targets
+    SET last_checked_at = CASE WHEN last_checked_at IS NULL OR last_checked_at < ? THEN ? ELSE last_checked_at END,
+        next_probe_at = CASE WHEN next_probe_at IS NULL OR next_probe_at < ? THEN ? ELSE next_probe_at END
+    WHERE id = ?`).bind(checkedAt, checkedAt, next, next, targetId);
+}
+
 export async function writeIncidentEvent(env, targetId, action, startedAt, recoveredAt, colo, error) {
   if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
   try {
@@ -273,7 +282,7 @@ export async function getCheckBucketSummaries(env, startDay, options = {}) {
   } catch (_) { return []; }
 }
 
-export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrites, latestStatus, incidentWrite = null) {
+export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrites, latestStatus, incidentWrite = null, nextProbeAt = null) {
   if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
   const stmts = [];
   for (const item of bucketWrites || []) {
@@ -286,6 +295,8 @@ export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrite
     if (incidentStmt) stmts.push(incidentStmt);
   }
   if (incidentWrite?.action === 'still_down') stmts.push(touchActiveIncidentStatement(env, targetId, checkedAt, incidentWrite.colo, incidentWrite.error));
+  const scheduleStmt = targetProbeScheduleStatement(env, targetId, checkedAt, nextProbeAt);
+  if (scheduleStmt) stmts.push(scheduleStmt);
   if (!stmts.length) return { ok: true, writes: 0 };
   await env.DB.batch(stmts);
   return { ok: true, writes: stmts.length };

@@ -85,17 +85,18 @@ export async function getStats(env) {
     const pingsToD1 = parseBoolean(env.AGENT_PINGS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE);
     const pingTargetsCount = (await env.DB.prepare(`SELECT COUNT(*) as cnt FROM ping_targets WHERE enabled = 1`).first())?.cnt || 0;
     const trafficAgentCount = (await env.DB.prepare(`SELECT COUNT(*) as cnt FROM targets WHERE enabled = 1 AND traffic_enabled = 1`).first())?.cnt || 0;
-    const agentReportsPerDay = agentCount * 288;
+    const reportIntervalSec = clamp(Number(env.AGENT_REPORT_INTERVAL_SEC || 900), 60, 86400);
+    const agentReportsPerDay = agentCount * Math.ceil(86400 / reportIntervalSec);
     const pingIntervalSec = clamp(Number(env.NIE_SLA_PING_SEC || env.NSTATUS_PING_SEC || env.AGENT_PING_SEC || 20), 5, 600);
     results.estimated_daily = {
-      check_bucket_writes: targetsCount * 288,
+      check_bucket_writes: targetsCount * Math.ceil(86400 / clamp(Number(env.HISTORY_PROBE_HEALTHY_INTERVAL_SEC || 900), 300, 86400)),
       agent_state_writes: agentReportsPerDay,
-      agent_traffic_period_writes: trafficAgentCount * 288,
+      agent_traffic_period_writes: trafficAgentCount * Math.ceil(86400 / reportIntervalSec),
       agent_traffic_daily_writes: trafficAgentCount,
       agent_history_d1_writes: metricsToD1 ? agentReportsPerDay : 0,
       ping_history_d1_writes: pingsToD1 ? Math.ceil(agentCount * pingTargetsCount * 86400 / pingIntervalSec) : 0,
-      agent_history_points_in_d1: metricsToD1 ? agentCount * metricsPointsPerReport * 288 : 0,
-      agent_metric_points_in_r2: agentCount * 300 * 288,
+      agent_history_points_in_d1: metricsToD1 ? agentCount * metricsPointsPerReport * Math.ceil(86400 / reportIntervalSec) : 0,
+      agent_metric_points_in_r2: agentCount * reportIntervalSec * Math.ceil(86400 / reportIntervalSec),
       ping_points_in_r2: Math.ceil(agentCount * pingTargetsCount * 86400 / pingIntervalSec),
       r2_class_a_writes_month: agentReportsPerDay * 30,
       d1_rows_written_limit_per_day: 100000,

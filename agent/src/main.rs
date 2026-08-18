@@ -27,13 +27,13 @@ use queue::{default_queue_file, flush_sample_queue, load_sample_queue, spawn_que
 use updater::{restart_after_update, spawn_update_worker, UpdateRole};
 
 const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const DEFAULT_REPORT_SEC: u64 = 300;
+const DEFAULT_REPORT_SEC: u64 = 900;
 const DEFAULT_SAMPLE_SEC: u64 = 1;
 const DEFAULT_PING_SEC: u64 = 20;
-const DEFAULT_PING_TARGET_REFRESH_SEC: u64 = 600;
-const DEFAULT_UPDATE_CHECK_SEC: u64 = 3600;
+const DEFAULT_PING_TARGET_REFRESH_SEC: u64 = 1800;
+const DEFAULT_UPDATE_CHECK_SEC: u64 = 86_400;
 const INITIAL_UPDATE_CHECK_SEC: u64 = 60;
-const REPORT_MAX_SAMPLES: usize = 300;
+const REPORT_MAX_SAMPLES: usize = 900;
 const REPORT_MAX_PINGS: usize = 5_000;
 const DEFAULT_QUEUE_MAX_SAMPLES: usize = 86_400;
 const QUEUE_FLUSH_SEC: u64 = 10;
@@ -316,6 +316,17 @@ fn run() -> Result<()> {
     }
 
     let http = HttpClient::new();
+    let telemetry_lock = if cfg.task_runner_only {
+        None
+    } else {
+        let lock_path = cfg.queue_file.with_file_name("telemetry.lock");
+        let Some(lock) = manager::acquire_instance_lock(&lock_path, "telemetry")? else {
+            eprintln!("{{\"ok\":true,\"telemetry\":\"already_running\"}}");
+            return Ok(());
+        };
+        Some(lock)
+    };
+    let _telemetry_lock = telemetry_lock;
     if cfg.task_runner_only {
         return manager::run(&cfg, &http);
     }
@@ -1590,8 +1601,8 @@ mod tests {
     }
 
     #[test]
-    fn ping_target_refresh_defaults_to_ten_minutes_and_is_bounded() {
-        assert_eq!(DEFAULT_PING_TARGET_REFRESH_SEC, 600);
+    fn ping_target_refresh_defaults_to_thirty_minutes_and_is_bounded() {
+        assert_eq!(DEFAULT_PING_TARGET_REFRESH_SEC, 1800);
         assert_eq!(normalize_ping_target_refresh_sec(1), 60);
         assert_eq!(normalize_ping_target_refresh_sec(600), 600);
         assert_eq!(normalize_ping_target_refresh_sec(86_400), 3_600);

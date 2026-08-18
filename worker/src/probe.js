@@ -199,7 +199,7 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
 
 
   if (result.skipped) {
-    await applyProbeWriteBatch(env, target.id, bucketAt, [], null, null);
+    await applyProbeWriteBatch(env, target.id, bucketAt, [], null, null, bucketAt + historyDueIntervalSec(target, env, previous));
     return { history_points: 0, uptime_24h: previous?.uptime_24h ?? null, uptime_7d: previous?.uptime_7d ?? null, incident: null, storage: 'skipped', state_update: null };
   }
 
@@ -231,7 +231,7 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
   const statusChangedAt = previous && Number(previous.ok) === okInt ? (previous.status_changed_at || checkedAt) : checkedAt;
   const outage = buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous);
   const stateUpdate = { target_id: target.id, checked_at: checkedAt, ok: okInt, latency_ms: latency, status_code: statusCode, error, probe_region: probeRegion, cf_colo: cfColo, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, avg_latency_24h: stats24.avgLatency, last_fail_at: okInt ? (previous?.last_fail_at || null) : checkedAt, current_outage_started_at: outage.currentOutageStartedAt, last_recover_at: outage.lastRecoverAt, status_changed_at: statusChangedAt, daily };
-  await applyProbeWriteBatch(env, target.id, checkedAt, bucketWrites, stateUpdate, outage.write);
+  await applyProbeWriteBatch(env, target.id, checkedAt, bucketWrites, stateUpdate, outage.write, checkedAt + historyDueIntervalSec(target, env, { ...previous, ok: okInt }));
   return { history_points: Number(daily[day]?.total || 0), missed_points: missedPoints.length, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, incident: outage.action, storage: 'd1', state_update: stateUpdate };
 }
 
@@ -261,16 +261,13 @@ export async function runDueTargets(env, options = {}) {
   const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 20), 1, 200);
   const now = nowSec();
   const rows = await env.DB.prepare(
-     `SELECT t.*, COALESCE(s.checked_at, t.last_checked_at) AS last_checked_at
+     `SELECT t.*, t.last_checked_at AS last_checked_at
       FROM targets t
-      LEFT JOIN latest_status s ON s.target_id = t.id
       WHERE t.enabled = 1
         AND COALESCE(t.no_public_ip, 0) = 0
-        AND (COALESCE(s.checked_at, t.last_checked_at) IS NULL
-          OR CAST((COALESCE(s.checked_at, t.last_checked_at)) / 300 AS INTEGER) * 300
-            <= CAST((? - CASE WHEN t.interval_sec < ? THEN ? ELSE t.interval_sec END) / 300 AS INTEGER) * 300)
-      ORDER BY t.group_name, t.name`
-  ).bind(now, MIN_INTERVAL_SEC, MIN_INTERVAL_SEC).all();
+        AND (t.next_probe_at IS NULL OR t.next_probe_at <= ?)
+      ORDER BY COALESCE(t.next_probe_at, 0), t.group_name, t.name`
+  ).bind(now).all();
   const allTargets = rows.results || [];
   if (!allTargets.length) return { ok: true, count: 0, results: [] };
   const lease = options.skipLease ? null : await acquireProbeRunLease(env);
@@ -281,7 +278,7 @@ export async function runDueTargets(env, options = {}) {
     const previousById = buildHistoryPreviousStateMap(allTargets, state, d1Latest);
     const targets = allTargets
       .map(target => ({ target, lastCheckedAt: lastPersistedCheckAt(target, d1Latest.get(String(target.id))) }))
-      .filter(item => item.lastCheckedAt <= now - historyDueIntervalSec(item.target, env))
+      .filter(item => item.lastCheckedAt <= now - historyDueIntervalSec(item.target, env, previousById.get(item.target.id)))
       .sort((a, b) => a.lastCheckedAt - b.lastCheckedAt).slice(0, maxTargets).map(item => item.target);
     if (!targets.length) return { ok: true, count: 0, results: [] };
     return { ok: true, count: targets.length, results: await runTargetBatch(env, targets, previousById) };
@@ -290,26 +287,30 @@ export async function runDueTargets(env, options = {}) {
   }
 }
 
-export function historyDueIntervalSec(target, env = {}) {
+export function historyDueIntervalSec(target, env = {}, previous = null) {
   const base = clamp(Number(target?.interval_sec || DEFAULT_INTERVAL_SEC), MIN_INTERVAL_SEC, 86400);
-  if (String(target?.probe_region || 'auto') !== 'auto') {
-    return Math.max(base, clamp(Number(env.HISTORY_PROBE_REGION_INTERVAL_SEC || 300), 300, 3600));
+  if (previous && Number(previous.ok) === 0) {
+    return clamp(Number(env.HISTORY_PROBE_DOWN_INTERVAL_SEC || 120), 60, 3600);
   }
-  return base;
+  const healthy = clamp(Number(env.HISTORY_PROBE_HEALTHY_INTERVAL_SEC || 900), MIN_INTERVAL_SEC, 86400);
+  const region = String(target?.probe_region || 'auto') === 'auto'
+    ? MIN_INTERVAL_SEC
+    : clamp(Number(env.HISTORY_PROBE_REGION_INTERVAL_SEC || 900), MIN_INTERVAL_SEC, 3600);
+  return Math.max(base, healthy, region);
 }
 
 export function fastStatusDueInterval(target, previous, now, baseIntervalSec, env = {}) {
-  const base = clamp(Number(baseIntervalSec || 60), 60, 300);
+  const base = clamp(Number(baseIntervalSec || 900), 60, 3600);
   let dueSec = base;
   const region = String(target?.probe_region || 'auto');
   if (region !== 'auto') {
-    dueSec = Math.max(dueSec, clamp(Number(env.FAST_STATUS_REGION_INTERVAL_SEC || 600), 300, 1800));
+    dueSec = Math.max(dueSec, clamp(Number(env.FAST_STATUS_REGION_INTERVAL_SEC || 900), 60, 3600));
   }
   if (previous && Number(previous.ok) === 0) {
     const outageAt = Number(previous.current_outage_started_at || 0);
-    const downAfterSec = clamp(Number(env.FAST_STATUS_DOWN_AFTER_SEC || 1500), 300, 7200);
-    if (outageAt && Number(now || 0) - outageAt >= downAfterSec) {
-      dueSec = Math.max(dueSec, clamp(Number(env.FAST_STATUS_DOWN_INTERVAL_SEC || 600), 300, 1800));
+    const downAfterSec = clamp(Number(env.FAST_STATUS_DOWN_AFTER_SEC ?? 0), 0, 7200);
+    if (!downAfterSec || (outageAt && Number(now || 0) - outageAt >= downAfterSec)) {
+      dueSec = Math.min(dueSec, clamp(Number(env.FAST_STATUS_DOWN_INTERVAL_SEC || 120), 60, 1800));
     }
   }
   return dueSec;
@@ -318,7 +319,7 @@ export function fastStatusDueInterval(target, previous, now, baseIntervalSec, en
 export async function runFastStatusTargets(env, options = {}) {
   if (!parseBoolean(env.FAST_STATUS_ENABLED ?? true, true)) return { ok: true, skipped: true, reason: 'disabled', count: 0, results: [] };
   if (!env.DB || !env.ARCHIVE) return { ok: true, skipped: true, reason: 'r2_required', count: 0, results: [] };
-  const intervalSec = clamp(Number(env.FAST_STATUS_INTERVAL_SEC || 60), 60, 300);
+  const intervalSec = clamp(Number(env.FAST_STATUS_INTERVAL_SEC || 900), 60, 3600);
   const maxTargets = clamp(Number(env.FAST_STATUS_MAX_TARGETS || 50), 1, 50);
   const now = nowSec();
   const rows = await env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0 ORDER BY group_name, name`).all();

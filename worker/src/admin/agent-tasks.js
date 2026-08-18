@@ -41,7 +41,7 @@ export function normalizeRunnerInstanceId(value) {
 const MAX_RESULT_BYTES = 256 * 1024;
 const MAX_EXCERPT_CHARS = 16 * 1024;
 const MAX_IP_UNLOCK_REPORT_CHARS = 64 * 1024;
-const AGENT_TASK_POLL_SEC = 300;
+const AGENT_TASK_POLL_SEC = 600;
 
 const MAX_BULK_AGENT_TASKS = 50;
 const BULK_AGENT_TASK_CONCURRENCY = 5;

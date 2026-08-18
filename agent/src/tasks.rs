@@ -16,7 +16,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-pub(crate) const TASK_POLL_SEC: u64 = 300;
+pub(crate) const TASK_POLL_SEC: u64 = 600;
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const MAX_NODEQUALITY_ARTIFACT_BYTES: usize = 24 * 1024;
@@ -1338,7 +1338,7 @@ mod tests {
 
     #[test]
     fn idle_task_polling_uses_the_cost_aware_interval() {
-        assert_eq!(TASK_POLL_SEC, 300);
+        assert_eq!(TASK_POLL_SEC, 600);
     }
 
     #[test]

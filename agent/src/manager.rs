@@ -2,7 +2,7 @@ use crate::updater::{restart_manager_after_update, spawn_manager_update_worker};
 use crate::{now_sec, Config, HttpClient, UpdateOutcome, AGENT_VERSION};
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -27,6 +27,57 @@ const UPDATE_CONFIRMATION: &str = "/var/lib/nie-sla-agent-manager/update-confirm
 const UPDATE_CONFIRM_AFTER_SEC: u64 = 60;
 const UPDATE_TELEMETRY_STABILITY_SEC: u64 = 30;
 const UPDATE_WATCHDOG_TIMEOUT_SEC: u64 = 180;
+const LEGACY_SERVICE_NAMES: [&str; 4] = [
+    "nstatus-metrics.service",
+    "nstatus-metrics-tasks.service",
+    "nstatus-agent.service",
+    "nstatus-agent-tasks.service",
+];
+const LEGACY_TIMER_NAMES: [&str; 4] = [
+    "nstatus-metrics-update.timer",
+    "nstatus-agent-update.timer",
+    "nstatus-metrics-update.service",
+    "nstatus-agent-update.service",
+];
+const LEGACY_PROCESS_NAMES: [&str; 3] =
+    ["nstatus-metrics", "nstatus-metrics-tasks", "nstatus-agent"];
+
+pub(crate) struct InstanceLock {
+    _file: File,
+}
+
+pub(crate) fn acquire_instance_lock(path: &Path, label: &str) -> Result<Option<InstanceLock>> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    if let Some(parent) = parent {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create {label} instance lock directory"))?;
+    }
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options
+        .open(path)
+        .with_context(|| format!("open {label} instance lock {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                return Ok(None);
+            }
+            return Err(error).with_context(|| format!("lock {label} instance {}", path.display()));
+        }
+    }
+    Ok(Some(InstanceLock { _file: file }))
+}
 
 pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
     if !cfg!(target_os = "linux") {
@@ -38,6 +89,12 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
         return Err(anyhow!("the Agent manager must run as root"));
     }
 
+    ensure_manager_state_dir()?;
+    let lock_path = Path::new(MANAGER_STATE_DIR).join("manager.lock");
+    let Some(_instance_lock) = acquire_instance_lock(&lock_path, "manager")? else {
+        eprintln!("{{\"ok\":true,\"manager\":\"already_running\"}}");
+        return Ok(());
+    };
     reconcile_service_layout().context("reconcile Agent services")?;
     write_heartbeat(cfg, "current")?;
     spawn_heartbeat(cfg.clone());
@@ -439,6 +496,7 @@ fn reconcile_service_layout() -> Result<()> {
     if Path::new(AGENT_BINARY).is_symlink() || Path::new(ENV_FILE).is_symlink() {
         return Err(anyhow!("refusing to reconcile symlinked Agent paths"));
     }
+    cleanup_legacy_services();
     clear_legacy_ping_capability();
     if Path::new("/run/systemd/system").is_dir() && command_exists("systemctl") {
         let telemetry = systemd_telemetry_unit();
@@ -487,6 +545,45 @@ fn reconcile_service_layout() -> Result<()> {
         install_openrc_recovery_job()?;
     }
     Ok(())
+}
+
+fn cleanup_legacy_services() {
+    if Path::new("/run/systemd/system").is_dir() && command_exists("systemctl") {
+        for unit in LEGACY_SERVICE_NAMES.iter().chain(LEGACY_TIMER_NAMES.iter()) {
+            let _ = Command::new("systemctl")
+                .args(["disable", "--now", unit])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    } else if command_exists("rc-service") {
+        for service in [
+            "nstatus-metrics",
+            "nstatus-metrics-tasks",
+            "nstatus-agent",
+            "nstatus-agent-tasks",
+        ] {
+            let _ = Command::new("rc-service")
+                .args([service, "stop"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            let _ = Command::new("rc-update")
+                .args(["del", service, "default"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+    if command_exists("pkill") {
+        for process in LEGACY_PROCESS_NAMES {
+            let _ = Command::new("pkill")
+                .args(["-x", process])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
 }
 
 fn clear_legacy_ping_capability() {
@@ -636,13 +733,13 @@ mod tests {
             agent_id: "agent-a".into(),
             agent_label: "Agent A".into(),
             sample_sec: 1,
-            report_sec: 300,
+            report_sec: 900,
             ping_sec: 20,
-            ping_target_refresh_sec: 300,
+            ping_target_refresh_sec: 1800,
             ping_targets: "*".into(),
             queue_file: path,
             queue_max_samples: 1000,
-            update_check_sec: 3600,
+            update_check_sec: 86_400,
             once: false,
             task_runner_only: false,
         }
@@ -733,5 +830,31 @@ mod tests {
         assert!(stable_process_identity(Some("123"), Some("123")));
         assert!(!stable_process_identity(Some("123"), Some("124")));
         assert!(!stable_process_identity(Some("0"), Some("0")));
+    }
+
+    #[test]
+    fn instance_lock_rejects_a_second_process() {
+        let path = std::env::temp_dir().join(format!(
+            "nie-sla-instance-lock-{}-{}",
+            std::process::id(),
+            now_sec()
+        ));
+        let first = acquire_instance_lock(&path, "test")
+            .unwrap()
+            .expect("first lock");
+        let second = acquire_instance_lock(&path, "test").unwrap();
+        assert!(second.is_none());
+        drop(first);
+        let third = acquire_instance_lock(&path, "test").unwrap();
+        assert!(third.is_some());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_cleanup_contract_covers_previous_service_names() {
+        assert!(LEGACY_SERVICE_NAMES.contains(&"nstatus-metrics.service"));
+        assert!(LEGACY_SERVICE_NAMES.contains(&"nstatus-agent.service"));
+        assert!(LEGACY_TIMER_NAMES.contains(&"nstatus-metrics-update.timer"));
+        assert!(LEGACY_PROCESS_NAMES.contains(&"nstatus-metrics"));
     }
 }

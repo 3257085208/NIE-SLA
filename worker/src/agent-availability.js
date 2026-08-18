@@ -8,7 +8,7 @@ export function agentAvailabilitySegments(previousUpdatedAt, currentAt = nowSec(
   if (!previousAt || !endAt || endAt <= previousAt) return [];
 
   const retentionDays = clamp(Number(env.AGENT_AVAILABILITY_RETENTION_DAYS || DEFAULT_RETENTION_DAYS), 30, 180);
-  const offlineAfterSec = clamp(Number(env.AGENT_OFFLINE_AFTER_SEC || 900), 120, 3600);
+  const offlineAfterSec = clamp(Number(env.AGENT_OFFLINE_AFTER_SEC || 1800), 120, 3600);
   const startAt = Math.max(previousAt, endAt - retentionDays * 86400);
   const onlineUntil = Math.min(endAt, previousAt + offlineAfterSec);
   const rows = new Map();

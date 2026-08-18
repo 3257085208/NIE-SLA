@@ -8,7 +8,7 @@ import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn } from 
 import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry } from './telemetry-buffer.js';
 import { getPingIntervalSec } from './ping-config.js';
 
-const MAX_AGENT_SAMPLES_PER_REPORT = 310;
+const MAX_AGENT_SAMPLES_PER_REPORT = 910;
 const MAX_AGENT_PINGS_PER_REPORT = 5_000;
 const MAX_TELEMETRY_HOURS_PER_REPORT = 25;
 const MAX_TELEMETRY_AGE_SEC = 7 * 86400;

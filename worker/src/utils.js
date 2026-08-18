@@ -295,7 +295,7 @@ export function agentStatusFields(state, env = {}) {
   if (!state?.updated_at) return {};
   const updatedAt = Math.floor(new Date(state.updated_at).getTime() / 1000);
   const ageSec = Number.isFinite(updatedAt) && updatedAt > 0 ? Math.max(0, nowSec() - updatedAt) : null;
-  const offlineAfterSec = clamp(Number(env.AGENT_OFFLINE_AFTER_SEC || 900), 120, 3600);
+  const offlineAfterSec = clamp(Number(env.AGENT_OFFLINE_AFTER_SEC || 1800), 120, 3600);
   return {
     status_source: 'agent',
     agent_online: ageSec != null && ageSec <= offlineAfterSec,

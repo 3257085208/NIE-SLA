@@ -284,7 +284,7 @@ export async function getAgentUpdatePolicy(env, request = null) {
   return {
     ok: true,
     auto_update: settings.agent_auto_update,
-    check_interval_sec: clamp(Number(env.AGENT_UPDATE_CHECK_SEC || 3600), 900, 86400),
+    check_interval_sec: clamp(Number(env.AGENT_UPDATE_CHECK_SEC || 86400), 900, 86400),
     release_ready: Boolean(release),
     ...(release || {}),
   };
