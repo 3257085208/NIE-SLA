@@ -1,6 +1,6 @@
 ﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean, publicCachePrivacyVersion, sanitizePublicAgentMetrics } from './utils.js';
 import { summarizeTraffic, summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffic.js';
-import { requireAgentForId, requireAnyAgent, safeJson, json } from './auth.js';
+import { ApiError, requireAgentForId, requireAnyAgent, safeJson, json } from './auth.js';
 import { readR2Json, readR2JsonStrict, writeR2Json } from './storage.js';
 import { rateLimitByIp } from './ratelimit.js';
 import { recordAgentAvailability } from './agent-availability.js';
@@ -168,8 +168,6 @@ export function normalizeAgentCapabilities(value, observedAt = nowSec()) {
 }
 
 export async function submitAgentMetrics(request, env, ctx = null) {
-  if (!env.DB) return json({ ok: false, error: '缺少 D1 的 DB 绑定' }, 500, env);
-
   await requireAnyAgent(request, env);
   const body = await safeJson(request);
   const agentId = sanitizeAgentId(body?.agent_id || env.DEFAULT_AGENT_ID || 'vps');
@@ -177,15 +175,27 @@ export async function submitAgentMetrics(request, env, ctx = null) {
   if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) {
     return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429, env);
   }
+  try {
+    return json(await processAgentMetricsPayload(env, body, ctx, agentId), 200, env, { 'cache-control': 'no-store' });
+  } catch (err) {
+    if (err instanceof ApiError) return json({ ok: false, error: err.message }, err.status, env, err.headers || null);
+    throw err;
+  }
+}
+
+export async function processAgentMetricsPayload(env, body, ctx = null, expectedAgentId = '') {
+  if (!env.DB) throw new ApiError(500, '缺少 D1 的 DB 绑定');
+  const agentId = sanitizeAgentId(body?.agent_id || env.DEFAULT_AGENT_ID || 'vps');
+  if (expectedAgentId && agentId !== sanitizeAgentId(expectedAgentId)) throw new ApiError(401, 'Agent ID 与连接身份不匹配');
   const agentLabel = String(body?.agent_label || agentId).trim().slice(0, 64) || agentId;
   const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
   const capabilities = normalizeAgentCapabilities(body?.capabilities);
   const metrics = body?.metrics;
-  if (!metrics || typeof metrics !== 'object') return json({ ok: false, error: '必须提供 metrics 对象' }, 400, env);
+  if (!metrics || typeof metrics !== 'object') throw new ApiError(400, '必须提供 metrics 对象');
   const rawSamples = Array.isArray(metrics.samples) ? metrics.samples : [];
-  if (rawSamples.length > MAX_AGENT_SAMPLES_PER_REPORT) return json({ ok: false, error: `too many samples; max ${MAX_AGENT_SAMPLES_PER_REPORT}` }, 400, env);
+  if (rawSamples.length > MAX_AGENT_SAMPLES_PER_REPORT) throw new ApiError(400, `too many samples; max ${MAX_AGENT_SAMPLES_PER_REPORT}`);
   const serialized = JSON.stringify(metrics);
-  if (serialized.length > 200_000) return json({ ok: false, error: 'metrics 数据过大' }, 400, env);
+  if (serialized.length > 200_000) throw new ApiError(400, 'metrics 数据过大');
 
   const ts = nowSec();
 
@@ -194,16 +204,16 @@ export async function submitAgentMetrics(request, env, ctx = null) {
   const vpsInfo = normalizeAgentVpsInfo(metrics.vps_info);
   const legacyPings = Array.isArray(metrics.pings) ? metrics.pings : [];
   const decodedSeries = pingSeriesToPoints(metrics.ping_series);
-  if (decodedSeries.error) return json({ ok: false, error: decodedSeries.error }, 400, env);
+  if (decodedSeries.error) throw new ApiError(400, decodedSeries.error);
   const pings = legacyPings.concat(decodedSeries.pings);
   const telemetryError = validateTelemetryBatch(rawSamples, pings, ts);
-  if (telemetryError) return json({ ok: false, error: telemetryError }, 400, env);
+  if (telemetryError) throw new ApiError(400, telemetryError);
 
   try {
     await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts });
   } catch (err) {
     console.error('persistAgentMetrics failed:', String(err?.message || err));
-    return json({ ok: false, error: '保存 Agent 监控数据失败' }, 500, env, { 'cache-control': 'no-store' });
+    throw new ApiError(500, '保存 Agent 监控数据失败', { 'cache-control': 'no-store' });
   }
 
   const trafficTask = persistAgentTraffic(env, agentId, metrics, ts)
@@ -211,11 +221,11 @@ export async function submitAgentMetrics(request, env, ctx = null) {
   if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(trafficTask);
   else await trafficTask;
 
-  return json({
+  return {
     ok: true,
     agent_id: agentId,
     ping_interval_sec: await getPingIntervalSec(env),
-  }, 200, env, { 'cache-control': 'no-store' });
+  };
 }
 
 export function pingSeriesToPoints(seriesList) {

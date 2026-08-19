@@ -8,10 +8,10 @@ import {
 
 const manifest = {
   schema: 'nie-sla-app-update-v1',
-  version: '1.1.15',
-  source_ref: 'app-v1.1.15',
+  version: '1.1.16',
+  source_ref: 'app-v1.1.16',
   published_at: '2026-07-25T12:00:00Z',
-  title: 'NIE-SLA 1.1.15',
+  title: 'NIE-SLA 1.1.16',
   changelog: ['更新中心', '安全修复'],
   release_url: 'https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md',
 };
@@ -24,7 +24,7 @@ assert.equal(compareAppVersions('0.23.0-beta.3', '0.23.0-beta.2'), 1);
 assert.equal(compareAppVersions('0.23.0', '0.23.0-beta.1'), 1);
 assert.equal(compareAppVersions('0.23.0-beta.1', '0.23.0'), -1);
 assert.equal(parseAppUpdateManifest({ ...manifest, version: '0.23.0-beta.1', source_ref: 'app-v0.23.0-beta.1' }).version, '0.23.0-beta.1');
-assert.equal(parseAppUpdateManifest(manifest).source_ref, 'app-v1.1.15');
+assert.equal(parseAppUpdateManifest(manifest).source_ref, 'app-v1.1.16');
 assert.equal(parseAppUpdateManifest({ ...manifest, release_url: 'not a URL' }).release_url, '');
 assert.throws(() => parseAppUpdateManifest({ ...manifest, source_ref: 'main' }), /source ref/);
 await assert.rejects(
@@ -42,8 +42,8 @@ const info = await getAppUpdateInfo(env, {
   }),
 });
 
-assert.equal(info.current_version, '1.1.15');
-assert.equal(info.latest_version, '1.1.15');
+assert.equal(info.current_version, '1.1.16');
+assert.equal(info.latest_version, '1.1.16');
 assert.equal(info.update_available, false);
 assert.equal(info.stale, false);
 assert.equal(info.update_source, 'official');
@@ -56,9 +56,9 @@ assert.equal('github_token' in info, false);
 
 const bundledManifest = {
   ...manifest,
-  version: '1.1.15',
-  source_ref: 'app-v1.1.15',
-  title: 'NIE-SLA 1.1.15',
+  version: '1.1.16',
+  source_ref: 'app-v1.1.16',
+  title: 'NIE-SLA 1.1.16',
 };
 let upstreamRequests = 0;
 let assetRequests = 0;
@@ -78,8 +78,8 @@ const rateLimitedFetch = async () => {
   return new Response('rate limited', { status: 429 });
 };
 const fallbackInfo = await getAppUpdateInfo(fallbackEnv, { force: true, fetchImpl: rateLimitedFetch });
-assert.equal(fallbackInfo.current_version, '1.1.15');
-assert.equal(fallbackInfo.latest_version, '1.1.15');
+assert.equal(fallbackInfo.current_version, '1.1.16');
+assert.equal(fallbackInfo.latest_version, '1.1.16');
 assert.equal(fallbackInfo.update_available, false);
 assert.equal(fallbackInfo.stale, true);
 assert.equal(fallbackInfo.update_source, 'bundled');
@@ -108,7 +108,7 @@ const staleInfo = await getAppUpdateInfo(staleEnv, {
     return new Response('unavailable', { status: 503 });
   },
 });
-assert.equal(staleInfo.latest_version, '1.1.15');
+assert.equal(staleInfo.latest_version, '1.1.16');
 assert.equal(staleInfo.stale, true);
 assert.equal(staleInfo.update_source, 'cache');
 assert.equal(staleRequests, 2);

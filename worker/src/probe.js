@@ -292,19 +292,19 @@ export function historyDueIntervalSec(target, env = {}, previous = null) {
   if (previous && Number(previous.ok) === 0) {
     return clamp(Number(env.HISTORY_PROBE_DOWN_INTERVAL_SEC || 120), 60, 3600);
   }
-  const healthy = clamp(Number(env.HISTORY_PROBE_HEALTHY_INTERVAL_SEC || 900), MIN_INTERVAL_SEC, 86400);
+  const healthy = clamp(Number(env.HISTORY_PROBE_HEALTHY_INTERVAL_SEC || 300), MIN_INTERVAL_SEC, 86400);
   const region = String(target?.probe_region || 'auto') === 'auto'
     ? MIN_INTERVAL_SEC
-    : clamp(Number(env.HISTORY_PROBE_REGION_INTERVAL_SEC || 900), MIN_INTERVAL_SEC, 3600);
+    : clamp(Number(env.HISTORY_PROBE_REGION_INTERVAL_SEC || 300), MIN_INTERVAL_SEC, 3600);
   return Math.max(base, healthy, region);
 }
 
 export function fastStatusDueInterval(target, previous, now, baseIntervalSec, env = {}) {
-  const base = clamp(Number(baseIntervalSec || 900), 60, 3600);
+  const base = clamp(Number(baseIntervalSec || 300), 60, 3600);
   let dueSec = base;
   const region = String(target?.probe_region || 'auto');
   if (region !== 'auto') {
-    dueSec = Math.max(dueSec, clamp(Number(env.FAST_STATUS_REGION_INTERVAL_SEC || 900), 60, 3600));
+      dueSec = Math.max(dueSec, clamp(Number(env.FAST_STATUS_REGION_INTERVAL_SEC || 300), 60, 3600));
   }
   if (previous && Number(previous.ok) === 0) {
     const outageAt = Number(previous.current_outage_started_at || 0);
@@ -319,7 +319,7 @@ export function fastStatusDueInterval(target, previous, now, baseIntervalSec, en
 export async function runFastStatusTargets(env, options = {}) {
   if (!parseBoolean(env.FAST_STATUS_ENABLED ?? true, true)) return { ok: true, skipped: true, reason: 'disabled', count: 0, results: [] };
   if (!env.DB || !env.ARCHIVE) return { ok: true, skipped: true, reason: 'r2_required', count: 0, results: [] };
-  const intervalSec = clamp(Number(env.FAST_STATUS_INTERVAL_SEC || 900), 60, 3600);
+  const intervalSec = clamp(Number(env.FAST_STATUS_INTERVAL_SEC || 300), 60, 3600);
   const maxTargets = clamp(Number(env.FAST_STATUS_MAX_TARGETS || 50), 1, 50);
   const now = nowSec();
   const rows = await env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0 ORDER BY group_name, name`).all();

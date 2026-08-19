@@ -1,4 +1,4 @@
-import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValidatedRedirects, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
+import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValidatedRedirects, sanitizeAgentId, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
 import { requireAgentForId, requireAnyAgent, requireAnyLatencyAgent, requireAgentIdentity, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, constantTimeEqual, internalRequestHeaders } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
@@ -191,6 +191,21 @@ async function dispatchStatic(env, url, request, ctx) {
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const m = request.method;
 
+
+  if (path === '/api/agent/metrics/ws' && m === 'GET') {
+    if (String(request.headers.get('upgrade') || '').toLowerCase() !== 'websocket') return new Response('WebSocket upgrade required', { status: 426 });
+    if (!env.TELEMETRY_BUFFER) return json({ ok: false, error: '缺少遥测 Durable Object' }, 503, env);
+    if (!await rateLimitByIp(request, env, 10, 60, { bestEffort: true })) return deny();
+    const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
+    const identity = await requireAgentForId(request, env, agentId);
+    if (!identity) throw new ApiError(401, '未授权');
+    const id = env.TELEMETRY_BUFFER.idFromName('agent-metrics-stream');
+    const stub = env.TELEMETRY_BUFFER.get(id);
+    const forwarded = new Request('https://nie-sla.internal/agent-metrics/ws', request);
+    forwarded.headers.set('x-nie-sla-agent-id', agentId);
+    for (const [key, value] of Object.entries(internalRequestHeaders(env))) forwarded.headers.set(key, value);
+    return stub.fetch(forwarded);
+  }
 
   if (path === '/' || path === '/api/health') {
     return json({ ok: true, name: env.PUBLIC_SITE_NAME || 'NIE-SLA', version: VERSION, time: new Date().toISOString() }, 200, env);

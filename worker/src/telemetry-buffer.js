@@ -1,5 +1,6 @@
 import { nowSec, sanitizeAgentId } from './utils.js';
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
+import { processAgentMetricsPayload } from './metrics.js';
 import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
 
 const HOUR_SEC = 3600;
@@ -18,6 +19,9 @@ export class TelemetryBuffer {
   async fetch(request) {
     const url = new URL(request.url);
     if (!internalRequestAuthorized(request, this.env)) return new Response(JSON.stringify({ ok: false, error: '未授权' }), { status: 401, headers: { 'content-type': 'application/json' } });
+    if (request.method === 'GET' && url.pathname === '/agent-metrics/ws' && String(request.headers.get('upgrade') || '').toLowerCase() === 'websocket') {
+      return this.openAgentMetricsSocket(request);
+    }
     if (request.method === 'POST' && url.pathname === '/append') {
       const body = await request.json();
       return Response.json(await this.append(body));
@@ -33,6 +37,44 @@ export class TelemetryBuffer {
       return Response.json({ ok: true });
     }
     return new Response(null, { status: 404 });
+  }
+
+  openAgentMetricsSocket(request) {
+    const agentId = sanitizeAgentId(request.headers.get('x-nie-sla-agent-id') || '');
+    if (!agentId) return new Response(JSON.stringify({ ok: false, error: '缺少 Agent ID' }), { status: 400, headers: { 'content-type': 'application/json' } });
+    const WebSocketPairCtor = globalThis.WebSocketPair;
+    if (typeof WebSocketPairCtor !== 'function') return new Response(JSON.stringify({ ok: false, error: 'WebSocket runtime unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+    const pair = new WebSocketPairCtor();
+    const [client, server] = Object.values(pair);
+    server.serializeAttachment({ agent_id: agentId });
+    this.state.acceptWebSocket(server, [`agent:${agentId}`]);
+    server.send(JSON.stringify({ ok: true, type: 'ready', agent_id: agentId }));
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(socket, message) {
+    try {
+      const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
+      if (text.length > 220_000) throw new Error('metrics 数据过大');
+      const body = JSON.parse(text);
+      if (body?.type === 'ping') {
+        socket.send(JSON.stringify({ ok: true, type: 'pong' }));
+        return;
+      }
+      const attachment = socket.deserializeAttachment() || {};
+      const payload = body?.type === 'metrics' ? body.payload : body;
+      const result = await processAgentMetricsPayload(this.env, payload, null, attachment.agent_id);
+      socket.send(JSON.stringify({ ...result, type: 'metrics_ack' }));
+    } catch (error) {
+      const status = Number(error?.status || 400);
+      socket.send(JSON.stringify({ ok: false, type: 'metrics_ack', error: String(error?.message || 'WS metrics failed'), retryable: status >= 500 }));
+    }
+  }
+
+  webSocketClose() {}
+
+  webSocketError(_socket, error) {
+    console.error('agent metrics websocket error:', String(error?.message || error));
   }
 
   async alarm() {

@@ -13,6 +13,8 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, System};
+use tungstenite::client::IntoClientRequest;
+use tungstenite::{connect, Message};
 use ureq::{config::IpFamily, ResponseExt};
 
 mod dns_compat;
@@ -27,7 +29,7 @@ use queue::{default_queue_file, flush_sample_queue, load_sample_queue, spawn_que
 use updater::{restart_after_update, spawn_update_worker, UpdateRole};
 
 const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const DEFAULT_REPORT_SEC: u64 = 900;
+const DEFAULT_REPORT_SEC: u64 = 300;
 const DEFAULT_SAMPLE_SEC: u64 = 1;
 const DEFAULT_PING_SEC: u64 = 20;
 const DEFAULT_PING_TARGET_REFRESH_SEC: u64 = 1800;
@@ -42,6 +44,7 @@ const MAX_PING_QUEUE_CAPACITY: usize = 10_000;
 const MAX_PING_CONCURRENCY: usize = 32;
 const TCP_PING_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_PING_RESOLVED_ADDRESSES: usize = 8;
+const WS_READ_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[derive(Clone, Debug)]
 struct Config {
@@ -57,6 +60,7 @@ struct Config {
     queue_file: PathBuf,
     queue_max_samples: usize,
     update_check_sec: u64,
+    ws_enabled: bool,
     once: bool,
     task_runner_only: bool,
 }
@@ -67,6 +71,18 @@ struct HttpClient {
     ipv6: ureq::Agent,
     probe_ipv4: ureq::Agent,
     probe_ipv6: ureq::Agent,
+}
+
+#[derive(Clone)]
+struct WsUploader {
+    tx: mpsc::Sender<WsCommand>,
+}
+
+enum WsCommand {
+    Submit {
+        body: String,
+        response: mpsc::Sender<Result<Option<u64>>>,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -365,6 +381,11 @@ fn run() -> Result<()> {
             UpdateRole::Telemetry,
         ))
     };
+    let ws_uploader = if cfg.ws_enabled {
+        Some(spawn_ws_uploader(cfg.clone()))
+    } else {
+        None
+    };
     geoip::spawn_geoip_worker(cfg.clone(), http.clone());
     let mut last_report = Instant::now();
     let mut first_report = true;
@@ -491,12 +512,18 @@ fn run() -> Result<()> {
             let ping_count = upload_pings.len();
             let cfg_for_upload = cfg.clone();
             let http_for_upload = http.clone();
+            let ws_for_upload = ws_uploader.clone();
             let tx = upload_tx.clone();
             uploading = true;
             first_report = false;
             last_report = Instant::now();
             thread::spawn(move || {
-                let result = submit(&cfg_for_upload, &http_for_upload, metrics);
+                let result = submit(
+                    &cfg_for_upload,
+                    &http_for_upload,
+                    ws_for_upload.as_ref(),
+                    metrics,
+                );
                 let _ = tx.send(UploadResult {
                     result,
                     last_sample_ts,
@@ -573,6 +600,7 @@ impl Config {
                 "NSTATUS_UPDATE_CHECK_SEC",
                 DEFAULT_UPDATE_CHECK_SEC,
             ),
+            ws_enabled: env_bool_compat("NIE_SLA_WS_ENABLED", "NSTATUS_WS_ENABLED", true),
             once: false,
             task_runner_only: env_compat(
                 "NIE_SLA_TASK_RUNNER_ONLY",
@@ -606,6 +634,7 @@ impl Config {
                         parse_u64(args.next(), cfg.queue_max_samples as u64) as usize
                 }
                 "--once" => cfg.once = true,
+                "--no-ws" => cfg.ws_enabled = false,
                 "--task-runner-only" => cfg.task_runner_only = true,
                 "--version" | "-V" => {
                     println!("v{}", AGENT_VERSION);
@@ -875,7 +904,115 @@ fn disk_info(total: u64, avail: u64) -> DiskInfo {
     }
 }
 
-fn submit(cfg: &Config, http: &HttpClient, metrics: Metrics) -> Result<Option<u64>> {
+fn spawn_ws_uploader(cfg: Config) -> WsUploader {
+    let (tx, rx) = mpsc::channel::<WsCommand>();
+    thread::spawn(move || {
+        let mut socket = None;
+        loop {
+            match rx.recv_timeout(Duration::from_secs(30)) {
+                Ok(WsCommand::Submit { body, response }) => {
+                    let result = submit_ws_payload(&cfg, &mut socket, &body);
+                    if result.is_err() {
+                        socket = None;
+                    }
+                    let _ = response.send(result);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if let Some(ws) = socket.as_mut() {
+                        if ws.send(Message::Ping(Vec::new().into())).is_err() {
+                            socket = None;
+                        }
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
+    WsUploader { tx }
+}
+
+fn submit_ws_payload(
+    cfg: &Config,
+    socket: &mut Option<
+        tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
+    >,
+    body: &str,
+) -> Result<Option<u64>> {
+    if socket.is_none() {
+        let ws_base = cfg
+            .api
+            .trim_end_matches('/')
+            .replacen("https://", "wss://", 1)
+            .replacen("http://", "ws://", 1);
+        let url = format!(
+            "{}/api/agent/metrics/ws?agent_id={}",
+            ws_base,
+            percent_encode_query(&cfg.agent_id)
+        );
+        let mut request = url
+            .into_client_request()
+            .context("build metrics WebSocket request")?;
+        request.headers_mut().insert(
+            "Authorization",
+            tungstenite::http::HeaderValue::from_str(&auth_header(&cfg.token))
+                .context("build metrics WebSocket authorization")?,
+        );
+        let (mut connected, _) = connect(request).context("connect metrics WebSocket")?;
+        set_ws_read_timeout(&mut connected)?;
+        *socket = Some(connected);
+    }
+    let ws = socket.as_mut().expect("metrics WebSocket initialized");
+    ws.send(Message::Text(body.to_string().into()))
+        .context("send metrics WebSocket frame")?;
+    loop {
+        match ws.read().context("read metrics WebSocket response")? {
+            Message::Text(text) => {
+                let value: serde_json::Value = serde_json::from_str(text.as_ref())
+                    .context("parse metrics WebSocket response")?;
+                if value.get("type").and_then(serde_json::Value::as_str) == Some("ready") {
+                    continue;
+                }
+                return parse_submit_response(text.as_ref());
+            }
+            Message::Ping(payload) => {
+                ws.send(Message::Pong(payload))
+                    .context("send metrics WebSocket pong")?;
+            }
+            Message::Close(frame) => {
+                return Err(anyhow!("metrics WebSocket closed: {:?}", frame));
+            }
+            Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
+        }
+    }
+}
+
+fn set_ws_read_timeout(
+    ws: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
+) -> Result<()> {
+    let timeout = Some(WS_READ_TIMEOUT);
+    match ws.get_mut() {
+        tungstenite::stream::MaybeTlsStream::Plain(stream) => {
+            stream
+                .set_read_timeout(timeout)
+                .context("set metrics WebSocket read timeout")?;
+        }
+        tungstenite::stream::MaybeTlsStream::Rustls(stream) => {
+            stream
+                .sock
+                .set_read_timeout(timeout)
+                .context("set metrics WebSocket TLS read timeout")?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn submit(
+    cfg: &Config,
+    http: &HttpClient,
+    ws: Option<&WsUploader>,
+    metrics: Metrics,
+) -> Result<Option<u64>> {
     let payload = serde_json::json!({
         "agent_id": cfg.agent_id,
         "agent_label": cfg.agent_label,
@@ -885,11 +1022,39 @@ fn submit(cfg: &Config, http: &HttpClient, metrics: Metrics) -> Result<Option<u6
     });
     let url = format!("{}/api/agent/metrics", cfg.api.trim_end_matches('/'));
     let body = payload.to_string();
+    if let Some(uploader) = ws {
+        let (response_tx, response_rx) = mpsc::channel();
+        if uploader
+            .tx
+            .send(WsCommand::Submit {
+                body: body.clone(),
+                response: response_tx,
+            })
+            .is_ok()
+        {
+            match response_rx.recv_timeout(Duration::from_secs(45)) {
+                Ok(Ok(ping_interval)) => {
+                    println!(
+                        "{{\"ok\":true,\"submitted_at\":{},\"transport\":\"ws\"}}",
+                        now_sec()
+                    );
+                    return Ok(ping_interval);
+                }
+                Ok(Err(err)) => {
+                    eprintln!("WS metrics upload failed, falling back to HTTP: {}", err)
+                }
+                Err(err) => eprintln!("WS metrics upload timed out, falling back to HTTP: {}", err),
+            }
+        }
+    }
     let response = http
         .post_json(&url, &cfg.token, &body)
         .map_err(|err| anyhow!("submit failed for {}: {}", url, err))?;
     let ping_interval = parse_submit_response(&response)?;
-    println!("{{\"ok\":true,\"submitted_at\":{}}}", now_sec());
+    println!(
+        "{{\"ok\":true,\"submitted_at\":{},\"transport\":\"http\"}}",
+        now_sec()
+    );
     Ok(ping_interval)
 }
 
@@ -1986,6 +2151,17 @@ fn env_u64_compat(primary: &str, legacy: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+fn env_bool_compat(primary: &str, legacy: &str, default: bool) -> bool {
+    match env_compat(primary, legacy, if default { "1" } else { "0" })
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "1" | "true" | "yes" | "on" => true,
+        "0" | "false" | "no" | "off" => false,
+        _ => default,
+    }
+}
+
 fn parse_u64(value: Option<String>, default: u64) -> u64 {
     value.and_then(|s| s.parse().ok()).unwrap_or(default)
 }
@@ -2026,6 +2202,6 @@ fn print_help() {
     println!("Usage: nie-sla-agent --api URL --token TOKEN [--once|--task-runner-only]");
     println!("  --task-runner-only  Run the privileged fixed-action Manager service");
     println!(
-        "Environment: NIE_SLA_API_BASE, NIE_SLA_AGENT_TOKEN, NIE_SLA_AGENT_ID, NIE_SLA_AGENT_LABEL, NIE_SLA_PING_TARGET_REFRESH_SEC (legacy NSTATUS_* aliases remain supported)"
+        "Environment: NIE_SLA_API_BASE, NIE_SLA_AGENT_TOKEN, NIE_SLA_AGENT_ID, NIE_SLA_AGENT_LABEL, NIE_SLA_PING_TARGET_REFRESH_SEC, NIE_SLA_WS_ENABLED (legacy NSTATUS_* aliases remain supported)"
     );
 }

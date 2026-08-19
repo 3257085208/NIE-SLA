@@ -54,6 +54,10 @@ assert.match(indexSource, /if \(!internalRequestAuthorized\(request, this\.env\)
 assert.match(probeSource, /headers: internalRequestHeaders\(env\)/, 'region probe calls must carry the internal request secret');
 assert.match(routesSource, /\/debug-colo[\s\S]{0,400}internalRequestHeaders\(env\)/, 'debug-colo must pass the internal request secret to the Durable Object');
 assert.match(telemetrySource, /internalRequestAuthorized\(request, this\.env\)/, 'TelemetryBuffer must require the internal request secret');
+assert.match(routesSource, /\/api\/agent\/metrics\/ws/, 'Agent metrics WebSocket route must be explicit');
+assert.match(telemetrySource, /acceptWebSocket\(server/, 'Agent metrics WebSocket must use Durable Object Hibernation API');
+assert.match(telemetrySource, /serializeAttachment\(\{ agent_id: agentId \}\)/, 'Agent WebSocket identity must survive Durable Object hibernation');
+assert.match(metricsSource, /export async function processAgentMetricsPayload/, 'HTTP and WebSocket metrics must share one validation/persistence path');
 assert.match(wranglerSource, /REGION_PROXY_BATCH_ENABLED = "true"/, 'production config must enable region batching');
 assert.match(indexSource, /out\.probe\.results\.map\(item => item\?\.warning\)/, 'scheduled probe diagnostics must retain state sync warnings');
 assert.match(statusSource, /optionalQuery[\s\S]{0,220}warnings\.push\(warning\)/, 'partial status query failures must be visible in the status warnings');

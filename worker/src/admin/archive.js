@@ -85,11 +85,11 @@ export async function getStats(env) {
     const pingsToD1 = parseBoolean(env.AGENT_PINGS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE);
     const pingTargetsCount = (await env.DB.prepare(`SELECT COUNT(*) as cnt FROM ping_targets WHERE enabled = 1`).first())?.cnt || 0;
     const trafficAgentCount = (await env.DB.prepare(`SELECT COUNT(*) as cnt FROM targets WHERE enabled = 1 AND traffic_enabled = 1`).first())?.cnt || 0;
-    const reportIntervalSec = clamp(Number(env.AGENT_REPORT_INTERVAL_SEC || 900), 60, 86400);
+    const reportIntervalSec = clamp(Number(env.AGENT_REPORT_INTERVAL_SEC || 300), 60, 86400);
     const agentReportsPerDay = agentCount * Math.ceil(86400 / reportIntervalSec);
     const pingIntervalSec = clamp(Number(env.NIE_SLA_PING_SEC || env.NSTATUS_PING_SEC || env.AGENT_PING_SEC || 20), 5, 600);
     results.estimated_daily = {
-      check_bucket_writes: targetsCount * Math.ceil(86400 / clamp(Number(env.HISTORY_PROBE_HEALTHY_INTERVAL_SEC || 900), 300, 86400)),
+      check_bucket_writes: targetsCount * Math.ceil(86400 / clamp(Number(env.HISTORY_PROBE_HEALTHY_INTERVAL_SEC || 300), 300, 86400)),
       agent_state_writes: agentReportsPerDay,
       agent_traffic_period_writes: trafficAgentCount * Math.ceil(86400 / reportIntervalSec),
       agent_traffic_daily_writes: trafficAgentCount,
