@@ -1,10 +1,14 @@
 import { nowSec, sanitizeAgentId } from './utils.js';
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
 import { processAgentMetricsPayload } from './metrics.js';
+import { readR2JsonResult } from './storage.js';
 import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
 
 const HOUR_SEC = 3600;
 const CHUNK_SEC = 300;
+const DEFAULT_FLUSH_SEC = 3600;
+const MIN_FLUSH_SEC = 600;
+const MAX_FLUSH_SEC = 86400;
 const CHUNK_PREFIX = 'chunk:';
 const LEGACY_BUFFER_PREFIX = 'hour:';
 const EXPORT_PREFIX = 'export:';
@@ -122,13 +126,14 @@ export class TelemetryBuffer {
   }
 
   async flushCompletedHours(currentAt) {
+    const flushInterval = telemetryFlushIntervalSec(this.env);
     const flushBefore = Number(currentAt) - FLUSH_GRACE_SEC;
     const rows = await this.bufferRows();
     const completed = new Map();
     for (const [key, value] of rows) {
       const start = bufferedStart(key);
       const hour = hourStart(start);
-      if (!Number.isFinite(start) || hour + HOUR_SEC > flushBefore) continue;
+      if (!Number.isFinite(start) || hour + flushInterval > flushBefore) continue;
       const item = completed.get(hour) || { keys: [], buffers: [] };
       item.keys.push(key);
       item.buffers.push(value);
@@ -195,7 +200,8 @@ export class TelemetryBuffer {
   }
 
   async scheduleFlush() {
-    const alarmAt = (hourStart(nowSec()) + HOUR_SEC + FLUSH_GRACE_SEC + 30) * 1000;
+    const flushInterval = telemetryFlushIntervalSec(this.env);
+    const alarmAt = (hourStart(nowSec()) + flushInterval + FLUSH_GRACE_SEC + 30) * 1000;
     const current = await this.state.storage.getAlarm();
     if (current == null || current > alarmAt) await this.state.storage.setAlarm(alarmAt);
   }
@@ -316,9 +322,13 @@ async function flushHour(env, buffered) {
 }
 
 async function readR2Object(bucket, key) {
-  const object = await bucket.get(key);
-  if (!object) return null;
-  try { return await object.json(); } catch (_) { return null; }
+  const result = await readR2JsonResult({ ARCHIVE: bucket }, key);
+  if (!result.ok) throw new Error(`R2 telemetry read failed (${key}): ${result.error}`);
+  if (!result.found) return null;
+  if (!result.value || typeof result.value !== 'object' || Array.isArray(result.value)) {
+    throw new Error(`R2 telemetry object is invalid (${key})`);
+  }
+  return result.value;
 }
 
 function metricsFromPayload(payload) {
@@ -390,6 +400,12 @@ function bufferedStart(key) {
   if (text.startsWith(CHUNK_PREFIX)) return Number(text.slice(CHUNK_PREFIX.length));
   if (text.startsWith(LEGACY_BUFFER_PREFIX)) return Number(text.slice(LEGACY_BUFFER_PREFIX.length));
   return NaN;
+}
+
+function telemetryFlushIntervalSec(env) {
+  const raw = Number(env?.TELEMETRY_FLUSH_INTERVAL_SEC ?? DEFAULT_FLUSH_SEC);
+  if (!Number.isFinite(raw)) return DEFAULT_FLUSH_SEC;
+  return Math.max(MIN_FLUSH_SEC, Math.min(MAX_FLUSH_SEC, Math.floor(raw)));
 }
 
 function hourStart(value) {

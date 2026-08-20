@@ -15,7 +15,7 @@ export { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTarg
 export { submitAgentResults } from './admin/agent-results.js';
 
 
-export { getPingTargets, createPingTarget, updatePingTarget, deletePingTarget, submitAgentPings, getAgentPings } from './admin/ping-targets.js';
+export { getPingTargets, createPingTarget, updatePingTarget, deletePingTarget, submitAgentPings, getAgentPings, getAgentPingsBatch } from './admin/ping-targets.js';
 export { updatePingConfig } from './ping-config.js';
 
 

@@ -1,9 +1,9 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260810-nqfix1";
-import { createAdminClient } from "./admin/api.js?v=20260810-nqfix1";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260810-nqfix1";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260810-nqfix1";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260820-themecfg1";
+import { createAdminClient } from "./admin/api.js?v=20260820-themecfg1";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260820-themecfg1";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260820-themecfg1";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260810-nqfix1";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260820-themecfg1";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -14,8 +14,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260810-nqfix1";
-import { readMigratedStorage, readStorage, writeStorage } from "./shared/storage.js?v=20260810-nqfix1";
+} from "./shared/grouping.js?v=20260820-themecfg1";
+import { readMigratedStorage, readStorage, writeStorage } from "./shared/storage.js?v=20260820-themecfg1";
 import { escapeHtml } from "./shared/html.js";
 import { fmtBytes } from "./shared/format.js";
 
@@ -251,6 +251,11 @@ function themeCardHtml(theme) {
   const mode = theme.mode === "canvas" ? "交互画布" : "CSS 样式";
   const digest = String(theme.package_sha256 || "");
   const uploadedAt = Number(theme.uploaded_at || 0);
+  const hasSettings = Array.isArray(theme.settings) && theme.settings.length > 0;
+  const settingsLabel = hasSettings ? `${theme.settings.length} 项` : "无可配置项";
+  const settingsButton = hasSettings
+    ? `<button class="btn btn-sm" type="button" data-theme-action="settings" data-theme-id="${escapeHtml(theme.id)}">设置 · ${theme.settings.length} 项</button>`
+    : `<button class="btn btn-sm" type="button" data-theme-action="settings" data-theme-id="${escapeHtml(theme.id)}" title="该主题未声明可配置项">设置</button>`;
   return `<article class="theme-card${theme.enabled ? " active" : ""}">
     <div class="theme-card-head">
       <div><span>${escapeHtml(mode)}</span><h3>${escapeHtml(theme.name || theme.id)}</h3></div>
@@ -264,9 +269,11 @@ function themeCardHtml(theme) {
       <div><dt>许可</dt><dd>${escapeHtml(theme.license || "未声明")}</dd></div>
       <div><dt>上传</dt><dd>${uploadedAt ? escapeHtml(formatDateTime(uploadedAt)) : "旧版导入"}</dd></div>
       <div><dt>SHA-256</dt><dd><code title="${escapeHtml(digest)}">${escapeHtml(digest ? `${digest.slice(0, 16)}...` : "未记录")}</code></dd></div>
+      <div><dt>设置</dt><dd>${escapeHtml(settingsLabel)}</dd></div>
     </dl>
     <div class="theme-card-actions">
       <button class="btn btn-sm ${theme.enabled ? "" : "btn-primary"}" type="button" data-theme-action="toggle" data-theme-id="${escapeHtml(theme.id)}">${theme.enabled ? "停用并恢复原版" : "启用主题"}</button>
+      ${settingsButton}
       <button class="btn btn-sm btn-danger" type="button" data-theme-action="delete" data-theme-id="${escapeHtml(theme.id)}">删除</button>
     </div>
   </article>`;
@@ -350,6 +357,78 @@ async function applyThemeAction(theme, action) {
     toast(error.message, "err");
   }
 }
+async function openThemeSettings(theme) {
+  try {
+    const data = await apiAdmin(`/api/themes/${encodeURIComponent(theme.id)}/config`, {}, 20_000);
+    const settings = Array.isArray(data.settings) ? data.settings : [];
+    const values = data.values && typeof data.values === 'object' ? data.values : {};
+    if (!settings.length) {
+      byId("modal").className = "modal theme-settings-modal";
+      byId("modal").innerHTML = `<div class="theme-confirm-head"><span>THEME SETTINGS</span><h3>${escapeHtml(theme.name || theme.id)} 设置</h3></div><div class="theme-settings-body"><div class="theme-setting-row"><span>暂无可配置项</span><span class="theme-setting-desc">该主题未在 manifest.json 声明 settings，作者未提供可调配置。请联系主题作者增加 settings 后重新上传。</span></div></div><div class="ma"><button class="btn btn-primary" type="button" data-close>知道了</button></div><small>提示：后台仍会在卡片上固定显示"设置"入口，便于区分有/无配置的主题。</small>`;
+      openModal();
+      return;
+    }
+    const body = settings.map(s => themeSettingFieldHtml(s, values[s.key])).join("");
+    byId("modal").className = "modal theme-settings-modal";
+    byId("modal").innerHTML = `<div class="theme-confirm-head"><span>THEME SETTINGS</span><h3>${escapeHtml(theme.name || theme.id)} 设置</h3></div><div class="theme-settings-body">${body}</div><div class="ma"><button class="btn" type="button" data-close>取消</button><button class="btn btn-primary" type="button" id="saveThemeSettings">保存</button></div>`;
+    openModal();
+    byId("saveThemeSettings").onclick = async () => {
+      const btn = byId("saveThemeSettings");
+      btn.disabled = true;
+      btn.textContent = "保存中...";
+      try {
+        const payload = {};
+        for (const s of settings) {
+          const el = document.getElementById(`theme-setting-${s.key}`);
+          if (!el) continue;
+          if (s.type === "boolean") payload[s.key] = el.checked;
+          else if (s.type === "number") payload[s.key] = el.value === "" ? s.default : Number(el.value);
+          else payload[s.key] = el.value;
+        }
+        await apiAdmin(`/api/themes/${encodeURIComponent(theme.id)}/config`, { method: "PUT", body: JSON.stringify({ values: payload }) }, 30_000);
+        toast("主题设置已保存", "ok");
+        closeModal();
+        await loadThemes();
+      } catch (error) {
+        toast(error.message, "err");
+        btn.disabled = false;
+        btn.textContent = "保存";
+      }
+    };
+  } catch (error) {
+    toast(error.message || "加载主题设置失败", "err");
+  }
+}
+
+function themeSettingFieldHtml(setting, value) {
+  const v = value ?? setting.default;
+  const label = escapeHtml(setting.label || setting.key);
+  const desc = setting.description ? `<span class="theme-setting-desc">${escapeHtml(setting.description)}</span>` : "";
+  const id = `theme-setting-${setting.key}`;
+  if (setting.type === "boolean") {
+    return `<label class="theme-setting-row"><span>${label}</span>${desc}<input type="checkbox" id="${id}" ${v ? "checked" : ""}></label>`;
+  }
+  if (setting.type === "select") {
+    const opts = (setting.options || []).map(o => `<option value="${escapeHtml(o.value)}" ${String(o.value)===String(v) ? "selected" : ""}>${escapeHtml(o.label || o.value)}</option>`).join("");
+    return `<label class="theme-setting-row"><span>${label}</span>${desc}<select id="${id}">${opts}</select></label>`;
+  }
+  if (setting.type === "color") {
+    return `<label class="theme-setting-row"><span>${label}</span>${desc}<input type="color" id="${id}" value="${escapeHtml(String(v))}"></label>`;
+  }
+  if (setting.type === "number") {
+    const min = setting.min !== undefined ? ` min="${setting.min}"` : "";
+    const max = setting.max !== undefined ? ` max="${setting.max}"` : "";
+    return `<label class="theme-setting-row"><span>${label}</span>${desc}<input type="number" id="${id}" value="${escapeHtml(String(v))}"${min}${max}></label>`;
+  }
+  if (setting.type === "textarea") {
+    return `<label class="theme-setting-row"><span>${label}</span>${desc}<textarea id="${id}" rows="3" placeholder="${escapeHtml(setting.placeholder || "")}">${escapeHtml(String(v))}</textarea></label>`;
+  }
+  if (setting.type === "image") {
+    return `<label class="theme-setting-row"><span>${label}</span>${desc}<input type="text" id="${id}" value="${escapeHtml(String(v))}" placeholder="https://..."><small>支持 https/相对路径，公开页按原样加载</small></label>`;
+  }
+  return `<label class="theme-setting-row"><span>${label}</span>${desc}<input type="text" id="${id}" value="${escapeHtml(String(v))}" placeholder="${escapeHtml(setting.placeholder || "")}"></label>`;
+}
+
 async function loadDash() {
   loading("dStats");
   loading("dVpsSla");
@@ -3151,7 +3230,9 @@ byId("themeTable").onclick = (event) => {
   const button = event.target.closest("button[data-theme-action]");
   if (!button) return;
   const theme = managedThemes.find(item => item.id === button.dataset.themeId);
-  if (theme) confirmThemeAction(theme, button.dataset.themeAction);
+  if (!theme) return;
+  if (button.dataset.themeAction === "settings") return openThemeSettings(theme);
+  confirmThemeAction(theme, button.dataset.themeAction);
 };
 byId("archiveBtn").onclick = async () => {
   try {

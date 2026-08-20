@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fastStatusDueInterval, groupTargetsByRegion, historyDueIntervalSec } from '../src/probe.js';
+import { ProbeRegion } from '../src/index.js';
+import { alignRegionBatchResults, fastStatusDueInterval, groupTargetsByRegion, historyDueIntervalSec } from '../src/probe.js';
 
 const NOW = 1_800_000_000;
 
@@ -65,4 +66,26 @@ test('region batching treats missing region as auto and keeps empty input stable
   assert.deepEqual(groupTargetsByRegion(), []);
   assert.deepEqual(groupTargetsByRegion([]), []);
   assert.deepEqual(groupTargetsByRegion([{ id: 'x' }]), [{ region: 'auto', targets: [{ id: 'x' }] }]);
+});
+
+test('region batch results are aligned back to the original target order', () => {
+  const targets = [{ id: 'a' }, { id: 'b' }];
+  assert.deepEqual(
+    alignRegionBatchResults(targets, [{ target_id: 'b', ok: 1 }, { target_id: 'a', ok: 0 }]),
+    [{ target_id: 'a', ok: 0 }, { target_id: 'b', ok: 1 }],
+  );
+});
+
+test('region batch mapping rejects missing, unknown, and duplicate target ids', () => {
+  const targets = [{ id: 'a' }, { id: 'b' }];
+  assert.throws(() => alignRegionBatchResults(targets, [{ target_id: 'a' }]), /incomplete target mapping/);
+  assert.throws(() => alignRegionBatchResults(targets, [{ target_id: 'a' }, { target_id: 'unknown' }]), /invalid target mapping/);
+  assert.throws(() => alignRegionBatchResults(targets, [{ target_id: 'a' }, { target_id: 'a' }]), /invalid target mapping/);
+});
+
+test('region worker keeps target identity when a batch item rejects', async () => {
+  const target = { id: 'reject-a', name: 'Reject A' };
+  Object.defineProperty(target, 'type', { get() { throw new Error('synthetic probe rejection'); } });
+  const result = await new ProbeRegion({}, {}).batchProbeCurrentStatus({ targets: [target] }, {});
+  assert.deepEqual(result.results, [{ ok: false, target_id: 'reject-a', name: 'Reject A', error: 'synthetic probe rejection' }]);
 });

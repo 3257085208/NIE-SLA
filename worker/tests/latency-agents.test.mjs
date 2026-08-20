@@ -110,6 +110,16 @@ assert.equal(publicHistory.sources.length, 1, JSON.stringify(publicHistory));
 assert.equal(publicHistory.sources[0].points.length, 1);
 assert.equal(publicHistory.sources[0].points[0].latency_ms, 45);
 
+const corruptLatencyArchive = memoryR2();
+const archivedKey = [...env.ARCHIVE.objects.keys()][0];
+corruptLatencyArchive.objects.set(archivedKey, { value: '{not-json', options: {} });
+const fallbackSubmission = await submitLatencyAgentResults(jsonRequest({}), { ...env, ARCHIVE: corruptLatencyArchive }, {
+  node_id: created.id,
+  results: [{ target_id: 'public-vps', checked_at: checkedAt + 60, latency_ms: 51, ok: true }],
+});
+assert.equal(fallbackSubmission.storage, 'd1_fallback', 'corrupt latency archive must fall back without overwriting it');
+assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM latency_results WHERE node_id = ? AND target_id = 'public-vps'`).get(created.id).count, 1);
+
 console.log('external Latency agent tests passed');
 
 function jsonRequest(body) {

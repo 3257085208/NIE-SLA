@@ -63,9 +63,10 @@ export class ProbeRegion {
         const saved = await saveCheck(this.env, target, checkedAt, result, previous[target.id] || null);
         return { target_id: target.id, name: target.name, ...result, saved, state_update: saved.state_update };
       }));
-      for (const item of settled) {
+      for (let index = 0; index < settled.length; index += 1) {
+        const item = settled[index];
         if (item.status === 'fulfilled') results.push(item.value);
-        else results.push({ ok: false, target_id: null, error: String(item.reason?.message || item.reason) });
+        else results.push(batchFailure(chunk[index], item.reason));
       }
     }
     return { ok: true, count: results.length, results };
@@ -81,13 +82,23 @@ export class ProbeRegion {
         const result = await probeTarget(target, await enrichCfContext(cf, this.env));
         return { target_id: target.id, name: target.name, ...result };
       }));
-      for (const item of settled) {
+      for (let index = 0; index < settled.length; index += 1) {
+        const item = settled[index];
         if (item.status === 'fulfilled') results.push(item.value);
-        else results.push({ ok: false, target_id: null, error: String(item.reason?.message || item.reason) });
+        else results.push(batchFailure(chunk[index], item.reason));
       }
     }
     return { ok: true, count: results.length, results };
   }
+}
+
+function batchFailure(target, reason) {
+  return {
+    ok: false,
+    target_id: target?.id ?? null,
+    name: target?.name || null,
+    error: String(reason?.message || reason),
+  };
 }
 
 

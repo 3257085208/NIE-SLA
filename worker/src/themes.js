@@ -15,6 +15,10 @@ const ZIP_CONTENT_TYPES = new Set(['application/zip', 'application/x-zip-compres
 const RESERVED_THEME_IDS = new Set(['admin', 'api', 'classic', 'extensions', 'plugins', 'themes']);
 const ALLOWED_EXTENSIONS = new Set(['.css', '.html', '.js', '.json', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.woff', '.woff2']);
 
+const SETTINGS_KEY_PREFIX = 'themes:config:';
+const MAX_SETTINGS_COUNT = 40;
+const ALLOWED_SETTING_TYPES = new Set(['text', 'textarea', 'number', 'boolean', 'select', 'color', 'image']);
+
 export async function getPublicTheme(env) {
   let themes = [];
   if (env?.DB) {
@@ -24,10 +28,17 @@ export async function getPublicTheme(env) {
     }
   }
   const activeTheme = themes.find(theme => theme.enabled) || null;
+  if (!activeTheme) return { ok: true, schema: 'nie-sla-themes-v1', active_theme: null };
+  let config = {};
+  try {
+    const raw = await getMeta(env, configKey(activeTheme.id));
+    if (raw) config = JSON.parse(raw);
+  } catch (_) {}
+  const merged = validateThemeConfigValues(activeTheme, { ...themeSettingsDefaults(activeTheme), ...config });
   return {
     ok: true,
     schema: 'nie-sla-themes-v1',
-    active_theme: activeTheme ? publicTheme(activeTheme) : null,
+    active_theme: { ...publicTheme(activeTheme), config: merged },
   };
 }
 
@@ -37,6 +48,161 @@ export async function listManagedThemes(env) {
     schema: 'nie-sla-themes-v1',
     themes: await loadRegistry(env),
   };
+}
+
+function configKey(id) {
+  return `${SETTINGS_KEY_PREFIX}${cleanThemeId(id)}`;
+}
+
+export async function getThemeConfig(id, env) {
+  const themeId = cleanThemeId(id);
+  const registry = await loadRegistry(env);
+  const theme = registry.find(item => item.id === themeId);
+  if (!theme) throw new ApiError(404, '主题不存在');
+  const raw = await getMeta(env, configKey(themeId));
+  let values = {};
+  if (raw) {
+    try { values = JSON.parse(raw); } catch (_) { values = {}; }
+  }
+  const defaults = themeSettingsDefaults(theme);
+  const merged = { ...defaults, ...values };
+  const validated = validateThemeConfigValues(theme, merged);
+  return { ok: true, theme_id: themeId, settings: theme.settings || [], values: validated, defaults };
+}
+
+export async function updateThemeConfig(id, request, env) {
+  const themeId = cleanThemeId(id);
+  const registry = await loadRegistry(env);
+  const theme = registry.find(item => item.id === themeId);
+  if (!theme) throw new ApiError(404, '主题不存在');
+  const body = await safeJson(request, 64 * 1024);
+  const input = body?.values && typeof body.values === 'object' ? body.values : body;
+  const merged = { ...themeSettingsDefaults(theme), ...(input || {}) };
+  const validated = validateThemeConfigValues(theme, merged);
+  await setMeta(env, configKey(themeId), JSON.stringify(validated));
+  return { ok: true, theme_id: themeId, values: validated };
+}
+
+function themeSettingsDefaults(theme) {
+  const out = {};
+  for (const s of (theme.settings || [])) {
+    out[s.key] = s.default;
+  }
+  return out;
+}
+
+function validateThemeConfigValues(theme, values) {
+  const out = {};
+  const settings = theme.settings || [];
+  if (!settings.length) return {};
+  const map = new Map(settings.map(s => [s.key, s]));
+  for (const s of settings) {
+    const raw = values?.[s.key];
+    out[s.key] = coerceSettingValue(s, raw);
+  }
+  for (const key of Object.keys(values || {})) {
+    if (!map.has(key)) throw new ApiError(400, `未知配置项：${key}`);
+  }
+  return out;
+}
+
+function coerceSettingValue(setting, raw) {
+  const type = setting.type;
+  if (type === 'boolean') {
+    if (raw === undefined || raw === null || raw === '') return setting.default;
+    return parseBoolean(raw, Boolean(setting.default));
+  }
+  if (type === 'number') {
+    if (raw === undefined || raw === null || raw === '') return setting.default;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) throw new ApiError(400, `配置项 ${setting.key} 必须是数字`);
+    const min = Number.isFinite(setting.min) ? setting.min : -1e12;
+    const max = Number.isFinite(setting.max) ? setting.max : 1e12;
+    if (n < min || n > max) throw new ApiError(400, `配置项 ${setting.key} 超出范围`);
+    return n;
+  }
+  if (type === 'select') {
+    const v = String(raw ?? setting.default ?? '').trim();
+    const opts = (setting.options || []).map(o => String(o.value));
+    if (!opts.includes(v)) throw new ApiError(400, `配置项 ${setting.key} 选项无效`);
+    return v;
+  }
+  if (type === 'color') {
+    const v = String(raw ?? setting.default ?? '').trim();
+    if (!/^#[0-9a-fA-F]{6}$/.test(v)) throw new ApiError(400, `配置项 ${setting.key} 颜色格式错误`);
+    return v.toLowerCase();
+  }
+  if (type === 'image') {
+    const v = String(raw ?? setting.default ?? '').trim().slice(0, 600);
+    if (!v) return '';
+    if (!/^(https:\/\/|\/|\.\.?\/)/i.test(v)) throw new ApiError(400, `配置项 ${setting.key} 图片地址无效`);
+    return v;
+  }
+  const v = String(raw ?? setting.default ?? '');
+  if (v.length > 2000) throw new ApiError(400, `配置项 ${setting.key} 过长`);
+  return v;
+}
+
+function validateThemeSettings(raw) {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new ApiError(400, 'settings 必须是数组');
+  if (raw.length > MAX_SETTINGS_COUNT) throw new ApiError(400, `settings 不能超过 ${MAX_SETTINGS_COUNT} 项`);
+  const seen = new Set();
+  return raw.map((item, idx) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new ApiError(400, `settings[${idx}] 必须是对象`);
+    const key = String(item.key || '').trim();
+    if (!/^[a-z][a-z0-9_]{1,30}$/.test(key)) throw new ApiError(400, `settings[${idx}].key 格式错误`);
+    if (seen.has(key)) throw new ApiError(400, `settings key 重复：${key}`);
+    seen.add(key);
+    const type = String(item.type || '').trim().toLowerCase();
+    if (!ALLOWED_SETTING_TYPES.has(type)) throw new ApiError(400, `settings[${idx}].type 不支持`);
+    const label = String(item.label || key).trim().slice(0, 40) || key;
+    const description = String(item.description || '').trim().slice(0, 120);
+    const out = { key, type, label, description };
+    if (type === 'select') {
+      const opts = Array.isArray(item.options) ? item.options : [];
+      if (!opts.length || opts.length > 20) throw new ApiError(400, `settings[${idx}].options 不能为空且不超过20`);
+      out.options = opts.map((o, oi) => {
+        if (!o || typeof o !== 'object') throw new ApiError(400, `settings[${idx}].options[${oi}] 格式错误`);
+        const v = String(o.value ?? '').trim();
+        const lab = String(o.label ?? v).trim().slice(0, 40);
+        if (!v) throw new ApiError(400, `settings[${idx}].options[${oi}].value 不能为空`);
+        if (v.length > 60) throw new ApiError(400, `settings[${idx}].options 选项过长`);
+        return { value: v, label: lab || v };
+      });
+      const def = String(item.default ?? out.options[0].value).trim();
+      if (!out.options.some(o => o.value === def)) throw new ApiError(400, `settings[${idx}].default 必须在 options 内`);
+      out.default = def;
+    } else if (type === 'boolean') {
+      out.default = parseBoolean(item.default, false);
+    } else if (type === 'number') {
+      const def = Number(item.default ?? 0);
+      if (!Number.isFinite(def)) throw new ApiError(400, `settings[${idx}].default 必须是数字`);
+      out.default = def;
+      if (item.min !== undefined) {
+        const min = Number(item.min);
+        if (!Number.isFinite(min)) throw new ApiError(400, `settings[${idx}].min 必须是数字`);
+        out.min = min;
+      }
+      if (item.max !== undefined) {
+        const max = Number(item.max);
+        if (!Number.isFinite(max)) throw new ApiError(400, `settings[${idx}].max 必须是数字`);
+        out.max = max;
+      }
+      if (out.min !== undefined && out.max !== undefined && out.min > out.max) throw new ApiError(400, `settings[${idx}] min 不能大于 max`);
+    } else if (type === 'color') {
+      const def = String(item.default ?? '#2ea36d').trim();
+      if (!/^#[0-9a-fA-F]{6}$/.test(def)) throw new ApiError(400, `settings[${idx}].default 颜色格式错误`);
+      out.default = def.toLowerCase();
+    } else if (type === 'image') {
+      out.default = String(item.default ?? '').trim().slice(0, 600);
+      if (out.default && !/^(https:\/\/|\/|\.\.?\/)/i.test(out.default)) throw new ApiError(400, `settings[${idx}].default 图片地址无效`);
+    } else {
+      out.default = String(item.default ?? '').trim().slice(0, 2000);
+      if (item.placeholder) out.placeholder = String(item.placeholder).trim().slice(0, 80);
+    }
+    return out;
+  });
 }
 
 export async function uploadTheme(request, env) {
@@ -177,6 +343,10 @@ export async function getThemeFile(env, id, path, revision = '') {
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
     'cross-origin-resource-policy': 'cross-origin',
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET, HEAD, OPTIONS',
+    'access-control-allow-headers': '*',
+    'access-control-expose-headers': '*',
   });
   if (cleanPath.endsWith('.html')) {
     const frameOrigin = resolveCorsOrigin(env);
@@ -216,6 +386,7 @@ function validateManifest(value, files) {
       throw new ApiError(400, 'files 清单必须与 ZIP 文件完全一致');
     }
   }
+  const settings = validateThemeSettings(value.settings);
   const mode = value.mode === 'canvas' ? 'canvas' : 'css';
   const record = {
     id,
@@ -230,6 +401,7 @@ function validateManifest(value, files) {
     license,
     preview,
     files: fileNames,
+    settings,
   };
   if (mode === 'canvas') {
     const entry = cleanPackagePath(value.entry || 'index.html');
@@ -302,6 +474,7 @@ function publicTheme(theme) {
     mode: theme.mode || 'css',
     styles: theme.styles || [],
     revision: theme.revision,
+    settings: theme.settings || [],
     ...(theme.mode === 'canvas' ? {
       entry: theme.entry,
       permissions: theme.permissions || [],
@@ -340,6 +513,8 @@ function validateStoredTheme(value) {
   if (!Array.isArray(value.files) || !value.files.length || value.files.length > FILE_MAX_COUNT) throw new Error('invalid files');
   const files = [...new Set(value.files.map(cleanPackagePath))];
   if (files.length !== value.files.length || files.some(path => !isAllowedPackageFile(path))) throw new Error('invalid files');
+  let settings = [];
+  try { settings = validateThemeSettings(value.settings); } catch (_) { throw new Error('invalid settings'); }
   const mode = String(value.mode || 'css');
   if (!['css', 'canvas'].includes(mode)) throw new Error('invalid mode');
   if (mode === 'canvas') {
@@ -349,13 +524,13 @@ function validateStoredTheme(value) {
     if (permissions.length !== 1 || permissions[0] !== 'status:read') throw new Error('invalid permissions');
     const height = Number(value.height);
     if (!Number.isFinite(height) || height < 400 || height > 12000) throw new Error('invalid height');
-    return { ...value, type: 'theme', id, revision, storage_root: storageRoot, files, mode, entry, permissions, height };
+    return { ...value, type: 'theme', id, revision, storage_root: storageRoot, files, mode, entry, permissions, height, settings };
   } else {
     const styles = Array.isArray(value.styles) ? value.styles.map(cleanPackagePath) : [];
     if (!styles.length || styles.length > 4 || styles.some(path => !path.endsWith('.css') || !files.includes(path))) {
       throw new Error('invalid styles');
     }
-    return { ...value, type: 'theme', id, revision, storage_root: storageRoot, files, mode, styles: [...new Set(styles)] };
+    return { ...value, type: 'theme', id, revision, storage_root: storageRoot, files, mode, styles: [...new Set(styles)], settings };
   }
 }
 

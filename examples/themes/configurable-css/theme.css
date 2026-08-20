@@ -1,0 +1,4 @@
+/* Example: use CSS variables injected from theme config — --nie-sla-* */
+:root { --nie-sla-accent: #2ea36d; }
+.hero h1 { color: var(--nie-sla-accent); }
+[data-theme-layout="compact"] .status-grid { gap: 8px; }

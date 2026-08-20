@@ -160,16 +160,67 @@ export async function getAgentPings(env, url, ctx = null) {
   return payload;
 }
 
+export async function getAgentPingsBatch(env, url, ctx = null) {
+  if (!env.DB) return { ok: true, targets: [], agents: {} };
+  const { hours, maxPerTarget } = resolvePublicPingQuery(url, env);
+  const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
+  const includeLoss = parseBoolean(url.searchParams.get('include_loss'), false);
+  const raw = String(url.searchParams.get('agent_ids') || url.searchParams.get('agentIds') || '').trim();
+  let ids = raw ? raw.split(',').map(s => sanitizeAgentId(String(s || '').trim())).filter(Boolean) : [];
+  if (!ids.length) {
+    const single = sanitizeAgentId(url.searchParams.get('agent_id') || '');
+    if (single) ids = [single];
+  }
+  ids = [...new Set(ids)].slice(0, 50);
+  if (!ids.length) return { ok: false, error: '必须提供 agent_ids（1-50 个）或 agent_id' };
+  if (ids.length === 1) {
+    const singleUrl = new URL(url.toString());
+    singleUrl.searchParams.set('agent_id', ids[0]);
+    singleUrl.searchParams.delete('agent_ids');
+    singleUrl.searchParams.delete('agentIds');
+    const single = await getAgentPings(env, singleUrl, ctx);
+    return { ok: true, targets: single.targets || [], ping_interval_sec: single.ping_interval_sec, agents: { [ids[0]]: single } };
+  }
+  const requestedUntil = nowSec();
+  const since = requestedUntil - hours * 3600;
+  const targets = await env.DB.prepare(`SELECT id, name, color FROM ping_targets WHERE enabled = 1`).all();
+  const pingIntervalSec = await getPingIntervalSec(env);
+  const concurrency = 12;
+  const results = {};
+  let idx = 0;
+  async function worker() {
+    while (idx < ids.length) {
+      const my = idx++;
+      const agentId = ids[my];
+      const u = new URL(url.toString());
+      u.searchParams.set('agent_id', agentId);
+      u.searchParams.delete('agent_ids');
+      u.searchParams.delete('agentIds');
+      try {
+        results[agentId] = await getAgentPings(env, u, ctx);
+      } catch (e) {
+        results[agentId] = { ok: false, error: String(e?.message || e) };
+      }
+    }
+  }
+  const workers = Array.from({ length: Math.min(concurrency, ids.length) }, () => worker());
+  await Promise.all(workers);
+  if (responseFormat === 'series') {
+    for (const v of Object.values(results)) if (v?.ok) { if (Array.isArray(v.series) && v.series.length) continue; if (Array.isArray(v.pings) && v.pings.length) { v.series = pingPointsToSeries(v.pings); v.pings = []; } else if (!v.series) { v.series = []; } }
+  }
+  return { ok: true, targets: targets.results || [], ping_interval_sec: pingIntervalSec, hours, max_per_target: maxPerTarget, format: responseFormat || 'pings', include_loss: includeLoss, agents: results };
+}
+
 export function resolvePublicPingQuery(url, env = {}) {
   const publicMaxHours = clamp(Number(env.AGENT_PINGS_PUBLIC_MAX_HOURS || env.AGENT_METRICS_PUBLIC_MAX_HOURS || 72), 1, 168);
   const hours = clamp(Math.floor(Number(url.searchParams.get('hours') || 24)), 1, publicMaxHours);
-  const hardMax = clamp(Number(env.AGENT_PINGS_HARD_MAX_POINTS_PER_TARGET || 2000), 30, 10000);
-  const defaultMax = clamp(Number(env.AGENT_PINGS_MAX_POINTS_PER_TARGET || 360), 30, hardMax);
+  const hardMax = clamp(Number(env.AGENT_PINGS_HARD_MAX_POINTS_PER_TARGET || 2000), 10, 10000);
+  const defaultMax = clamp(Number(env.AGENT_PINGS_MAX_POINTS_PER_TARGET || 360), 10, hardMax);
   let maxPerTargetRaw = url.searchParams.has('max_points_per_target')
     ? Number(url.searchParams.get('max_points_per_target'))
     : defaultMax;
   if (!Number.isFinite(maxPerTargetRaw) || maxPerTargetRaw <= 0) maxPerTargetRaw = defaultMax;
-  const maxPerTarget = clamp(Math.floor(maxPerTargetRaw), 30, hardMax);
+  const maxPerTarget = clamp(Math.floor(maxPerTargetRaw), 10, hardMax);
   return { hours, maxPerTarget, defaultMax, hardMax, publicMaxHours };
 }
 

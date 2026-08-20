@@ -1,6 +1,42 @@
 # 更新日志
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
+## 1.1.22 - 2026-08-21
+
+- 批量 Pings：新增 `GET /api/agent/pings/batch` 与 `GET /api/v1/pings/batch`（`agent_ids=a,b,c` 1-50 个，`hours`/`format=series`/`max_points_per_target`/`include_loss` 透传，`100/60 + keyPrefix: pings-batch/v1-pings-batch + bestEffort`），Worker 扇出 12 并发复用 `getAgentPings`（R2 小时桶 + D1 合并 + `compact`），主题 1 请求拿 39 卡全量，彻底 0-429；单 `pings 300/120` 与主题 `600/2000` 保持。
+
+
+## 1.1.21 - 2026-08-21
+
+- Pings/Metrics 读限流放宽：`GET /api/agent/pings` 与 `GET /api/v1/pings` 30→300/60，`GET /api/agent/metrics` 与 `GET /api/v1/metrics` 30→120/60，均改用独立桶（`keyPrefix: agent-pings/agent-metrics/v1-pings/v1-metrics` + `bestEffort`），前台多 VPS 切图不再 429。
+- 延续 v1.1.20 主题 600/2000 隔离，其余限流不变。
+
+
+## 1.1.20 - 2026-08-21
+
+- 限流优化：`GET /api/themes` 120→600/60 与 `GET /api/themes/file/*` 300→2000/60，均改用 `keyPrefix: themes-api / theme-file` 独立桶与 `bestEffort` 内存限流，多静态文件主题一次加载不再 429；全局与其它接口限流策略不变。
+- 修复：还原 `worker/src/auth.js` 的 `resolveCorsOrigin` CORS 逻辑与 `worker/src/themes.js` 的 HTML `connect-src 'none'` 沙箱，仅保留主题静态文件的 `access-control-allow-*` 跨域头，避免 `*` 扩大攻击面。
+
+
+## 1.1.19 - 2026-08-21
+
+- 主题可配置：`manifest.json` 新增 `settings`（NodeGet 风格，`text/textarea/number/boolean/select/color/image`），管理后台主题卡片新增“更多设置”按钮，弹动态表单（校验 + 默认值），保存至 `app_meta themes:config:{id}`。
+- 新增 `GET/PUT /api/themes/{id}/config`（admin），`GET /api/themes` 的 `active_theme` 追加 `config`（合并默认值后的有效值），旧主题无 `settings` 完全兼容。
+- 前端注入：CSS 主题通过 `:root { --nie-sla-<key>: value }` 透传；Canvas 主题通过 `postMessage {type:"nie-sla:config", config}` 下发，`status` 消息亦携带 `config`。
+- 新增可配置示例 `examples/themes/configurable-css/`（7 类控件完整演示）。
+
+## 1.1.18 - 2026-08-20
+
+- 创新降本：体验保持 300s 感知，额度靠 WS 常驻复用（20:1 折算）+ DO 小时级缓冲（TELEMETRY_FLUSH_INTERVAL_SEC=3600）+ Cache/304 命中实现；WRANGLER 策略回归 300/420s 高频，前端无感。
+- Agent 默认 300s 上报走 TELEMETRY_BUFFER 休眠 WS，12 次上报仅 1 次 R2 puts；故障 120s 重试不变。
+- 测试门禁同步为 300s 体验模型，free-tier 100台 5min 仍在免费层内（靠协议而非延迟）。
+
+## 1.1.17 - 2026-08-20
+
+- 内测 P0 大胆降本：健康目标与区域探测、快速状态、Agent 指标批量上报、状态快照与在线判断全面回归 15/30 分钟经济模式；Worker 每分钟 Cron、D1 到期扫描与 R2 快照写入显著下降，仍保留故障约 2 分钟快速重试。
+- Agent 默认上报周期调回 900 秒；沿用 WebSocket 优先传输（DO Hibernation、身份绑定、确认帧、Ping/Pong、45s 超时，失败回退 HTTP）。
+- 调度与缓存默认值同步：`HISTORY_PROBE_*=900`、`FAST_STATUS_*=900`、`STATUS_SNAPSHOT 900/1200s`、`AGENT_OFFLINE_AFTER 1800s`、`AGENT_REPORT 900s`；`probe.js` 兜底与 `fastStatus`/`historyDue` 同步。
+- 测试与门禁同步：`free-tier-budget` 与 `probe-faststatus` 按 900 秒经济模型校验，100 台内测环境可在免费额度内承载。
 
 ## 1.1.16 - 2026-08-19
 
@@ -8,6 +44,8 @@ NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agen
 - Agent 新增 WebSocket 优先的指标传输，使用 Durable Object Hibernation、连接身份绑定、确认帧、Ping/Pong 和 45 秒读超时；连接失败自动回退原 HTTP 上传。
 - Worker 的 HTTP/WS 指标处理共用同一套校验、D1/R2 持久化和流量处理逻辑；旧 Agent、HTTP API、旧下载资产和原有 UI 功能继续兼容。
 - 该版本重点降低 Agent 上报握手请求；D1 读取、Worker 探测和 Durable Object 执行时长仍需按完整 UTC 日 Analytics 观察，不能仅凭 WS 承诺免费额度可支持 100 台 VPS。
+
+## 1.1.15 - 2026-08-19
 
 - 新增经济模式：健康目标历史探测与快速状态默认 15 分钟，故障目标切换到约 2 分钟恢复探测；探测调度使用 `next_probe_at` 索引，减少 D1 到期扫描。
 - Agent 指标改为 15 分钟批量上报，单批保留约 15 分钟样本；任务领取改为 10 分钟一次，普通升级策略检查改为 24 小时一次，保留手动/强制升级入口。

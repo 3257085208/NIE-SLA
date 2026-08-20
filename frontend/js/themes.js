@@ -63,6 +63,34 @@ async function mountTheme(theme) {
     document.head.appendChild(link);
     return loaded;
   }));
+  injectThemeConfig(theme);
+}
+
+function injectThemeConfig(theme) {
+  document.querySelectorAll('style[data-nie-sla-theme-config]').forEach(n => n.remove());
+  const config = theme.config && typeof theme.config === 'object' ? theme.config : {};
+  const settings = Array.isArray(theme.settings) ? theme.settings : [];
+  if (!settings.length || !Object.keys(config).length) return;
+  const lines = [];
+  for (const s of settings) {
+    const v = config[s.key];
+    if (v === undefined || v === null || v === '') continue;
+    const varName = `--nie-sla-${s.key.replace(/_/g, '-')}`;
+    if (s.type === 'color' || s.type === 'text' || s.type === 'select' || s.type === 'image') {
+      lines.push(`${varName}: ${cssEscape(String(v))};`);
+    } else if (s.type === 'number' || s.type === 'boolean') {
+      lines.push(`${varName}: ${cssEscape(String(v))};`);
+    }
+  }
+  if (!lines.length) return;
+  const style = document.createElement('style');
+  style.dataset.nieSlaThemeConfig = theme.id;
+  style.textContent = `:root{${lines.join('')}}`;
+  document.head.appendChild(style);
+}
+
+function cssEscape(value) {
+  return String(value).replace(/;/g, '').replace(/\n/g, ' ').slice(0, 600);
 }
 
 window.addEventListener('message', event => {
@@ -78,9 +106,12 @@ window.addEventListener('message', event => {
 
 function sendThemeStatus() {
   if (!canvasRecord?.window || !latestStatus) return;
-  const message = { api_version: 'v1', payload: latestStatus };
+  const config = canvasRecord.theme.config && typeof canvasRecord.theme.config === 'object' ? canvasRecord.theme.config : {};
+  const message = { api_version: 'v1', payload: latestStatus, config, theme: { id: canvasRecord.theme.id, revision: canvasRecord.theme.revision } };
   canvasRecord.window.postMessage({ type: 'nie-sla:status', ...message }, '*');
   canvasRecord.window.postMessage({ type: 'nstatus:status', ...message }, '*');
+  canvasRecord.window.postMessage({ type: 'nie-sla:config', config, theme: { id: canvasRecord.theme.id } }, '*');
+  canvasRecord.window.postMessage({ type: 'nstatus:config', config, theme: { id: canvasRecord.theme.id } }, '*');
 }
 
 async function handleThemeRequest(record, message) {

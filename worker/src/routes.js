@@ -2,7 +2,7 @@ import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValida
 import { requireAgentForId, requireAnyAgent, requireAnyLatencyAgent, requireAgentIdentity, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, constantTimeEqual, internalRequestHeaders } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
-import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation } from './admin.js';
+import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, getAgentPingsBatch, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
 import { VERSION } from './version.js';
@@ -13,7 +13,7 @@ import { developerApiPreflight, developerApiUrl, getDeveloperApiManifest, withDe
 import { nodeQualityImageSource, publicNodeQualityReport } from './nodequality.js';
 import { adminAuthConfig, completeGitHubOAuth, finishGitHubOAuth, getAdminAccount, passwordLogin, startGitHubOAuth, updateAdminAccount } from './admin-auth.js';
 import { getAppUpdateInfo } from './app-update.js';
-import { deleteTheme, getPublicTheme, getThemeFile, listManagedThemes, updateTheme, uploadTheme } from './themes.js';
+import { deleteTheme, getPublicTheme, getThemeConfig, getThemeFile, listManagedThemes, updateTheme, updateThemeConfig, uploadTheme } from './themes.js';
 import { encryptionKeyStatus, migrateEncryptionMaterials } from './encryption-maintenance.js';
 import { createNodeQualityBrokerImages } from './nq-image-host.js';
 
@@ -215,16 +215,18 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/colo-echo' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json({ ok: true, colo: request.cf?.colo || null, city: request.cf?.city || null, country: request.cf?.country || null, ts: Date.now() }, 200, env); }
   if (path === '/api/status' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getStatusCached(request, env, url, ctx); }
   if (path === '/api/checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getChecksCached(request, env, url, ctx); }
-  if (path === '/api/agent/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return deny(); return getAgentMetricsCached(request, env, url, ctx); }
-  if (path === '/api/agent/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return deny(); return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  if (path === '/api/agent/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'agent-metrics' })) return deny(); return getAgentMetricsCached(request, env, url, ctx); }
+  if (path === '/api/agent/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true, keyPrefix: 'agent-pings' })) return deny(); return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
   if (path === '/api/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny(); await ensureV6Schema(env); return getPublicLatencyCached(env, url, ctx); }
   if ((path === '/api/v1' || path === '/api/v1/manifest') && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(getDeveloperApiManifest(request, env, VERSION), 200, env, { 'cache-control': 'public, max-age=300' }), request, env); }
   if (path === '/api/v1/status' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getStatusCached(request, env, developerApiUrl(url, '/api/status'), ctx), request, env); }
   if (path === '/api/v1/checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getChecksCached(request, env, developerApiUrl(url, '/api/checks'), ctx), request, env); }
-  if (path === '/api/v1/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getAgentMetricsCached(request, env, developerApiUrl(url, '/api/agent/metrics'), ctx), request, env); }
-  if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
+  if (path === '/api/v1/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'v1-metrics' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getAgentMetricsCached(request, env, developerApiUrl(url, '/api/agent/metrics'), ctx), request, env); }
+  if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true, keyPrefix: 'v1-pings' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/v1/latency' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(await getPublicLatencyCached(env, developerApiUrl(url, '/api/latency'), ctx), request, env); }
-  if (path === '/api/themes' && m === 'GET') { if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny(); return json(await getPublicTheme(env), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  if (path === '/api/agent/pings/batch' && m === 'GET') { if (!await rateLimitByIp(request, env, 100, 60, { bestEffort: true, keyPrefix: 'pings-batch' })) return deny(); return json(await getAgentPingsBatch(env, url, ctx), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  if (path === '/api/v1/pings/batch' && m === 'GET') { if (!await rateLimitByIp(request, env, 100, 60, { bestEffort: true, keyPrefix: 'v1-pings-batch' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPingsBatch(env, developerApiUrl(url, '/api/agent/pings/batch'), ctx), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
+  if (path === '/api/themes' && m === 'GET') { if (!await rateLimitByIp(request, env, 600, 60, { bestEffort: true, keyPrefix: 'themes-api' })) return deny(); return json(await getPublicTheme(env), 200, env, { 'cache-control': 'public, max-age=20' }); }
   if (path === '/api/nq/image-broker' && m === 'POST') {
     try {
       if (!['1', 'true'].includes(String(env.NQ_PUBLIC_BROKER_ENABLED || '').trim().toLowerCase())) {
@@ -326,12 +328,12 @@ async function dispatchStatic(env, url, request, ctx) {
   }
   const revisionedThemeFileMatch = path.match(/^\/api\/themes\/file\/([^/]+)\/@([^/]+)\/(.+)$/);
   if (revisionedThemeFileMatch && m === 'GET') {
-    if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true })) return deny();
+    if (!await rateLimitByIp(request, env, 2000, 60, { bestEffort: true, keyPrefix: 'theme-file' })) return deny();
     return getThemeFile(env, pathParam(revisionedThemeFileMatch[1]), pathParam(revisionedThemeFileMatch[3]), pathParam(revisionedThemeFileMatch[2]));
   }
   const themeFileMatch = path.match(/^\/api\/themes\/file\/([^/]+)\/(.+)$/);
   if (themeFileMatch && m === 'GET') {
-    if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true })) return deny();
+    if (!await rateLimitByIp(request, env, 2000, 60, { bestEffort: true, keyPrefix: 'theme-file' })) return deny();
     return getThemeFile(env, pathParam(themeFileMatch[1]), pathParam(themeFileMatch[2]));
   }
 
@@ -437,6 +439,9 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/maintenance/cleanup' && m === 'POST') { await withAdmin(request, env); const body = await safeJson(request).catch(() => ({})); return json({ ok: true, d1: await cleanupVolatileHistory(env, body), r2: await cleanupAgentMetricsR2(env, body) }, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/themes/manage' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listManagedThemes(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/themes/upload' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await uploadTheme(request, env), 201, env, { 'cache-control': 'no-store' }); }
+  const themeConfigMatch = path.match(/^\/api\/themes\/([^/]+)\/config$/);
+  if (themeConfigMatch && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getThemeConfig(pathParam(themeConfigMatch[1]), env), 200, env, { 'cache-control': 'no-store' }); }
+  if (themeConfigMatch && (m === 'PUT' || m === 'PATCH')) { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateThemeConfig(pathParam(themeConfigMatch[1]), request, env), 200, env, { 'cache-control': 'no-store' }); }
 
 
   if (path === '/api/debug-colo' && m === 'GET') { await withAdmin(request, env); return debugColo(env, url); }

@@ -1,6 +1,7 @@
 import { ApiError, safeJson } from '../auth.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, sha256Hex } from '../utils.js';
+import { readR2JsonResult } from '../storage.js';
 import { agentApiBase, agentInstallBase, shellQuote } from './install-command.js';
 import { getMeta, getPublicSettings, setMeta } from './settings.js';
 
@@ -350,7 +351,7 @@ async function appendLatencyArchive(env, nodeId, points) {
   }
   for (const [segmentStart, additions] of groups) {
     const key = latencySegmentKey(nodeId, segmentStart);
-    const existing = await readArchiveObject(env.ARCHIVE, key);
+    const existing = await readArchiveObjectStrict(env.ARCHIVE, key);
     const byPoint = new Map();
     for (const point of existing?.points || []) byPoint.set(`${point.target_id}:${point.checked_at}`, point);
     for (const point of additions) byPoint.set(`${point.target_id}:${point.checked_at}`, point);
@@ -391,6 +392,16 @@ async function readArchiveObject(bucket, key) {
   } catch (_) {
     return null;
   }
+}
+
+async function readArchiveObjectStrict(bucket, key) {
+  const result = await readR2JsonResult({ ARCHIVE: bucket }, key);
+  if (!result.ok) throw new Error(`R2 latency archive read failed (${key}): ${result.error}`);
+  if (!result.found) return null;
+  if (!result.value || typeof result.value !== 'object' || Array.isArray(result.value)) {
+    throw new Error(`R2 latency archive object is invalid (${key})`);
+  }
+  return result.value;
 }
 
 async function writeLatencyD1Fallback(env, nodeId, points) {

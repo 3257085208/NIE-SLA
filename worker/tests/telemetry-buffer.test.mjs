@@ -78,6 +78,21 @@ await append(crossBuffer, {
 await crossBuffer.flushCompletedHours(currentHour + 3600);
 assert.equal(crossArchive.puts, 2, 'cross-hour input flushes into separate hourly objects');
 
+const corruptStorage = memoryStorage();
+const corruptArchive = memoryR2();
+const corruptBuffer = new TelemetryBuffer({ storage: corruptStorage }, { ARCHIVE: corruptArchive });
+await append(corruptBuffer, {
+  agent_id: 'vps-corrupt',
+  points: [{ ts: currentHour + 10, cpu: 99 }],
+  pings: [],
+});
+const corruptDate = new Date(currentHour * 1000).toISOString();
+const corruptKey = `agent-metrics-v1/vps-corrupt/${corruptDate.slice(0, 10)}/${corruptDate.slice(11, 13)}/telemetry.json`;
+corruptArchive.objects.set(corruptKey, '{not-json');
+await corruptBuffer.flushCompletedHours(currentHour + 4600);
+assert.equal(corruptArchive.puts, 0, 'corrupt R2 telemetry must not be overwritten');
+assert.equal((await corruptStorage.list({ prefix: 'chunk:' })).size, 1, 'failed corrupt-object flush must retain buffered chunks for retry');
+
 const exportStorage = memoryStorage();
 const exportArchive = memoryR2();
 const exportBuffer = new TelemetryBuffer({ storage: exportStorage }, {

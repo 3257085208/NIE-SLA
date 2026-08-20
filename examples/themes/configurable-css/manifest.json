@@ -1,0 +1,22 @@
+{
+  "schema": "nie-sla-theme-v1",
+  "id": "example-configurable",
+  "name": "Example Configurable",
+  "version": "1.0.0",
+  "type": "theme",
+  "mode": "css",
+  "styles": ["theme.css"],
+  "settings": [
+    { "key": "hero_title", "type": "text", "label": "大标题", "default": "NIE-SLA", "placeholder": "输入站点大标题" },
+    { "key": "hero_subtitle", "type": "textarea", "label": "副标题", "default": "可配置主题示例", "placeholder": "支持多行" },
+    { "key": "accent", "type": "color", "label": "强调色", "default": "#2ea36d", "description": "用于按钮与高亮" },
+    { "key": "show_banner", "type": "boolean", "label": "显示横幅", "default": true },
+    { "key": "layout", "type": "select", "label": "布局", "default": "classic", "options": [{ "value": "classic", "label": "经典" }, { "value": "compact", "label": "紧凑" }] },
+    { "key": "hero_image", "type": "image", "label": "首图", "default": "", "description": "https 或相对路径" },
+    { "key": "max_items", "type": "number", "label": "每页数量", "default": 20, "min": 5, "max": 100 }
+  ],
+  "author": "NIE-SLA Example",
+  "description": "Configurable CSS theme — demonstrates 更多设置 (NodeGet-style).",
+  "license": "MIT",
+  "files": ["manifest.json", "theme.css"]
+}

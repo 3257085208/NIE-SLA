@@ -16,6 +16,26 @@ export function groupTargetsByRegion(targets = []) {
   return [...groups.entries()].map(([region, regionTargets]) => ({ region, targets: regionTargets }));
 }
 
+export function alignRegionBatchResults(targets = [], results = []) {
+  const expected = new Map();
+  for (const target of targets || []) {
+    const id = String(target?.id || '').trim();
+    if (!id || expected.has(id)) throw new Error('region batch input has a duplicate or missing target id');
+    expected.set(id, target);
+  }
+  if (!Array.isArray(results) || results.length !== expected.size) {
+    throw new Error('region batch returned an incomplete target mapping');
+  }
+  const received = new Map();
+  for (const result of results) {
+    const id = String(result?.target_id || '').trim();
+    if (!id || !expected.has(id) || received.has(id)) throw new Error('region batch returned an invalid target mapping');
+    received.set(id, result);
+  }
+  if (received.size !== expected.size) throw new Error('region batch returned an incomplete target mapping');
+  return (targets || []).map(target => received.get(String(target.id).trim()));
+}
+
 function regionBatchEnabled(env = {}) {
   return parseBoolean(env.REGION_PROXY_BATCH_ENABLED ?? true, true);
 }
@@ -345,14 +365,10 @@ export async function runFastStatusTargets(env, options = {}) {
     for (const group of groupTargetsByRegion(targets)) {
       if (regionBatchEnabled(env) && group.region !== 'auto' && env.REGION_PROXY && ALLOWED_REGIONS.has(group.region)) {
         try {
-          const rawResults = await probeCurrentStatusTargetsViaRegionBatch(env, group.targets);
-          for (const raw of rawResults) {
-            const target = group.targets.find(item => String(item.id) === String(raw?.target_id));
-            if (!target) {
-              results.push({ ok: false, error: 'region batch result missing target' });
-              continue;
-            }
-            results.push(buildFastStatusResult(target, previousById.get(target.id) || null, raw, checkedAt));
+          const alignedResults = alignRegionBatchResults(group.targets, await probeCurrentStatusTargetsViaRegionBatch(env, group.targets));
+          for (let index = 0; index < alignedResults.length; index += 1) {
+            const target = group.targets[index];
+            results.push(buildFastStatusResult(target, previousById.get(target.id) || null, alignedResults[index], checkedAt));
           }
           continue;
         } catch (error) {
@@ -454,7 +470,8 @@ export async function runTargetBatch(env, targets, previousById = null) {
   for (const group of groupTargetsByRegion(targets)) {
     if (regionBatchEnabled(env) && group.region !== 'auto' && env.REGION_PROXY && ALLOWED_REGIONS.has(group.region)) {
       try {
-        out.push(...await probeAndSaveTargetsViaRegionBatch(env, group.targets, previousById, checkedAt));
+        const rawResults = await probeAndSaveTargetsViaRegionBatch(env, group.targets, previousById, checkedAt);
+        out.push(...alignRegionBatchResults(group.targets, rawResults));
         continue;
       } catch (error) {
         console.error('region batch probe failed, falling back per target:', String(error?.message || error));
