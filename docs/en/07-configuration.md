@@ -22,11 +22,16 @@ Configuration splits into four groups: Worker vars, Worker secrets, admin D1 set
 | `PUBLIC_STATUS_AGENT_DETAILS` | `false` | expose hostname, Agent version, exact capacity/uptime, system and hardware fingerprints, and traffic details; enable only for legacy theme compatibility |
 | `PUBLIC_STATUS_UNLOCK_DETAILS` | `false` | expose per-node streaming/IP unlock details |
 | `PUBLIC_STATUS_STORAGE_DETAILS` | `false` | expose the D1/R2 storage mode and status snapshot key |
+| `STATUS_STREAM_MAX_CONNECTIONS` | `200` | global active connection cap for the public status WSS |
+| `STATUS_STREAM_MAX_CONNECTIONS_PER_IP` | `10` | active connection cap per source for the public status WSS |
+| `STATUS_STREAM_MAX_SOCKET_AGE_SEC` | `1800` | maximum lifetime of one public status WSS connection |
+| `STATUS_STREAM_MAX_IDLE_SEC` | `90` | maximum idle time without a heartbeat |
 | `INCIDENTS_TO_D1` | `true` | write incidents to D1 |
 | `RATE_LIMIT_D1` | `true` | cross-instance rate limiting via D1 |
 | `MISSED_WRITE_BACKFILL_MAX_BUCKETS` | `6` | max missed buckets backfilled |
 | `ALERT_MAX_MESSAGES_PER_RUN` | `30` | alert cap per run |
 | `DEVELOPER_API_ORIGINS` | empty | exact origins allowed to call `/api/v1` from browsers; `*` is ignored |
+| `INTERNAL_CRON_SECRET` | required for internal Durable Objects/scheduled dispatch | dedicated Worker-to-Durable-Object secret; missing values fail closed, and admin/Agent secrets are never used as fallbacks |
 
 The three `PUBLIC_STATUS_*_DETAILS` switches default to off. With Agent details disabled, public status and metrics APIs still return CPU, memory, and disk percentages, load, and current receive/transmit rates without exact server fingerprints. Each switch combination uses a separate cache key.
 
@@ -80,6 +85,7 @@ The `TELEMETRY_BUFFER` Durable Object binding is required for the default archit
 ```bash
 npx wrangler secret put ADMIN_PASSWORD
 npx wrangler secret put TOTP_ENCRYPTION_KEY
+npx wrangler secret put INTERNAL_CRON_SECRET
 npx wrangler secret list
 ```
 

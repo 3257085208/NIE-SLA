@@ -4,6 +4,7 @@ const CIPHERTEXT_PREFIX = 'enc:v1:';
 const TOKEN_PREFIX = 'nst_';
 const TOKEN_BYTES = 32;
 const SUBJECT_TYPES = new Set(['agent', 'latency']);
+const credentialTouchCaches = new WeakMap();
 
 export async function getOrCreateAgentToken(env, subjectType, subjectId) {
   const subject = normalizeSubject(subjectType, subjectId);
@@ -59,6 +60,10 @@ export async function findAgentCredential(env, token) {
   return { agent_id: String(row.subject_id) };
 }
 
+export async function findEnabledAgentCredential(env, token) {
+  return findEnabledCredential(env, 'agent', token, 'targets', 'agent_id');
+}
+
 export async function findLatencyCredential(env, token) {
   const presented = String(token || '').trim();
   if (!presented || !env.DB) return null;
@@ -71,6 +76,42 @@ export async function findLatencyCredential(env, token) {
   if (!row?.subject_id || !constantTimeEqual(hash, row.token_hash)) return null;
   await touchCredential(env, 'latency', row.subject_id);
   return { node_id: String(row.subject_id) };
+}
+
+export async function findEnabledLatencyCredential(env, token) {
+  return findEnabledCredential(env, 'latency', token, 'latency_agents', 'node_id');
+}
+
+export async function verifyEnabledAgentCredential(env, subjectType, subjectId, token) {
+  const subject = normalizeSubject(subjectType, subjectId);
+  const presented = String(token || '').trim();
+  if (!presented || !env.DB) return false;
+  const hash = await sha256Hex(presented);
+  const table = subject.type === 'agent' ? 'targets' : 'latency_agents';
+  const row = await env.DB.prepare(`SELECT c.token_hash FROM agent_credentials c
+    JOIN ${table} t ON t.id = c.subject_id AND t.enabled = 1
+    WHERE c.subject_type = ? AND c.subject_id = ? AND c.token_hash = ? LIMIT 1`)
+    .bind(subject.type, subject.id, hash)
+    .first()
+    .catch(() => null);
+  if (!row?.token_hash || !constantTimeEqual(hash, row.token_hash)) return false;
+  await touchCredential(env, subject.type, subject.id);
+  return true;
+}
+
+async function findEnabledCredential(env, subjectType, token, table, field) {
+  const presented = String(token || '').trim();
+  if (!presented || !env.DB) return null;
+  const hash = await sha256Hex(presented);
+  const row = await env.DB.prepare(`SELECT c.subject_id, c.token_hash, t.id AS enabled_target_id FROM agent_credentials c
+    LEFT JOIN ${table} t ON t.id = c.subject_id AND t.enabled = 1
+    WHERE c.subject_type = ? AND c.token_hash = ? LIMIT 1`)
+    .bind(subjectType, hash)
+    .first()
+    .catch(() => null);
+  if (!row?.subject_id || !row?.token_hash || !constantTimeEqual(hash, row.token_hash)) return null;
+  await touchCredential(env, subjectType, row.subject_id);
+  return { [field]: String(row.subject_id), target_enabled: Boolean(row.enabled_target_id) };
 }
 
 export async function exportAgentTokens(env) {
@@ -260,12 +301,37 @@ function subjectBytes(subject) {
 async function touchCredential(env, subjectType, subjectId) {
   const now = nowSec();
   const interval = Math.max(3600, Math.min(86400, Number(env.AGENT_CREDENTIAL_TOUCH_SEC || 21600)));
-  await env.DB.prepare(`UPDATE agent_credentials SET last_used_at = ?
-    WHERE subject_type = ? AND subject_id = ?
-      AND (last_used_at IS NULL OR last_used_at <= ?)`)
-    .bind(now, subjectType, subjectId, now - interval)
-    .run()
-    .catch(() => {});
+  const database = env?.DB;
+  if (!database || (typeof database !== 'object' && typeof database !== 'function')) return;
+  let cache = credentialTouchCaches.get(database);
+  if (!cache) {
+    cache = { last: new Map(), pending: new Map() };
+    credentialTouchCaches.set(database, cache);
+  }
+  const key = `${subjectType}:${subjectId}`;
+  const last = cache.last.get(key);
+  // The SQL predicate cannot become true again before this same interval.
+  if (last && Date.now() - last < interval * 1000) return;
+  const pending = cache.pending.get(key);
+  if (pending) return pending;
+
+  const promise = (async () => {
+    try {
+      await database.prepare(`UPDATE agent_credentials SET last_used_at = ?
+        WHERE subject_type = ? AND subject_id = ?
+          AND (last_used_at IS NULL OR last_used_at <= ?)`)
+        .bind(now, subjectType, subjectId, now - interval)
+        .run();
+      cache.last.set(key, Date.now());
+    } catch (_) {
+      // Preserve the previous best-effort audit semantics: auth must not fail
+      // merely because the optional last-used timestamp could not be updated.
+    } finally {
+      cache.pending.delete(key);
+    }
+  })();
+  cache.pending.set(key, promise);
+  return promise;
 }
 
 function constantTimeEqual(a, b) {

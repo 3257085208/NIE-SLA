@@ -5,7 +5,8 @@ import { readR2Json, readR2JsonStrict, writeR2Json } from './storage.js';
 import { rateLimitByIp } from './ratelimit.js';
 import { recordAgentAvailability } from './agent-availability.js';
 import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn } from './admin/schema.js';
-import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry } from './telemetry-buffer.js';
+import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry, readBufferedAgentLatestState } from './telemetry-buffer.js';
+import { bufferedAgentStateEnabled, newerAgentMetricRow } from './agent-state.js';
 import { getPingIntervalSec } from './ping-config.js';
 
 const MAX_AGENT_SAMPLES_PER_REPORT = 910;
@@ -89,12 +90,14 @@ export function normalizeAgentVpsInfo(value) {
   if (Number.isFinite(gpuUtil)) out.gpu_util = boundedMetric(gpuUtil, 0, 100);
   if (Array.isArray(value.temperature_sensors)) {
     out.temperature_sensors = value.temperature_sensors.slice(0, 128).flatMap((sensor) => {
+      const id = String(sensor?.id || '').trim().slice(0, 64);
       const label = String(sensor?.label || '').trim().slice(0, 128);
       const rawTemp = sensor?.temp_c;
       const temp = Number(rawTemp);
       if (!label || rawTemp == null || rawTemp === '' || typeof rawTemp === 'boolean' || !Number.isFinite(temp)) return [];
       const kind = String(sensor?.kind || '');
       return [{
+        id,
         label,
         kind: ['cpu', 'gpu', 'motherboard', 'disk', 'chipset', 'other'].includes(kind) ? kind : 'other',
         temp_c: boundedMetric(temp, -100, 1_000),
@@ -102,6 +105,26 @@ export function normalizeAgentVpsInfo(value) {
     });
   }
   return out;
+}
+
+function normalizeTemperatureSensors(value, max = 16) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value.slice(0, Math.max(1, max)).flatMap((sensor) => {
+    const id = String(sensor?.id || '').trim().slice(0, 64);
+    const label = String(sensor?.label || '').trim().slice(0, 128);
+    const rawTemp = sensor?.temp_c;
+    const temp = Number(rawTemp);
+    if (!id || seen.has(id) || !label || rawTemp == null || rawTemp === '' || typeof rawTemp === 'boolean' || !Number.isFinite(temp)) return [];
+    seen.add(id);
+    const kind = String(sensor?.kind || '');
+    return [{
+      id,
+      label,
+      kind: ['cpu', 'gpu', 'motherboard', 'disk', 'chipset', 'other'].includes(kind) ? kind : 'other',
+      temp_c: boundedMetric(temp, -100, 1_000),
+    }];
+  });
 }
 
 export function normalizeAgentMetricState(metrics = {}) {
@@ -168,10 +191,12 @@ export function normalizeAgentCapabilities(value, observedAt = nowSec()) {
 }
 
 export async function submitAgentMetrics(request, env, ctx = null) {
-  await requireAnyAgent(request, env);
+  const identity = await requireAnyAgent(request, env);
   const body = await safeJson(request);
   const agentId = sanitizeAgentId(body?.agent_id || env.DEFAULT_AGENT_ID || 'vps');
-  await requireAgentForId(request, env, agentId);
+  if (identity?.type !== 'scoped' || sanitizeAgentId(identity.agent_id) !== agentId) {
+    await requireAgentForId(request, env, agentId);
+  }
   if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) {
     return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429, env);
   }
@@ -183,7 +208,7 @@ export async function submitAgentMetrics(request, env, ctx = null) {
   }
 }
 
-export async function processAgentMetricsPayload(env, body, ctx = null, expectedAgentId = '') {
+export async function processAgentMetricsPayload(env, body, ctx = null, expectedAgentId = '', options = {}) {
   if (!env.DB) throw new ApiError(500, '缺少 D1 的 DB 绑定');
   const agentId = sanitizeAgentId(body?.agent_id || env.DEFAULT_AGENT_ID || 'vps');
   if (expectedAgentId && agentId !== sanitizeAgentId(expectedAgentId)) throw new ApiError(401, 'Agent ID 与连接身份不匹配');
@@ -209,8 +234,9 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   const telemetryError = validateTelemetryBatch(rawSamples, pings, ts);
   if (telemetryError) throw new ApiError(400, telemetryError);
 
+  let latestState = null;
   try {
-    await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts });
+    latestState = await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts }, options);
   } catch (err) {
     console.error('persistAgentMetrics failed:', String(err?.message || err));
     throw new ApiError(500, '保存 Agent 监控数据失败', { 'cache-control': 'no-store' });
@@ -221,11 +247,13 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(trafficTask);
   else await trafficTask;
 
-  return {
+  const result = {
     ok: true,
     agent_id: agentId,
     ping_interval_sec: await getPingIntervalSec(env),
   };
+  if (options.returnLatestState && latestState) result.latest_state = latestState;
+  return result;
 }
 
 export function pingSeriesToPoints(seriesList) {
@@ -253,14 +281,16 @@ export function pingSeriesToPoints(seriesList) {
     }
     for (let index = 0; index < dt.length; index++) {
       const delta = Number(dt[index]);
-      const latencyMs = latency[index] == null ? null : Number(latency[index]);
       const okValue = ok[index];
-      if (!Number.isInteger(delta) || delta < 0
-        || (latencyMs != null && (!Number.isFinite(latencyMs) || latencyMs < 0 || latencyMs > 1000))
-        || ![0, 1, false, true].includes(okValue)) {
+      if (!Number.isInteger(delta) || delta < 0 || ![0, 1, false, true].includes(okValue)) {
         return { pings: [], error: 'ping_series contains an invalid sample' };
       }
-      pings.push({ target_id: targetId, ts: t0 + delta, latency_ms: latencyMs, ok: okValue });
+      // Clamp out-of-range latencies (non-finite, negative, or above the 1000ms
+      // ceiling) to a loss sample, matching the legacy normalizePingPoint
+      // behavior, instead of rejecting the whole report.
+      let latencyMs = latency[index] == null ? null : Number(latency[index]);
+      if (latencyMs != null && (!Number.isFinite(latencyMs) || latencyMs < 0 || latencyMs > 1000)) latencyMs = null;
+      pings.push({ target_id: targetId, ts: t0 + delta, latency_ms: latencyMs, ok: latencyMs == null ? 0 : okValue });
     }
   }
   return { pings, error: '' };
@@ -295,12 +325,23 @@ export async function getAgentMetrics(env, url, ctx = null) {
         vps_info: row.vps_info ? parseJsonSafe(row.vps_info) : null,
         pings: row.pings ? parseJsonSafe(row.pings) : [],
       };
-      latest.traffic = await readAgentTraffic(env, agentId);
-      latestTs = Math.floor(new Date(latest.updated_at || 0).getTime() / 1000);
     }
   } catch (error) {
     console.error('latest Agent metrics unavailable:', String(error?.message || error));
     warnings.push('Latest Agent metrics unavailable');
+  }
+
+  if (bufferedAgentStateEnabled(env)) {
+    const buffered = await readBufferedAgentLatestState(env, agentId).catch((error) => {
+      console.error('buffered latest Agent metrics unavailable:', String(error?.message || error));
+      warnings.push('Buffered latest Agent metrics unavailable');
+      return null;
+    });
+    latest = newerAgentMetricRow(latest, buffered);
+  }
+  if (latest) {
+    latest.traffic = await readAgentTraffic(env, agentId, latest);
+    latestTs = Math.floor(new Date(latest.updated_at || 0).getTime() / 1000);
   }
 
   const requestedUntil = nowSec();
@@ -432,14 +473,21 @@ async function agentTrafficSettings(env, agentId, ts = nowSec()) {
   return trafficSettingsFromTarget(row, env, ts);
 }
 
-async function readAgentTraffic(env, agentId) {
+async function readAgentTraffic(env, agentId, metricOverride = null) {
   const settings = await agentTrafficSettings(env, agentId);
   if (!settings.enabled || !agentId) return summarizeTraffic(null, settings);
   try {
-    const [row, metric] = await Promise.all([
+    const [row, d1Metric] = await Promise.all([
       env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? AND month = ?`).bind(agentId, settings.month).first(),
-      env.DB.prepare(`SELECT net, updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first(),
+      metricOverride
+        ? Promise.resolve(metricOverride)
+        : env.DB.prepare(`SELECT net, updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first(),
     ]);
+    let metric = d1Metric;
+    if (!metricOverride && bufferedAgentStateEnabled(env)) {
+      const buffered = await readBufferedAgentLatestState(env, agentId).catch(() => null);
+      metric = newerAgentMetricRow(metric, buffered);
+    }
     return summarizeTrafficWithPending(row, settings, metric);
   } catch (_) {
     return summarizeTraffic(null, settings);
@@ -488,10 +536,15 @@ export async function rebuildAgentTrafficPeriod(env, agentId, target = null, ts 
       .bind(agentId).first();
   }
   const settings = trafficSettingsFromTarget(source, env, ts);
-  const [latest, metric] = await Promise.all([
+  const [latest, d1Metric] = await Promise.all([
     env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? ORDER BY updated_at DESC, month DESC LIMIT 1`).bind(id).first(),
     env.DB.prepare(`SELECT net FROM agent_metrics_state WHERE agent_id = ?`).bind(id).first().catch(() => null),
   ]);
+  let metric = d1Metric;
+  if (bufferedAgentStateEnabled(env)) {
+    const buffered = await readBufferedAgentLatestState(env, id).catch(() => null);
+    metric = newerAgentMetricRow(metric, buffered);
+  }
   const daily = await dailyTrafficSum(env, id, settings.period_start, settings.period_end);
   const includeActive = dayInTrafficPeriod(latest?.active_day, settings);
   const net = parseJsonSafe(metric?.net);
@@ -904,6 +957,7 @@ export function selectMetricFields(point, fields = null) {
   if (!Array.isArray(fields) || !fields.length) return normalized;
   const out = { ts: normalized.ts };
   for (const field of fields) out[field] = normalized[field];
+  if (normalized.temperature_sensors?.length) out.temperature_sensors = normalized.temperature_sensors;
   return out;
 }
 
@@ -919,7 +973,14 @@ export function metricPointsToColumns(points, fields = null) {
     dt.push(Number(point.ts) - t0);
     for (const field of usedFields) values[field].push(roundMetric(point[field]));
   }
-  return { t0, dt, fields: usedFields, values };
+  const temperatureSensors = temperatureSensorSeries(list);
+  return {
+    t0,
+    dt,
+    fields: usedFields,
+    values,
+    ...(temperatureSensors.length ? { temperature_sensors: temperatureSensors } : {}),
+  };
 }
 
 export function metricPointsFromPayload(payload, fields = null) {
@@ -933,10 +994,26 @@ function metricColumnsToPoints(series, fields = null) {
   const usedFields = Array.isArray(fields) && fields.length
     ? fields
     : Array.isArray(series?.fields) ? series.fields : Object.keys(values);
+  const temperatureSensors = Array.isArray(series?.temperature_sensors) ? series.temperature_sensors : [];
   const t0 = Number(series?.t0 || 0);
   return (series?.dt || []).map((delta, index) => {
     const point = { ts: t0 + Number(delta || 0) };
     for (const field of usedFields) point[field] = Number(values?.[field]?.[index] || 0);
+    const sensors = temperatureSensors.flatMap((sensor) => {
+      const id = String(sensor?.id || '').trim().slice(0, 64);
+      const label = String(sensor?.label || '').trim().slice(0, 128);
+      const rawTemp = sensor?.temp_c?.[index];
+      const temp = Number(rawTemp);
+      if (!id || !label || rawTemp == null || rawTemp === '' || typeof rawTemp === 'boolean' || !Number.isFinite(temp)) return [];
+      const kind = String(sensor?.kind || '');
+      return [{
+        id,
+        label,
+        kind: ['cpu', 'gpu', 'motherboard', 'disk', 'chipset', 'other'].includes(kind) ? kind : 'other',
+        temp_c: boundedMetric(temp, -100, 1_000),
+      }];
+    });
+    if (sensors.length) point.temperature_sensors = sensors;
     return point;
   });
 }
@@ -961,7 +1038,58 @@ function averageMetricChunk(chunk) {
     if (avg != null) out[key] = roundMetric(avg);
     else if (!['cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp'].includes(key)) out[key] = 0;
   }
+  const temperatureSensors = averageTemperatureSensors(chunk);
+  if (temperatureSensors.length) out.temperature_sensors = temperatureSensors;
   return out;
+}
+
+function temperatureSensorSeries(points) {
+  const sensors = new Map();
+  for (const point of points || []) {
+    for (const sensor of point?.temperature_sensors || []) {
+      const id = String(sensor?.id || '').trim().slice(0, 64);
+      const label = String(sensor?.label || '').trim().slice(0, 128);
+      if (!id || !label || sensors.has(id)) continue;
+      const kind = String(sensor?.kind || '');
+      sensors.set(id, {
+        id,
+        label,
+        kind: ['cpu', 'gpu', 'motherboard', 'disk', 'chipset', 'other'].includes(kind) ? kind : 'other',
+      });
+    }
+  }
+  return [...sensors.values()].map((sensor) => ({
+    ...sensor,
+    temp_c: (points || []).map((point) => {
+      const match = (point?.temperature_sensors || []).find(item => String(item?.id || '').trim() === sensor.id);
+      const temp = Number(match?.temp_c);
+      return Number.isFinite(temp) ? roundMetric(boundedMetric(temp, -100, 1_000)) : null;
+    }),
+  }));
+}
+
+function averageTemperatureSensors(chunk) {
+  const sensors = new Map();
+  for (const point of chunk || []) {
+    for (const sensor of point?.temperature_sensors || []) {
+      const id = String(sensor?.id || '').trim().slice(0, 64);
+      const label = String(sensor?.label || '').trim().slice(0, 128);
+      const temp = Number(sensor?.temp_c);
+      if (!id || !label || !Number.isFinite(temp)) continue;
+      const kind = String(sensor?.kind || '');
+      const item = sensors.get(id) || {
+        id,
+        label,
+        kind: ['cpu', 'gpu', 'motherboard', 'disk', 'chipset', 'other'].includes(kind) ? kind : 'other',
+        values: [],
+      };
+      item.values.push(boundedMetric(temp, -100, 1_000));
+      sensors.set(id, item);
+    }
+  }
+  return [...sensors.values()].flatMap(({ values, ...sensor }) => values.length
+    ? [{ ...sensor, temp_c: roundMetric(values.reduce((sum, value) => sum + value, 0) / values.length) }]
+    : []);
 }
 
 function avgNumber(items, key) {
@@ -998,6 +1126,8 @@ function normalizeMetricPoint(point) {
       ? boundedMetric(n, 0, 100)
       : boundedMetric(n, -100, 1_000);
   }
+  const temperatureSensors = normalizeTemperatureSensors(point?.temperature_sensors);
+  if (temperatureSensors.length) out.temperature_sensors = temperatureSensors;
   return out;
 }
 
@@ -1019,7 +1149,7 @@ function pingKey(point) {
 export async function loadAgentPingsR2History(env, agentId, since, until, out = [], ctx = null) {
   if (!env.ARCHIVE) return { loaded: false, count: 0, pings: out };
   const id = sanitizeAgentId(agentId);
-  const counts = await mapWithConcurrency(historyHours(since, until), 24, async (hour) => {
+  await mapWithConcurrency(historyHours(since, until), 24, async (hour) => {
     let localCount = 0;
     const telemetry = await readR2Json(env, agentTelemetryHourKey(env, id, hour), null);
     const payload = telemetry?.pings || await readR2Json(env, agentPingsHourKey(env, id, hour), null);
@@ -1242,51 +1372,46 @@ function normalizeOkInt(value) {
   return ['1', 'true', 'yes', 'ok', 'up'].includes(text) ? 1 : 0;
 }
 
-async function persistAgentMetrics(env, data) {
+async function persistAgentMetrics(env, data, options = {}) {
   const { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts } = data;
   const rawPings = mapPings(pings, ts);
-  const statePings = await mergeStatePings(env, agentId, rawPings);
-  const previousState = await env.DB.prepare(`SELECT s.updated_at,
+  const d1PreviousState = await env.DB.prepare(`SELECT s.*,
     COALESCE((SELECT no_public_ip FROM targets WHERE id = ?), 0) AS no_public_ip
     FROM agent_metrics_state s WHERE s.agent_id = ?`)
     .bind(agentId, agentId).first().catch(() => null);
-  if (Number(previousState?.no_public_ip || 0) === 1) {
-    await recordAgentAvailability(env, agentId, previousState?.updated_at, ts)
+  const bufferedPreviousState = options.previousState && typeof options.previousState === 'object' && !Array.isArray(options.previousState)
+    ? options.previousState
+    : null;
+  const previousState = bufferedPreviousState || d1PreviousState;
+  const statePings = mergeStatePings(previousState?.pings ?? d1PreviousState?.pings, rawPings, env);
+  if (Number(d1PreviousState?.no_public_ip || 0) === 1) {
+    await recordAgentAvailability(env, agentId, previousState?.updated_at || d1PreviousState?.updated_at, ts)
       .catch(err => console.error('recordAgentAvailability failed:', String(err?.message || err)));
   }
-  const writeState = () => env.DB.prepare(`
-    INSERT INTO agent_metrics_state (agent_id, agent_label, agent_version, updated_at, hostname, cpu_percent, process_count, thread_count, memory, load, disk, net, diskio, stats, uptime_sec, vps_info, pings, capabilities)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(agent_id) DO UPDATE SET
-      agent_label=excluded.agent_label,
-      agent_version=COALESCE(excluded.agent_version, agent_version),
-      updated_at=excluded.updated_at, hostname=excluded.hostname,
-      cpu_percent=excluded.cpu_percent, process_count=excluded.process_count, thread_count=excluded.thread_count, memory=excluded.memory, load=excluded.load,
-      disk=excluded.disk, net=excluded.net, diskio=excluded.diskio,
-      stats=excluded.stats, uptime_sec=excluded.uptime_sec,
-      vps_info=CASE WHEN excluded.vps_info IS NOT NULL THEN excluded.vps_info ELSE vps_info END,
-      pings=excluded.pings,
-      capabilities=CASE WHEN excluded.capabilities IS NOT NULL THEN excluded.capabilities ELSE capabilities END
-  `).bind(
-    agentId, agentLabel, agentVersion, new Date().toISOString(),
-    String(metrics.hostname || '').slice(0, 128), state.cpu_percent, state.process_count, state.thread_count,
-    JSON.stringify(state.memory), JSON.stringify(state.load), JSON.stringify(state.disk),
-    JSON.stringify(state.net), JSON.stringify(state.diskio),
-    state.stats ? JSON.stringify(state.stats) : null, state.uptime_sec,
-    vpsInfo ? JSON.stringify(vpsInfo) : null,
-    JSON.stringify(statePings),
-    capabilities ? JSON.stringify(capabilities) : null
-  ).run();
-  try {
-    await writeState();
-  } catch (err) {
-    if (!isMissingAgentCapabilitiesColumn(err)) throw err;
-    await ensureAgentCapabilitiesColumn(env);
-    await writeState();
-  }
+  const previousVpsInfo = parseJsonSafe(previousState?.vps_info);
+  const previousCapabilities = parseJsonSafe(previousState?.capabilities);
+  const effectiveVpsInfo = vpsInfo || (Object.keys(previousVpsInfo).length ? previousVpsInfo : null);
+  const effectiveCapabilities = capabilities || (Object.keys(previousCapabilities).length ? previousCapabilities : null);
+  const updatedAt = new Date().toISOString();
+  const hostname = String(metrics.hostname || previousState?.hostname || '').slice(0, 128);
+  const latestState = {
+    schema: 'nie-sla-agent-metrics-v1',
+    agent_id: agentId,
+    agent_label: agentLabel,
+    agent_version: agentVersion || previousState?.agent_version || null,
+    updated_at: updatedAt,
+    hostname,
+    ...state,
+    vps_info: effectiveVpsInfo,
+    pings: statePings,
+    capabilities: effectiveCapabilities,
+  };
+  if (!options.skipStateD1) await writeAgentMetricState(env, latestState);
 
   const rawPoints = mapSamples(rawSamples);
   if (!rawPoints.length) rawPoints.push(toPoint(state));
+  const temperatureSensors = normalizeTemperatureSensors(vpsInfo?.temperature_sensors);
+  if (temperatureSensors.length) rawPoints[rawPoints.length - 1].temperature_sensors = temperatureSensors;
   if (env.ARCHIVE) {
 
 
@@ -1303,21 +1428,66 @@ async function persistAgentMetrics(env, data) {
     } catch (_) {}
     try { await env.DB.prepare(`DELETE FROM agent_metrics_history WHERE agent_id = ? AND ts < ?`).bind(agentId, ts - retentionSeconds(env, 'AGENT_METRICS_RETENTION_HOURS', 6, 1, 72)).run(); } catch (_) {}
   }
+  return latestState;
 }
 
-async function mergeStatePings(env, agentId, incoming, maxPerTarget = 60, maxTotal = 600) {
+async function writeAgentMetricState(env, state) {
+  const agentId = sanitizeAgentId(state?.agent_id);
+  if (!env.DB || !agentId) return;
+  const agentLabel = String(state.agent_label || agentId).trim().slice(0, 64) || agentId;
+  const agentVersion = String(state.agent_version || '').trim().slice(0, 32) || null;
+  const updatedAt = String(state.updated_at || new Date().toISOString());
+  const hostname = String(state.hostname || '').slice(0, 128);
+  const writeState = () => env.DB.prepare(`
+    INSERT INTO agent_metrics_state (agent_id, agent_label, agent_version, updated_at, hostname, cpu_percent, process_count, thread_count, memory, load, disk, net, diskio, stats, uptime_sec, vps_info, pings, capabilities)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(agent_id) DO UPDATE SET
+      agent_label=excluded.agent_label,
+      agent_version=COALESCE(excluded.agent_version, agent_version),
+      updated_at=excluded.updated_at, hostname=excluded.hostname,
+      cpu_percent=excluded.cpu_percent, process_count=excluded.process_count, thread_count=excluded.thread_count, memory=excluded.memory, load=excluded.load,
+      disk=excluded.disk, net=excluded.net, diskio=excluded.diskio,
+      stats=excluded.stats, uptime_sec=excluded.uptime_sec,
+      vps_info=CASE WHEN excluded.vps_info IS NOT NULL THEN excluded.vps_info ELSE vps_info END,
+      pings=excluded.pings,
+      capabilities=CASE WHEN excluded.capabilities IS NOT NULL THEN excluded.capabilities ELSE capabilities END
+  `).bind(
+    agentId, agentLabel, agentVersion, updatedAt,
+    hostname, state.cpu_percent, state.process_count, state.thread_count,
+    JSON.stringify(state.memory || {}), JSON.stringify(state.load || {}), JSON.stringify(state.disk || {}),
+    JSON.stringify(state.net || {}), JSON.stringify(state.diskio || {}),
+    state.stats ? JSON.stringify(state.stats) : null, state.uptime_sec,
+    state.vps_info ? JSON.stringify(state.vps_info) : null,
+    JSON.stringify(Array.isArray(state.pings) ? state.pings : []),
+    state.capabilities ? JSON.stringify(state.capabilities) : null,
+  ).run();
+  try {
+    await writeState();
+  } catch (err) {
+    if (!isMissingAgentCapabilitiesColumn(err)) throw err;
+    await ensureAgentCapabilitiesColumn(env);
+    await writeState();
+  }
+}
+
+export async function persistAgentMetricsStateFallback(env, state) {
+  if (!env.DB || !state || typeof state !== 'object' || Array.isArray(state)) {
+    return { ok: true, skipped: true };
+  }
+  await writeAgentMetricState(env, state);
+  return { ok: true };
+}
+
+function mergeStatePings(previousSerialized, incoming, env, maxPerTarget = 60, maxTotal = 600) {
   const byKey = new Map();
   const cutoff = nowSec() - retentionSeconds(env, 'PING_HISTORY_RETENTION_HOURS', 6, 1, 168);
-  try {
-    const row = await env.DB.prepare(`SELECT pings FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first();
-    const previous = parseJsonSafe(row?.pings);
-    if (Array.isArray(previous)) {
-      for (const ping of previous) {
-        const point = normalizePingPoint(ping);
-        if (point.target_id && point.ts >= cutoff) byKey.set(pingKey(point), point);
-      }
+  const previous = parseJsonSafe(previousSerialized);
+  if (Array.isArray(previous)) {
+    for (const ping of previous) {
+      const point = normalizePingPoint(ping);
+      if (point.target_id && point.ts >= cutoff) byKey.set(pingKey(point), point);
     }
-  } catch (_) {}
+  }
   for (const ping of incoming || []) {
     const point = normalizePingPoint(ping);
     if (point.target_id && point.ts >= cutoff) byKey.set(pingKey(point), point);

@@ -56,10 +56,13 @@ export async function submitAgentLocation(request, env, agentIdValue) {
   const target = await findEnabledAgentTarget(env, agentIdValue);
   if (!target || target.type !== 'tcp') throw new ApiError(404, 'Agent 对应的 VPS 不存在或已停用');
   const location = countryCode || country;
-  await env.DB.prepare(`UPDATE targets SET ipv4 = ?, ipv6 = ?, location = ?, city = ?, location_source = ?, location_updated_at = ?, updated_at = ? WHERE id = ?`)
-    .bind(ipv4, ipv6, location, city, provider, now, now, target.id).run();
-  await env.DB.prepare(`UPDATE nodes SET ipv4 = ?, ipv6 = ?, country_code = ?, country = ?, city = ?, location_source = ?, location_updated_at = ?, updated_at = ? WHERE id = ? OR id = ? OR legacy_target_id = ?`)
-    .bind(ipv4, ipv6, countryCode, country, city, provider, now, now, target.id, agentId, target.id).run();
+  await env.DB.prepare(`UPDATE targets SET ipv4 = ?, ipv6 = ?, location = ?, city = ?, location_source = ?, location_updated_at = ?, updated_at = ?
+    WHERE id = ? AND (ipv4 IS NOT ? OR ipv6 IS NOT ? OR location IS NOT ? OR city IS NOT ? OR location_source IS NOT ?)`)
+    .bind(ipv4, ipv6, location, city, provider, now, now, target.id, ipv4, ipv6, location, city, provider).run();
+  await env.DB.prepare(`UPDATE nodes SET ipv4 = ?, ipv6 = ?, country_code = ?, country = ?, city = ?, location_source = ?, location_updated_at = ?, updated_at = ?
+    WHERE (id = ? OR id = ? OR legacy_target_id = ?)
+      AND (ipv4 IS NOT ? OR ipv6 IS NOT ? OR country_code IS NOT ? OR country IS NOT ? OR city IS NOT ? OR location_source IS NOT ?)`)
+    .bind(ipv4, ipv6, countryCode, country, city, provider, now, now, target.id, agentId, target.id, ipv4, ipv6, countryCode, country, city, provider).run();
   return { ok: true, agent_id: agentId, location: { ipv4, ipv6, country_code: countryCode, country, city, source: provider, updated_at: now } };
 }
 

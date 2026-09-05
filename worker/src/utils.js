@@ -147,6 +147,10 @@ export function isPrivateHost(host) {
   if (hostname.startsWith('[') && hostname.endsWith(']')) hostname = hostname.slice(1, -1);
 
   hostname = hostname.split('%')[0];
+  // Trailing-dot forms ("127.0.0.1.", "example.com.") must not dodge the
+  // IPv4 literal check below, so strip them before any classification.
+  while (hostname.endsWith('.')) hostname = hostname.slice(0, -1);
+  if (!hostname) return true;
   if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || hostname === '0.0.0.0') return true;
 
   const v4mapped = hostname.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
@@ -190,6 +194,13 @@ export function isPrivateHost(host) {
     }
     return false;
   }
+  // Everything left should be an ordinary DNS name. Integer, hex and octal
+  // IPv4 spellings ("2130706433", "0x7f.0.0.1", "0177.0.0.1") and malformed
+  // labels are treated as non-public instead of falling through as public.
+  if (/^[0-9.]+$/.test(hostname)) return true;
+  if (hostname.split('.').some(label => /^0x/i.test(label))) return true;
+  if (hostname.length > 253) return true;
+  if (!/^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?(?:\.[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?)*$/.test(hostname)) return true;
   return false;
 }
 

@@ -5,6 +5,8 @@ import { writeAgentTelemetryR2History, compactPingPointsByTarget, loadAgentPings
 import { rateLimitByIp } from '../ratelimit.js';
 import { getPingIntervalSec, pingConfigPayload } from '../ping-config.js';
 import { normalizePingTarget, normalizeProbeProtocols, pingTargetProtocol } from '../ping-target-protocol.js';
+import { bufferedAgentStateEnabled, newerAgentMetricRow } from '../agent-state.js';
+import { readBufferedAgentLatestState } from '../telemetry-buffer.js';
 
 function normalizeOkInt(value) {
   if (value === true || value === 1) return 1;
@@ -12,6 +14,10 @@ function normalizeOkInt(value) {
   const text = String(value).trim().toLowerCase();
   return ['1', 'true', 'yes', 'ok', 'up'].includes(text) ? 1 : 0;
 }
+
+const MAX_PING_HOURS_PER_BATCH = 25;
+const MAX_PING_AGE_SEC = 7 * 86400;
+const MAX_PING_FUTURE_SEC = 300;
 
 
 
@@ -66,11 +72,13 @@ export async function deletePingTarget(id, env) {
 
 export async function submitAgentPings(request, env) {
   if (!env.DB) return { ok: false, error: '缺少 D1 的 DB 绑定' };
-  await requireAnyAgent(request, env);
+  const identity = await requireAnyAgent(request, env);
   const body = await safeJson(request);
   const agentId = sanitizeAgentId(body?.agent_id || '');
   if (!agentId) return { ok: false, error: '必须提供 agent_id' };
-  await requireAgentForId(request, env, agentId);
+  if (identity?.type !== 'scoped' || sanitizeAgentId(identity.agent_id) !== agentId) {
+    await requireAgentForId(request, env, agentId);
+  }
   if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) {
     throw new ApiError(429, '请求过于频繁，请稍后重试。');
   }
@@ -81,13 +89,20 @@ export async function submitAgentPings(request, env) {
   const now = nowSec();
   const accepted = [];
   const stmts = [];
+  let dropped = 0;
   for (const p of pings) {
     const targetId = String(p?.target_id || '').trim();
     const ts = Math.floor(Number(p?.ts || Math.floor(now)));
     const latency = p?.latency_ms == null ? null : Math.round(Number(p.latency_ms));
     const ok = p?.ok === undefined ? (Number.isFinite(latency) && latency >= 0 ? 1 : 0) : normalizeOkInt(p.ok);
-    if (!targetId || !Number.isFinite(ts)) continue;
+    if (!targetId || !Number.isFinite(ts) || ts < now - MAX_PING_AGE_SEC || ts > now + MAX_PING_FUTURE_SEC) {
+      dropped += 1;
+      continue;
+    }
     accepted.push({ target_id: targetId, ts, latency_ms: Number.isFinite(latency) && latency >= 0 ? latency : null, ok });
+  }
+  if (new Set(accepted.map((p) => Math.floor(p.ts / 3600) * 3600)).size > MAX_PING_HOURS_PER_BATCH) {
+    throw new ApiError(400, `pings 时间跨度过大，单批最多覆盖 ${MAX_PING_HOURS_PER_BATCH} 个小时桶`);
   }
   if (accepted.length && env.ARCHIVE) await writeAgentTelemetryR2History(env, agentId, [], accepted);
   if (accepted.length && parseBoolean(env.AGENT_PINGS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE)) {
@@ -105,7 +120,7 @@ export async function submitAgentPings(request, env) {
     await env.DB.prepare(`DELETE FROM ping_history WHERE agent_id = ? AND ts < ?`)
       .bind(agentId, now - retentionSeconds(env, 'PING_HISTORY_RETENTION_HOURS', 6, 1, 72)).run();
   }
-  return { ok: true, stored: accepted.length, storage: env.ARCHIVE ? 'r2' : 'd1', d1_rows: stmts.length };
+  return { ok: true, stored: accepted.length, storage: env.ARCHIVE ? 'r2' : 'd1', d1_rows: stmts.length, dropped };
 }
 
 export async function getAgentPings(env, url, ctx = null) {
@@ -119,7 +134,11 @@ export async function getAgentPings(env, url, ctx = null) {
   let until = requestedUntil;
   try {
     const row = await env.DB.prepare(`SELECT updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first();
-    const latestTs = Math.floor(new Date(row?.updated_at || 0).getTime() / 1000);
+    const buffered = bufferedAgentStateEnabled(env)
+      ? await readBufferedAgentLatestState(env, agentId).catch(() => null)
+      : null;
+    const latest = newerAgentMetricRow(row, buffered);
+    const latestTs = Math.floor(new Date(latest?.updated_at || 0).getTime() / 1000);
     if (latestTs > 0) until = Math.min(requestedUntil, latestTs + 600);
   } catch (_) {}
   const byKey = new Map();
@@ -181,8 +200,6 @@ export async function getAgentPingsBatch(env, url, ctx = null) {
     const single = await getAgentPings(env, singleUrl, ctx);
     return { ok: true, targets: single.targets || [], ping_interval_sec: single.ping_interval_sec, agents: { [ids[0]]: single } };
   }
-  const requestedUntil = nowSec();
-  const since = requestedUntil - hours * 3600;
   const targets = await env.DB.prepare(`SELECT id, name, color FROM ping_targets WHERE enabled = 1`).all();
   const pingIntervalSec = await getPingIntervalSec(env);
   const concurrency = 12;

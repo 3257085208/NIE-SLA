@@ -1,6 +1,7 @@
 
-import { clamp, parseBoolean, nowSec, dayFromSec, isMissedMonitorPoint, buildMissedPoints, buildOpenMissedPoints, retentionSeconds } from '../utils.js';
-import { summaryRowsFromChecks } from '../storage.js';
+import { clamp, parseBoolean, nowSec, dayFromSec, dayStartSec, isMissedMonitorPoint, buildMissedPoints, buildOpenMissedPoints } from '../utils.js';
+import { summaryRowsFromChecks, readR2State } from '../storage.js';
+import { appendBufferedProbeHistory, probeHistoryEnabled, readBufferedProbeHistory } from '../probe-history-buffer.js';
 
 
 
@@ -21,6 +22,10 @@ function latestStatusStatement(env, s) {
     s.probe_region || 'auto', s.cf_colo || null, s.uptime_24h, s.uptime_7d, s.avg_latency_24h,
     s.last_fail_at, s.current_outage_started_at, s.last_recover_at, s.status_changed_at
   );
+}
+
+export function latestStatusToD1Enabled(env = {}) {
+  return parseBoolean(env.PROBE_LATEST_STATUS_TO_D1 ?? true, true);
 }
 
 export async function upsertLatestStatus(env, s) {
@@ -163,10 +168,11 @@ export async function upsertCheckBucket(env, targetId, day, point) {
 export async function readCheckBuckets(env, targetId, days) {
   if (!env.DB) return [];
   try {
+    const since = nowSec() - days * 86400;
     const rows = await env.DB.prepare(
       `SELECT bucket_at as checked_at, last_ok as ok, last_latency_ms as latency_ms, last_status_code as status_code, last_error as error, probe_region, total, ok_count FROM check_buckets WHERE target_id = ? AND bucket_at >= ? ORDER BY bucket_at ASC`
-    ).bind(targetId, nowSec() - days * 86400).all();
-    const stored = (rows.results || []).map(r => ({
+    ).bind(targetId, since).all();
+    const legacy = (rows.results || []).map(r => ({
       missed: isMissedMonitorPoint(r) || (Number(r.total || 0) === 0 && Number(r.ok_count || 0) === 0),
       checked_at: Number(r.checked_at || 0),
       ok: isMissedMonitorPoint(r) ? 0 : Number(r.ok || 0),
@@ -178,6 +184,15 @@ export async function readCheckBuckets(env, targetId, days) {
       ok_count: isMissedMonitorPoint(r) ? 0 : Number(r.ok_count || 0),
       bucket: true,
     })).filter(r => Number(r.checked_at) > 0);
+    const buffered = probeHistoryEnabled(env)
+      ? await readBufferedProbeHistory(env, targetId, since, nowSec(), dayFromSec(since, env), dayFromSec(nowSec(), env)).catch((error) => {
+        console.error('read buffered probe history failed:', String(error?.message || error));
+        return [];
+      })
+      : [];
+    const byBucket = new Map(legacy.map(point => [Number(point.checked_at), point]));
+    for (const point of buffered) byBucket.set(Number(point.checked_at), point);
+    const stored = [...byBucket.values()].sort((a, b) => Number(a.checked_at) - Number(b.checked_at));
     if (!stored.length) return stored;
     const out = [stored[0]];
     for (let i = 1; i < stored.length; i++) {
@@ -195,6 +210,19 @@ export async function readCheckBuckets(env, targetId, days) {
 
 export async function readCheckBucketDaySummary(env, targetId, day, beforeAt) {
   if (!env.DB) return { total: 0, ok_count: 0, sum_latency_ms: 0 };
+  if (probeHistoryEnabled(env)) {
+    const row = await env.DB.prepare(
+      `SELECT bucket_at as checked_at, last_ok as ok, last_latency_ms as latency_ms, last_error as error, total, ok_count
+       FROM check_buckets WHERE target_id = ? AND day = ? AND bucket_at < ? ORDER BY bucket_at ASC`
+    ).bind(targetId, day, beforeAt).all();
+    const buffered = await readBufferedProbeHistory(env, targetId, dayStartSec(day, env), beforeAt - 1, day, day).catch((error) => {
+      console.error('read buffered probe day failed:', String(error?.message || error));
+      return [];
+    });
+    const byBucket = new Map((row.results || []).map(point => [Number(point.checked_at), point]));
+    for (const point of buffered) byBucket.set(Number(point.checked_at), point);
+    return summarizeCheckPoints([...byBucket.values()]);
+  }
   const row = await env.DB.prepare(
     `SELECT
        SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE total END) AS total,
@@ -210,6 +238,22 @@ export async function readCheckBucketDaySummary(env, targetId, day, beforeAt) {
   };
 }
 
+function summarizeCheckPoints(points) {
+  let total = 0;
+  let okCount = 0;
+  let sumLatency = 0;
+  for (const point of points || []) {
+    if (isMissedMonitorPoint(point)) continue;
+    const pointTotal = Math.max(0, Number(point.total || 0));
+    const pointOk = Math.max(0, Number(point.ok_count || 0));
+    total += pointTotal;
+    okCount += pointOk;
+    const latency = Number(point.latency_ms);
+    if (pointOk && Number.isFinite(latency)) sumLatency += latency * pointOk;
+  }
+  return { total, ok_count: okCount, sum_latency_ms: sumLatency };
+}
+
 export function checkBucketSummaryQueryPlan(startDay, options = {}) {
   const targetIds = options.targetIds === undefined
     ? null
@@ -217,11 +261,28 @@ export function checkBucketSummaryQueryPlan(startDay, options = {}) {
   if (targetIds && !targetIds.length) return [];
   const recentFromDay = String(options.recentFromDay || startDay);
   const historicalTargetIds = [...new Set((options.historicalTargetIds || []).map(String).filter(Boolean))];
+  const historicalRanges = Array.isArray(options.historicalTargetRanges)
+    ? options.historicalTargetRanges.map((range) => ({
+      fromDay: String(range?.fromDay || '').slice(0, 10),
+      toDay: String(range?.toDay || '').slice(0, 10),
+      targetIds: [...new Set((range?.targetIds || []).map(String).filter(Boolean))],
+    })).filter(range => range.fromDay && range.toDay && range.fromDay < range.toDay && range.targetIds.length)
+    : [];
   const plans = [{
     where: 'day >= ?',
     params: [recentFromDay],
   }];
-  if (recentFromDay > startDay && historicalTargetIds.length) {
+  if (recentFromDay > startDay && historicalRanges.length) {
+    for (const range of historicalRanges) {
+      const fromDay = range.fromDay < startDay ? startDay : range.fromDay;
+      const toDay = range.toDay > recentFromDay ? recentFromDay : range.toDay;
+      if (fromDay >= toDay) continue;
+      plans.push({
+        where: `day >= ? AND day < ? AND target_id IN (${range.targetIds.map(() => '?').join(',')})`,
+        params: [fromDay, toDay, ...range.targetIds],
+      });
+    }
+  } else if (recentFromDay > startDay && historicalTargetIds.length) {
     plans.push({
       where: `day >= ? AND day < ? AND target_id IN (${historicalTargetIds.map(() => '?').join(',')})`,
       params: [startDay, recentFromDay, ...historicalTargetIds],
@@ -235,6 +296,67 @@ export function checkBucketSummaryQueryPlan(startDay, options = {}) {
     }
   }
   return plans;
+}
+
+function addCalendarDays(day, offset) {
+  const value = new Date(`${String(day || '').slice(0, 10)}T00:00:00.000Z`);
+  if (!Number.isFinite(value.getTime())) return String(day || '').slice(0, 10);
+  value.setUTCDate(value.getUTCDate() + Number(offset || 0));
+  return value.toISOString().slice(0, 10);
+}
+
+export function buildSummaryFallbackOptions({ startDay, days, env, r2State, summaryCacheRows = [], targetIds = [], forceHistoricalTargetIds = [], currentDay = dayFromSec(nowSec(), env) }) {
+  const ids = [...new Set((targetIds || []).map(String).filter(Boolean))];
+  if (!ids.length) return { targetIds: [] };
+  const forceHistorical = new Set((forceHistoricalTargetIds || []).map(String).filter(Boolean));
+  const cachedDays = new Map();
+  for (const row of summaryCacheRows || []) {
+    const targetId = String(row?.target_id || '').trim();
+    const day = String(row?.day || '').slice(0, 10);
+    if (!targetId || !day || day >= currentDay) continue;
+    if (!cachedDays.has(targetId)) cachedDays.set(targetId, new Set());
+    cachedDays.get(targetId).add(day);
+  }
+
+  const requiredDays = [];
+  for (let offset = 0; offset < Math.max(1, Number(days) || 1); offset++) requiredDays.push(addCalendarDays(startDay, offset));
+  const historicalDays = requiredDays.filter((day) => day < currentDay);
+  const rangeTargets = new Map();
+  const addHistoricalRange = (fromDay, toDay, targetId) => {
+    const key = `${fromDay}|${toDay}`;
+    if (!rangeTargets.has(key)) rangeTargets.set(key, { fromDay, toDay, targetIds: [] });
+    rangeTargets.get(key).targetIds.push(targetId);
+  };
+  const historicalTargetIds = ids.filter((targetId) => {
+    const daily = r2State?.targets?.[targetId]?.daily;
+    const coveredDays = new Set(daily && typeof daily === 'object' ? Object.keys(daily) : []);
+    for (const day of cachedDays.get(targetId) || []) coveredDays.add(day);
+    if (forceHistorical.has(targetId)) {
+      addHistoricalRange(historicalDays[0] || startDay, currentDay, targetId);
+      return true;
+    }
+    const missingDays = historicalDays.filter((day) => !coveredDays.has(day));
+    if (!missingDays.length) return false;
+    let rangeStart = missingDays[0];
+    let previousDay = missingDays[0];
+    for (let index = 1; index < missingDays.length; index += 1) {
+      const day = missingDays[index];
+      if (day !== addCalendarDays(previousDay, 1)) {
+        addHistoricalRange(rangeStart, addCalendarDays(previousDay, 1), targetId);
+        rangeStart = day;
+      }
+      previousDay = day;
+    }
+    addHistoricalRange(rangeStart, addCalendarDays(previousDay, 1), targetId);
+    return true;
+  });
+
+  return {
+    targetIds: ids,
+    recentFromDay: currentDay,
+    historicalTargetIds,
+    historicalTargetRanges: [...rangeTargets.values()].map(range => ({ ...range, targetIds: [...new Set(range.targetIds)] })),
+  };
 }
 
 export async function getCheckBucketSummaries(env, startDay, options = {}) {
@@ -262,7 +384,19 @@ export async function getCheckBucketSummaries(env, startDay, options = {}) {
         });
       }
     }
-    const latestRows = await env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region FROM latest_status`).all().catch(() => ({ results: [] }));
+    let latestRows = await env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region FROM latest_status`).all().catch(() => ({ results: [] }));
+    if (!latestStatusToD1Enabled(env)) {
+      const currentState = options.r2State || await readR2State(env).catch((error) => {
+        console.error('read R2 current status for summaries failed:', String(error?.message || error));
+        return { targets: {} };
+      });
+      const latestByTarget = new Map((latestRows.results || []).map(row => [String(row.target_id), row]));
+      for (const [targetId, state] of Object.entries(currentState.targets || {})) {
+        const current = latestByTarget.get(targetId);
+        if (!current || Number(state?.checked_at || 0) >= Number(current?.checked_at || 0)) latestByTarget.set(targetId, { ...state, target_id: targetId });
+      }
+      latestRows = { results: [...latestByTarget.values()] };
+    }
     for (const row of latestRows.results || []) {
       if (Number(row.ok || 0) !== 1 || !Number(row.checked_at || 0)) continue;
       const synthetic = buildOpenMissedPoints(env, row, nowSec(), row.probe_region || 'auto');
@@ -278,34 +412,89 @@ export async function getCheckBucketSummaries(env, startDay, options = {}) {
         byKey.set(key, existing);
       }
     }
+    const bufferedTargetIds = [...new Set([
+      ...(options.targetIds || []),
+      ...(options.historicalTargetIds || []),
+      ...((options.historicalTargetRanges || []).flatMap(range => range?.targetIds || [])),
+    ].map(String).filter(Boolean))];
+    if (probeHistoryEnabled(env) && bufferedTargetIds.length) {
+      const untilDay = dayFromSec(nowSec(), env);
+      const bufferedRows = await Promise.all(bufferedTargetIds.map(async targetId => {
+        try {
+          const points = await readBufferedProbeHistory(env, targetId, dayStartSec(startDay, env), nowSec(), startDay, untilDay);
+          return summaryRowsFromChecks(targetId, points, env);
+        } catch (error) {
+          console.error(`read buffered probe summaries failed (${targetId}):`, String(error?.message || error));
+          return [];
+        }
+      }));
+      for (const rows of bufferedRows) {
+        for (const row of rows) {
+          if (String(row.day) < String(startDay)) continue;
+          const key = `${row.target_id}|${row.day}`;
+          const existing = byKey.get(key);
+          if (!existing) {
+            byKey.set(key, row);
+            continue;
+          }
+          // The buffer is enabled during a rolling migration.  D1 contains
+          // the prefix written before the switch, while the buffer contains
+          // the suffix written after it; additive merge preserves both.
+          existing.total += Number(row.total || 0);
+          existing.ok_count += Number(row.ok_count || 0);
+          existing.sum_latency_ms += Number(row.sum_latency_ms || 0);
+        }
+      }
+    }
     return [...byKey.values()].sort((a, b) => a.day.localeCompare(b.day) || a.target_id.localeCompare(b.target_id));
   } catch (_) { return []; }
 }
 
-export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrites, latestStatus, incidentWrite = null, nextProbeAt = null) {
+export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrites, latestStatus, incidentWrite = null, nextProbeAt = null, scheduleFlush = true) {
   if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
   const stmts = [];
-  for (const item of bucketWrites || []) {
-    if (!item?.point || !item.day) continue;
-    stmts.push(checkBucketStatement(env, targetId, item.day, item.point));
+  let bucketStorage = 'd1';
+  let bufferSucceeded = false;
+  if (probeHistoryEnabled(env) && (bucketWrites || []).length) {
+    try {
+      await appendBufferedProbeHistory(env, targetId, bucketWrites);
+      bucketStorage = 'probe_history';
+      bufferSucceeded = true;
+    } catch (error) {
+      console.error('append buffered probe history failed, falling back to D1:', String(error?.message || error));
+    }
   }
-  if (latestStatus) stmts.push(latestStatusStatement(env, latestStatus));
+  if (!bufferSucceeded) {
+    for (const item of bucketWrites || []) {
+      if (!item?.point || !item.day) continue;
+      stmts.push(checkBucketStatement(env, targetId, item.day, item.point));
+    }
+  }
+  if (latestStatus && latestStatusToD1Enabled(env)) stmts.push(latestStatusStatement(env, latestStatus));
   if (incidentWrite) {
     const incidentStmt = incidentEventStatement(env, targetId, incidentWrite.action, incidentWrite.started_at, incidentWrite.recovered_at, incidentWrite.colo, incidentWrite.error);
     if (incidentStmt) stmts.push(incidentStmt);
   }
   if (incidentWrite?.action === 'still_down') stmts.push(touchActiveIncidentStatement(env, targetId, checkedAt, incidentWrite.colo, incidentWrite.error));
-  const scheduleStmt = targetProbeScheduleStatement(env, targetId, checkedAt, nextProbeAt);
+  const scheduleStmt = scheduleFlush === false ? null : targetProbeScheduleStatement(env, targetId, checkedAt, nextProbeAt);
   if (scheduleStmt) stmts.push(scheduleStmt);
-  if (!stmts.length) return { ok: true, writes: 0 };
+  if (!stmts.length) return { ok: true, writes: 0, bucket_storage: bucketStorage };
   await env.DB.batch(stmts);
-  return { ok: true, writes: stmts.length };
+  return { ok: true, writes: stmts.length, bucket_storage: bucketStorage };
 }
 
 export async function cleanupOldCheckBuckets(env, daysToKeep = 31) {
   if (!env.DB) return;
   try {
-    await env.DB.prepare(`DELETE FROM check_buckets WHERE bucket_at < ?`).bind(nowSec() - daysToKeep * 86400).run();
+    const cutoff = nowSec() - daysToKeep * 86400;
+    const cutoffDay = dayFromSec(cutoff, env);
+    // Keep the exact timestamp boundary while using the existing day index.
+    // The previous bucket_at-only predicate had no leading bucket_at index and
+    // performed a full-table scan on every maintenance invocation.
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM check_buckets WHERE day < ?`).bind(cutoffDay),
+      env.DB.prepare(`DELETE FROM check_buckets WHERE day = ? AND bucket_at < ?`).bind(cutoffDay, cutoff),
+    ]);
   } catch (_) { console.error('cleanupOldCheckBuckets failed'); }
 }
 

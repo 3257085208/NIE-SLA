@@ -3,7 +3,7 @@ set -eu
 
 BASE_URL="${NIE_SLA_AGENT_BASE_URL:-${NSTATUS_AGENT_BASE_URL:-https://status.example.com}}"
 BASE_URL="${BASE_URL%/}"
-DEFAULT_SETUP_SHA256="885dc3569ac97cb1e5f95e0293acab64030e38b2a084a1401e9633f07722ee2d"
+DEFAULT_SETUP_SHA256="ae186c01e001863fc46724c2e61954f65590fae0be27eca0dd03e5d3494a8c93"
 
 need_root() {
   if [ "$(id -u 2>/dev/null || echo 1)" != "0" ]; then
@@ -55,7 +55,17 @@ sha256_file() {
   else echo "Missing sha256sum, shasum, or openssl for installer verification." >&2; exit 1; fi
 }
 
-need_root
+ROOTLESS=false
+for arg in "$@"; do
+  case "$arg" in
+    --rootless) ROOTLESS=true ;;
+  esac
+done
+if [ "$ROOTLESS" = "true" ]; then
+  export NIE_SLA_ROOTLESS="${NIE_SLA_ROOTLESS:-1}"
+else
+  need_root
+fi
 
 if ! command -v bash >/dev/null 2>&1; then
   install_pkg bash

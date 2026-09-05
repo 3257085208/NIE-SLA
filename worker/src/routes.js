@@ -1,8 +1,9 @@
-import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValidatedRedirects, sanitizeAgentId, sanitizeId, publicCachePrivacyVersion, sha256Hex } from './utils.js';
-import { requireAgentForId, requireAnyAgent, requireAnyLatencyAgent, requireAgentIdentity, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, constantTimeEqual, internalRequestHeaders } from './auth.js';
+import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValidatedRedirects, sanitizeAgentId, sanitizeId, publicCachePrivacyVersion } from './utils.js';
+import { requireAgentForId, requireAnyAgent, requireAnyLatencyAgent, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, internalRequestHeaders, resolveCorsOrigin } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
 import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, getAgentPingsBatch, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getStats, cleanupVolatileHistory, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation } from './admin.js';
+import { createUsageSummaryAccess, getDebugLogSummary, getUsageSummaryAccessStatus, revokeUsageSummaryAccess, usageSummaryBearerToken, validateUsageSummaryAccess } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
 import { VERSION } from './version.js';
@@ -16,6 +17,7 @@ import { getAppUpdateInfo } from './app-update.js';
 import { deleteTheme, getPublicTheme, getThemeConfig, getThemeFile, listManagedThemes, updateTheme, updateThemeConfig, uploadTheme } from './themes.js';
 import { encryptionKeyStatus, migrateEncryptionMaterials } from './encryption-maintenance.js';
 import { createNodeQualityBrokerImages } from './nq-image-host.js';
+import { AGENT_METRICS_STREAM_INSTANCE } from './telemetry-buffer.js';
 
 function deny(retryAfter = null) {
   const headers = retryAfter == null ? null : { 'retry-after': String(Math.max(1, Math.ceil(Number(retryAfter) || 1))) };
@@ -34,27 +36,26 @@ async function withAdmin(request, env) {
   return session;
 }
 
+// Keep the narrow terminal credential separate from the administrator-session
+// verifier.  It can authorize exactly one read-only endpoint and must never
+// become an alternative credential for other administration routes.
+async function withUsageSummaryAccess(request, env) {
+  const presentedSession = String(request.headers.get('x-admin-session') || '').trim();
+  if (presentedSession) {
+    await withAdmin(request, env);
+    return { type: 'admin_session' };
+  }
+  const token = usageSummaryBearerToken(request);
+  if (!token) throw new ApiError(401, '需要有效的管理会话或用量只读凭据');
+  await ensureV6Schema(env);
+  const access = await validateUsageSummaryAccess(env, token);
+  if (!access.valid) throw new ApiError(401, '需要有效的管理会话或用量只读凭据');
+  return { type: 'usage_summary_token', expires_at: access.expires_at };
+}
+
 function cachedAdminSession(request, env) {
   const cached = adminSessionCache.get(request);
   return cached?.env === env ? cached.session : null;
-}
-
-async function loginState(request, env) {
-  if (!env.DB) return { totp_enabled: false, totp_required: false, session_valid: false, session_id: null, session_expires_at: null };
-  const totp = await checkTOTP(env);
-  const presentedSession = String(request.headers.get('x-admin-session') || '').trim();
-  const session = presentedSession ? await validateAdminSession(env, presentedSession) : null;
-  const sessionValid = Boolean(session?.valid);
-  return {
-    totp_enabled: !!totp.totp_enabled,
-    totp_required: !!totp.totp_enabled,
-    session_valid: sessionValid,
-    session_id: sessionValid ? presentedSession : null,
-    session_expires_at: sessionValid ? session.expires_at : null,
-    auth_mode: sessionValid ? 'session' : 'login_required',
-    provider: sessionValid ? session.provider : null,
-    subject: sessionValid ? session.subject : null,
-  };
 }
 
 async function loginGate(request, env) {
@@ -75,24 +76,12 @@ async function loginGate(request, env) {
   throw new ApiError(401, '会话无效或已过期');
 }
 
-async function sessionMatches(storedSession, presentedSession) {
-  const stored = String(storedSession || '');
-  const presented = String(presentedSession || '');
-  if (!stored || !presented) return false;
-  if (stored.startsWith('sha256:')) return constantTimeEqual(stored.slice(7), await sha256Hex(presented));
-  return constantTimeEqual(stored, presented);
-}
-
-
-
 const ROUTES = [
-
   { method: 'GET', path: '/' },
   { method: 'GET', path: '/api/health' },
-
-
   { method: 'GET', path: '/api/colo-echo', rl: 'public' },
   { method: 'GET', path: '/api/status', rl: 'public' },
+  { method: 'GET', path: '/api/status/ws', rl: 'public' },
   { method: 'GET', path: '/api/checks', rl: 'public' },
   { method: 'GET', path: '/api/agent/metrics', rl: 'public' },
   { method: 'GET', path: '/api/agent/pings', rl: 'public' },
@@ -108,8 +97,6 @@ const ROUTES = [
   { method: 'GET', path: '/api/nq/:id', rl: 'public' },
   { method: 'GET', path: '/api/nq/:id/image/:tab', rl: 'public' },
   { method: 'POST', path: '/api/nq/image-broker', rl: 'write' },
-
-
   { method: 'GET', path: '/api/agent/targets', rl: 'write' },
   { method: 'POST', path: '/api/agent/results', rl: 'write' },
   { method: 'POST', path: '/api/agent/metrics', rl: 'write' },
@@ -122,13 +109,9 @@ const ROUTES = [
   { method: 'GET', path: '/api/latency-agent/targets', rl: 'write' },
   { method: 'POST', path: '/api/latency-agent/results', rl: 'write' },
   { method: 'GET', path: '/api/latency-agent/update-policy', rl: 'write' },
-
-
   { method: 'POST', path: '/api/totp/setup', rl: 'write' },
   { method: 'POST', path: '/api/totp/verify', rl: 'write' },
   { method: 'POST', path: '/api/totp/disable', rl: 'write' },
-
-
   { method: 'GET', path: '/api/auth/config', rl: 'public' },
   { method: 'POST', path: '/api/auth/login', rl: 'write' },
   { method: 'GET', path: '/api/auth/account', rl: 'write' },
@@ -137,8 +120,6 @@ const ROUTES = [
   { method: 'GET', path: '/api/auth/github/callback', rl: 'write' },
   { method: 'POST', path: '/api/auth/github/complete', rl: 'write' },
   { method: 'GET', path: '/api/login', rl: 'write' },
-
-
   { method: 'GET', path: '/api/settings', rl: 'write' },
   { method: 'PATCH', path: '/api/settings', rl: 'write' },
   { method: 'GET', path: '/api/alerts/settings', rl: 'write' },
@@ -156,8 +137,6 @@ const ROUTES = [
   { method: 'POST', path: '/api/backup/export', rl: 'write' },
   { method: 'POST', path: '/api/backup/preview', rl: 'write' },
   { method: 'POST', path: '/api/backup/restore', rl: 'write' },
-
-
   { method: 'GET', path: '/api/stats', rl: 'write' },
   { method: 'GET', path: '/api/agent/install-command', rl: 'write' },
   { method: 'GET', path: '/api/agent/install-script', rl: 'write' },
@@ -166,10 +145,12 @@ const ROUTES = [
   { method: 'POST', path: '/api/maintenance/cleanup', rl: 'write' },
   { method: 'GET', path: '/api/themes/manage', rl: 'write' },
   { method: 'POST', path: '/api/themes/upload', rl: 'write' },
-
-
   { method: 'GET', path: '/api/debug-colo', rl: 'write' },
   { method: 'GET', path: '/api/debug/latency-health', rl: 'write' },
+  { method: 'GET', path: '/api/debug/usage-summary', rl: 'write' },
+  { method: 'GET', path: '/api/debug/usage-access-token', rl: 'write' },
+  { method: 'POST', path: '/api/debug/usage-access-token', rl: 'write' },
+  { method: 'DELETE', path: '/api/debug/usage-access-token', rl: 'write' },
   { method: 'GET', path: '/api/debug/logs', rl: 'write' },
   { method: 'GET', path: '/api/targets', rl: 'write' },
   { method: 'POST', path: '/api/targets', rl: 'write' },
@@ -185,11 +166,23 @@ const ROUTES = [
   { method: 'POST', path: '/api/latency-agents', rl: 'write' },
 ];
 
-const KEY = (method, path) => `${method} ${path}`;
-
 async function dispatchStatic(env, url, request, ctx) {
   const path = url.pathname.replace(/\/+$/, '') || '/';
   const m = request.method;
+
+
+  if (path === '/api/status/ws' && m === 'GET') {
+    if (String(request.headers.get('upgrade') || '').toLowerCase() !== 'websocket') return new Response('WebSocket upgrade required', { status: 426 });
+    if (!env.STATUS_STREAM) return json({ ok: false, error: '缺少状态 Durable Object' }, 503, env);
+    if (!await rateLimitByIp(request, env, 20, 60, { bestEffort: true, keyPrefix: 'status-stream' })) return deny();
+    const origin = String(request.headers.get('origin') || '').trim().replace(/\/+$/, '');
+    const allowedOrigin = resolveCorsOrigin(env).replace(/\/+$/, '');
+    if (origin && allowedOrigin && origin !== allowedOrigin) return json({ ok: false, error: '来源不被允许' }, 403, env);
+    const id = env.STATUS_STREAM.idFromName('public-status-stream');
+    const forwarded = new Request('https://nie-sla.internal/status/ws', request);
+    for (const [key, value] of Object.entries(internalRequestHeaders(env))) forwarded.headers.set(key, value);
+    return env.STATUS_STREAM.get(id).fetch(forwarded);
+  }
 
 
   if (path === '/api/agent/metrics/ws' && m === 'GET') {
@@ -199,7 +192,7 @@ async function dispatchStatic(env, url, request, ctx) {
     const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
     const identity = await requireAgentForId(request, env, agentId);
     if (!identity) throw new ApiError(401, '未授权');
-    const id = env.TELEMETRY_BUFFER.idFromName('agent-metrics-stream');
+    const id = env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE);
     const stub = env.TELEMETRY_BUFFER.get(id);
     const forwarded = new Request('https://nie-sla.internal/agent-metrics/ws', request);
     forwarded.headers.set('x-nie-sla-agent-id', agentId);
@@ -339,7 +332,10 @@ async function dispatchStatic(env, url, request, ctx) {
 
 
   const hasBearer = /^bearer\s+\S+/i.test(request.headers.get('authorization') || '');
-  if (!isAgentApiPath(path)) {
+  // The usage-summary route has its own stricter 6/5-minute best-effort gate
+  // below.  Do not make its read-only nsu_ credential create a D1 rate-limit
+  // write merely because it uses the Authorization header.
+  if (!isAgentApiPath(path) && path !== '/api/debug/usage-summary') {
     if (!hasBearer) {
       if (!await rateLimitByIp(request, env, 30, 60, { bestEffort: true })) return deny();
     } else if (!await rateLimitByIp(request, env, 60, 60, { durable: true })) {
@@ -378,14 +374,14 @@ async function dispatchStatic(env, url, request, ctx) {
   const agentTaskCancelStatusMatch = path.match(/^\/api\/agent\/tasks\/([^/]+)\/cancel-status$/);
   if (agentTaskCancelStatusMatch && m === 'GET') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await agentTaskCancelStatus(env, agentId, pathParam(agentTaskCancelStatusMatch[1])), 200, env, { 'cache-control': 'no-store' }); }
   const agentTaskResultMatch = path.match(/^\/api\/agent\/tasks\/([^/]+)$/);
-  if (agentTaskResultMatch && m === 'POST') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); return json(await completeAgentTask(request, env, pathParam(agentTaskResultMatch[1]), agentId), 200, env, { 'cache-control': 'no-store' }); }
+  if (agentTaskResultMatch && m === 'POST') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); const taskBody = await completeAgentTask(request, env, pathParam(agentTaskResultMatch[1]), agentId); await maybeLogDebugOperation(request, env, url, path, method, 200, ctx, taskBody?.task?.status === 'failed'); return json(taskBody, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agent/targets' && m === 'GET') { await ensureV6Schema(env); const nodeId = url.searchParams.get('node_id') || ''; await requireLatencyAgentForId(request, env, nodeId); return json(await getLatencyAgentTargets(env), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/latency-agent/results' && m === 'POST') { await ensureV6Schema(env); await requireAnyLatencyAgent(request, env); const body = await safeJson(request); await requireLatencyAgentForId(request, env, body.node_id); return json(await submitLatencyAgentResults(request, env, body), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/latency-agent/results' && m === 'POST') { await ensureV6Schema(env); const identity = await requireAnyLatencyAgent(request, env); const body = await safeJson(request); const nodeId = sanitizeAgentId(body.node_id); if (identity?.type !== 'scoped' || sanitizeAgentId(identity.node_id) !== nodeId) await requireLatencyAgentForId(request, env, body.node_id); return json(await submitLatencyAgentResults(request, env, body), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agent/update-policy' && m === 'GET') { await ensureV6Schema(env); const nodeId = url.searchParams.get('node_id') || ''; await requireLatencyAgentForId(request, env, nodeId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getLatencyAgentUpdatePolicy(env), 200, env, { 'cache-control': 'no-store' }); }
 
 
   if (path === '/api/totp/setup' && m === 'POST') { await withAdmin(request, env); return setupTOTP(env); }
-  if (path === '/api/totp/verify' && m === 'POST') { await withAdmin(request, env); return verifyTOTP(request, env); }
+  if (path === '/api/totp/verify' && m === 'POST') { await withAdmin(request, env); if (!await rateLimitD1(env, `totp-verify:${debugClientIp(request)}`, 10, 300)) return deny(300); return verifyTOTP(request, env); }
   if (path === '/api/totp/disable' && m === 'POST') { await withAdmin(request, env); return disableTOTP(env); }
 
 
@@ -446,6 +442,10 @@ async function dispatchStatic(env, url, request, ctx) {
 
   if (path === '/api/debug-colo' && m === 'GET') { await withAdmin(request, env); return debugColo(env, url); }
   if (path === '/api/debug/latency-health' && m === 'GET') { await withAdmin(request, env); return json(await getLatencyHealth(env, url), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/debug/usage-access-token' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getUsageSummaryAccessStatus(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/debug/usage-access-token' && m === 'POST') { if (!await rateLimitByIp(request, env, 3, 300, { bestEffort: true, keyPrefix: 'usage-summary-access-token' })) return deny(300); await withAdmin(request, env); await ensureV6Schema(env); return json(await createUsageSummaryAccess(env), 201, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/debug/usage-access-token' && m === 'DELETE') { if (!await rateLimitByIp(request, env, 3, 300, { bestEffort: true, keyPrefix: 'usage-summary-access-token' })) return deny(300); await withAdmin(request, env); await ensureV6Schema(env); return json(await revokeUsageSummaryAccess(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/debug/usage-summary' && m === 'GET') { if (!await rateLimitByIp(request, env, 6, 300, { bestEffort: true, keyPrefix: 'debug-usage-summary' })) return deny(300); await withUsageSummaryAccess(request, env); await ensureV6Schema(env); return json(await getDebugLogSummary(env, url), 200, env, { 'cache-control': 'private, max-age=30, stale-while-revalidate=30', 'x-nie-sla-debug-cost': 'one-bounded-d1-aggregate' }); }
   if (path === '/api/debug/logs' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listDebugLogs(env, url), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/targets' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listTargets(env), 200, env); }
   if (path === '/api/sync-targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await syncEnvTargets(env, { force: true }), 200, env); }
@@ -549,7 +549,7 @@ function debugActorFor(url, request, env) {
 }
 
 async function maybeLogDebugOperation(request, env, url, path, method, status, ctx, failed = false) {
-  if (!shouldLogDebugOperation(path, method)) return;
+  if (!shouldLogDebugOperation(path, method, failed)) return;
   const entry = {
     ip: debugClientIp(request),
     method,

@@ -5,9 +5,9 @@ import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
 
-const INSTALLER_SHA256 = '903f80ccdecda0f735f216e602ad84f018c01be1741a2902fd5a6ee386af8365';
-const SETUP_SHA256 = '885dc3569ac97cb1e5f95e0293acab64030e38b2a084a1401e9633f07722ee2d';
-const CFTZ_SHA256 = '40975e710f0c6f9a3115630d36d6431bb2a71ed615c1fc5c19fd7c8af9fb5e16';
+const INSTALLER_SHA256 = '7404e7af45832aeac71df72a8762e33c6f9a71f690541c7ceb318f4a58ffce7a';
+const SETUP_SHA256 = 'ae186c01e001863fc46724c2e61954f65590fae0be27eca0dd03e5d3494a8c93';
+const CFTZ_SHA256 = '49a0a476bc9260e6e3b5631abf7c5dd537e8cf141657cb93358f68c4fc363256';
 const INSTALL_TICKET_PREFIX = 'nsi_';
 const INSTALL_TICKET_BYTES = 24;
 const INSTALL_TICKET_TTL_SEC = 600;
@@ -47,6 +47,7 @@ export async function getAgentInstallCommand(env, url, request = null) {
   await cleanupInstallTickets(env, now);
 
   const linuxCommand = `(t=$(mktemp) && trap 'rm -f "$t"' EXIT INT TERM && chmod 0600 "$t" && curl -fsSL -H ${shellQuote(`Authorization: Bearer ${installTicket}`)} ${shellQuote(`${apiBase}${INSTALL_SCRIPT_PATH}`)} -o "$t" && sh "$t")`;
+  const linuxCommandRootless = `(t=$(mktemp) && trap 'rm -f "$t"' EXIT INT TERM && chmod 0600 "$t" && curl -fsSL -H ${shellQuote(`Authorization: Bearer ${installTicket}`)} ${shellQuote(`${apiBase}${INSTALL_SCRIPT_PATH}`)} -o "$t" && sh "$t" --rootless)`;
 
   return {
     ok: true,
@@ -58,6 +59,7 @@ export async function getAgentInstallCommand(env, url, request = null) {
     credential_type: 'one_time_install_token',
     install_token_expires_at: expiresAt,
     linux_command: linuxCommand,
+    linux_command_rootless: linuxCommandRootless,
   };
 }
 
@@ -168,11 +170,11 @@ function bearerToken(request) {
 }
 
 export async function agentApiBase(env, request = null, url = null, installBase = '') {
-  const explicit = String(env.PUBLIC_AGENT_API_BASE || env.AGENT_API_BASE || env.PUBLIC_API_BASE || '').trim();
-  if (explicit) return explicit.replace(/\/+$/, '');
-
   const stored = await getAgentPublicBase(env);
   if (stored) return stored;
+
+  const explicit = String(env.PUBLIC_AGENT_API_BASE || env.AGENT_API_BASE || env.PUBLIC_API_BASE || '').trim();
+  if (explicit) return explicit.replace(/\/+$/, '');
 
   const publicOrigin = publicRequestOrigin(request);
   if (publicOrigin) return publicOrigin.replace(/\/+$/, '');

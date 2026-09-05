@@ -29,6 +29,17 @@ export function latencyInstallCommandFromPayload(payload, expectedNodeId) {
 }
 
 export function agentInstallCommandFromPayload(payload, expectedTargetId) {
+  return agentCommandFromPayload(payload, expectedTargetId, 'linux_command');
+}
+
+// The rootless variant shares the same one-time ticket, so it must never be
+// appended to the copied command: the second download would 401 on the
+// already-consumed ticket. Use this with a dedicated copy action instead.
+export function agentRootlessInstallCommandFromPayload(payload, expectedTargetId) {
+  return agentCommandFromPayload(payload, expectedTargetId, 'linux_command_rootless');
+}
+
+function agentCommandFromPayload(payload, expectedTargetId, field) {
   if (!payload || payload.ok !== true) throw new Error(payload?.error || 'Worker 未返回有效安装命令');
   const targetId = String(payload.target_id || '');
   if (!targetId || targetId !== String(expectedTargetId || '')) throw new Error('安装命令与当前 Agent 不匹配，请刷新后台后重试');
@@ -36,20 +47,18 @@ export function agentInstallCommandFromPayload(payload, expectedTargetId) {
     throw new Error('安装命令未绑定一次性节点凭据，请重新生成');
   }
 
-  const command = String(payload.linux_command || payload.command || '').trim();
-  if (/(?:NIE_SLA|NSTATUS)_AGENT_TOKEN\s*=|\bnst_[a-f0-9]{32,}\b/i.test(command)) {
-    throw new Error('安装命令包含长期节点凭据，已拒绝复制');
-  }
   const apiBase = String(payload.api_base || '').replace(/\/+$/, '');
   const expectedEndpoint = apiBase ? `${apiBase}/api/agent/install-script` : '';
+  const command = String(payload[field] || payload.command || '').trim();
   if (
     !command
     || command.length > 1024
     || command.includes('\n')
+    || /(?:NIE_SLA|NSTATUS)_AGENT_TOKEN\s*=|\bnst_[a-f0-9]{32,}\b/i.test(command)
     || !INSTALL_TICKET_PATTERN.test(command)
     || !expectedEndpoint
     || !command.includes(`'${expectedEndpoint}'`)
-    || !/-o "\$t" && sh "\$t"\)$/.test(command)
+    || !/-o "\$t" && sh "\$t"( --rootless)?\)$/.test(command)
   ) {
     throw new Error('安装命令缺少有效的一次性节点凭据，请重新生成');
   }

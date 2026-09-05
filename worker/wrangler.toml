@@ -6,7 +6,27 @@ workers_dev = true
 [assets]
 directory = "./dist-one-click"
 binding = "ASSETS"
-run_worker_first = true
+# Keep dynamic/admin/unknown paths on the Worker, while letting known static
+# files go directly through the Assets CDN. This preserves the custom admin
+# path and API behavior without billing every JS/CSS/icon request as a Worker
+# invocation. Negative patterns take precedence over the catch-all pattern.
+run_worker_first = [
+  "/*",
+  "!/assets/*",
+  "!/bin/*",
+  "!/js/*",
+  "!/index.html",
+  "!/404.html",
+  "!/*.css",
+  "!/*.js",
+  "!/*.json",
+  "!/*.sh",
+  "!/cftz",
+  "!/VERSION",
+  "!/release-build-id.txt",
+  "!/_headers",
+  "!/.DS_Store",
+]
 not_found_handling = "404-page"
 
 [triggers]
@@ -16,8 +36,8 @@ crons = ["* * * * *"]
 PUBLIC_SITE_NAME = "NIE-SLA"
 ALLOWED_ORIGIN = "https://status.example.com"
 PUBLIC_SITE_ORIGIN = "https://status.example.com"
-PUBLIC_WORKER_URL = "https://api.example.com"
-PUBLIC_AGENT_API_BASE = "https://api.example.com"
+PUBLIC_WORKER_URL = "https://status.example.com"
+PUBLIC_AGENT_API_BASE = "https://status.example.com"
 TIMEZONE_OFFSET_MINUTES = "480"
 CONCURRENCY = "20"
 MAX_TARGETS_PER_RUN = "20"
@@ -26,8 +46,8 @@ CHECKS_WINDOW_HOURS = "72"
 INCIDENTS_TO_D1 = "true"
 PUBLIC_MASK_IPS = "true"
 PUBLIC_STATUS_AGENT_DETAILS = "true"
-PUBLIC_STATUS_UNLOCK_DETAILS = "true"
-PUBLIC_STATUS_STORAGE_DETAILS = "true"
+PUBLIC_STATUS_UNLOCK_DETAILS = "false"
+PUBLIC_STATUS_STORAGE_DETAILS = "false"
 AGENT_METRICS_RETENTION_HOURS = "6"
 AGENT_REPORT_INTERVAL_SEC = "300"
 AGENT_METRICS_POINTS_PER_REPORT = "6"
@@ -40,15 +60,21 @@ AGENT_METRICS_MAX_POINTS_24H = "1200"
 AGENT_PINGS_PUBLIC_MAX_HOURS = "72"
 AGENT_PINGS_HARD_MAX_POINTS_PER_TARGET = "2000"
 MISSED_BACKFILL_GRACE_SEC = "150"
-STATUS_CACHE_TTL = "60"
+STATUS_CACHE_TTL = "10"
 CHECKS_CACHE_TTL = "300"
 STATUS_SNAPSHOT_EVERY_SEC = "300"
 STATUS_SNAPSHOT_MAX_AGE_SEC = "420"
+STATUS_STREAM_MAX_CONNECTIONS = "200"
+STATUS_STREAM_MAX_CONNECTIONS_PER_IP = "10"
+STATUS_STREAM_MAX_SOCKET_AGE_SEC = "1800"
+STATUS_STREAM_MAX_IDLE_SEC = "90"
 AGENT_OFFLINE_AFTER_SEC = "900"
 AGENT_CREDENTIAL_TOUCH_SEC = "21600"
 TRAFFIC_PERSIST_INTERVAL_SEC = "1800"
 AGENT_METRICS_TO_D1 = "false"
+AGENT_METRICS_STATE_TO_D1 = "false"
 AGENT_PINGS_TO_D1 = "false"
+PROBE_LATEST_STATUS_TO_D1 = "false"
 PING_HISTORY_RETENTION_HOURS = "6"
 RATE_LIMIT_D1 = "true"
 MISSED_WRITE_BACKFILL_MAX_BUCKETS = "6"
@@ -61,10 +87,15 @@ FAST_STATUS_DOWN_AFTER_SEC = "0"
 HISTORY_PROBE_HEALTHY_INTERVAL_SEC = "300"
 HISTORY_PROBE_DOWN_INTERVAL_SEC = "120"
 HISTORY_PROBE_REGION_INTERVAL_SEC = "300"
-AGENT_UPDATE_CHECK_SEC = "86400"
+# Roll out transport fixes promptly after a Worker release. This does not
+# change telemetry, probe, ping, or UI refresh cadence; it only shortens the
+# maximum time an already-installed Agent can remain on the legacy HTTP path.
+AGENT_UPDATE_CHECK_SEC = "900"
 REGION_PROXY_BATCH_ENABLED = "true"
 TELEMETRY_FLUSH_INTERVAL_SEC = "3600"
-FAST_STATUS_MAX_TARGETS = "50"
+PROBE_HISTORY_BUFFER = "true"
+PROBE_HISTORY_R2_PREFIX = "probe-history-v1"
+FAST_STATUS_MAX_TARGETS = "100"
 AGENT_AUTO_UPDATE_DEFAULT = "true"
 
 [[d1_databases]]
@@ -84,6 +115,14 @@ class_name = "ProbeRegion"
 name = "TELEMETRY_BUFFER"
 class_name = "TelemetryBuffer"
 
+[[durable_objects.bindings]]
+name = "PROBE_HISTORY"
+class_name = "ProbeHistoryBuffer"
+
+[[durable_objects.bindings]]
+name = "STATUS_STREAM"
+class_name = "StatusStream"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["ProbeRegion"]
@@ -91,3 +130,11 @@ new_sqlite_classes = ["ProbeRegion"]
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["TelemetryBuffer"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["ProbeHistoryBuffer"]
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["StatusStream"]

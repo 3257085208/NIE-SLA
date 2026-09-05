@@ -670,13 +670,13 @@ fn set_executable(_path: &Path) -> Result<()> {
 
 fn systemd_telemetry_unit() -> String {
     format!(
-        "[Unit]\nDescription=NIE-SLA VPS Metrics Agent\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nExecStart={AGENT_BINARY}\nRestart=always\nRestartSec=15\nUser=nie-sla\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths={STATE_DIR}\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=NIE-SLA VPS Metrics Agent\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nExecStart={AGENT_BINARY}\nRestart=on-failure\nRestartSec=15\nUser=nie-sla\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths={STATE_DIR}\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
     )
 }
 
 fn systemd_manager_unit() -> String {
     format!(
-        "[Unit]\nDescription=NIE-SLA privileged Agent manager\nAfter=network-online.target {TELEMETRY_SERVICE}.service\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nEnvironment=NIE_SLA_TASK_RUNNER_ONLY=1\nExecStart={AGENT_BINARY} --task-runner-only\nRestart=always\nRestartSec=20\nUser=root\nPrivateTmp=true\nProtectHome=true\nUMask=0027\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=NIE-SLA privileged Agent manager\nAfter=network-online.target {TELEMETRY_SERVICE}.service\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nEnvironment=NIE_SLA_TASK_RUNNER_ONLY=1\nExecStart={AGENT_BINARY} --task-runner-only\nRestart=on-failure\nRestartSec=20\nUser=root\nPrivateTmp=true\nProtectHome=true\nUMask=0027\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
     )
 }
 
@@ -725,6 +725,7 @@ fn openrc_recovery_update_job() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WsEncoding;
 
     fn test_config(path: PathBuf) -> Config {
         Config {
@@ -741,6 +742,7 @@ mod tests {
             queue_max_samples: 1000,
             update_check_sec: 86_400,
             ws_enabled: false,
+            ws_encoding: WsEncoding::Json,
             once: false,
             task_runner_only: false,
         }
@@ -790,8 +792,12 @@ mod tests {
         let unit = systemd_manager_unit();
         assert!(unit.contains("ExecStart=/opt/nie-sla-agent/nie-sla-agent --task-runner-only"));
         assert!(unit.contains("User=root"));
+        assert!(unit.contains("Restart=on-failure"));
         assert!(!unit.contains("$NSTATUS_TASK"));
         assert!(!unit.contains("curl"));
+
+        let telemetry = systemd_telemetry_unit();
+        assert!(telemetry.contains("Restart=on-failure"));
 
         let openrc = openrc_manager_service();
         assert!(openrc.contains("start-stop-daemon --start --background --make-pidfile"));
@@ -845,6 +851,9 @@ mod tests {
             .expect("first lock");
         let second = acquire_instance_lock(&path, "test").unwrap();
         assert!(second.is_none());
+        // BSD flock ownership is process-scoped. Explicitly release the failed
+        // second acquisition before proving that the next acquisition works.
+        drop(second);
         drop(first);
         let third = acquire_instance_lock(&path, "test").unwrap();
         assert!(third.is_some());

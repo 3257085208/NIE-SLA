@@ -1,13 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.22",
-  "agent_version": "v1.1.22",
-  "source_ref": "app-v1.1.22",
-  "published_at": "2026-08-21T00:00:00Z",
-  "title": "NIE-SLA 1.1.22",
+  "version": "1.1.24",
+  "agent_version": "v1.1.24",
+  "source_ref": "app-v1.1.24",
+  "published_at": "2026-09-05T00:00:00Z",
+  "title": "NIE-SLA 1.1.24",
   "changelog": [
-    "批量 Pings：新增 GET /api/agent/pings/batch 与 GET /api/v1/pings/batch（agent_ids=a,b,c 1-50 限 100/60 隔离桶），支持 hours/format=series/max_points_per_target/include_loss，1 请求拿 39 卡全量，彻底 0-429（39 倍 R2 节省）。",
-    "单 Pings 保持 v1.1.21 的 300/120 放宽；主题 600/2000 隔离不变；其余限流与鉴权不变。"
+    "探测调度回写节流：targets 调度镜像每目标每 30 分钟回写一次，探测节奏仍由状态存储驱动。",
+    "调试日志收缩：仅保留登录/账号安全与任务失败详情，Agent 轮询与管理操作不再写入。",
+    "Agent 新增无 root 安装形态（install.sh --rootless）与自更新回滚确认；NodeQuality 任务增加本地超时（默认 3600 秒）。",
+    "安装器新增品牌横幅（NIE_SLA_BANNER=nie-sla|qq.sg|as218834）；安装命令复制恢复为单条。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -75,6 +75,9 @@ run_check "NQ public image broker route tests" node --experimental-loader "$ROOT
 run_check "login route hardening tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/login-route.test.mjs"
 run_check "fast-status probe cadence tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/probe-faststatus.test.mjs"
 run_check "durable telemetry buffer tests" node "$ROOT/worker/tests/telemetry-buffer.test.mjs"
+run_check "Agent telemetry Protobuf tests" node "$ROOT/worker/tests/telemetry-protobuf.test.mjs"
+run_check "durable probe history buffer tests" node "$ROOT/worker/tests/probe-history-buffer.test.mjs"
+run_check "public status stream tests" node "$ROOT/worker/tests/status-stream.test.mjs"
 run_check "Cloudflare free-tier budget tests" node "$ROOT/worker/tests/free-tier-budget.test.mjs"
 run_check "bulk VPS target update tests" node "$ROOT/worker/tests/target-bulk.test.mjs"
 run_check "VPS target creation defaults" node "$ROOT/worker/tests/target-create.test.mjs"
@@ -88,11 +91,15 @@ run_check "time-series export tests" node "$ROOT/worker/tests/timeseries-export.
 run_check "compact Ping series tests" node "$ROOT/worker/tests/ping-series.test.mjs"
 run_check "legacy chart color schema migration" node "$ROOT/worker/tests/schema-color-migration.test.mjs"
 run_check "debug operation log retention and safety" node "$ROOT/worker/tests/debug-logs.test.mjs"
+run_check "usage summary read-only access credential tests" node "$ROOT/worker/tests/usage-summary-access.test.mjs"
+run_check "usage summary read-only access route tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/usage-summary-access-route.test.mjs"
 run_check "auth order tests" node "$ROOT/worker/tests/auth-order.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
   run_check "public export tool" node --check "$ROOT/scripts/export-public.mjs"
   run_check "public export file classification" node "$ROOT/tests/public-export-files.test.mjs"
 fi
+run_check "site-only usage model syntax" node --check "$ROOT/scripts/usage-model.mjs"
+run_check "site-only usage model tests" node "$ROOT/tests/usage-model.test.mjs"
 run_shell "worker module bundle" "cd '$ROOT' && $PACKAGE_EXEC esbuild worker/src/index.js --bundle --format=esm --platform=browser --external:cloudflare:sockets --outfile='$TMP_DIR/nstatus-worker-bundle.mjs' && rm -f '$TMP_DIR/nstatus-worker-bundle.mjs'"
 run_shell "js undefined references" "cd '$ROOT' && $PACKAGE_EXEC eslint@10.6.0 -c tests/eslint.config.mjs worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests --no-error-on-unmatched-pattern"
 

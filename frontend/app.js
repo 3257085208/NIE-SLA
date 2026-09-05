@@ -1,14 +1,12 @@
 import { escapeAttr, escapeHtml } from './js/shared/html.js';
 import {
   billingCycleSuffix,
-  formatDateOnly,
   isLifetimeBilling,
   normalizeBillingCycle,
 } from './js/shared/billing.js';
 import {
   cssEscape,
   clampNumber,
-  downsample,
   fmtBytes,
   fmtBytesPerSec,
   fmtSizeMB,
@@ -19,15 +17,13 @@ import {
   minMax,
   normalizeCityName,
   pad,
-  percent,
   timeAgoSec,
 } from './js/shared/format.js';
 import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260820-themecfg1';
-import { canShowTemperature, hasGpuData, hasTemperatureData } from './js/shared/hardware.js';
-import { countryByCode, normalizeCountryCode } from './js/shared/target-catalogs.js';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260821-themecfg2';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260904-fix1';
+import { countryByCode } from './js/shared/target-catalogs.js';
 import {
-  chartColorToRgb,
   clampChartRange,
   countChartGaps,
   countMissedChecks,
@@ -35,13 +31,13 @@ import {
   hexToRgba,
   trimEmptyPointEdges,
 } from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260820-themecfg1';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260821-themecfg2';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
 import { targetSlaPercentage } from './js/shared/sla.js';
 import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
-import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260820-themecfg1';
-import { readMigratedStorage, readStorage, writeStorage } from './js/shared/storage.js?v=20260820-themecfg1';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260821-vpsdetail1';
+import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260821-themecfg2';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -91,6 +87,12 @@ const state = {
   groupByMode: normalizeGroupByMode(readMigratedStorage('localStorage', 'nie-sla.groupByMode', 'nstatus.groupByMode', 'group')),
   statusRequestSeq: 0,
   statusController: null,
+  statusStream: null,
+  statusStreamConnected: false,
+  statusStreamHeartbeatTimer: null,
+  statusStreamRetryMs: 1000,
+  statusStreamRetryTimer: null,
+  statusLastFullLoadedAt: 0,
   lastGroupsRenderKey: '',
   appearance: normalizeAppearance(DEFAULT_APPEARANCE),
 };
@@ -287,7 +289,10 @@ window.addEventListener('nstatus:chartjs-ready', () => {
 });
 initializeFrontendTheme();
 loadStatus();
-setInterval(loadStatus, 60_000);
+connectStatusStream();
+setInterval(() => {
+  if (!state.statusStreamConnected || Date.now() - state.statusLastFullLoadedAt >= 300_000) loadStatus();
+}, 10_000);
 
 function api(path) {
   return `${state.apiBase}${path}`;
@@ -314,7 +319,7 @@ async function loadStatus() {
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
     const res = await fetch(api('/api/status?days=30&lite=1'), {
-      cache: 'no-store',
+      cache: 'default',
       signal: controller.signal,
     });
 
@@ -326,6 +331,7 @@ async function loadStatus() {
 
     if (requestSeq !== state.statusRequestSeq) return;
     state.data = data;
+    state.statusLastFullLoadedAt = Date.now();
     render(data);
   } catch (err) {
     if (err.name === 'AbortError' || requestSeq !== state.statusRequestSeq) return;
@@ -344,6 +350,89 @@ async function loadStatus() {
   } finally {
     clearTimeout(timer);
     if (state.statusController === controller) state.statusController = null;
+  }
+}
+
+function statusStreamUrl() {
+  const base = state.apiBase || window.location.origin || window.location.href;
+  const url = new URL('/api/status/ws', base);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  return url.toString();
+}
+
+function connectStatusStream() {
+  if (!window.location?.protocol || !['http:', 'https:'].includes(window.location.protocol)
+    || typeof WebSocket !== 'function' || state.statusStream || state.statusStreamRetryTimer) return;
+  let socket;
+  try { socket = new WebSocket(statusStreamUrl()); } catch (_) { scheduleStatusStreamReconnect(); return; }
+  state.statusStream = socket;
+  socket.addEventListener('open', () => {
+    state.statusStreamConnected = true;
+    state.statusStreamRetryMs = 1000;
+    clearInterval(state.statusStreamHeartbeatTimer);
+    state.statusStreamHeartbeatTimer = setInterval(() => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      try { socket.send(JSON.stringify({ type: 'ping' })); } catch (_) {}
+    }, 20_000);
+  });
+  socket.addEventListener('message', (event) => {
+    let body;
+    try { body = JSON.parse(String(event.data || '')); } catch (_) { return; }
+    if (body?.type === 'status_update') applyStatusStreamEvents(body.events);
+  });
+  socket.addEventListener('error', () => {
+    try { socket.close(); } catch (_) {}
+  });
+  socket.addEventListener('close', () => {
+    clearInterval(state.statusStreamHeartbeatTimer);
+    state.statusStreamHeartbeatTimer = null;
+    if (state.statusStream === socket) state.statusStream = null;
+    state.statusStreamConnected = false;
+    scheduleStatusStreamReconnect();
+  });
+}
+
+function scheduleStatusStreamReconnect() {
+  if (state.statusStreamRetryTimer || typeof WebSocket !== 'function') return;
+  const delay = state.statusStreamRetryMs;
+  state.statusStreamRetryMs = Math.min(30_000, Math.max(1000, delay * 2));
+  state.statusStreamRetryTimer = setTimeout(() => {
+    state.statusStreamRetryTimer = null;
+    connectStatusStream();
+  }, delay);
+}
+
+function applyStatusStreamEvents(events) {
+  if (!state.data || !Array.isArray(state.data.targets)) {
+    loadStatus();
+    return;
+  }
+  let changed = false;
+  for (const event of Array.isArray(events) ? events : []) {
+    const target = state.data.targets.find(item => String(item?.id || '') === String(event?.target_id || ''));
+    if (!target) continue;
+    const incomingAt = Number(event?.checked_at || 0);
+    if (!incomingAt || incomingAt < Number(target.checked_at || 0)) continue;
+    Object.assign(target, {
+      checked_at: incomingAt,
+      last_checked_at: incomingAt,
+      ok: Number(event.ok) === 1 ? 1 : 0,
+      latency_ms: event.latency_ms == null ? null : Number(event.latency_ms),
+      status_code: event.status_code == null ? null : Number(event.status_code),
+      error: event.error == null ? null : String(event.error),
+      uptime_24h: event.uptime_24h == null ? target.uptime_24h : Number(event.uptime_24h),
+      uptime_7d: event.uptime_7d == null ? target.uptime_7d : Number(event.uptime_7d),
+      avg_latency_24h: event.avg_latency_24h == null ? target.avg_latency_24h : Number(event.avg_latency_24h),
+      last_fail_at: event.last_fail_at == null ? null : Number(event.last_fail_at),
+      current_outage_started_at: event.current_outage_started_at == null ? null : Number(event.current_outage_started_at),
+      last_recover_at: event.last_recover_at == null ? null : Number(event.last_recover_at),
+      status_changed_at: event.status_changed_at == null ? target.status_changed_at : Number(event.status_changed_at),
+    });
+    changed = true;
+  }
+  if (changed) {
+    state.data.now = new Date().toISOString();
+    render(state.data);
   }
 }
 
@@ -759,7 +848,7 @@ function renderGroup(name, list, days, summaries, index = 0) {
       <div class="group-head" role="button" tabindex="0">
         <span class="group-toggle">−</span>
         <div class="group-title">
-          <strong>${escapeHtml(displayGroupName(name))}</strong>
+          <strong>${escapeHtml(sharedDisplayGroupName(name))}</strong>
           <span>${describeGroup(name, list.length, up)}</span>
         </div>
         <span class="group-status">${escapeHtml(statusText)}</span>
@@ -916,11 +1005,30 @@ function configuredChartColor(value, fallback) {
   return /^#[0-9a-f]{6}$/.test(color) ? color : fallback;
 }
 
-function isTargetStale() {
+function isTargetStale(target = {}) {
+  const source = target?.status_source === 'agent'
+    ? target.last_metrics_at
+    : (target.checked_at ?? target.last_checked_at);
+  const timestamp = timestampSeconds(source);
+  if (!timestamp) return false;
+  const age = Math.floor(Date.now() / 1000) - timestamp;
+  if (age <= 0) return false;
+  const interval = boundedPositiveSeconds(target.interval_sec, 300, 60, 86_400);
+  const configured = boundedPositiveSeconds(target.agent_offline_after_sec || target.stale_after_sec, 0, 60, 86_400);
+  const grace = Math.min(900, Math.max(120, interval * 2));
+  return age > (configured || interval + grace);
+}
 
+function timestampSeconds(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric > 1e12 ? numeric / 1000 : numeric;
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed / 1000 : 0;
+}
 
-
-  return false;
+function boundedPositiveSeconds(value, fallback, min, max) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
 function daybarClassFromPct(pct) {
@@ -1184,9 +1292,19 @@ function normalizeAgentMetricsPayload(data) {
   if (!data?.series || !Array.isArray(data.series.dt)) return data;
   const { t0, dt, values } = data.series;
   const fields = Array.isArray(data.series.fields) ? data.series.fields : Object.keys(values || {});
+  const temperatureSensors = Array.isArray(data.series.temperature_sensors) ? data.series.temperature_sensors : [];
   const history = dt.map((delta, index) => {
     const point = { ts: Number(t0 || 0) + Number(delta || 0) };
     for (const field of fields) point[field] = Number(values?.[field]?.[index] || 0);
+    const sensors = temperatureSensors.flatMap((sensor) => {
+      const id = String(sensor?.id || '').trim();
+      const label = String(sensor?.label || '').trim();
+      const rawTemp = sensor?.temp_c?.[index];
+      const temp = Number(rawTemp);
+      if (!id || !label || rawTemp == null || rawTemp === '' || typeof rawTemp === 'boolean' || !Number.isFinite(temp)) return [];
+      return [{ id, label, kind: String(sensor?.kind || 'other'), temp_c: temp }];
+    });
+    if (sensors.length) point.temperature_sensors = sensors;
     return point;
   });
   return { ...data, history };
@@ -1337,7 +1455,7 @@ function temperatureSensorItems(info = {}) {
   if (!hasTemperatureData(info)) return [];
   const items = [];
   const add = (label, value) => {
-    if (Number.isFinite(Number(value))) items.push(vpsItem(label, `${Number(value).toFixed(1)}°C`));
+    if (isValidTemperature(value)) items.push(vpsItem(label, `${Number(value).toFixed(1)}°C`));
   };
   add('CPU', info.cpu_temp_c);
   add('GPU', info.gpu_temp_c);
@@ -1350,6 +1468,47 @@ function temperatureSensorItems(info = {}) {
   if (!sensors.some(sensor => sensor?.kind === 'disk')) add('硬盘', info.disk_temp_c);
   if (!sensors.some(sensor => sensor?.kind === 'chipset')) add('芯片组', info.chipset_temp_c);
   return items;
+}
+
+const TEMPERATURE_SENSOR_COLORS = ['#00897b', '#6d4c41', '#7e57c2', '#546e7a', '#c62828', '#2e7d32', '#1565c0', '#ad1457'];
+const TEMPERATURE_SENSOR_KIND_LABELS = { cpu: 'CPU', gpu: 'GPU', motherboard: '主板', disk: '硬盘', chipset: '芯片组', other: '传感器' };
+
+function temperatureSensorChartDefinitions(latest, history) {
+  const byId = new Map();
+  const register = (sensor) => {
+    const id = String(sensor?.id || '').trim();
+    if (!id || byId.has(id)) return;
+    byId.set(id, {
+      id,
+      label: String(sensor?.label || '').trim() || id,
+      kind: TEMPERATURE_SENSOR_KIND_LABELS[sensor?.kind] ? sensor.kind : 'other',
+      current: Number(sensor?.temp_c),
+    });
+  };
+  for (const sensor of latest?.vps_info?.temperature_sensors || []) register(sensor);
+  for (const point of history || []) {
+    for (const sensor of point?.temperature_sensors || []) register(sensor);
+  }
+  return [...byId.values()].map((sensor, index) => {
+    const points = (history || []).map((point) => {
+      const sample = (point?.temperature_sensors || []).find(item => String(item?.id || '').trim() === sensor.id);
+      const value = Number(sample?.temp_c);
+      return { x: Number(point.ts), y: isValidTemperature(value) ? value : null };
+    });
+    const values = points.map(point => point.y).filter(isValidTemperature);
+    const currentValue = Number(sensor.current);
+    const currentOnly = !values.length && isValidTemperature(currentValue);
+    if (currentOnly && points.length) points[points.length - 1].y = currentValue;
+    return {
+      ...sensor,
+      label: `${TEMPERATURE_SENSOR_KIND_LABELS[sensor.kind] || '传感器'} · ${sensor.label}`,
+      color: TEMPERATURE_SENSOR_COLORS[index % TEMPERATURE_SENSOR_COLORS.length],
+      points,
+      values: currentOnly ? [currentValue] : values,
+      currentOnly,
+      currentValue,
+    };
+  }).filter(item => item.values.length);
 }
 
 function vpsItem(label, value) {
@@ -1614,7 +1773,7 @@ function checkStatusLabel(c) {
   return Number(c.ok) ? '成功' : '失败';
 }
 function targetHasStatus(target) {
-  return target?.status_source === 'agent' ? Boolean(target.last_metrics_at) : Boolean(target?.checked_at);
+  return target?.status_source === 'agent' ? Boolean(timestampSeconds(target.last_metrics_at)) : Boolean(timestampSeconds(target?.checked_at));
 }
 
 function targetIsUp(target) {
@@ -1842,7 +2001,7 @@ function updateChartForCurrentRange() {
 
   updateChart(rangeChecks, state.selectedName || '服务');
 
-  const expected = expectedChartGapSec(state.selectedRange);
+  const expected = expectedChartGapSec();
   const gapCount = countChartGaps(rangeChecks, expected);
   const missedCount = countMissedChecks(rangeChecks);
   const externalCount = (state.externalLatencySources || []).length;
@@ -1902,12 +2061,16 @@ function updateMetricsChart() {
 
   if (!m.history || !m.history.length) {
     const latestTs = Math.floor(new Date(m.latest.updated_at || 0).getTime() / 1000) || Math.floor(Date.now() / 1000);
+    const latestInfo = m.latest.vps_info || {};
     m.history = [{
       ts: latestTs, cpu: m.latest.cpu_percent, mem: m.latest.memory?.percent || 0,
       disk: m.latest.disk?.percent || 0, load1: m.latest.load?.load1 || 0,
       net_rx: m.latest.net?.rx_bytes_sec || 0, net_tx: m.latest.net?.tx_bytes_sec || 0,
       tcp_conns: m.latest.net?.tcp_conns || 0, udp_conns: m.latest.net?.udp_conns || 0,
       disk_read: m.latest.diskio?.read_bytes_sec || 0, disk_write: m.latest.diskio?.write_bytes_sec || 0,
+      cpu_temp: latestInfo.cpu_temp_c, gpu_temp: latestInfo.gpu_temp_c,
+      motherboard_temp: latestInfo.motherboard_temp_c, disk_temp: latestInfo.disk_temp_c,
+      chipset_temp: latestInfo.chipset_temp_c, temperature_sensors: latestInfo.temperature_sensors,
     }];
   }
 
@@ -1954,34 +2117,45 @@ function updateMetricsChart() {
       { field: 'chipset_temp', latest: 'chipset_temp_c', label: '芯片组', color: '#64748b' },
     ];
     const series = definitions.map(definition => {
-      const values = history.map(point => Number(point[definition.field])).filter(Number.isFinite);
+      const values = history.map(point => Number(point[definition.field])).filter(value => isValidTemperature(value));
       return {
         ...definition,
         values,
-        points: history.map(point => ({ x: Number(point.ts), y: Number.isFinite(Number(point[definition.field])) ? Number(point[definition.field]) : null })),
+        points: history.map(point => ({ x: Number(point.ts), y: isValidTemperature(point[definition.field]) ? Number(point[definition.field]) : null })),
       };
     }).filter(item => item.values.length);
+    const dynamicSeries = temperatureSensorChartDefinitions(latest, history);
+    const temperatureSeries = [...series, ...dynamicSeries];
     els.chartTitle.textContent = '温度';
-    els.chartMeta.textContent = series.length
-      ? `${series.map(item => `${item.label} 平均 ${(item.values.reduce((a, b) => a + b, 0) / item.values.length).toFixed(1)}°C`).join(' · ')} · ${history.length} 个采样点`
+    els.chartMeta.textContent = temperatureSeries.length
+      ? `${temperatureSeries.map(item => `${item.label} ${item.currentOnly ? '当前' : '平均'} ${(item.values.reduce((a, b) => a + b, 0) / item.values.length).toFixed(1)}°C`).join(' · ')} · ${history.length} 个采样点`
       : '当前设备未提供可用的温度历史数据。';
     const currentTemperatures = definitions.map(item => {
       const raw = latest.vps_info?.[item.latest];
-      const value = Number(raw);
-      return raw != null && Number.isFinite(value) ? `${item.label} ${value.toFixed(1)}°C` : '';
-    }).filter(Boolean);
+      return isValidTemperature(raw) ? `${item.label} ${Number(raw).toFixed(1)}°C` : '';
+    }).concat(dynamicSeries.map(item => (
+      isValidTemperature(item.currentValue) ? `${item.label} ${item.currentValue.toFixed(1)}°C` : ''
+    ))).filter(Boolean);
     els.chartAvg.textContent = currentTemperatures.join(' · ') || '-';
     if (!state.chart) return;
-    state.chart.data.datasets = series.map(item => netDataset(`${item.label} °C`, item.points, item.color));
+    state.chart.data.datasets = temperatureSeries.map(item => {
+      const dataset = netDataset(`${item.label} °C`, item.points, item.color);
+      if (item.currentOnly) {
+        dataset.pointRadius = 4;
+        dataset.pointHoverRadius = 5;
+      }
+      return dataset;
+    });
   } else if (metric === 'gpu') {
     const showTemperature = canShowTemperature(latest.vps_info || {});
     const utilPoints = history.map(p => ({ x: Number(p.ts), y: Number(p.gpu_util) || 0 }));
-    const tempPoints = history.map(p => ({ x: Number(p.ts), y: Number.isFinite(Number(p.gpu_temp)) ? Number(p.gpu_temp) : null }));
+    const tempPoints = history.map(p => ({ x: Number(p.ts), y: isValidTemperature(p.gpu_temp) ? Number(p.gpu_temp) : null }));
     const utilVals = history.map(p => Number(p.gpu_util)).filter(Number.isFinite);
     const avg = utilVals.length ? utilVals.reduce((a, b) => a + b, 0) / utilVals.length : 0;
     els.chartTitle.textContent = 'GPU';
     els.chartMeta.textContent = `占用平均 ${avg.toFixed(1)}% · ${history.length} 个采样点`;
-    els.chartAvg.textContent = `占用 ${Number(latest.vps_info?.gpu_util ?? latest.gpu_util ?? 0).toFixed(1)}%${showTemperature ? ` · 温度 ${Number(latest.vps_info?.gpu_temp_c ?? latest.gpu_temp_c ?? 0).toFixed(1)}°C` : ''}`;
+    const gpuTempRaw = latest.vps_info?.gpu_temp_c ?? latest.gpu_temp_c;
+    els.chartAvg.textContent = `占用 ${Number(latest.vps_info?.gpu_util ?? latest.gpu_util ?? 0).toFixed(1)}%${showTemperature && isValidTemperature(gpuTempRaw) ? ` · 温度 ${Number(gpuTempRaw).toFixed(1)}°C` : ''}`;
     if (!state.chart) return;
     state.chart.data.datasets = [
       netDataset('占用 %', utilPoints, '#3949ab'),
@@ -2592,14 +2766,9 @@ function updateChartZoomButton() {
   els.chartReset.disabled = !zoomed;
 }
 
-function expectedChartGapSec(range) {
+function expectedChartGapSec() {
   const intervalSec = Math.max(300, Number(state.selectedTargetIntervalSec || 300));
   return Math.max(300, Math.round(intervalSec * 1.6));
-}
-
-function chartLineBreakGapSec(range) {
-  const intervalSec = Math.max(300, Number(state.selectedTargetIntervalSec || 300));
-  return Math.max(expectedChartGapSec(range), Math.round(intervalSec * 6));
 }
 
 function rangeLabel(range) {
@@ -2753,10 +2922,6 @@ function describeGroup(name, total, up) {
   return `${up}/${total} 个服务运行正常`;
 }
 
-function displayGroupName(name) {
-  return sharedDisplayGroupName(name);
-}
-
 function targetSearchText(t) {
   const country = countryByCode(t.location);
   return [
@@ -2790,14 +2955,6 @@ function indexSummaries(rows) {
   });
 
   return map;
-}
-
-function groupBy(arr, fn) {
-  return arr.reduce((acc, x) => {
-    const k = fn(x);
-    (acc[k] ||= []).push(x);
-    return acc;
-  }, {});
 }
 
 function avgLatency(rows) {

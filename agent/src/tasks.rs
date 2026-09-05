@@ -22,6 +22,8 @@ const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const MAX_NODEQUALITY_ARTIFACT_BYTES: usize = 24 * 1024;
 const MAX_NODEQUALITY_CAPTURE_CHARS: usize = 180 * 1024;
 const IP_UNLOCK_TIMEOUT_SEC: u64 = 600;
+const NODEQUALITY_DEFAULT_TIMEOUT_SEC: u64 = 3600;
+const NODEQUALITY_MAX_TIMEOUT_SEC: u64 = 7200;
 const NODEQUALITY_CAPTURE_BEGIN: &str = "__NIE_SLA_NQ_ARTIFACTS_V1_BEGIN__";
 const NODEQUALITY_CAPTURE_END: &str = "__NIE_SLA_NQ_ARTIFACTS_V1_END__";
 
@@ -150,12 +152,25 @@ impl TaskCancellation {
             percent_encode_query(&self.task_id),
             percent_encode_query(&self.agent_id),
         );
-        let Ok(body) = self.http.get(&url, &self.token) else {
-            return false;
-        };
-        match serde_json::from_str::<Value>(&body) {
-            Ok(value) => value.get("cancelled").and_then(Value::as_bool) == Some(true),
-            Err(_) => false,
+        let outcome = self
+            .http
+            .get(&url, &self.token)
+            .map_err(|error| error.to_string())
+            .and_then(|body| {
+                serde_json::from_str::<Value>(&body)
+                    .map(|value| value.get("cancelled").and_then(Value::as_bool) == Some(true))
+                    .map_err(|error| error.to_string())
+            });
+        match outcome {
+            Ok(cancelled) => cancelled,
+            Err(error) => {
+                eprintln!(
+                    "{{\"ok\":false,\"task_cancel_status_error\":{}}}",
+                    serde_json::to_string(&error)
+                        .unwrap_or_else(|_| "\"cancel status check failed\"".into())
+                );
+                false
+            }
         }
     }
 }
@@ -181,7 +196,7 @@ fn execute_fixed_task(
         return Err(anyhow!("Beta task actions currently require Linux"));
     }
     match action {
-        "nodequality" => run_nodequality(cfg, http, options, cancellation),
+        "nodequality" => run_nodequality(cfg, http, timeout_sec, options, cancellation),
         "ip_unlock" => run_ip_unlock(cfg, http, timeout_sec, cancellation),
         _ => Err(anyhow!("unsupported fixed task action")),
     }
@@ -190,6 +205,7 @@ fn execute_fixed_task(
 fn run_nodequality(
     cfg: &Config,
     http: &HttpClient,
+    timeout_sec: Option<u64>,
     options: Option<&Value>,
     cancellation: Option<&TaskCancellation>,
 ) -> Result<TaskOutput> {
@@ -198,7 +214,7 @@ fn run_nodequality(
     let output = run_fixed_remote_script(
         cfg,
         http,
-        None,
+        Some(nodequality_timeout_sec(timeout_sec)),
         "https://run.NodeQuality.com",
         &[],
         Some(&stdin),
@@ -206,6 +222,12 @@ fn run_nodequality(
         cancellation,
     )?;
     nodequality_task_output(&output)
+}
+
+fn nodequality_timeout_sec(timeout_sec: Option<u64>) -> u64 {
+    timeout_sec
+        .unwrap_or(NODEQUALITY_DEFAULT_TIMEOUT_SEC)
+        .min(NODEQUALITY_MAX_TIMEOUT_SEC)
 }
 
 fn nodequality_stdin(options: Option<&Value>) -> Vec<u8> {
@@ -1681,6 +1703,40 @@ mod tests {
     #[test]
     fn fixed_task_timeouts_are_action_specific() {
         assert_eq!(IP_UNLOCK_TIMEOUT_SEC, 600);
+        assert_eq!(NODEQUALITY_DEFAULT_TIMEOUT_SEC, 3600);
+        assert_eq!(NODEQUALITY_MAX_TIMEOUT_SEC, 7200);
+    }
+
+    #[test]
+    fn nodequality_tasks_get_a_bounded_local_timeout() {
+        use std::ffi::OsStr;
+
+        assert_eq!(nodequality_timeout_sec(None), NODEQUALITY_DEFAULT_TIMEOUT_SEC);
+        assert_eq!(nodequality_timeout_sec(Some(1800)), 1800);
+        assert_eq!(
+            nodequality_timeout_sec(Some(999_999)),
+            NODEQUALITY_MAX_TIMEOUT_SEC
+        );
+
+        let command = fixed_task_command(Some(nodequality_timeout_sec(None)));
+        assert_eq!(command.get_program(), OsStr::new("timeout"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![
+                OsStr::new("-k"),
+                OsStr::new("5s"),
+                OsStr::new("3600s"),
+                OsStr::new("bash")
+            ]
+        );
+    }
+
+    #[test]
+    fn nodequality_runner_wires_the_bounded_timeout_through() {
+        let source = include_str!("tasks.rs");
+        assert!(source
+            .contains("\"nodequality\" => run_nodequality(cfg, http, timeout_sec, options, cancellation)"));
+        assert!(source.contains("Some(nodequality_timeout_sec(timeout_sec))"));
     }
 
     #[test]

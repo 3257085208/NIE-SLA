@@ -4,6 +4,38 @@ import { ensureV6Schema } from './schema.js';
 
 const LOG_LEVEL = 'debug';
 const RETENTION_DAYS = 30;
+const SUMMARY_MAX_HOURS = 24;
+const SUMMARY_GROUP_LIMIT = 512;
+const DEBUG_ROUTE_BUCKETS = [
+  'agent_tasks',
+  'agent_task_action',
+  'agent_update_policy',
+  'agent_config',
+  'agent_location',
+  'agent_ping_targets',
+  'latency_update_policy',
+  'latency_targets',
+  'latency_results',
+  'admin_agent_tasks',
+  'other_debug',
+];
+
+// Keep this expression deliberately independent of user input.  It converts
+// dynamic target/task paths into a small, bounded set before aggregation, so
+// the diagnostic endpoint cannot return one row per ID or expose log details.
+const DEBUG_ROUTE_CASE_SQL = `CASE
+    WHEN path = '/api/agent/tasks' AND method = 'GET' THEN 'agent_tasks'
+    WHEN path LIKE '/api/agent/tasks/%' THEN 'agent_task_action'
+    WHEN path = '/api/agent/update-policy' THEN 'agent_update_policy'
+    WHEN path = '/api/agent/config' THEN 'agent_config'
+    WHEN path = '/api/agent/location' THEN 'agent_location'
+    WHEN path = '/api/agent/ping-targets' THEN 'agent_ping_targets'
+    WHEN path = '/api/latency-agent/update-policy' THEN 'latency_update_policy'
+    WHEN path = '/api/latency-agent/targets' THEN 'latency_targets'
+    WHEN path = '/api/latency-agent/results' THEN 'latency_results'
+    WHEN path = '/api/agent-tasks' OR path LIKE '/api/agent-tasks/%' THEN 'admin_agent_tasks'
+    ELSE 'other_debug'
+  END`;
 const DEBUG_ROUTES = [
   { match: /^\/api\/auth\/login$/, methods: ['POST'], summary: '管理员登录' },
   { match: /^\/api\/auth\/account$/, summary: '管理员账号' },
@@ -52,11 +84,57 @@ function boundedParam(url, name, fallback, min, max) {
   return Number.isFinite(value) ? clamp(value, min, max) : fallback;
 }
 
-export function shouldLogDebugOperation(path, method) {
+function parseTimestamp(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return 0;
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const number = Number(raw);
+    if (!Number.isFinite(number)) return 0;
+    return Math.floor(number > 1e12 ? number / 1000 : number);
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
+}
+
+function summaryWindow(url) {
+  const now = Math.floor(Date.now() / 1000);
+  const requestedTo = parseTimestamp(url?.searchParams?.get('to'));
+  const to = requestedTo > 0 ? Math.min(requestedTo, now) : now;
+  const requestedFrom = parseTimestamp(url?.searchParams?.get('from'));
+  const requestedHours = boundedParam(url, 'hours', SUMMARY_MAX_HOURS, 1, SUMMARY_MAX_HOURS);
+  const maxFrom = Math.max(0, to - SUMMARY_MAX_HOURS * 3600);
+  let from = requestedFrom > 0 ? requestedFrom : to - requestedHours * 3600;
+  const clampedFrom = from < maxFrom;
+  const invalidOrder = from >= to;
+  if (clampedFrom) from = maxFrom;
+  if (invalidOrder) from = Math.max(0, to - 1);
+  return {
+    from,
+    to,
+    hours: (to - from) / 3600,
+    clamped_to_now: requestedTo > now,
+    clamped_window: clampedFrom || invalidOrder,
+  };
+}
+
+function integerCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.round(number) : 0;
+}
+
+// 调试日志只保留两类（用户定义的范围）：
+//  1. 登录与账号安全（/api/auth/*、/api/totp/*，成功与失败都记录）
+//  2. Agent 任务失败详情（/api/agent/tasks 的失败完成或错误）
+// 其余操作（Agent 轮询、配置读取、管理列表等）不再写 debug_logs。
+export function shouldLogDebugOperation(path, method, failed = false) {
   if (path === '/api/debug/logs') return false;
+  if (path === '/api/auth/' || path.startsWith('/api/auth/') || path.startsWith('/api/totp/')) return true;
+  if (failed !== true) return false;
   const upper = String(method || 'GET').toUpperCase();
-  return DEBUG_ROUTES.some(route => route.match.test(path)
-    && (!route.methods || route.methods.includes(upper)));
+  return path === '/api/agent/tasks' || path.startsWith('/api/agent/tasks/')
+    ? DEBUG_ROUTES.some(route => route.match.test(path)
+      && (!route.methods || route.methods.includes(upper)))
+    : false;
 }
 
 export function debugSummary(path, method) {
@@ -139,6 +217,90 @@ export async function listDebugLogs(env, url = new URL('https://status.example/a
     total: Number(countRow?.total || 0),
     limit,
     offset,
+  };
+}
+
+export async function getDebugLogSummary(env, url = new URL('https://status.example/api/debug/usage-summary')) {
+  const window = summaryWindow(url);
+  const routeCounts = Object.fromEntries(DEBUG_ROUTE_BUCKETS.map((route) => [route, 0]));
+  const empty = {
+    ok: true,
+    schema: 'nie-sla-debug-summary-v1',
+    source: 'debug_logs',
+    available: Boolean(env?.DB),
+    window: {
+      from: window.from,
+      to: window.to,
+      from_iso: new Date(window.from * 1000).toISOString(),
+      to_iso: new Date(window.to * 1000).toISOString(),
+      hours: Number(window.hours.toFixed(3)),
+      clamped_to_now: window.clamped_to_now,
+      clamped_window: window.clamped_window,
+      timezone: 'UTC',
+    },
+    total: 0,
+    route_counts: routeCounts,
+    status_counts: {},
+    method_counts: {},
+    groups: [],
+    complete: Boolean(env?.DB),
+    truncated: false,
+    query: {
+      statements: 0,
+      raw_rows_returned: 0,
+      aggregate_rows_returned: 0,
+      max_hours: SUMMARY_MAX_HOURS,
+      max_groups: SUMMARY_GROUP_LIMIT,
+      mode: 'bounded_aggregate',
+      time_index: 'idx_debug_logs_ts',
+    },
+  };
+  if (!env?.DB) return empty;
+
+  const result = await env.DB.prepare(`
+    SELECT ${DEBUG_ROUTE_CASE_SQL} AS route, method, status, COUNT(*) AS total
+    FROM debug_logs
+    WHERE ts >= ? AND ts < ?
+    GROUP BY route, method, status
+    ORDER BY total DESC, route ASC, method ASC, status ASC
+    LIMIT ?`)
+    .bind(window.from, window.to, SUMMARY_GROUP_LIMIT)
+    .all();
+  const rows = Array.isArray(result) ? result : (result?.results || []);
+  const statusCounts = {};
+  const methodCounts = {};
+  const groups = [];
+  let total = 0;
+  for (const row of rows) {
+    const route = DEBUG_ROUTE_BUCKETS.includes(String(row?.route || '')) ? String(row.route) : 'other_debug';
+    const method = cleanText(row?.method, 12, '');
+    const status = integerCount(row?.status);
+    const count = integerCount(row?.total);
+    if (!count) continue;
+    routeCounts[route] += count;
+    const statusKey = String(status || 0);
+    statusCounts[statusKey] = integerCount(statusCounts[statusKey]) + count;
+    const methodKey = method || 'UNKNOWN';
+    methodCounts[methodKey] = integerCount(methodCounts[methodKey]) + count;
+    total += count;
+    groups.push({ route, method, status, count });
+  }
+  const truncated = rows.length >= SUMMARY_GROUP_LIMIT;
+  return {
+    ...empty,
+    available: true,
+    total,
+    route_counts: routeCounts,
+    status_counts: statusCounts,
+    method_counts: methodCounts,
+    groups,
+    complete: !truncated,
+    truncated,
+    query: {
+      ...empty.query,
+      statements: 1,
+      aggregate_rows_returned: groups.length,
+    },
   };
 }
 

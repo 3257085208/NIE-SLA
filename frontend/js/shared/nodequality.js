@@ -57,7 +57,6 @@ export function renderNqAnsiHtml(content = '', wrapCharsArg = 0) {
   let html = '';
   let lineCols = 0;
   let lineLeading = 0;
-  let lineStarted = false;
   let lineIndent = 0;
   let firstSeen = false;
   let colonSeen = false;
@@ -78,7 +77,7 @@ export function renderNqAnsiHtml(content = '', wrapCharsArg = 0) {
       let out = '';
       for (const ch of text) {
         if (ch === '\n') {
-          lineCols = 0; lineLeading = 0; lineStarted = false; lineIndent = 0;
+          lineCols = 0; lineLeading = 0; lineIndent = 0;
           firstSeen = false; colonSeen = false; afterColon = false; colonGap = 0;
           out += ch; continue;
         }
@@ -98,7 +97,6 @@ export function renderNqAnsiHtml(content = '', wrapCharsArg = 0) {
         if (nextCols > wrapChars) {
           out += '\n' + ' '.repeat(lineIndent);
           lineCols = lineIndent + cols;
-          lineStarted = true;
         } else {
           lineCols = nextCols;
         }

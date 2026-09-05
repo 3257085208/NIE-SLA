@@ -25,10 +25,11 @@ export { syncEnvTargets, syncEnvTargetsMaybe } from './admin/sync.js';
 export { archiveDay, archiveYesterdayOncePerLocalDay, getRecentIncidents, getStats } from './admin/archive.js';
 
 
-export { upsertLatestStatus, writeIncidentEvent, touchActiveIncident, upsertTargetLastCheckedAt, upsertCheckBucket, readCheckBuckets, readCheckBucketDaySummary, getCheckBucketSummaries, checkBucketSummaryQueryPlan, applyProbeWriteBatch, cleanupOldCheckBuckets, cleanupVolatileHistory } from './admin/check-buckets.js';
+export { upsertLatestStatus, latestStatusToD1Enabled, writeIncidentEvent, touchActiveIncident, upsertTargetLastCheckedAt, upsertCheckBucket, readCheckBuckets, readCheckBucketDaySummary, getCheckBucketSummaries, checkBucketSummaryQueryPlan, buildSummaryFallbackOptions, applyProbeWriteBatch, cleanupOldCheckBuckets, cleanupVolatileHistory } from './admin/check-buckets.js';
 
 
-export { cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, sanitizeDebugLogEntry, shouldLogDebugOperation } from './admin/debug-logs.js';
+export { cleanupDebugLogs, debugClientIp, debugSummary, getDebugLogSummary, listDebugLogs, recordDebugLog, sanitizeDebugLogEntry, shouldLogDebugOperation } from './admin/debug-logs.js';
+export { createUsageSummaryAccess, getUsageSummaryAccessStatus, revokeUsageSummaryAccess, usageSummaryBearerToken, validateUsageSummaryAccess } from './admin/usage-summary-access.js';
 
 
 export { getAgentInstallCommand, getAgentInstallScript } from './admin/install-command.js';
@@ -40,6 +41,6 @@ export { getLatencyHealth } from './admin/latency-health.js';
 export { listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, getLatestExternalLatencyByTarget } from './admin/latency-agents.js';
 
 
-export { AGENT_TASK_ACTIONS, createAgentTask, createAgentTasks, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, normalizeTaskResult } from './admin/agent-tasks.js';
+export { AGENT_TASK_ACTIONS, createAgentTask, createAgentTasks, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, normalizeTaskResult, cleanupFinishedAgentTasks } from './admin/agent-tasks.js';
 export { GEOIP_PROVIDERS, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, validateCustomGeoIpUrl } from './admin/agent-location.js';
 export { exportBackup, previewBackup, restoreBackup, createRestoreSnapshot } from './admin/backup.js';

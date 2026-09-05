@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::fs;
 use std::io::Read;
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, System};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::{connect, Message};
-use ureq::{config::IpFamily, ResponseExt};
+use ureq::{config::IpFamily, http::Uri, ResponseExt};
 
 mod dns_compat;
 mod geoip;
@@ -23,9 +23,12 @@ mod manager;
 mod platform;
 mod queue;
 mod tasks;
+mod telemetry_proto;
 mod updater;
 
 use queue::{default_queue_file, flush_sample_queue, load_sample_queue, spawn_queue_writer};
+#[cfg(target_os = "linux")]
+use updater::{confirm_pending_update, rollback_stale_pending_update};
 use updater::{restart_after_update, spawn_update_worker, UpdateRole};
 
 const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -45,6 +48,8 @@ const MAX_PING_CONCURRENCY: usize = 32;
 const TCP_PING_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_PING_RESOLVED_ADDRESSES: usize = 8;
 const WS_READ_TIMEOUT: Duration = Duration::from_secs(45);
+const WS_RETRY_MIN_DELAY: Duration = Duration::from_secs(60);
+const WS_RETRY_MAX_DELAY: Duration = Duration::from_secs(300);
 
 #[derive(Clone, Debug)]
 struct Config {
@@ -61,14 +66,23 @@ struct Config {
     queue_max_samples: usize,
     update_check_sec: u64,
     ws_enabled: bool,
+    ws_encoding: WsEncoding,
     once: bool,
     task_runner_only: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WsEncoding {
+    Json,
+    Protobuf,
 }
 
 #[derive(Clone)]
 struct HttpClient {
     ipv4: ureq::Agent,
     ipv6: ureq::Agent,
+    public_ipv4: ureq::Agent,
+    public_ipv6: ureq::Agent,
     probe_ipv4: ureq::Agent,
     probe_ipv6: ureq::Agent,
 }
@@ -81,8 +95,46 @@ struct WsUploader {
 enum WsCommand {
     Submit {
         body: String,
-        response: mpsc::Sender<Result<Option<u64>>>,
+        binary: Option<Vec<u8>>,
+        response: mpsc::Sender<Result<WsSubmitResponse>>,
     },
+}
+
+#[derive(Clone, Debug)]
+struct WsRetryState {
+    next_attempt: Option<Instant>,
+    delay: Duration,
+}
+
+impl Default for WsRetryState {
+    fn default() -> Self {
+        Self {
+            next_attempt: None,
+            delay: WS_RETRY_MIN_DELAY,
+        }
+    }
+}
+
+impl WsRetryState {
+    fn retry_delay(&self, now: Instant) -> Option<Duration> {
+        self.next_attempt
+            .map(|deadline| deadline.saturating_duration_since(now))
+            .filter(|remaining| !remaining.is_zero())
+    }
+
+    fn record_failure(&mut self, now: Instant) {
+        self.next_attempt = Some(now + self.delay);
+        self.delay = self
+            .delay
+            .checked_mul(2)
+            .unwrap_or(WS_RETRY_MAX_DELAY)
+            .min(WS_RETRY_MAX_DELAY);
+    }
+
+    fn record_success(&mut self) {
+        self.next_attempt = None;
+        self.delay = WS_RETRY_MIN_DELAY;
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -217,7 +269,7 @@ struct Metrics {
 
 #[derive(Debug)]
 struct UploadResult {
-    result: Result<Option<u64>>,
+    result: Result<WsSubmitResponse>,
     last_sample_ts: i64,
     sample_count: usize,
     ping_count: usize,
@@ -283,6 +335,12 @@ struct PingResult {
 struct PingPlan {
     targets: Vec<PingTarget>,
     interval_sec: u64,
+}
+
+#[derive(Debug, Default)]
+struct WsSubmitResponse {
+    ping_interval_sec: Option<u64>,
+    ping_plan: Option<PingPlan>,
 }
 
 #[derive(Debug)]
@@ -371,7 +429,8 @@ fn run() -> Result<()> {
         cfg.queue_max_samples,
     );
     let ping_interval_sec = Arc::new(AtomicU64::new(cfg.ping_sec));
-    let ping_rx = spawn_ping_worker(cfg.clone(), http.clone(), ping_interval_sec.clone());
+    let (ping_rx, ping_plan_tx) =
+        spawn_ping_worker(cfg.clone(), http.clone(), ping_interval_sec.clone());
     let update_rx = if cfg.once {
         None
     } else {
@@ -389,6 +448,12 @@ fn run() -> Result<()> {
     geoip::spawn_geoip_worker(cfg.clone(), http.clone());
     let mut last_report = Instant::now();
     let mut first_report = true;
+    #[cfg(target_os = "linux")]
+    if let Ok(true) = rollback_stale_pending_update() {
+        eprintln!("{{\"ok\":true,\"update_rollback\":\"restored previous agent binary\"}}");
+        flush_sample_queue(&queue_tx)?;
+        restart_after_update(&std::env::current_exe().unwrap_or_default())?;
+    }
     let mut uploading = false;
     let mut last_upload_failed = false;
     let retry_sec = cfg.report_sec.clamp(10, 60);
@@ -407,11 +472,18 @@ fn run() -> Result<()> {
         while let Ok(result) = upload_rx.try_recv() {
             uploading = false;
             match result.result {
-                Ok(next_ping_interval) => {
-                    if let Some(interval) = next_ping_interval {
+                Ok(upload) => {
+                    if let Some(plan) = upload.ping_plan {
+                        let _ = ping_plan_tx.send(plan);
+                    }
+                    if let Some(interval) = upload.ping_interval_sec {
                         apply_ping_interval(&ping_interval_sec, interval);
                     }
                     last_upload_failed = false;
+                    #[cfg(target_os = "linux")]
+                    {
+                        let _ = confirm_pending_update();
+                    }
                     drop_samples_through(&mut samples, result.last_sample_ts);
                     let _ = queue_tx.send(QueueCommand::Acknowledge(result.last_sample_ts));
                     drop_ping_prefix(&mut pings, result.ping_count);
@@ -533,8 +605,11 @@ fn run() -> Result<()> {
             });
             if cfg.once {
                 if let Ok(result) = upload_rx.recv() {
-                    let next_ping_interval = result.result?;
-                    if let Some(interval) = next_ping_interval {
+                    let upload = result.result?;
+                    if let Some(plan) = upload.ping_plan {
+                        let _ = ping_plan_tx.send(plan);
+                    }
+                    if let Some(interval) = upload.ping_interval_sec {
                         apply_ping_interval(&ping_interval_sec, interval);
                     }
                     let _ = queue_tx.send(QueueCommand::Acknowledge(result.last_sample_ts));
@@ -601,6 +676,11 @@ impl Config {
                 DEFAULT_UPDATE_CHECK_SEC,
             ),
             ws_enabled: env_bool_compat("NIE_SLA_WS_ENABLED", "NSTATUS_WS_ENABLED", true),
+            ws_encoding: parse_ws_encoding(&env_compat(
+                "NIE_SLA_WS_ENCODING",
+                "NSTATUS_WS_ENCODING",
+                "json",
+            ))?,
             once: false,
             task_runner_only: env_compat(
                 "NIE_SLA_TASK_RUNNER_ONLY",
@@ -635,6 +715,9 @@ impl Config {
                 }
                 "--once" => cfg.once = true,
                 "--no-ws" => cfg.ws_enabled = false,
+                "--ws-encoding" => {
+                    cfg.ws_encoding = parse_ws_encoding(&args.next().unwrap_or_default())?
+                }
                 "--task-runner-only" => cfg.task_runner_only = true,
                 "--version" | "-V" => {
                     println!("v{}", AGENT_VERSION);
@@ -908,19 +991,33 @@ fn spawn_ws_uploader(cfg: Config) -> WsUploader {
     let (tx, rx) = mpsc::channel::<WsCommand>();
     thread::spawn(move || {
         let mut socket = None;
+        let mut retry = WsRetryState::default();
         loop {
             match rx.recv_timeout(Duration::from_secs(30)) {
-                Ok(WsCommand::Submit { body, response }) => {
-                    let result = submit_ws_payload(&cfg, &mut socket, &body);
-                    if result.is_err() {
-                        socket = None;
-                    }
+                Ok(WsCommand::Submit {
+                    body,
+                    binary,
+                    response,
+                }) => {
+                    let result = if let Some(delay) = retry.retry_delay(Instant::now()) {
+                        Err(anyhow!("WSS retry delayed for {}s", delay.as_secs().max(1)))
+                    } else {
+                        let result = submit_ws_payload(&cfg, &mut socket, &body, binary.as_deref());
+                        if result.is_err() {
+                            socket = None;
+                            retry.record_failure(Instant::now());
+                        } else {
+                            retry.record_success();
+                        }
+                        result
+                    };
                     let _ = response.send(result);
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     if let Some(ws) = socket.as_mut() {
                         if ws.send(Message::Ping(Vec::new().into())).is_err() {
                             socket = None;
+                            retry.record_failure(Instant::now());
                         }
                     }
                 }
@@ -937,7 +1034,8 @@ fn submit_ws_payload(
         tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
     >,
     body: &str,
-) -> Result<Option<u64>> {
+    binary: Option<&[u8]>,
+) -> Result<WsSubmitResponse> {
     if socket.is_none() {
         let ws_base = cfg
             .api
@@ -962,8 +1060,14 @@ fn submit_ws_payload(
         *socket = Some(connected);
     }
     let ws = socket.as_mut().expect("metrics WebSocket initialized");
-    ws.send(Message::Text(body.to_string().into()))
-        .context("send metrics WebSocket frame")?;
+    match binary {
+        Some(payload) => ws
+            .send(Message::Binary(payload.to_vec().into()))
+            .context("send binary metrics WebSocket frame")?,
+        None => ws
+            .send(Message::Text(body.to_string().into()))
+            .context("send metrics WebSocket frame")?,
+    }
     loop {
         match ws.read().context("read metrics WebSocket response")? {
             Message::Text(text) => {
@@ -1012,7 +1116,7 @@ fn submit(
     http: &HttpClient,
     ws: Option<&WsUploader>,
     metrics: Metrics,
-) -> Result<Option<u64>> {
+) -> Result<WsSubmitResponse> {
     let payload = serde_json::json!({
         "agent_id": cfg.agent_id,
         "agent_label": cfg.agent_label,
@@ -1022,23 +1126,33 @@ fn submit(
     });
     let url = format!("{}/api/agent/metrics", cfg.api.trim_end_matches('/'));
     let body = payload.to_string();
+    let binary = (cfg.ws_encoding == WsEncoding::Protobuf).then(|| {
+        telemetry_proto::encode_payload(
+            &cfg.agent_id,
+            &cfg.agent_label,
+            &format!("v{}", AGENT_VERSION),
+            &payload["capabilities"],
+            &metrics,
+        )
+    });
     if let Some(uploader) = ws {
         let (response_tx, response_rx) = mpsc::channel();
         if uploader
             .tx
             .send(WsCommand::Submit {
                 body: body.clone(),
+                binary,
                 response: response_tx,
             })
             .is_ok()
         {
             match response_rx.recv_timeout(Duration::from_secs(45)) {
-                Ok(Ok(ping_interval)) => {
+                Ok(Ok(upload)) => {
                     println!(
                         "{{\"ok\":true,\"submitted_at\":{},\"transport\":\"ws\"}}",
                         now_sec()
                     );
-                    return Ok(ping_interval);
+                    return Ok(upload);
                 }
                 Ok(Err(err)) => {
                     eprintln!("WS metrics upload failed, falling back to HTTP: {}", err)
@@ -1050,15 +1164,15 @@ fn submit(
     let response = http
         .post_json(&url, &cfg.token, &body)
         .map_err(|err| anyhow!("submit failed for {}: {}", url, err))?;
-    let ping_interval = parse_submit_response(&response)?;
+    let upload = parse_submit_response(&response)?;
     println!(
         "{{\"ok\":true,\"submitted_at\":{},\"transport\":\"http\"}}",
         now_sec()
     );
-    Ok(ping_interval)
+    Ok(upload)
 }
 
-fn parse_submit_response(response: &str) -> Result<Option<u64>> {
+fn parse_submit_response(response: &str) -> Result<WsSubmitResponse> {
     let value: serde_json::Value =
         serde_json::from_str(response).context("parse metrics response JSON")?;
     if value.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
@@ -1071,10 +1185,46 @@ fn parse_submit_response(response: &str) -> Result<Option<u64>> {
             .collect::<String>();
         return Err(anyhow!(message));
     }
-    Ok(value
+    let ping_interval_sec = value
         .get("ping_interval_sec")
         .and_then(serde_json::Value::as_u64)
-        .filter(|value| (5..=300).contains(value)))
+        .filter(|value| (5..=300).contains(value));
+    let ping_plan = value.get("control").and_then(parse_control_ping_plan);
+    Ok(WsSubmitResponse {
+        ping_interval_sec,
+        ping_plan,
+    })
+}
+
+fn parse_control_ping_plan(value: &serde_json::Value) -> Option<PingPlan> {
+    let targets = value.get("ping_targets")?.as_array()?;
+    let parsed = targets
+        .iter()
+        .filter_map(|item| {
+            let id = item.get("id")?.as_str()?.to_string();
+            let target = item.get("target")?.as_str()?.to_string();
+            let enabled = item
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let protocol = ping_protocol(item.get("protocol").and_then(|v| v.as_str()), &target)?;
+            Some(PingTarget {
+                id,
+                target,
+                enabled,
+                protocol,
+            })
+        })
+        .filter(|target| target.enabled)
+        .collect();
+    let interval_sec = value
+        .get("ping_interval_sec")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|interval| (5..=300).contains(interval))?;
+    Some(PingPlan {
+        targets: parsed,
+        interval_sec,
+    })
 }
 
 fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
@@ -1322,6 +1472,8 @@ impl HttpClient {
         Self {
             ipv4: build_http_agent(IpFamily::Ipv4Only),
             ipv6: build_http_agent(IpFamily::Ipv6Only),
+            public_ipv4: build_public_http_agent(IpFamily::Ipv4Only),
+            public_ipv6: build_public_http_agent(IpFamily::Ipv6Only),
             probe_ipv4: build_probe_http_agent(IpFamily::Ipv4Only),
             probe_ipv6: build_probe_http_agent(IpFamily::Ipv6Only),
         }
@@ -1377,25 +1529,48 @@ impl HttpClient {
     }
 
     fn get_public_bytes_limited(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>> {
-        if !url.starts_with("https://") {
-            return Err(anyhow!("public download URL must use HTTPS"));
+        let mut current = validate_public_download_url(url)?;
+        for redirect_count in 0..=4 {
+            let mut res = self
+                .request_with_public_ip_fallback(|agent| agent.get(&current).call())
+                .map_err(|err| http_error("GET", &current, err))?;
+            if res.status().is_redirection() {
+                let location = res
+                    .headers()
+                    .get("location")
+                    .and_then(|value| value.to_str().ok())
+                    .ok_or_else(|| anyhow!("public download redirect has no valid Location"))?;
+                if redirect_count >= 4 {
+                    return Err(anyhow!("too many public download redirects"));
+                }
+                current = resolve_public_redirect(&current, location)?;
+                continue;
+            }
+            if res.get_uri().scheme_str() != Some("https") {
+                return Err(anyhow!("public download redirected away from HTTPS"));
+            }
+            let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
+            res.body_mut()
+                .as_reader()
+                .take(max_bytes.saturating_add(1) as u64)
+                .read_to_end(&mut bytes)
+                .with_context(|| format!("HTTP GET failed while reading {}", current))?;
+            if bytes.len() > max_bytes {
+                return Err(anyhow!("HTTP response from {} exceeds size limit", current));
+            }
+            return Ok(bytes);
         }
-        let mut res = self
-            .request_with_ip_fallback(|agent| agent.get(url).call())
-            .map_err(|err| http_error("GET", url, err))?;
-        if res.get_uri().scheme_str() != Some("https") {
-            return Err(anyhow!("public download redirected away from HTTPS"));
+        Err(anyhow!("too many public download redirects"))
+    }
+
+    fn request_with_public_ip_fallback<T>(
+        &self,
+        request: impl Fn(&ureq::Agent) -> std::result::Result<T, ureq::Error>,
+    ) -> std::result::Result<T, ureq::Error> {
+        match request(&self.public_ipv4) {
+            Err(err) if should_try_other_ip_family(&err) => request(&self.public_ipv6),
+            result => result,
         }
-        let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
-        res.body_mut()
-            .as_reader()
-            .take(max_bytes.saturating_add(1) as u64)
-            .read_to_end(&mut bytes)
-            .with_context(|| format!("HTTP GET failed while reading {}", url))?;
-        if bytes.len() > max_bytes {
-            return Err(anyhow!("HTTP response from {} exceeds size limit", url));
-        }
-        Ok(bytes)
     }
 
     fn probe(&self, url: &str) -> Option<u128> {
@@ -1413,10 +1588,128 @@ impl HttpClient {
     }
 }
 
+fn validate_public_download_url(value: &str) -> Result<String> {
+    let uri: Uri = value
+        .parse()
+        .map_err(|_| anyhow!("public download URL is invalid"))?;
+    if uri.scheme_str() != Some("https")
+        || uri.host().is_none()
+        || uri
+            .authority()
+            .is_some_and(|value| value.as_str().contains('@'))
+    {
+        return Err(anyhow!(
+            "public download URL must use HTTPS without credentials"
+        ));
+    }
+    let host = uri.host().unwrap_or_default().trim_matches(['[', ']']);
+    if host.is_empty() || is_restricted_hostname(host) {
+        return Err(anyhow!(
+            "public download URL cannot target a private or reserved host"
+        ));
+    }
+    let port = uri.port_u16().unwrap_or(443);
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .with_context(|| format!("could not resolve public download host {}", host))?
+        .collect::<Vec<_>>();
+    if addresses.is_empty()
+        || addresses
+            .iter()
+            .any(|address| is_restricted_ip(address.ip()))
+    {
+        return Err(anyhow!(
+            "public download URL resolves to a private or reserved address"
+        ));
+    }
+    Ok(uri.to_string())
+}
+
+fn resolve_public_redirect(current: &str, location: &str) -> Result<String> {
+    let location = location.trim();
+    if location.starts_with("https://") {
+        return validate_public_download_url(location);
+    }
+    let base: Uri = current
+        .parse()
+        .map_err(|_| anyhow!("current public download URL is invalid"))?;
+    let authority = base
+        .authority()
+        .ok_or_else(|| anyhow!("public download redirect has no authority"))?;
+    let path = if location.starts_with('/') {
+        location.to_string()
+    } else if location.starts_with('?') {
+        format!("{}{}", base.path(), location)
+    } else {
+        return Err(anyhow!(
+            "public download redirect must remain an absolute HTTPS URL or root-relative path"
+        ));
+    };
+    validate_public_download_url(&format!("https://{}{}", authority, path))
+}
+
+fn is_restricted_hostname(host: &str) -> bool {
+    let normalized = host.trim_end_matches('.').to_ascii_lowercase();
+    normalized == "localhost"
+        || normalized.ends_with(".localhost")
+        || normalized.ends_with(".local")
+        || normalized == "metadata.google.internal"
+}
+
+fn is_restricted_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(value) => {
+            let octets = value.octets();
+            value.is_private()
+                || value.is_loopback()
+                || value.is_link_local()
+                || value.is_unspecified()
+                || value.is_multicast()
+                || value.is_broadcast()
+                || octets[0] == 0
+                || octets[0] == 240
+                || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+                || (octets[0] == 169 && octets[1] == 254)
+                || (octets[0] == 192 && octets[1] == 0)
+                || (octets[0] == 192 && octets[1] == 2)
+                || (octets[0] == 192 && octets[1] == 88 && octets[2] == 99)
+                || (octets[0] == 198 && (18..=19).contains(&octets[1]))
+                || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
+                || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
+        }
+        IpAddr::V6(value) => {
+            let segments = value.segments();
+            value.is_loopback()
+                || value.is_unspecified()
+                || value.is_multicast()
+                || value.is_unique_local()
+                || value.is_unicast_link_local()
+                || (segments[0] == 0x2001 && segments[1] == 0x0db8)
+                || value
+                    .to_ipv4()
+                    .is_some_and(|mapped| is_restricted_ip(IpAddr::V4(mapped)))
+        }
+    }
+}
+
 fn build_http_agent(ip_family: IpFamily) -> ureq::Agent {
     let config = ureq::Agent::config_builder()
         .user_agent(format!("NIE-SLA-Agent/{}", AGENT_VERSION))
         .ip_family(ip_family)
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_send_request(Some(Duration::from_secs(10)))
+        .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_recv_body(Some(Duration::from_secs(30)))
+        .build();
+    ureq::Agent::new_with_config(config)
+}
+
+fn build_public_http_agent(ip_family: IpFamily) -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
+        .user_agent(format!("NIE-SLA-Agent/{}", AGENT_VERSION))
+        .ip_family(ip_family)
+        .max_redirects(0)
+        .max_redirects_will_error(false)
         .timeout_connect(Some(Duration::from_secs(10)))
         .timeout_send_request(Some(Duration::from_secs(10)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
@@ -1459,14 +1752,20 @@ fn spawn_ping_worker(
     cfg: Config,
     http: HttpClient,
     ping_interval_sec: Arc<AtomicU64>,
-) -> mpsc::Receiver<PingBatch> {
+) -> (mpsc::Receiver<PingBatch>, mpsc::Sender<PingPlan>) {
     let (tx, rx) = mpsc::channel();
+    let (plan_tx, plan_rx) = mpsc::channel::<PingPlan>();
     thread::spawn(move || {
         let mut targets = Vec::new();
         let refresh_period = Duration::from_secs(cfg.ping_target_refresh_sec);
         let mut last_refresh = Instant::now() - refresh_period;
         let mut last_ping = Instant::now() - Duration::from_secs(cfg.ping_sec);
         loop {
+            while let Ok(plan) = plan_rx.try_recv() {
+                apply_ping_interval(&ping_interval_sec, plan.interval_sec);
+                targets = plan.targets;
+                last_refresh = Instant::now();
+            }
             if last_refresh.elapsed() >= refresh_period {
                 if let Ok(plan) = fetch_ping_targets(&cfg, &http) {
                     apply_ping_interval(&ping_interval_sec, plan.interval_sec);
@@ -1495,7 +1794,7 @@ fn spawn_ping_worker(
             ));
         }
     });
-    rx
+    (rx, plan_tx)
 }
 
 fn current_ping_interval(interval: &AtomicU64) -> u64 {
@@ -1707,6 +2006,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn public_download_guard_rejects_private_and_reserved_addresses() {
+        for value in [
+            IpAddr::V4("127.0.0.1".parse().unwrap()),
+            IpAddr::V4("169.254.169.254".parse().unwrap()),
+            IpAddr::V4("203.0.113.8".parse().unwrap()),
+            IpAddr::V6("::1".parse().unwrap()),
+            IpAddr::V6("2001:db8::8".parse().unwrap()),
+        ] {
+            assert!(is_restricted_ip(value));
+        }
+        assert!(validate_public_download_url("https://127.0.0.1/").is_err());
+        assert!(validate_public_download_url("https://[::1]/").is_err());
+    }
+
+    #[test]
     fn disk_uses_the_root_filesystem_instead_of_summing_bind_mounts() {
         let mount_points = [
             Path::new("/"),
@@ -1792,10 +2106,17 @@ mod tests {
     #[test]
     fn metrics_ack_requires_an_explicit_success_contract() {
         assert_eq!(
-            parse_submit_response(r#"{"ok":true,"ping_interval_sec":20}"#).unwrap(),
+            parse_submit_response(r#"{"ok":true,"ping_interval_sec":20}"#)
+                .unwrap()
+                .ping_interval_sec,
             Some(20)
         );
-        assert_eq!(parse_submit_response(r#"{"ok":true}"#).unwrap(), None);
+        assert!(parse_submit_response(r#"{"ok":true}"#)
+            .unwrap()
+            .ping_plan
+            .is_none());
+        let response = parse_submit_response(r#"{"ok":true,"control":{"ping_interval_sec":30,"ping_targets":[{"id":"dns","target":"1.1.1.1:53","protocol":"tcp"}]}}"#).unwrap();
+        assert_eq!(response.ping_plan.unwrap().interval_sec, 30);
         assert!(
             parse_submit_response(r#"{"ok":false,"error":"D1 unavailable"}"#)
                 .unwrap_err()
@@ -1803,6 +2124,30 @@ mod tests {
                 .contains("D1 unavailable")
         );
         assert!(parse_submit_response("not-json").is_err());
+    }
+
+    #[test]
+    fn ws_retry_backoff_is_bounded_and_resets_after_success() {
+        let start = Instant::now();
+        let mut retry = WsRetryState::default();
+
+        assert!(retry.retry_delay(start).is_none());
+
+        retry.record_failure(start);
+        assert_eq!(retry.delay, Duration::from_secs(120));
+        assert!(retry.retry_delay(start).unwrap() >= Duration::from_secs(60));
+        assert!(retry.retry_delay(start + Duration::from_secs(60)).is_none());
+
+        retry.record_failure(start + Duration::from_secs(60));
+        assert_eq!(retry.delay, Duration::from_secs(240));
+        retry.record_failure(start + Duration::from_secs(180));
+        assert_eq!(retry.delay, WS_RETRY_MAX_DELAY);
+        retry.record_failure(start + Duration::from_secs(420));
+        assert_eq!(retry.delay, WS_RETRY_MAX_DELAY);
+
+        retry.record_success();
+        assert!(retry.retry_delay(start).is_none());
+        assert_eq!(retry.delay, WS_RETRY_MIN_DELAY);
     }
 
     #[test]
@@ -2202,6 +2547,17 @@ fn print_help() {
     println!("Usage: nie-sla-agent --api URL --token TOKEN [--once|--task-runner-only]");
     println!("  --task-runner-only  Run the privileged fixed-action Manager service");
     println!(
-        "Environment: NIE_SLA_API_BASE, NIE_SLA_AGENT_TOKEN, NIE_SLA_AGENT_ID, NIE_SLA_AGENT_LABEL, NIE_SLA_PING_TARGET_REFRESH_SEC, NIE_SLA_WS_ENABLED (legacy NSTATUS_* aliases remain supported)"
+        "Environment: NIE_SLA_API_BASE, NIE_SLA_AGENT_TOKEN, NIE_SLA_AGENT_ID, NIE_SLA_AGENT_LABEL, NIE_SLA_PING_TARGET_REFRESH_SEC, NIE_SLA_WS_ENABLED, NIE_SLA_WS_ENCODING=json|protobuf (legacy NSTATUS_* aliases remain supported)"
     );
+}
+
+fn parse_ws_encoding(value: &str) -> Result<WsEncoding> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "json" | "text" => Ok(WsEncoding::Json),
+        "protobuf" | "proto" => Ok(WsEncoding::Protobuf),
+        other => Err(anyhow!(
+            "NIE_SLA_WS_ENCODING must be json or protobuf, got {}",
+            other
+        )),
+    }
 }

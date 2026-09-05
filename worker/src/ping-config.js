@@ -6,6 +6,8 @@ export const MAX_PING_INTERVAL_SEC = 300;
 export const DEFAULT_PING_INTERVAL_SEC = 20;
 
 const META_KEY = 'agent_ping_interval_sec';
+const CACHE_TTL_MS = 60_000;
+const pingConfigCaches = new WeakMap();
 
 export function normalizePingIntervalSec(value, fallback = DEFAULT_PING_INTERVAL_SEC) {
   const number = Number(value);
@@ -15,15 +17,39 @@ export function normalizePingIntervalSec(value, fallback = DEFAULT_PING_INTERVAL
 }
 
 export async function getPingIntervalSec(env) {
-  let stored = null;
-  if (env.DB) {
-    stored = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`)
-      .bind(META_KEY).first().catch(() => null);
-  }
-  return normalizePingIntervalSec(
-    stored?.value,
-    normalizePingIntervalSec(env.NIE_SLA_PING_SEC ?? env.NSTATUS_PING_SEC ?? env.AGENT_PING_SEC, DEFAULT_PING_INTERVAL_SEC),
+  const fallback = normalizePingIntervalSec(
+    env.NIE_SLA_PING_SEC ?? env.NSTATUS_PING_SEC ?? env.AGENT_PING_SEC,
+    DEFAULT_PING_INTERVAL_SEC,
   );
+  const database = env?.DB;
+  if (!database || (typeof database !== 'object' && typeof database !== 'function')) return fallback;
+
+  const now = Date.now();
+  const cached = pingConfigCaches.get(database);
+  if (cached?.value !== undefined && cached.expires_at > now) return cached.value;
+  if (cached?.promise) return cached.promise;
+
+  const pending = { promise: null };
+  const promise = (async () => {
+    let stored = null;
+    try {
+      stored = await database.prepare(`SELECT value FROM app_meta WHERE key = ?`)
+        .bind(META_KEY).first();
+    } catch (_) {}
+    const value = normalizePingIntervalSec(stored?.value, fallback);
+    if (pingConfigCaches.get(database) === pending) {
+      pingConfigCaches.set(database, { value, expires_at: Date.now() + CACHE_TTL_MS });
+    }
+    return value;
+  })();
+  pending.promise = promise;
+  pingConfigCaches.set(database, pending);
+  return promise;
+}
+
+export function invalidatePingIntervalCache(env) {
+  const database = env?.DB;
+  if (database && (typeof database === 'object' || typeof database === 'function')) pingConfigCaches.delete(database);
 }
 
 export async function updatePingConfig(request, env) {
@@ -35,6 +61,7 @@ export async function updatePingConfig(request, env) {
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
     .bind(META_KEY, String(interval), nowSec()).run();
+  invalidatePingIntervalCache(env);
   return { ok: true, ...pingConfigPayload(interval) };
 }
 

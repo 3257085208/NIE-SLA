@@ -171,8 +171,9 @@ try {
   database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
     .run('agent_public_base', 'https://agent.example.com', now);
+  const storedOriginEnv = { ...env, PUBLIC_AGENT_API_BASE: 'https://api.example.test' };
   const storedOriginCommand = await getAgentInstallCommand(
-    env,
+    storedOriginEnv,
     new URL('https://generated-name.workers.dev/api/agent/install-command?target_id=vps-a'),
     new Request('https://generated-name.workers.dev/api/agent/install-command?target_id=vps-a'),
   );
@@ -180,7 +181,7 @@ try {
   assert.equal(storedOriginCommand.api_base, 'https://agent.example.com');
   assert.match(storedOriginCommand.linux_command, /https:\/\/agent\.example\.com\/api\/agent\/install-script/);
   const storedOriginLatency = await getLatencyAgentInstallCommand(
-    env,
+    storedOriginEnv,
     new URL('https://generated-name.workers.dev/api/latency-agent/install-command?node_id=latency-tokyo'),
     new Request('https://generated-name.workers.dev/api/latency-agent/install-command?node_id=latency-tokyo'),
   );

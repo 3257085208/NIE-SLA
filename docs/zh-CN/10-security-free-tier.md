@@ -29,6 +29,11 @@ Agent 更新的 manifest 哈希由同一 Worker 策略提供，能防止传输�
 
 ## 免费额度
 
+> **当前估算规则：** 当前规划统一使用版本化的[站点用量模型](../usage-model.md)
+> 和 [`../../scripts/usage-model-calibration.json`](../../scripts/usage-model-calibration.json)。
+> 下方的 100 台 VPS 表格是历史架构情景，不是线上实时读数，也不是 Cloudflare
+> Dashboard 数值保证。
+
 实际额度取决于 VPS 数量、公开访问量、Ping 数量、重试、历史范围与告警。默认设计：
 
 - Cron 每分钟更新当前状态；Agent 仍按 5 分钟上传。

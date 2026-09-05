@@ -27,6 +27,7 @@ assert.match(routesSource, /if \(agentTaskCancelStatusMatch && m === 'GET'\) \{ 
 assert.equal((routesSource.match(/path === '\/api\/agent\/tasks' && m === 'GET'/g) || []).length, 1, 'agent task claim route must be declared exactly once');
 assert.match(routesSource, /\/api\/agent\/tasks' && m === 'GET'[\s\S]{0,600}runner_instance_id/, 'agent task claim route must accept runner_instance_id');
 assert.match(schemaSource, /schema:worker-v26-20260810-quota/, 'schema marker must advance for task owner tracking');
+assert.match(schemaSource, /schema:worker-v28-probe-buffer/, 'probe buffer migration must be tracked');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN cancel_requested_at INTEGER/, 'running tasks must store a cancellation request timestamp');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN runner_instance_id TEXT/, 'running tasks must track the Agent Manager runner instance');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN runner_heartbeat_at INTEGER/, 'running tasks must track Manager heartbeats');
@@ -55,9 +56,21 @@ assert.match(probeSource, /headers: internalRequestHeaders\(env\)/, 'region prob
 assert.match(routesSource, /\/debug-colo[\s\S]{0,400}internalRequestHeaders\(env\)/, 'debug-colo must pass the internal request secret to the Durable Object');
 assert.match(telemetrySource, /internalRequestAuthorized\(request, this\.env\)/, 'TelemetryBuffer must require the internal request secret');
 assert.match(routesSource, /\/api\/agent\/metrics\/ws/, 'Agent metrics WebSocket route must be explicit');
+assert.match(routesSource, /\/api\/status\/ws/, 'public status WebSocket route must be explicit');
 assert.match(telemetrySource, /acceptWebSocket\(server/, 'Agent metrics WebSocket must use Durable Object Hibernation API');
+assert.match(indexSource, /export \{ StatusStream \} from '\.\/status-stream\.js'/, 'public status WebSocket Durable Object must be exported');
+assert.match(wranglerSource, /name = "STATUS_STREAM"/, 'public status WebSocket binding must be configured');
 assert.match(telemetrySource, /serializeAttachment\(\{ agent_id: agentId \}\)/, 'Agent WebSocket identity must survive Durable Object hibernation');
 assert.match(metricsSource, /export async function processAgentMetricsPayload/, 'HTTP and WebSocket metrics must share one validation/persistence path');
+assert.match(wranglerSource, /AGENT_METRICS_STATE_TO_D1 = "false"/, 'production must keep high-frequency Agent current state out of D1');
+assert.match(wranglerSource, /PROBE_LATEST_STATUS_TO_D1 = "false"/, 'production must keep high-frequency probe current state out of D1');
+assert.match(metricsSource, /skipStateD1/, 'the WebSocket metrics path must be able to skip the D1 current-state write');
+assert.match(metricsSource, /persistAgentMetricsStateFallback/, 'buffer failures must retain a D1 latest-state compatibility fallback');
+assert.match(telemetrySource, /fallback Agent latest state to D1 failed/, 'buffer failures must not silently lose the latest visible state');
+assert.match(telemetrySource, /LATEST_STATE_PREFIX = 'latest:state:'/, 'the telemetry buffer must retain per-Agent latest state keys');
+assert.match(telemetrySource, /AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream'/, 'latest-state readers must target the same shared WSS Durable Object instance');
+assert.doesNotMatch(telemetrySource, /idFromName\(`agent:\$\{id\}`\)[\s\S]{0,200}\/latest/, 'per-Agent latest state must never be read from the chunk-buffer instance');
+assert.match(telemetrySource, /startAfter/, 'unbounded storage.list() calls must page with a continuation cursor');
 assert.match(wranglerSource, /REGION_PROXY_BATCH_ENABLED = "true"/, 'production config must enable region batching');
 assert.match(indexSource, /out\.probe\.results\.map\(item => item\?\.warning\)/, 'scheduled probe diagnostics must retain state sync warnings');
 assert.match(statusSource, /optionalQuery[\s\S]{0,220}warnings\.push\(warning\)/, 'partial status query failures must be visible in the status warnings');
@@ -73,9 +86,11 @@ assert.match(adminAuthSource, /throw new ApiError\(404, '未找到'\)/, 'disable
 assert.match(routesSource, /rateLimitByIp\(request, env, 1, 10,[\s\S]{0,180}rateLimitByIp\(request, env, 5, 300/, 'password login must enforce short and cumulative IP windows');
 assert.match(routesSource, /return deny\(10\)[\s\S]{0,180}return deny\(300\)/, 'password login rate limits must include Retry-After values');
 assert.match(metricsSource, /latest: sanitizePublicAgentMetrics\(latest, env\)/, 'public metrics must sanitize the latest Agent fingerprint');
-assert.match(wranglerSource, /PUBLIC_STATUS_AGENT_DETAILS = "true"/, 'production status page must keep public Agent details visible');
-assert.match(wranglerSource, /PUBLIC_STATUS_UNLOCK_DETAILS = "true"/, 'production status page must keep public unlock details visible');
-assert.match(wranglerSource, /PUBLIC_STATUS_STORAGE_DETAILS = "true"/, 'production status page must keep public storage details visible');
+assert.match(wranglerSource, /PUBLIC_STATUS_AGENT_DETAILS = "true"/, 'production status page must expose the requested VPS hardware details');
+assert.match(wranglerSource, /PUBLIC_STATUS_UNLOCK_DETAILS = "false"/, 'production status page must keep unlock details private by default');
+assert.match(wranglerSource, /PUBLIC_STATUS_STORAGE_DETAILS = "false"/, 'production status page must keep storage details private by default');
+assert.match(wranglerSource, /STATUS_STREAM/, 'production config must declare the public status stream binding');
+assert.match(await readFile(new URL('../src/status-stream.js', import.meta.url), 'utf8'), /MAX_ACTIVE_CONNECTIONS|MAX_SOCKET_AGE_SEC|setAlarm/, 'public status stream must enforce a connection lease');
 
 function urlWith(qs) {
   return new URL('https://example.test/api/agent/metrics?' + qs);
@@ -179,7 +194,7 @@ console.log('developer API tests passed');
   assert.equal(internalRequestAuthorized(new Request('https://nie-sla.internal/', { headers: { 'x-nie-sla-internal-secret': secret } }), env), true);
   assert.equal(internalRequestAuthorized(new Request('https://nstatus.internal/', { headers: { 'x-nstatus-internal-secret': secret } }), env), true);
   assert.equal(internalRequestAuthorized(new Request('https://nstatus.internal/', { headers: { 'x-nstatus-internal-secret': 'wrong-secret' } }), env), false);
-  assert.equal(internalRequestAuthorized(new Request('https://nstatus.internal/'), {}), true);
+  assert.equal(internalRequestAuthorized(new Request('https://nstatus.internal/'), {}), false);
   assert.deepEqual(internalRequestHeaders(env), { 'content-type': 'application/json', 'x-nie-sla-internal-secret': secret, 'x-nstatus-internal-secret': secret });
 }
 console.log('internal DO auth tests passed');

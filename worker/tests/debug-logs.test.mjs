@@ -5,6 +5,7 @@ import {
   cleanupDebugLogs,
   debugClientIp,
   debugSummary,
+  getDebugLogSummary,
   listDebugLogs,
   recordDebugLog,
   sanitizeDebugLogEntry,
@@ -54,15 +55,46 @@ assert.equal(afterCleanup.logs.length, 1);
 assert.equal(afterCleanup.logs[0].ip, '198.51.100.7');
 
 assert.equal(shouldLogDebugOperation('/api/auth/login', 'POST'), true);
+assert.equal(shouldLogDebugOperation('/api/auth/login', 'POST', true), true, 'login failures must be logged');
+assert.equal(shouldLogDebugOperation('/api/totp/verify', 'POST'), true);
 assert.equal(shouldLogDebugOperation('/api/status', 'GET'), false);
 assert.equal(shouldLogDebugOperation('/api/debug/logs', 'GET'), false);
-assert.equal(shouldLogDebugOperation('/api/agent/tasks', 'GET'), true);
+assert.equal(shouldLogDebugOperation('/api/debug/usage-summary', 'GET'), false);
+assert.equal(shouldLogDebugOperation('/api/agent/tasks', 'GET'), false, 'agent polls must not be logged');
+assert.equal(shouldLogDebugOperation('/api/agent/tasks', 'POST', true), true, 'task failures must be logged');
+assert.equal(shouldLogDebugOperation('/api/agent/tasks', 'POST'), false, 'successful task completions must not be logged');
+assert.equal(shouldLogDebugOperation('/api/agent/tasks/task-1', 'POST', true), true);
+assert.equal(shouldLogDebugOperation('/api/agent/tasks/task-1', 'POST'), false);
+assert.equal(shouldLogDebugOperation('/api/targets', 'PATCH', true), false, 'admin CRUD failures stay out of debug logs');
 assert.equal(shouldLogDebugOperation('/api/agent/metrics', 'POST'), false);
 assert.equal(debugSummary('/api/targets', 'PATCH'), '探针配置');
 assert.equal(
   debugClientIp(new Request('https://status.example/api/targets', { headers: { 'cf-connecting-ip': '203.0.113.9' } })),
   '203.0.113.9',
 );
+
+await recordDebugLog(env, { ts: now - 10, method: 'GET', path: '/api/agent/tasks', status: 200 });
+await recordDebugLog(env, { ts: now - 20, method: 'POST', path: '/api/agent/tasks/task-1', status: 200 });
+await recordDebugLog(env, { ts: now - 30, method: 'GET', path: '/api/agent-tasks', status: 200 });
+await recordDebugLog(env, { ts: now - 40, method: 'PATCH', path: '/api/targets/target-1', status: 500 });
+const summary = await getDebugLogSummary(env, new URL(`https://status.example/api/debug/usage-summary?from=${now - 3600}&to=${now}`));
+assert.equal(summary.total, 4);
+assert.equal(summary.route_counts.agent_tasks, 1);
+assert.equal(summary.route_counts.agent_task_action, 1);
+assert.equal(summary.route_counts.admin_agent_tasks, 1);
+assert.equal(summary.route_counts.other_debug, 1);
+assert.deepEqual(summary.status_counts, { '200': 3, '500': 1 });
+assert.equal(summary.query.statements, 1);
+assert.equal(summary.query.raw_rows_returned, 0);
+assert.equal(summary.query.aggregate_rows_returned, 4);
+assert.equal(summary.complete, true);
+assert.equal(summary.groups.some((group) => 'path' in group || 'ip' in group || 'actor' in group), false);
+const queryPlan = database.prepare(`EXPLAIN QUERY PLAN SELECT id FROM debug_logs WHERE ts >= ? AND ts < ?`).all(now - 3600, now);
+assert.match(queryPlan.map((row) => row.detail).join(' '), /idx_debug_logs_ts/);
+const unavailableSummary = await getDebugLogSummary({}, new URL('https://status.example/api/debug/usage-summary'));
+assert.equal(unavailableSummary.available, false);
+assert.equal(unavailableSummary.complete, false);
+assert.equal(unavailableSummary.query.statements, 0);
 
 const clean = sanitizeDebugLogEntry({
   method: ' delete ',
@@ -81,6 +113,26 @@ assert.match(
   routes,
   /\/api\/debug\/logs[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}listDebugLogs\(env, url\)[\s\S]{0,300}'cache-control': 'no-store'/,
   'debug log listing must require an admin session and must not be cached',
+);
+assert.match(
+  routes,
+  /\/api\/debug\/usage-summary[\s\S]{0,300}rateLimitByIp\(request, env, 6, 300, \{ bestEffort: true, keyPrefix: 'debug-usage-summary' \}\)[\s\S]{0,300}withUsageSummaryAccess\(request, env\)[\s\S]{0,300}getDebugLogSummary\(env, url\)[\s\S]{0,300}one-bounded-d1-aggregate/,
+  'debug usage summary must have an in-memory limit, require its narrow access gate, and expose its bounded cost',
+);
+assert.match(
+  routes,
+  /!isAgentApiPath\(path\) && path !== '\/api\/debug\/usage-summary'/,
+  'the nsu_ summary read must bypass the generic Bearer D1 rate-limit write because it has its own stricter gate',
+);
+assert.match(
+  routes,
+  /async function withUsageSummaryAccess[\s\S]{0,900}withAdmin\(request, env\)[\s\S]{0,900}usageSummaryBearerToken\(request\)[\s\S]{0,900}validateUsageSummaryAccess\(env, token\)/,
+  'the narrow debug credential must remain separate from generic administrator authentication',
+);
+assert.match(
+  routes,
+  /\/api\/debug\/usage-access-token[\s\S]{0,350}withAdmin\(request, env\)[\s\S]{0,350}getUsageSummaryAccessStatus[\s\S]{0,120}\/api\/debug\/usage-access-token[\s\S]{0,350}withAdmin\(request, env\)[\s\S]{0,350}createUsageSummaryAccess/,
+  'usage credential lifecycle routes must require a full administrator session',
 );
 assert.doesNotMatch(routes, /recordDebugLog\(env,[\s\S]{0,200}(?:authorization|x-admin-session)/i, 'debug logging must never capture auth headers');
 const index = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');

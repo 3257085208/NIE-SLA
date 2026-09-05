@@ -1,4 +1,4 @@
-import { findAgentCredential, findLatencyCredential, legacyScopedToken, verifyAgentCredential } from './agent-credentials.js';
+import { findAgentCredential, findEnabledAgentCredential, findEnabledLatencyCredential, findLatencyCredential, legacyScopedToken, verifyAgentCredential, verifyEnabledAgentCredential } from './agent-credentials.js';
 import { findEnabledAgentTarget, sanitizeAgentId } from './utils.js';
 
 export function requireAgent(request, env) {
@@ -19,11 +19,20 @@ export async function requireAgentForId(request, env, agentId) {
   const configured = String(env.AGENT_TOKEN || '').trim();
   const id = String(agentId || '').trim();
   if (!id || !env.DB) throw new ApiError(401, '未授权');
+  const token = bearerToken(request);
+  if (!token) {
+    const target = await findEnabledAgentTarget(env, id);
+    if (!target) throw new ApiError(401, 'Agent 目标不存在或已禁用');
+    throw new ApiError(401, '未授权');
+  }
+  if (configured && constantTimeEqual(token, configured)) {
+    const target = await findEnabledAgentTarget(env, id);
+    if (!target) throw new ApiError(401, 'Agent 目标不存在或已禁用');
+    return { type: 'global' };
+  }
+  if (await verifyEnabledAgentCredential(env, 'agent', id, token)) return { type: 'scoped', agent_id: id };
   const target = await findEnabledAgentTarget(env, id);
   if (!target) throw new ApiError(401, 'Agent 目标不存在或已禁用');
-  const token = bearerToken(request);
-  if (!token) throw new ApiError(401, '未授权');
-  if (configured && constantTimeEqual(token, configured)) return { type: 'global' };
   if (await verifyAgentCredential(env, 'agent', id, token)) return { type: 'scoped', agent_id: id };
   const scoped = await agentScopedToken(env, id);
   if (scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', agent_id: id };
@@ -36,10 +45,18 @@ export async function requireAnyAgent(request, env) {
   if (!token) throw new ApiError(401, '未授权');
   if (configured && constantTimeEqual(token, configured)) return { type: 'global' };
   if (!env.DB) throw new ApiError(401, '未授权');
-  const credential = await findAgentCredential(env, token);
+  const credential = await findEnabledAgentCredential(env, token);
   if (credential) {
+    if (credential.target_enabled) return { type: 'scoped', agent_id: credential.agent_id };
     const target = await findEnabledAgentTarget(env, credential.agent_id);
     if (target) return { type: 'scoped', agent_id: credential.agent_id };
+  }
+  if (!credential) {
+    const legacyCredential = await findAgentCredential(env, token);
+    if (legacyCredential) {
+      const target = await findEnabledAgentTarget(env, legacyCredential.agent_id);
+      if (target) return { type: 'scoped', agent_id: legacyCredential.agent_id };
+    }
   }
   const rows = await env.DB.prepare(`SELECT id FROM targets WHERE enabled = 1`).all().catch(() => ({ results: [] }));
   for (const row of rows.results || []) {
@@ -71,11 +88,21 @@ export async function agentScopedToken(env, agentId) {
 export async function requireLatencyAgentForId(request, env, nodeId) {
   const id = sanitizeAgentId(nodeId);
   if (!id || !env.DB) throw new ApiError(401, 'Latency 节点不存在或已禁用');
-  const node = await env.DB.prepare(`SELECT id FROM latency_agents WHERE id = ? AND enabled = 1`).bind(id).first().catch(() => null);
-  if (!node) throw new ApiError(401, 'Latency 节点不存在或已禁用');
   const token = bearerToken(request);
   const globalToken = String(env.AGENT_TOKEN || '').trim();
-  if (token && globalToken && constantTimeEqual(token, globalToken)) return { type: 'global', node_id: id };
+  if (!token) {
+    const node = await env.DB.prepare(`SELECT id FROM latency_agents WHERE id = ? AND enabled = 1`).bind(id).first().catch(() => null);
+    if (!node) throw new ApiError(401, 'Latency 节点不存在或已禁用');
+    throw new ApiError(401, '未授权');
+  }
+  if (globalToken && constantTimeEqual(token, globalToken)) {
+    const node = await env.DB.prepare(`SELECT id FROM latency_agents WHERE id = ? AND enabled = 1`).bind(id).first().catch(() => null);
+    if (!node) throw new ApiError(401, 'Latency 节点不存在或已禁用');
+    return { type: 'global', node_id: id };
+  }
+  if (await verifyEnabledAgentCredential(env, 'latency', id, token)) return { type: 'scoped', node_id: id };
+  const node = await env.DB.prepare(`SELECT id FROM latency_agents WHERE id = ? AND enabled = 1`).bind(id).first().catch(() => null);
+  if (!node) throw new ApiError(401, 'Latency 节点不存在或已禁用');
   if (token && await verifyAgentCredential(env, 'latency', id, token)) return { type: 'scoped', node_id: id };
   const scoped = await latencyAgentScopedToken(env, id);
   if (token && scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', node_id: id };
@@ -92,10 +119,18 @@ export async function requireAnyLatencyAgent(request, env) {
   if (!token) throw new ApiError(401, '未授权');
   if (configured && constantTimeEqual(token, configured)) return { type: 'global' };
   if (!env.DB) throw new ApiError(401, '未授权');
-  const credential = await findLatencyCredential(env, token);
+  const credential = await findEnabledLatencyCredential(env, token);
   if (credential) {
+    if (credential.target_enabled) return { type: 'scoped', node_id: credential.node_id };
     const node = await env.DB.prepare(`SELECT id FROM latency_agents WHERE id = ? AND enabled = 1`).bind(credential.node_id).first().catch(() => null);
     if (node) return { type: 'scoped', node_id: credential.node_id };
+  }
+  if (!credential) {
+    const legacyCredential = await findLatencyCredential(env, token);
+    if (legacyCredential) {
+      const node = await env.DB.prepare(`SELECT id FROM latency_agents WHERE id = ? AND enabled = 1`).bind(legacyCredential.node_id).first().catch(() => null);
+      if (node) return { type: 'scoped', node_id: legacyCredential.node_id };
+    }
   }
   const rows = await env.DB.prepare(`SELECT id FROM latency_agents WHERE enabled = 1`).all().catch(() => ({ results: [] }));
   for (const row of rows.results || []) {
@@ -131,7 +166,7 @@ export function constantTimeEqual(a, b) {
 }
 
 export function internalScheduleSecret(env) {
-  return String(env?.INTERNAL_CRON_SECRET || env?.ADMIN_PASSWORD || env?.ADMIN_TOKEN || env?.AGENT_TOKEN || '').trim();
+  return String(env?.INTERNAL_CRON_SECRET || '').trim();
 }
 
 export function internalRequestHeaders(env) {
@@ -141,7 +176,7 @@ export function internalRequestHeaders(env) {
 
 export function internalRequestAuthorized(request, env) {
   const expected = internalScheduleSecret(env);
-  if (!expected) return true;
+  if (!expected) return false;
   const presented = String(request.headers.get('x-nie-sla-internal-secret') || request.headers.get('x-nstatus-internal-secret') || '');
   return constantTimeEqual(expected, presented);
 }
@@ -186,7 +221,7 @@ export async function safeJson(request, maxBytes = 256_000) {
 }
 
 export function json(data, status = 200, env = null, extraHeaders = null) {
-  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'access-control-allow-origin': resolveCorsOrigin(env) || 'null', 'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type,authorization,x-admin-session,x-totp-code,x-theme-sha256,x-extension-filename,x-extension-sha256', 'access-control-max-age': '86400', ...(extraHeaders || {}) } });
+  return new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store, max-age=0', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'access-control-allow-origin': resolveCorsOrigin(env) || 'null', 'access-control-allow-methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'access-control-allow-headers': 'content-type,authorization,x-admin-session,x-totp-code,x-theme-sha256,x-extension-filename,x-extension-sha256', 'access-control-max-age': '86400', ...(extraHeaders || {}) } });
 }
 
 export function corsPreflight(env) {

@@ -50,7 +50,7 @@ async function mountTheme(theme) {
     canvas.appendChild(frame);
     canvas.hidden = false;
     document.body.dataset.extensionThemeMode = 'canvas';
-    canvasRecord = { frame, theme, window: frame.contentWindow };
+    canvasRecord = { frame, theme, window: frame.contentWindow, fitViewport: false };
     await loaded;
     return;
   }
@@ -99,9 +99,20 @@ window.addEventListener('message', event => {
   const type = String(event.data.type || '');
   if (type === 'nie-sla:ready' || type === 'nstatus:ready') sendThemeStatus();
   if (type === 'nie-sla:resize' || type === 'nstatus:resize') {
-    record.frame.height = String(clampCanvasHeight(event.data.height));
+    if (event.data.fit_viewport === true) {
+      record.fitViewport = true;
+      record.frame.height = String(clampCanvasHeight(window.innerHeight));
+    } else {
+      record.fitViewport = false;
+      record.frame.height = String(clampCanvasHeight(event.data.height));
+    }
   }
   if (type === 'nie-sla:request' || type === 'nstatus:request') handleThemeRequest(record, event.data);
+});
+
+window.addEventListener('resize', () => {
+  if (!canvasRecord?.fitViewport) return;
+  canvasRecord.frame.height = String(clampCanvasHeight(window.innerHeight));
 });
 
 function sendThemeStatus() {

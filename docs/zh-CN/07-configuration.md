@@ -22,11 +22,16 @@
 | `PUBLIC_STATUS_AGENT_DETAILS` | `false` | 是否公开主机名、Agent 版本、精确容量/在线时长、系统与硬件指纹及流量明细；仅兼容旧主题时开启 |
 | `PUBLIC_STATUS_UNLOCK_DETAILS` | `false` | 是否公开逐节点流媒体/IP 解锁明细 |
 | `PUBLIC_STATUS_STORAGE_DETAILS` | `false` | 是否公开 D1/R2 存储模式及状态快照键名 |
+| `STATUS_STREAM_MAX_CONNECTIONS` | `200` | 公开状态 WSS 全局活跃连接上限 |
+| `STATUS_STREAM_MAX_CONNECTIONS_PER_IP` | `10` | 公开状态 WSS 单来源活跃连接上限 |
+| `STATUS_STREAM_MAX_SOCKET_AGE_SEC` | `1800` | 公开状态 WSS 单连接最大寿命 |
+| `STATUS_STREAM_MAX_IDLE_SEC` | `90` | 公开状态 WSS 无心跳最大空闲时间 |
 | `INCIDENTS_TO_D1` | `true` | 事件写 D1 |
 | `RATE_LIMIT_D1` | `true` | 使用 D1 做跨实例限流 |
 | `MISSED_WRITE_BACKFILL_MAX_BUCKETS` | `6` | 最多补写漏检桶 |
 | `ALERT_MAX_MESSAGES_PER_RUN` | `30` | 单轮告警上限 |
 | `DEVELOPER_API_ORIGINS` | 空 | `/api/v1` 浏览器调用的精确 Origin 逗号列表，不支持 `*` |
+| `INTERNAL_CRON_SECRET` | 必填（使用 Durable Object/内部调度时） | Worker 与内部 Durable Object 之间的专用共享 Secret；缺失时内部请求会拒绝，禁止用管理员密码或 Agent Token 替代 |
 
 三个 `PUBLIC_STATUS_*_DETAILS` 开关默认关闭。关闭 Agent 详情时，公开状态与指标 API 仍返回 CPU/内存/磁盘百分比、负载和当前收发速率，但不返回可用于识别服务器的精确信息；修改这些开关会使用独立缓存键，不会复用其他隐私模式的缓存。
 
@@ -40,7 +45,9 @@
 | `AGENT_METRICS_R2_RETENTION_HOURS` | `72` | R2 高频历史保留 |
 | `AGENT_METRICS_POINTS_PER_REPORT` | `6` | 报告抽样点控制 |
 | `AGENT_METRICS_TO_D1` | `false` | 高频指标写 D1（会显著增加写入量） |
+| `AGENT_METRICS_STATE_TO_D1` | `false` | 当前 Agent 指标状态写 D1；关闭时以 TelemetryBuffer Durable Object 为主、D1 为兼容回退 |
 | `AGENT_PINGS_TO_D1` | `false` | Ping 高频历史写 D1 |
+| `PROBE_LATEST_STATUS_TO_D1` | `false` | 当前探测状态写 D1；关闭时以 R2 当前状态为主、D1 为兼容回退 |
 | `PING_HISTORY_RETENTION_HOURS` | `6` | D1 Ping 临时历史 |
 | `AGENT_CREDENTIAL_TOUCH_SEC` | `21600` | 每节点 Token 最近使用时间的最小写入间隔 |
 | `TRAFFIC_PERSIST_INTERVAL_SEC` | `1800` | 流量周期行最大落盘间隔；页面合并未落盘差值 |
@@ -82,6 +89,7 @@
 ```bash
 npx wrangler secret put ADMIN_PASSWORD
 npx wrangler secret put TOTP_ENCRYPTION_KEY
+npx wrangler secret put INTERNAL_CRON_SECRET
 npx wrangler secret list
 ```
 

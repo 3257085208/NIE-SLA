@@ -1,15 +1,17 @@
 import { enrichCfContext, probeTarget, saveCheck, runDueTargets, runFastStatusTargets } from './probe.js';
 import { writeStatusSnapshot } from './status.js';
-import { archiveYesterdayOncePerLocalDay, cleanupDebugLogs, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates } from './admin.js';
+import { archiveYesterdayOncePerLocalDay, cleanupDebugLogs, cleanupFinishedAgentTasks, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates } from './admin.js';
 import { cleanupRateLimitsD1 } from './ratelimit.js';
 import { cleanupAgentMetricsR2 } from './metrics.js';
 import { runAlertChecks } from './alerts.js';
-import { VERSION } from './version.js';
 import { handleRequest } from './routes.js';
 import { constantTimeEqual, internalRequestAuthorized, internalRequestHeaders, internalScheduleSecret, json } from './auth.js';
 import { clamp, parseBoolean, shouldRunScheduledFollowups } from './utils.js';
 import { routeStaticAssets } from './static-assets.js';
+import { publishStatusEvents } from './status-stream.js';
 export { TelemetryBuffer } from './telemetry-buffer.js';
+export { ProbeHistoryBuffer } from './probe-history-buffer.js';
+export { StatusStream } from './status-stream.js';
 
 const INTERNAL_SCHEDULE_PATH = '/api/internal/scheduled';
 
@@ -147,6 +149,12 @@ export async function runScheduledTasks(env, cron, options = {}) {
   } else {
     try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env, { skipLease: options.serialized === true })); } catch (err) { results.fast_status_error = String(err?.message || err); }
   }
+  const statusEvents = [...(results.probe?.events || []), ...(results.fast_status?.events || [])];
+  if (statusEvents.length) {
+    try { results.status_stream = await measure('status_stream', () => publishStatusEvents(env, statusEvents)); } catch (err) {
+      results.status_stream_error = String(err?.message || err);
+    }
+  }
   const hasCurrentStatus = historyProbeCount > 0 || Number(results.fast_status?.count || 0) > 0;
   if (!shouldRunScheduledFollowups(results.probe) && !hasCurrentStatus) {
     results.followups = { ok: true, skipped: true, reason: results.probe_error ? 'probe_failed' : 'no_targets_due' };
@@ -167,6 +175,7 @@ export async function runScheduledTasks(env, cron, options = {}) {
     try { results.check_bucket_cleanup = await measure('check_bucket_cleanup', () => cleanupOldCheckBuckets(env, 31)); } catch (err) { results.check_bucket_cleanup_error = String(err?.message || err); }
     try { results.debug_log_cleanup = await measure('debug_log_cleanup', () => cleanupDebugLogs(env)); } catch (err) { results.debug_log_cleanup_error = String(err?.message || err); }
     try { results.agent_metrics_r2_cleanup = await measure('agent_metrics_r2_cleanup', () => cleanupAgentMetricsR2(env)); } catch (err) { results.agent_metrics_r2_cleanup_error = String(err?.message || err); }
+    try { results.agent_task_cleanup = await measure('agent_task_cleanup', () => cleanupFinishedAgentTasks(env)); } catch (err) { results.agent_task_cleanup_error = String(err?.message || err); }
   }
   if (parseBoolean(env.ENABLE_DAILY_ARCHIVE ?? false, false)) {
     try { results.archive = await archiveYesterdayOncePerLocalDay(env); } catch (err) { results.archive_error = String(err?.message || err); }
@@ -269,6 +278,8 @@ function compactScheduledResults(results) {
     const warnings = [...new Set(out.probe.results.map(item => item?.warning).filter(Boolean))];
     out.probe = { ok: out.probe.ok, count: out.probe.count, failed, ...(warnings.length ? { warnings } : {}) };
   }
+  if (out.fast_status?.events) delete out.fast_status.events;
+  if (out.probe?.events) delete out.probe.events;
   if (out.alerts?.errors) {
     out.alerts = { ...out.alerts, errors: out.alerts.errors.slice(0, 5) };
   }
@@ -284,11 +295,13 @@ async function claimHourlyMaintenanceSlot(env, cron = '') {
   const hour = Math.floor(Date.now() / 3600000);
   const key = 'maintenance:hourly';
   const now = Math.floor(Date.now() / 1000);
-  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+  const result = await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
     WHERE CAST(app_meta.value AS INTEGER) < ?`)
     .bind(key, String(hour), now, hour)
     .run();
-  const row = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(key).first().catch(() => null);
-  return row?.value === String(hour);
+  // Only the invocation that actually inserted/advanced the hour owns the
+  // maintenance slot. Reading the current value after a failed conditional
+  // UPSERT would make every minute in the same hour return true.
+  return Number(result?.meta?.changes || 0) > 0;
 }

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { webcrypto } from 'node:crypto';
 import { ensureV6Schema } from '../src/admin/schema.js';
-import { createAgentTask, createAgentTasks, claimAgentTask, completeAgentTask, listAgentTasks, cancelAgentTask, agentTaskCancelStatus, normalizeRunnerInstanceId, normalizeTaskResult } from '../src/admin/agent-tasks.js';
+import { cleanupFinishedAgentTasks, createAgentTask, createAgentTasks, claimAgentTask, completeAgentTask, listAgentTasks, cancelAgentTask, agentTaskCancelStatus, normalizeRunnerInstanceId, normalizeTaskResult } from '../src/admin/agent-tasks.js';
 import { getGeoIpSettings, submitAgentLocation, updateGeoIpSettings, validateCustomGeoIpUrl } from '../src/admin/agent-location.js';
 import { exportBackup, previewBackup, restoreBackup } from '../src/admin/backup.js';
 import { getOrCreateAgentToken, verifyAgentCredential } from '../src/agent-credentials.js';
@@ -472,6 +473,66 @@ const replaced = await restoreBackup(jsonRequest({
   confirm: 'RESTORE',
 }), restoredEnv);
 assert.deepEqual(replaced.runtime_cleanup, { d1_cleared: true, r2_cleared: true, warnings: [] });
+
+// --- agent_tasks retention cleanup (Bug fix: unbounded table growth) ---
+{
+  const schemaSource = await readFile(new URL('../src/admin/schema.js', import.meta.url), 'utf8');
+  const adminSource = await readFile(new URL('../src/admin.js', import.meta.url), 'utf8');
+  const indexSource = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
+  assert.match(schemaSource, /CREATE INDEX IF NOT EXISTS idx_agent_tasks_status_expires ON agent_tasks\(status, expires_at\)/, 'expireStaleTasks predicate (status, expires_at) must be index-backed');
+  assert.match(schemaSource, /schema:worker-v29-agent-task-retention/, 'the retention index migration must carry its own schema marker');
+  assert.match(adminSource, /cleanupFinishedAgentTasks/, 'admin.js must re-export the retention cleanup');
+  assert.match(indexSource, /agent_task_cleanup/, 'hourly maintenance must run the agent task retention cleanup');
+
+  const now2 = Math.floor(Date.now() / 1000);
+  const stale = now2 - 31 * 86400;
+  const fresh = now2 - 86400;
+  const insertTask = sqlite.prepare(`INSERT INTO agent_tasks (id, agent_id, action, status, requested_at, claimed_at, finished_at, expires_at)
+    VALUES (?, ?, 'ip_unlock', ?, ?, ?, ?, ?)`);
+  const terminalStatuses = ['succeeded', 'failed', 'expired', 'cancelled'];
+  for (let index = 0; index < 1200; index += 1) {
+    insertTask.run(`retention-old-${index}`, `retention-agent-${index % 7}`, terminalStatuses[index % 4], stale - index, stale - index, stale, stale + 600);
+  }
+  insertTask.run('retention-keep-fresh-succeeded', 'retention-keep-1', 'succeeded', fresh, fresh, fresh, fresh + 600);
+  insertTask.run('retention-keep-old-queued', 'retention-keep-2', 'queued', stale, null, null, stale + 600);
+  insertTask.run('retention-keep-old-running', 'retention-keep-3', 'running', stale, stale, null, stale + 600);
+
+  const batchChanges = [];
+  const baseDb = env.DB;
+  const spyingDb = {
+    prepare(sql) {
+      const statement = baseDb.prepare(sql);
+      return {
+        bind(...params) { statement.bind(...params); return this; },
+        async run() {
+          const result = await statement.run();
+          if (sql.includes('DELETE FROM agent_tasks WHERE rowid IN')) batchChanges.push(Number(result?.meta?.changes || 0));
+          return result;
+        },
+        all: (...args) => statement.all(...args),
+        first: (...args) => statement.first(...args),
+      };
+    },
+    batch(statements) { return baseDb.batch(statements); },
+  };
+  const summary = await cleanupFinishedAgentTasks({ ...env, DB: spyingDb });
+  assert.equal(summary.ok, true);
+  assert.equal(summary.retention_days, 30);
+  assert.equal(summary.deleted, 1200, 'terminal tasks finished more than 30 days ago must be deleted');
+  assert.deepEqual(batchChanges, [500, 500, 200], 'cleanup must delete in bounded 500-row batches and stop under the limit');
+  assert.equal(summary.truncated, false);
+  assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM agent_tasks WHERE id LIKE 'retention-old-%'`).get().count, 0);
+  assert.equal(sqlite.prepare(`SELECT COUNT(*) AS count FROM agent_tasks WHERE id LIKE 'retention-keep-%'`).get().count, 3, 'fresh terminal, old queued, and old running tasks must survive retention cleanup');
+  assert.equal(sqlite.prepare(`SELECT status FROM agent_tasks WHERE id = 'retention-keep-old-queued'`).get().status, 'queued');
+
+  const idle = await cleanupFinishedAgentTasks(env);
+  assert.equal(idle.ok, true);
+  assert.equal(idle.deleted, 0, 'a second cleanup pass must find nothing left to delete');
+  assert.deepEqual(idle.truncated, false);
+
+  const missingDb = await cleanupFinishedAgentTasks({});
+  assert.equal(missingDb.skipped, true, 'cleanup must be a no-op without a DB binding');
+}
 
 console.log('Agent task, GeoIP, and backup tests passed');
 

@@ -1,6 +1,17 @@
 # 更新日志
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
+## 1.1.24 - 2026-09-05
+
+- 探测调度节流：`targets` 调度镜像每目标每 30 分钟回写一次（`TARGET_SCHEDULE_FLUSH_SEC`），探测选择不再依赖该镜像；探测节奏由状态存储驱动。
+- 调试日志收缩：仅保留登录/账号安全（`/api/auth/*`、`/api/totp/*`）与 Agent 任务失败详情；其余操作不写入 `debug_logs`。
+- Agent：新增无 root 安装形态（`install.sh --rootless`，systemd user 服务，不含特权 Manager）；自更新新增回滚确认；NodeQuality 任务本地超时（默认 3600 秒，上限 7200 秒）。
+- WSS 当前状态按 Agent 分键存储并分页读取；DO 存储列举改用分页循环。
+- `ping_series` 单样本延迟超限改为钳制，不再整包拒绝；`/api/agent/pings` 增加时间窗与小时桶校验。
+- 安装器：新增 `--rootless`、品牌横幅（`NIE_SLA_BANNER`）、`agent_tasks` 保留清理与 `(status, expires_at)` 索引。
+- 新增用量估算模型脚本与校准文件（`scripts/usage-model.mjs`）。
+
+
 ## 1.1.22 - 2026-08-21
 
 - 批量 Pings：新增 `GET /api/agent/pings/batch` 与 `GET /api/v1/pings/batch`（`agent_ids=a,b,c` 1-50 个，`hours`/`format=series`/`max_points_per_target`/`include_loss` 透传，`100/60 + keyPrefix: pings-batch/v1-pings-batch + bestEffort`），Worker 扇出 12 并发复用 `getAgentPings`（R2 小时桶 + D1 合并 + `compact`），主题 1 请求拿 39 卡全量，彻底 0-429；单 `pings 300/120` 与主题 `600/2000` 保持。

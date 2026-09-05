@@ -1,8 +1,12 @@
 import { nowSec, sanitizeAgentId } from './utils.js';
+import { agentStateTimestamp } from './agent-state.js';
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
-import { processAgentMetricsPayload } from './metrics.js';
+import { persistAgentMetricsStateFallback, processAgentMetricsPayload } from './metrics.js';
 import { readR2JsonResult } from './storage.js';
 import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
+import { getPingIntervalSec } from './ping-config.js';
+import { pingTargetProtocol } from './ping-target-protocol.js';
+import { decodeAgentMetricsProtobuf } from './telemetry-protobuf.js';
 
 const HOUR_SEC = 3600;
 const CHUNK_SEC = 300;
@@ -12,7 +16,20 @@ const MAX_FLUSH_SEC = 86400;
 const CHUNK_PREFIX = 'chunk:';
 const LEGACY_BUFFER_PREFIX = 'hour:';
 const EXPORT_PREFIX = 'export:';
+// Every Agent WebSocket is routed to the same shared Durable Object instance
+// (see routes.js), so per-Agent latest states must live under per-Agent keys
+// inside that one instance instead of a single shared key.
+export const AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream';
+const LATEST_STATE_PREFIX = 'latest:state:';
+// Durable Object storage.list() silently truncates large key spaces (default
+// page caps around 1000 keys), so every unbounded listing must page through
+// the full range (startAfter acts as the continuation cursor).
+const STORAGE_LIST_PAGE_LIMIT = 500;
 const FLUSH_GRACE_SEC = 600;
+
+function latestStateKey(agentId) {
+  return `${LATEST_STATE_PREFIX}${sanitizeAgentId(agentId)}`;
+}
 
 export class TelemetryBuffer {
   constructor(state, env) {
@@ -25,6 +42,20 @@ export class TelemetryBuffer {
     if (!internalRequestAuthorized(request, this.env)) return new Response(JSON.stringify({ ok: false, error: '未授权' }), { status: 401, headers: { 'content-type': 'application/json' } });
     if (request.method === 'GET' && url.pathname === '/agent-metrics/ws' && String(request.headers.get('upgrade') || '').toLowerCase() === 'websocket') {
       return this.openAgentMetricsSocket(request);
+    }
+    if (request.method === 'GET' && url.pathname === '/latest') {
+      const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
+      if (!agentId) return Response.json({ ok: false, error: 'Agent ID 无效' }, { status: 400 });
+      return Response.json({ ok: true, state: await this.state.storage.get(latestStateKey(agentId)) || null });
+    }
+    if (request.method === 'DELETE' && url.pathname === '/latest') {
+      const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
+      if (!agentId) return Response.json({ ok: false, error: 'Agent ID 无效' }, { status: 400 });
+      await this.state.storage.delete(latestStateKey(agentId));
+      return Response.json({ ok: true, agent_id: agentId });
+    }
+    if (request.method === 'GET' && url.pathname === '/fleet/latest') {
+      return Response.json(await this.readFleetLatestStates());
     }
     if (request.method === 'POST' && url.pathname === '/append') {
       const body = await request.json();
@@ -58,17 +89,45 @@ export class TelemetryBuffer {
 
   async webSocketMessage(socket, message) {
     try {
-      const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
-      if (text.length > 220_000) throw new Error('metrics 数据过大');
-      const body = JSON.parse(text);
+      const body = typeof message === 'string'
+        ? parseJsonMessage(message)
+        : parseBinaryMessage(message);
       if (body?.type === 'ping') {
         socket.send(JSON.stringify({ ok: true, type: 'pong' }));
         return;
       }
       const attachment = socket.deserializeAttachment() || {};
       const payload = body?.type === 'metrics' ? body.payload : body;
-      const result = await processAgentMetricsPayload(this.env, payload, null, attachment.agent_id);
-      socket.send(JSON.stringify({ ...result, type: 'metrics_ack' }));
+      // previousState must be THIS Agent's own latest state (per-Agent key in
+      // this shared instance), never another Agent's state.
+      const agentId = sanitizeAgentId(attachment.agent_id || '');
+      const previousState = agentId ? await this.state.storage.get(latestStateKey(agentId)) || null : null;
+      const result = await processAgentMetricsPayload(this.env, payload, null, attachment.agent_id, {
+        previousState,
+        skipStateD1: true,
+        returnLatestState: true,
+      });
+      const latestState = result?.latest_state;
+      if (latestState) {
+        try {
+          const latestKey = latestStateKey(latestState.agent_id || agentId);
+          // A late message from a stale socket (reconnect race) must not
+          // overwrite a newer state already stored for this Agent.
+          if (agentStateTimestamp(previousState?.updated_at) <= agentStateTimestamp(latestState.updated_at)) {
+            await this.state.storage.put(latestKey, latestState);
+          }
+        } catch (error) {
+          console.error('store buffered Agent latest state failed:', String(error?.message || error));
+          try {
+            await persistAgentMetricsStateFallback(this.env, latestState);
+          } catch (fallbackError) {
+            console.error('fallback Agent latest state to D1 failed:', String(fallbackError?.message || fallbackError));
+          }
+        }
+      }
+      const { latest_state: _latestState, ...ack } = result || {};
+      const control = await this.readControlSnapshot();
+      socket.send(JSON.stringify({ ...ack, ...(control ? { control } : {}), type: 'metrics_ack' }));
     } catch (error) {
       const status = Number(error?.status || 400);
       socket.send(JSON.stringify({ ok: false, type: 'metrics_ack', error: String(error?.message || 'WS metrics failed'), retryable: status >= 500 }));
@@ -102,6 +161,38 @@ export class TelemetryBuffer {
     await this.scheduleFlush();
     await this.flushCompletedHours(nowSec());
     return { ok: true, chunks: grouped.size };
+  }
+
+  async readFleetLatestStates() {
+    const rows = await this.listStorageEntries(LATEST_STATE_PREFIX);
+    const states = {};
+    for (const [key, value] of rows) {
+      const agentId = sanitizeAgentId(String(key).slice(LATEST_STATE_PREFIX.length));
+      if (agentId && value && typeof value === 'object' && !Array.isArray(value)) states[agentId] = value;
+    }
+    return { ok: true, states };
+  }
+
+  async readControlSnapshot() {
+    const now = nowSec();
+    const cached = await this.state.storage.get('control:ping');
+    const ttl = Math.max(60, Math.min(3600, Number(this.env.PROBE_CONTROL_CACHE_SEC || 300)));
+    if (cached?.control && Number(cached.fetched_at || 0) + ttl > now) return cached.control;
+    try {
+      const rows = await this.env.DB?.prepare(`SELECT id, target, enabled FROM ping_targets WHERE enabled = 1 ORDER BY name LIMIT 500`).all();
+      const targets = (rows?.results || []).map(row => ({
+        id: String(row.id || '').slice(0, 128),
+        target: String(row.target || '').slice(0, 2048),
+        enabled: Number(row.enabled || 0) === 1,
+        protocol: pingTargetProtocol(row.target),
+      })).filter(row => row.id && row.target && ['tcp', 'http'].includes(row.protocol));
+      const control = { ping_interval_sec: await getPingIntervalSec(this.env), ping_targets: targets };
+      await this.state.storage.put('control:ping', { fetched_at: now, control });
+      return control;
+    } catch (error) {
+      console.error('read WSS control snapshot failed:', String(error?.message || error));
+      return cached?.control || null;
+    }
   }
 
   async read(since, until) {
@@ -166,7 +257,7 @@ export class TelemetryBuffer {
 
   async flushPendingExports(currentAt) {
     if (!timeseriesExportEnabled(this.env)) return;
-    const rows = await this.state.storage.list({ prefix: EXPORT_PREFIX });
+    const rows = await this.listStorageEntries(EXPORT_PREFIX);
     let retry = false;
     for (const [key, value] of rows) {
       const hour = hourStart(value?.hour || String(key).slice(EXPORT_PREFIX.length));
@@ -206,14 +297,56 @@ export class TelemetryBuffer {
     if (current == null || current > alarmAt) await this.state.storage.setAlarm(alarmAt);
   }
 
+  // storage.list() truncates around 1000 keys per call, so unbounded listings
+  // page with an explicit per-page limit and startAfter as the continuation
+  // cursor until the key range is exhausted.
+  async listStorageEntries(prefix, pageLimit = STORAGE_LIST_PAGE_LIMIT) {
+    const entries = new Map();
+    let startAfter;
+    while (true) {
+      const page = await this.state.storage.list(startAfter
+        ? { prefix, limit: pageLimit, startAfter }
+        : { prefix, limit: pageLimit });
+      const before = entries.size;
+      for (const [key, value] of page) if (!entries.has(key)) entries.set(key, value);
+      if (page.size < pageLimit || entries.size === before) break;
+      const lastKey = [...page.keys()].pop();
+      if (!lastKey || lastKey === startAfter) break;
+      startAfter = lastKey;
+    }
+    return entries;
+  }
+
   async bufferRows(limit = null) {
-    const chunks = await this.state.storage.list(limit == null ? { prefix: CHUNK_PREFIX } : { prefix: CHUNK_PREFIX, limit });
+    // With a limit these are bounded existence/count probes; without one the
+    // flush path must see every row, so it pages through the full key space.
+    const chunks = limit == null
+      ? await this.listStorageEntries(CHUNK_PREFIX)
+      : await this.state.storage.list({ prefix: CHUNK_PREFIX, limit });
     if (limit != null && chunks.size >= limit) return chunks;
-    const legacy = await this.state.storage.list(limit == null
-      ? { prefix: LEGACY_BUFFER_PREFIX }
-      : { prefix: LEGACY_BUFFER_PREFIX, limit: limit - chunks.size });
+    const legacy = limit == null
+      ? await this.listStorageEntries(LEGACY_BUFFER_PREFIX)
+      : await this.state.storage.list({ prefix: LEGACY_BUFFER_PREFIX, limit: limit - chunks.size });
     return new Map([...chunks, ...legacy]);
   }
+}
+
+function parseJsonMessage(text) {
+  if (text.length > 220_000) throw new Error('metrics 数据过大');
+  return JSON.parse(text);
+}
+
+function parseBinaryMessage(message) {
+  const bytes = message instanceof ArrayBuffer
+    ? new Uint8Array(message)
+    : ArrayBuffer.isView(message)
+      ? new Uint8Array(message.buffer, message.byteOffset, message.byteLength)
+      : null;
+  if (!bytes) return decodeAgentMetricsProtobuf(message);
+  if (bytes.byteLength > 220_000) throw new Error('metrics 数据过大');
+  // Keep accepting the legacy binary-UTF-8 JSON form used by older clients.
+  if (bytes[0] === 0x7b || bytes[0] === 0x5b) return parseJsonMessage(new TextDecoder().decode(bytes));
+  return decodeAgentMetricsProtobuf(bytes);
 }
 
 export async function appendBufferedAgentTelemetry(env, agentId, points, pings) {
@@ -245,6 +378,42 @@ export async function readBufferedAgentTelemetry(env, agentId, since, until) {
   };
 }
 
+export async function readBufferedAgentLatestState(env, agentId) {
+  if (!env.TELEMETRY_BUFFER) return null;
+  const id = sanitizeAgentId(agentId);
+  if (!id) return null;
+  // Latest states live in the same shared instance that owns the Agent
+  // WebSockets, keyed per Agent (latest:state:<agent_id>).
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const url = new URL('https://nie-sla.internal/latest');
+  url.searchParams.set('agent_id', id);
+  const response = await stub.fetch(url.toString(), { headers: internalRequestHeaders(env) });
+  if (!response.ok) return null;
+  const body = await response.json().catch(() => ({}));
+  return body?.state && typeof body.state === 'object' && !Array.isArray(body.state) ? body.state : null;
+}
+
+export async function readFleetLatestAgentStates(env) {
+  if (!env.TELEMETRY_BUFFER) return {};
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const response = await stub.fetch('https://nie-sla.internal/fleet/latest', { headers: internalRequestHeaders(env) });
+  if (!response.ok) return {};
+  const body = await response.json().catch(() => ({}));
+  return body?.states && typeof body.states === 'object' && !Array.isArray(body.states) ? body.states : {};
+}
+
+export async function deleteBufferedAgentLatestState(env, agentId) {
+  if (!env.TELEMETRY_BUFFER) return { ok: true, skipped: true };
+  const id = sanitizeAgentId(agentId);
+  if (!id) return { ok: true, skipped: true };
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const url = new URL('https://nie-sla.internal/latest');
+  url.searchParams.set('agent_id', id);
+  const response = await stub.fetch(url.toString(), { method: 'DELETE', headers: internalRequestHeaders(env) });
+  if (!response.ok) throw new Error(`Agent latest state 删除失败：HTTP ${response.status}`);
+  return response.json();
+}
+
 export async function deleteBufferedAgentTelemetry(env, agentId) {
   if (!env.TELEMETRY_BUFFER) return { ok: true, skipped: true };
   const id = sanitizeAgentId(agentId);
@@ -252,7 +421,9 @@ export async function deleteBufferedAgentTelemetry(env, agentId) {
   const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(`agent:${id}`));
   const response = await stub.fetch('https://nie-sla.internal/delete', { method: 'POST', headers: internalRequestHeaders(env) });
   if (!response.ok) throw new Error(`遥测缓冲删除失败：HTTP ${response.status}`);
-  return response.json();
+  const result = await response.json();
+  await deleteBufferedAgentLatestState(env, id);
+  return result;
 }
 
 function groupByChunk(points, pings) {
@@ -336,9 +507,15 @@ function metricsFromPayload(payload) {
   const series = payload?.series;
   if (!series || !Array.isArray(series.dt)) return [];
   const fields = Array.isArray(series.fields) ? series.fields : Object.keys(series.values || {});
+  const temperatureSensors = Array.isArray(series.temperature_sensors) ? series.temperature_sensors : [];
   return series.dt.map((delta, index) => {
     const point = { ts: Number(series.t0 || 0) + Number(delta || 0) };
     for (const field of fields) point[field] = Number(series.values?.[field]?.[index] || 0);
+    const sensors = temperatureSensors.flatMap(sensor => {
+      const normalized = normalizeBufferedTemperatureSensor({ ...sensor, temp_c: sensor?.temp_c?.[index] });
+      return normalized ? [normalized] : [];
+    });
+    if (sensors.length) point.temperature_sensors = sensors;
     return point;
   });
 }
@@ -418,7 +595,7 @@ function chunkStart(value) {
 
 function metricPointsToColumns(points) {
   const list = [...(points || [])].sort((a, b) => Number(a.ts) - Number(b.ts));
-  const fields = [...new Set(list.flatMap(point => Object.keys(point).filter(key => key !== 'ts')))];
+  const fields = [...new Set(list.flatMap(point => Object.keys(point).filter(key => key !== 'ts' && key !== 'temperature_sensors')))];
   const t0 = Number(list[0]?.ts || 0);
   const values = Object.fromEntries(fields.map(field => [field, []]));
   const dt = [];
@@ -426,7 +603,50 @@ function metricPointsToColumns(points) {
     dt.push(Number(point.ts) - t0);
     for (const field of fields) values[field].push(Number(point[field] || 0));
   }
-  return { t0, dt, fields, values };
+  const temperatureSensors = temperatureSensorSeries(list);
+  return {
+    t0,
+    dt,
+    fields,
+    values,
+    ...(temperatureSensors.length ? { temperature_sensors: temperatureSensors } : {}),
+  };
+}
+
+function normalizeBufferedTemperatureSensor(sensor) {
+  const id = String(sensor?.id || '').trim().slice(0, 64);
+  const label = String(sensor?.label || '').trim().slice(0, 128);
+  const rawTemp = sensor?.temp_c;
+  const temp = Number(rawTemp);
+  if (!id || !label || rawTemp == null || rawTemp === '' || typeof rawTemp === 'boolean' || !Number.isFinite(temp)) return null;
+  const kind = String(sensor?.kind || '');
+  return {
+    id,
+    label,
+    kind: ['cpu', 'gpu', 'motherboard', 'disk', 'chipset', 'other'].includes(kind) ? kind : 'other',
+    temp_c: Math.max(-100, Math.min(1_000, temp)),
+  };
+}
+
+function temperatureSensorSeries(points) {
+  const sensors = new Map();
+  for (const point of points || []) {
+    for (const sensor of Array.isArray(point?.temperature_sensors) ? point.temperature_sensors.slice(0, 16) : []) {
+      const normalized = normalizeBufferedTemperatureSensor(sensor);
+      if (normalized && !sensors.has(normalized.id)) sensors.set(normalized.id, {
+        id: normalized.id,
+        label: normalized.label,
+        kind: normalized.kind,
+      });
+    }
+  }
+  return [...sensors.values()].map(sensor => ({
+    ...sensor,
+    temp_c: (points || []).map(point => {
+      const match = (point?.temperature_sensors || []).find(item => String(item?.id || '').trim() === sensor.id);
+      return normalizeBufferedTemperatureSensor(match)?.temp_c ?? null;
+    }),
+  }));
 }
 
 function pingPointsToSeries(pings) {

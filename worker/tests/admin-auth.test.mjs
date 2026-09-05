@@ -25,6 +25,12 @@ function memoryDb() {
           return null;
         },
         async run() {
+          if (/UPDATE app_meta SET value = \?, updated_at = \? WHERE key = \? AND value = \?/i.test(sql)) {
+            const [value, _updatedAt, key, expected] = this.values;
+            if (meta.get(String(key)) !== String(expected)) return { success: true, meta: { changes: 0 } };
+            meta.set(String(key), String(value));
+            return { success: true, meta: { changes: 1 } };
+          }
           if (/INSERT INTO app_meta/i.test(sql)) meta.set(String(this.values[0]), String(this.values[1]));
           if (/DELETE FROM app_meta/i.test(sql)) meta.delete(String(this.values[0]));
           if (/DELETE FROM rate_limits WHERE key = \? AND ts < \?/i.test(sql)) {

@@ -1,6 +1,7 @@
-import { ApiError, constantTimeEqual, json, safeJson } from './auth.js';
+import { ApiError, constantTimeEqual, safeJson } from './auth.js';
 import { nowSec, sha256Hex, bytesToBase64, base64ToBytes } from './utils.js';
 import { checkTOTP, createAdminSession, revokeAllAdminSessions, verifyActiveTOTP } from './totp.js';
+import { revokeUsageSummaryAccess } from './admin/usage-summary-access.js';
 import { getAdminPath } from './admin-path.js';
 import { clearRateLimitD1, rateLimitD1, rateLimitStatusD1 } from './ratelimit.js';
 
@@ -113,7 +114,10 @@ export async function updateAdminAccount(request, env) {
     || !constantTimeEqual(stored.password_hash, record.password_hash)) {
     throw new ApiError(500, '管理员账号写入后校验失败，请重试');
   }
-  await revokeAllAdminSessions(env);
+  await Promise.all([
+    revokeAllAdminSessions(env),
+    revokeUsageSummaryAccess(env),
+  ]);
   await Promise.all([
     writePending(env, OAUTH_STATES_KEY, []),
     writePending(env, OAUTH_TICKETS_KEY, []),
@@ -221,6 +225,11 @@ export async function completeGitHubOAuth(request, env) {
   if (!env.DB) throw new ApiError(500, 'GitHub 登录需要 D1 数据库');
   const body = await safeJson(request, 8_192);
   const ticket = String(body.ticket || '').trim();
+  const ticketHash = await sha256Hex(ticket);
+  const sourceIp = String(request.headers.get('cf-connecting-ip') || 'unknown').slice(0, 80);
+  if (!await rateLimitD1(env, `github-ticket:${ticketHash}:${sourceIp}`, 10, 300)) {
+    throw new ApiError(429, 'GitHub 登录票据尝试次数过多，请稍后重试。', { 'retry-after': '300' });
+  }
   const entry = await findPendingToken(env, OAUTH_TICKETS_KEY, ticket);
   if (!entry) throw new ApiError(401, 'GitHub 登录票据无效或已过期');
 
@@ -443,20 +452,34 @@ async function findPendingToken(env, key, token) {
 
 async function consumePendingToken(env, key, token) {
   const hash = await sha256Hex(String(token || ''));
-  const now = nowSec();
-  const pending = await readPending(env, key);
-  let found = null;
-  const remaining = [];
-  for (const entry of pending) {
-    if (Number(entry.expires_at || 0) <= now) continue;
-    if (!found && constantTimeEqual(String(entry.token_hash || ''), hash)) {
-      found = entry;
-      continue;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const row = await env.DB.prepare('SELECT value FROM app_meta WHERE key = ?').bind(key).first();
+    const raw = String(row?.value || '[]');
+    let pending;
+    try {
+      const parsed = JSON.parse(raw);
+      pending = Array.isArray(parsed) ? parsed.filter((entry) => entry && entry.token_hash) : [];
+    } catch (_) {
+      pending = [];
     }
-    remaining.push(entry);
+    const now = nowSec();
+    let found = null;
+    const remaining = [];
+    for (const entry of pending) {
+      if (Number(entry.expires_at || 0) <= now) continue;
+      if (!found && constantTimeEqual(String(entry.token_hash || ''), hash)) {
+        found = entry;
+        continue;
+      }
+      remaining.push(entry);
+    }
+    if (!found) return null;
+    const result = await env.DB.prepare('UPDATE app_meta SET value = ?, updated_at = ? WHERE key = ? AND value = ?')
+      .bind(JSON.stringify(remaining.slice(-MAX_PENDING_OAUTH)), now, key, raw)
+      .run();
+    if (Number(result?.meta?.changes || 0) === 1) return found;
   }
-  await writePending(env, key, remaining);
-  return found;
+  return null;
 }
 
 async function readPending(env, key) {

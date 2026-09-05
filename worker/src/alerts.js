@@ -2,6 +2,8 @@ import { clamp, nowSec, parseBoolean, sanitizeAgentId, isPrivateHost, bytesToBas
 import { summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffic.js';
 import { ApiError, safeJson } from './auth.js';
 import { readR2State } from './storage.js';
+import { bufferedAgentStateEnabled, mergeAgentMetricRows } from './agent-state.js';
+import { readFleetLatestAgentStates } from './telemetry-buffer.js';
 
 const SETTINGS_KEY = 'alert_settings';
 const TG_TOKEN_KEY = 'alert_telegram_bot_token';
@@ -143,12 +145,16 @@ export async function runAlertChecks(env, options = {}) {
   if (!channels.length) return finishAlertRun(env, { ok: true, skipped: true, reason: 'channels_not_configured' });
   await ensureAlertStateTable(env);
 
-  const [targetRows, metricRows, trafficRows, latestRows, stateRows] = await Promise.all([
+  const [targetRows, metricRows, trafficRows, latestRows, stateRows, bufferedMetrics] = await Promise.all([
     env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 ORDER BY group_name, name`).all(),
     env.DB.prepare(`SELECT * FROM agent_metrics_state`).all(),
     env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all(),
     env.DB.prepare(`SELECT * FROM latest_status`).all(),
     env.DB.prepare(`SELECT * FROM alert_state`).all(),
+    bufferedAgentStateEnabled(env) ? readFleetLatestAgentStates(env).catch((error) => {
+      console.error('Alert buffered Agent metrics unavailable:', String(error?.message || error));
+      return {};
+    }) : Promise.resolve({}),
   ]);
 
   const alertEnv = Object.create(env);
@@ -157,7 +163,7 @@ export async function runAlertChecks(env, options = {}) {
   );
 
   const metricsByAgent = new Map();
-  for (const row of metricRows.results || []) {
+  for (const row of mergeAgentMetricRows(metricRows.results, bufferedMetrics)) {
     const id = sanitizeAgentId(row.agent_id);
     if (id) metricsByAgent.set(id, row);
   }

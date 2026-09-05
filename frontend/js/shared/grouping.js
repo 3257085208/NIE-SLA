@@ -1,5 +1,7 @@
 ﻿
 
+import { escapeAttr, escapeHtml } from './html.js';
+
 export const GROUP_BY_OPTIONS = [
   { id: 'group', label: 'VPS / Web' },
   { id: 'provider', label: '商家' },
@@ -99,6 +101,6 @@ export function lineTypeOptionsHtml(selected = '') {
   }
   return options.map((opt) => {
     const sel = selectedValue === opt.id ? ' selected' : '';
-    return `<option value="${opt.id}"${sel}>${opt.label}</option>`;
+    return `<option value="${escapeAttr(opt.id)}"${sel}>${escapeHtml(opt.label)}</option>`;
   }).join('');
 }

@@ -2,7 +2,8 @@ import { connect } from 'cloudflare:sockets';
 import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatus, withTimeout, ALLOWED_REGIONS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC, BUCKET_SEC, isPrivateHost, buildMissedPoints, lastPersistedCheckAt } from './utils.js';
 import { internalRequestHeaders } from './auth.js';
 import { readR2State, mergeR2StateUpdates, setDailySummary, cachedDailySummaryBefore, dailySummaryFromPoints, statsFromDailySummaries } from './storage.js';
-import { applyProbeWriteBatch, readCheckBucketDaySummary } from './admin.js';
+import { applyProbeWriteBatch, readCheckBucketDaySummary, latestStatusToD1Enabled, upsertLatestStatus } from './admin.js';
+import { compactStatusEvents } from './status-stream.js';
 
 const daySummaryCache = new Map();
 
@@ -218,8 +219,9 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
   const cfColo = result.cf_colo || null;
 
 
+  const scheduleFlush = scheduleFlushDue(target, checkedAt, env);
   if (result.skipped) {
-    await applyProbeWriteBatch(env, target.id, bucketAt, [], null, null, bucketAt + historyDueIntervalSec(target, env, previous));
+    await applyProbeWriteBatch(env, target.id, bucketAt, [], null, null, bucketAt + historyDueIntervalSec(target, env, previous), scheduleFlush);
     return { history_points: 0, uptime_24h: previous?.uptime_24h ?? null, uptime_7d: previous?.uptime_7d ?? null, incident: null, storage: 'skipped', state_update: null };
   }
 
@@ -251,8 +253,8 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
   const statusChangedAt = previous && Number(previous.ok) === okInt ? (previous.status_changed_at || checkedAt) : checkedAt;
   const outage = buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous);
   const stateUpdate = { target_id: target.id, checked_at: checkedAt, ok: okInt, latency_ms: latency, status_code: statusCode, error, probe_region: probeRegion, cf_colo: cfColo, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, avg_latency_24h: stats24.avgLatency, last_fail_at: okInt ? (previous?.last_fail_at || null) : checkedAt, current_outage_started_at: outage.currentOutageStartedAt, last_recover_at: outage.lastRecoverAt, status_changed_at: statusChangedAt, daily };
-  await applyProbeWriteBatch(env, target.id, checkedAt, bucketWrites, stateUpdate, outage.write, checkedAt + historyDueIntervalSec(target, env, { ...previous, ok: okInt }));
-  return { history_points: Number(daily[day]?.total || 0), missed_points: missedPoints.length, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, incident: outage.action, storage: 'd1', state_update: stateUpdate };
+  const writeResult = await applyProbeWriteBatch(env, target.id, checkedAt, bucketWrites, stateUpdate, outage.write, checkedAt + historyDueIntervalSec(target, env, { ...previous, ok: okInt }), scheduleFlush);
+  return { history_points: Number(daily[day]?.total || 0), missed_points: missedPoints.length, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, incident: outage.action, storage: writeResult.bucket_storage || 'd1', state_update: stateUpdate };
 }
 
 function missedBackfillWriteLimit(env) {
@@ -280,14 +282,16 @@ function buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous) 
 export async function runDueTargets(env, options = {}) {
   const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 20), 1, 200);
   const now = nowSec();
+  // Schedule bookkeeping lives in the R2 status state (lastCheckedAt gate
+  // below); next_probe_at in D1 is only a coarse crash-recovery mirror, so the
+  // selection intentionally does not filter on it.
   const rows = await env.DB.prepare(
      `SELECT t.*, t.last_checked_at AS last_checked_at
       FROM targets t
       WHERE t.enabled = 1
         AND COALESCE(t.no_public_ip, 0) = 0
-        AND (t.next_probe_at IS NULL OR t.next_probe_at <= ?)
-      ORDER BY COALESCE(t.next_probe_at, 0), t.group_name, t.name`
-  ).bind(now).all();
+      ORDER BY t.group_name, t.name`
+  ).all();
   const allTargets = rows.results || [];
   if (!allTargets.length) return { ok: true, count: 0, results: [] };
   const lease = options.skipLease ? null : await acquireProbeRunLease(env);
@@ -301,10 +305,21 @@ export async function runDueTargets(env, options = {}) {
       .filter(item => item.lastCheckedAt <= now - historyDueIntervalSec(item.target, env, previousById.get(item.target.id)))
       .sort((a, b) => a.lastCheckedAt - b.lastCheckedAt).slice(0, maxTargets).map(item => item.target);
     if (!targets.length) return { ok: true, count: 0, results: [] };
-    return { ok: true, count: targets.length, results: await runTargetBatch(env, targets, previousById) };
+    const results = await runTargetBatch(env, targets, previousById);
+    return { ok: true, count: targets.length, results, events: compactStatusEvents(results) };
   } finally {
     if (!options.skipLease) await releaseProbeRunLease(env, lease);
   }
+}
+
+// Plan-A schedule throttling: the per-probe targets UPDATE (last_checked_at /
+// next_probe_at mirror) only runs once per target per flush window; probing
+// cadence itself is governed by the R2 status state, not by this row.
+export function scheduleFlushDue(target, checkedAt, env = {}) {
+  const min = clamp(Number(env.TARGET_SCHEDULE_FLUSH_SEC ?? 1800), 60, 86400);
+  const last = Number(target?.last_checked_at || 0);
+  if (!Number.isFinite(last) || last <= 0) return true;
+  return checkedAt - last >= min;
 }
 
 export function historyDueIntervalSec(target, env = {}, previous = null) {
@@ -340,7 +355,11 @@ export async function runFastStatusTargets(env, options = {}) {
   if (!parseBoolean(env.FAST_STATUS_ENABLED ?? true, true)) return { ok: true, skipped: true, reason: 'disabled', count: 0, results: [] };
   if (!env.DB || !env.ARCHIVE) return { ok: true, skipped: true, reason: 'r2_required', count: 0, results: [] };
   const intervalSec = clamp(Number(env.FAST_STATUS_INTERVAL_SEC || 300), 60, 3600);
-  const maxTargets = clamp(Number(env.FAST_STATUS_MAX_TARGETS || 50), 1, 50);
+  // Keep the fast-status scheduler useful once the fleet grows beyond the
+  // original 50-target ceiling. The interval and per-target probe cadence are
+  // unchanged; this only prevents a larger enabled fleet from being silently
+  // truncated.
+  const maxTargets = clamp(Number(env.FAST_STATUS_MAX_TARGETS || 100), 1, 200);
   const now = nowSec();
   const rows = await env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0 ORDER BY group_name, name`).all();
   const state = await readR2State(env);
@@ -381,13 +400,30 @@ export async function runFastStatusTargets(env, options = {}) {
         for (const item of settled) results.push(item.status === 'fulfilled' ? item.value : { ok: false, error: String(item.reason?.message || item.reason) });
       }
     }
-    await mergeR2StateUpdates(env, results.map((item) => item.state_update).filter(Boolean));
-    return {
+    let stateSyncWarning = '';
+    const stateUpdates = results.map((item) => item.state_update).filter(Boolean);
+    try {
+      const stateSync = await mergeR2StateUpdates(env, stateUpdates);
+      if (!stateSync?.ok) {
+        stateSyncWarning = 'r2_state_sync_failed';
+        const fallback = await fallbackLatestStatusToD1(env, stateUpdates);
+        if (!fallback.ok) stateSyncWarning = 'r2_state_sync_and_d1_fallback_failed';
+      }
+    } catch (error) {
+      stateSyncWarning = 'r2_state_sync_failed';
+      console.error('fast-status R2 state sync failed:', String(error?.message || error));
+      const fallback = await fallbackLatestStatusToD1(env, stateUpdates);
+      if (!fallback.ok) stateSyncWarning = 'r2_state_sync_and_d1_fallback_failed';
+    }
+    const response = {
       ok: true,
       count: targets.length,
       interval_sec: intervalSec,
       results: results.map(({ state_update, ...result }) => result),
+      events: compactStatusEvents(results),
     };
+    if (stateSyncWarning) response.warning = stateSyncWarning;
+    return response;
   } finally {
     if (!options.skipLease) await releaseProbeRunLease(env, lease);
   }
@@ -485,14 +521,30 @@ export async function runTargetBatch(env, targets, previousById = null) {
   }
   let stateSyncWarning = '';
   try {
-    await mergeR2StateUpdates(env, out.map(item => item.state_update).filter(Boolean));
+    const stateSync = await mergeR2StateUpdates(env, out.map(item => item.state_update).filter(Boolean));
+    if (!stateSync?.ok) {
+      stateSyncWarning = 'r2_state_sync_failed';
+      const fallback = await fallbackLatestStatusToD1(env, out.map(item => item.state_update).filter(Boolean));
+      if (!fallback.ok) stateSyncWarning = 'r2_state_sync_and_d1_fallback_failed';
+    }
   } catch (error) {
     stateSyncWarning = 'r2_state_sync_failed';
     console.error('probe R2 state sync failed:', String(error?.message || error));
+    const fallback = await fallbackLatestStatusToD1(env, out.map(item => item.state_update).filter(Boolean));
+    if (!fallback.ok) stateSyncWarning = 'r2_state_sync_and_d1_fallback_failed';
   }
   return out.map(({ state_update, ...publicResult }) => stateSyncWarning
     ? { ...publicResult, warning: stateSyncWarning }
     : publicResult);
+}
+
+async function fallbackLatestStatusToD1(env, updates = []) {
+  if (latestStatusToD1Enabled(env) || !updates.length) return { ok: true, skipped: true };
+  const results = await Promise.allSettled(updates.filter(Boolean).map(update => upsertLatestStatus(env, update)));
+  return {
+    ok: results.every(result => result.status === 'fulfilled' && result.value?.ok),
+    count: results.filter(result => result.status === 'fulfilled' && result.value?.ok).length,
+  };
 }
 
 async function runSingleTarget(env, target, previousState = null) {

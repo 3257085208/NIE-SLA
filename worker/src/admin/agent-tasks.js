@@ -2,6 +2,8 @@ import { ApiError, safeJson } from '../auth.js';
 import { nowSec, sanitizeAgentId } from '../utils.js';
 import { nodeQualityUnlockData, normalizeNodeQualityReport, normalizeNodeQualityReportUrl, sanitizeAnsiContent } from '../nodequality.js';
 import { uploadNodeQualityReportImages } from '../nq-image-host.js';
+import { bufferedAgentStateEnabled, newerAgentMetricRow } from '../agent-state.js';
+import { readBufferedAgentLatestState } from '../telemetry-buffer.js';
 
 export const AGENT_TASK_ACTIONS = Object.freeze({
 
@@ -126,9 +128,13 @@ async function createAgentTaskForAgent(env, agentId, action, options = null) {
   }
   const runtime = await env.DB.prepare(`SELECT updated_at, capabilities FROM agent_metrics_state WHERE agent_id = ?`)
     .bind(canonical).first().catch(() => null);
-  const capabilities = parseCapabilities(runtime?.capabilities);
-  const lastSeen = Math.floor(new Date(runtime?.updated_at || 0).getTime() / 1000);
-  if (!runtime || !lastSeen || nowSec() - lastSeen > 900) {
+  const bufferedRuntime = bufferedAgentStateEnabled(env)
+    ? await readBufferedAgentLatestState(env, canonical).catch(() => null)
+    : null;
+  const effectiveRuntime = newerAgentMetricRow(runtime, bufferedRuntime);
+  const capabilities = parseCapabilities(effectiveRuntime?.capabilities);
+  const lastSeen = Math.floor(new Date(effectiveRuntime?.updated_at || 0).getTime() / 1000);
+  if (!effectiveRuntime || !lastSeen || nowSec() - lastSeen > 900) {
     throw new ApiError(409, 'Agent 当前离线，暂时不能下发任务');
   }
   if (!capabilities?.actions?.includes(action)) {
@@ -421,6 +427,35 @@ async function expireStaleTasks(env, agentId = '') {
     await env.DB.prepare(`UPDATE agent_tasks SET status = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN 'cancelled' ELSE 'failed' END, finished_at = ?, error = CASE WHEN cancel_requested_at IS NOT NULL AND cancel_requested_at > 0 THEN '任务已被管理员强制停止' ELSE 'Agent Manager 心跳超时导致任务中断，请重新运行' END
       WHERE status = 'running' AND runner_instance_id IS NOT NULL AND runner_heartbeat_at IS NOT NULL AND runner_heartbeat_at <= ?`).bind(now, staleBefore).run();
   }
+}
+
+const AGENT_TASK_RETENTION_DAYS = 30;
+const AGENT_TASK_CLEANUP_BATCH = 500;
+const AGENT_TASK_CLEANUP_MAX_BATCHES = 20;
+
+export async function cleanupFinishedAgentTasks(env, retentionDays = AGENT_TASK_RETENTION_DAYS) {
+  if (!env?.DB) return { ok: true, skipped: true, reason: 'missing_db' };
+  const requestedDays = Number(retentionDays);
+  const days = Number.isFinite(requestedDays) && requestedDays > 0
+    ? Math.min(365, Math.floor(requestedDays))
+    : AGENT_TASK_RETENTION_DAYS;
+  const cutoff = nowSec() - days * 86400;
+  let deleted = 0;
+  let batches = 0;
+  let truncated = false;
+  while (batches < AGENT_TASK_CLEANUP_MAX_BATCHES) {
+    const result = await env.DB.prepare(`DELETE FROM agent_tasks WHERE rowid IN (
+      SELECT rowid FROM agent_tasks
+      WHERE status IN ('succeeded', 'failed', 'expired', 'cancelled')
+        AND finished_at IS NOT NULL AND finished_at < ?
+      LIMIT ${AGENT_TASK_CLEANUP_BATCH})`).bind(cutoff).run();
+    const changes = Number(result?.meta?.changes || 0);
+    deleted += changes;
+    batches += 1;
+    if (changes < AGENT_TASK_CLEANUP_BATCH) { truncated = false; break; }
+    truncated = true;
+  }
+  return { ok: true, deleted, batches, retention_days: days, cutoff, truncated };
 }
 
 async function recoverOrphanedRunningTasks(env, taskIds, runnerInstanceId) {

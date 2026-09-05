@@ -1,11 +1,14 @@
 use crate::{percent_encode_query, Config, HttpClient};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
+use std::fs;
+use std::path::PathBuf;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const GEOIP_RETRY_SEC: u64 = 3600;
 const GEOIP_REFRESH_SEC: u64 = 86400;
+const GEOIP_STATE_FILE: &str = "geoip-last-success";
 
 #[derive(Clone, Debug, Default)]
 struct GeoLocation {
@@ -22,19 +25,87 @@ pub(crate) fn spawn_geoip_worker(cfg: Config, http: HttpClient) {
         return;
     }
     thread::spawn(move || loop {
-        let delay = match refresh_location(&cfg, &http) {
-            Ok(()) => GEOIP_REFRESH_SEC,
-            Err(error) => {
-                eprintln!(
-                    "{{\"ok\":false,\"geoip_error\":{}}}",
-                    serde_json::to_string(&error.to_string())
-                        .unwrap_or_else(|_| "\"geoip failed\"".into())
-                );
-                GEOIP_RETRY_SEC
-            }
+        let delay = match geoip_refresh_delay(read_last_success(&cfg), now_sec()) {
+            Some(delay) => delay,
+            None => match refresh_location(&cfg, &http) {
+                Ok(()) => {
+                    if let Err(error) = write_last_success(&cfg, now_sec()) {
+                        eprintln!(
+                            "{{\"ok\":false,\"geoip_state_error\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "\"geoip state failed\"".into())
+                        );
+                    }
+                    Duration::from_secs(GEOIP_REFRESH_SEC)
+                }
+                Err(error) => {
+                    eprintln!(
+                        "{{\"ok\":false,\"geoip_error\":{}}}",
+                        serde_json::to_string(&error.to_string())
+                            .unwrap_or_else(|_| "\"geoip failed\"".into())
+                    );
+                    Duration::from_secs(GEOIP_RETRY_SEC)
+                }
+            },
         };
-        thread::sleep(Duration::from_secs(delay));
+        thread::sleep(delay);
     });
+}
+
+fn geoip_state_path(cfg: &Config) -> PathBuf {
+    cfg.queue_file.with_file_name(GEOIP_STATE_FILE)
+}
+
+fn now_sec() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn geoip_refresh_delay(last_success: Option<u64>, now: u64) -> Option<Duration> {
+    let last_success = last_success?.min(now);
+    let due_at = last_success.checked_add(GEOIP_REFRESH_SEC)?;
+    (due_at > now).then(|| Duration::from_secs(due_at - now))
+}
+
+fn read_last_success(cfg: &Config) -> Option<u64> {
+    let path = geoip_state_path(cfg);
+    let metadata = fs::symlink_metadata(&path).ok()?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 32 {
+        return None;
+    }
+    fs::read_to_string(path)
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|value| *value > 0)
+}
+
+fn write_last_success(cfg: &Config, timestamp: u64) -> Result<()> {
+    let path = geoip_state_path(cfg);
+    if fs::symlink_metadata(&path)
+        .ok()
+        .is_some_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(anyhow!("refusing symlinked GeoIP refresh state"));
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .ok_or_else(|| anyhow!("GeoIP refresh state has no parent directory"))?;
+    fs::create_dir_all(parent)?;
+    let temporary = parent.join(format!(".{GEOIP_STATE_FILE}.tmp-{}", std::process::id()));
+    if fs::symlink_metadata(&temporary)
+        .ok()
+        .is_some_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(anyhow!("refusing symlinked temporary GeoIP refresh state"));
+    }
+    fs::write(&temporary, format!("{timestamp}\n"))?;
+    fs::rename(&temporary, &path)?;
+    Ok(())
 }
 
 fn refresh_location(cfg: &Config, http: &HttpClient) -> Result<()> {
@@ -289,5 +360,50 @@ mod tests {
         let value = parse_custom(r#"{"ipv4":"203.0.113.8","ipv6":"2001:db8::8","country_code":"US","country":"美国","city":"洛杉矶"}"#).unwrap();
         assert_eq!(value.ipv4.as_deref(), Some("203.0.113.8"));
         assert_eq!(value.ipv6.as_deref(), Some("2001:db8::8"));
+    }
+
+    #[test]
+    fn successful_refresh_waits_a_day_even_after_a_process_restart() {
+        let refreshed_at = 1_700_000_000;
+        assert_eq!(
+            geoip_refresh_delay(Some(refreshed_at), refreshed_at + 60),
+            Some(Duration::from_secs(GEOIP_REFRESH_SEC - 60))
+        );
+        assert_eq!(
+            geoip_refresh_delay(Some(refreshed_at), refreshed_at + GEOIP_REFRESH_SEC),
+            None
+        );
+        assert_eq!(geoip_refresh_delay(None, refreshed_at), None);
+    }
+
+    #[test]
+    fn refresh_state_round_trip_uses_the_agent_state_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "nie-sla-geoip-state-{}-{}",
+            std::process::id(),
+            now_sec()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let cfg = Config {
+            api: "https://example.test".into(),
+            token: "token".into(),
+            agent_id: "agent-a".into(),
+            agent_label: "Agent A".into(),
+            sample_sec: 1,
+            report_sec: 300,
+            ping_sec: 20,
+            ping_target_refresh_sec: 1800,
+            ping_targets: "*".into(),
+            queue_file: root.join("samples-queue.json"),
+            queue_max_samples: 1000,
+            update_check_sec: 86_400,
+            ws_enabled: true,
+            ws_encoding: crate::WsEncoding::Json,
+            once: false,
+            task_runner_only: false,
+        };
+        write_last_success(&cfg, 123).unwrap();
+        assert_eq!(read_last_success(&cfg), Some(123));
+        let _ = fs::remove_dir_all(root);
     }
 }

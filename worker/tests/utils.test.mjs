@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
-import { agentStatusFields, buildMissedPoints, buildOpenMissedPoints, lastPersistedCheckAt, normalizeTarget, parseBoolean, publicCachePrivacyVersion, publicCheckPoint, sanitizeId, sanitizePublicAgentMetrics, sanitizePublicStatusPayload, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
+import { agentStatusFields, assertPublicHttpUrl, buildMissedPoints, buildOpenMissedPoints, isPrivateHost, lastPersistedCheckAt, normalizeTarget, parseBoolean, publicCachePrivacyVersion, publicCheckPoint, sanitizeId, sanitizePublicAgentMetrics, sanitizePublicStatusPayload, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
 import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, requireLatencyAgentForId, safeJson } from '../src/auth.js';
 import { clearRateLimitD1, rateLimitD1, rateLimitStatusD1 } from '../src/ratelimit.js';
 import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, normalizeAgentMetricState, normalizeAgentVpsInfo, pingLossPointsToRuns, pingLossRunsToPoints, pingPointsFromPayload, pingPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
@@ -8,7 +8,7 @@ import { runAlertChecks } from '../src/alerts.js';
 import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeAgentPublicBase, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
 import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates, readR2JsonResult, readR2JsonStrict } from '../src/storage.js';
-import { checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
+import { buildSummaryFallbackOptions, checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
 import { isAgentApiPath } from '../src/route-policy.js';
 import { compactStatusPayload, refreshLatencySources } from '../src/status-payload.js';
 import { agentAvailabilitySegments, mergeAgentAvailabilityRows, uptimeBaselineRows } from '../src/agent-availability.js';
@@ -133,6 +133,67 @@ assert.deepEqual(checkBucketSummaryQueryPlan('2026-06-19', { targetIds: [] }), [
 assert.deepEqual(checkBucketSummaryQueryPlan('2026-06-19', { targetIds: ['vps-a'] }), [
   { where: '(day >= ?) AND target_id IN (?)', params: ['2026-06-19', 'vps-a'] },
 ]);
+assert.deepEqual(checkBucketSummaryQueryPlan('2026-06-19', {
+  targetIds: ['vps-a', 'vps-b'],
+  recentFromDay: '2026-06-21',
+  historicalTargetRanges: [{ fromDay: '2026-06-19', toDay: '2026-06-20', targetIds: ['vps-a'] }],
+}), [
+  { where: '(day >= ?) AND target_id IN (?,?)', params: ['2026-06-21', 'vps-a', 'vps-b'] },
+  { where: '(day >= ? AND day < ? AND target_id IN (?)) AND target_id IN (?,?)', params: ['2026-06-19', '2026-06-20', 'vps-a', 'vps-a', 'vps-b'] },
+]);
+
+assert.deepEqual(buildSummaryFallbackOptions({
+  startDay: '2026-07-01',
+  days: 3,
+  currentDay: '2026-07-03',
+  env: { TIMEZONE_OFFSET_MINUTES: '480' },
+  r2State: { targets: { 'vps-a': { daily: { '2026-07-01': {}, '2026-07-02': {} } }, 'vps-b': { daily: { '2026-07-02': {} } } } },
+  targetIds: ['vps-a', 'vps-b'],
+}), {
+  targetIds: ['vps-a', 'vps-b'],
+  recentFromDay: '2026-07-03',
+  historicalTargetIds: ['vps-b'],
+  historicalTargetRanges: [{ fromDay: '2026-07-01', toDay: '2026-07-02', targetIds: ['vps-b'] }],
+});
+assert.deepEqual(buildSummaryFallbackOptions({
+  startDay: '2026-07-01',
+  days: 3,
+  currentDay: '2026-07-03',
+  env: { TIMEZONE_OFFSET_MINUTES: '480' },
+  r2State: { targets: { 'vps-a': { checked_at: 300, daily: { '2026-07-01': {}, '2026-07-02': {} } } } },
+  targetIds: ['vps-a'],
+  forceHistoricalTargetIds: ['vps-a'],
+}), {
+  targetIds: ['vps-a'],
+  recentFromDay: '2026-07-03',
+  historicalTargetIds: ['vps-a'],
+  historicalTargetRanges: [{ fromDay: '2026-07-01', toDay: '2026-07-03', targetIds: ['vps-a'] }],
+});
+assert.deepEqual(buildSummaryFallbackOptions({
+  startDay: '2026-07-01',
+  days: 3,
+  currentDay: '2026-07-03',
+  env: { TIMEZONE_OFFSET_MINUTES: '480' },
+  r2State: { targets: { 'vps-a': { daily: {} } } },
+  summaryCacheRows: [
+    { target_id: 'vps-a', day: '2026-07-01', total: 1 },
+    { target_id: 'vps-a', day: '2026-07-02', total: 1 },
+  ],
+  targetIds: ['vps-a'],
+}), {
+  targetIds: ['vps-a'],
+  recentFromDay: '2026-07-03',
+  historicalTargetIds: [],
+  historicalTargetRanges: [],
+});
+assert.deepEqual(buildSummaryFallbackOptions({
+  startDay: '2026-07-01',
+  days: 3,
+  currentDay: '2026-07-03',
+  env: { TIMEZONE_OFFSET_MINUTES: '480' },
+  r2State: { targets: { 'vps-a': { daily: { '2026-07-01': {}, '2026-07-02': {} } } } },
+  targetIds: [],
+}), { targetIds: [] });
 
 assert.equal(await rateLimitD1({}, 'missing-db', 1, 60), false);
 const rateEnv = fakeRateLimitEnv();
@@ -370,6 +431,25 @@ assert.throws(() => normalizeAgentPublicBase('https://user:pass@agent.example.co
 assert.throws(() => normalizeAgentPublicBase('https://agent.example.com/api'), /路径/);
 assert.throws(() => normalizeAgentPublicBase('https://agent.example.com/?from=admin'), /参数/);
 assert.throws(() => normalizeAgentPublicBase('https://127.0.0.1'), /私有|内部/);
+assert.throws(() => normalizeAgentPublicBase('https://127.0.0.1.'), /私有|内部/);
+
+{
+  const privateHosts = [
+    '127.0.0.1', '127.0.0.1.', '127.0.0.1..', '10.1.2.3', '172.16.0.9', '192.168.1.1',
+    '169.254.169.254', '0.0.0.0', '100.64.0.1', '198.18.0.1', '224.0.0.1', '255.255.255.255',
+    '2130706433', '0177.0.0.1', '1.2.3', '127..0.0.1', '0x7f.0.0.1', 'a..b.example.com',
+    'localhost', 'foo.localhost', 'dev.local', '',
+    '::1', '::ffff:127.0.0.1', '::ffff:10.0.0.1', 'fc00::1', 'fe80::1', 'ff02::1',
+    '64:ff9b::127.0.0.1', '[::ffff:127.0.0.1]',
+  ];
+  for (const host of privateHosts) assert.equal(isPrivateHost(host), true, `expected private: ${JSON.stringify(host)}`);
+  const publicHosts = ['example.com', 'example.com.', 'status.example.com', 'my-server.example.com',
+    'a.cn', '8.8.8.8', '1.1.1.1', '2606:4700::1111', '[2606:4700::1111]', 'xn--fsq.example.com'];
+  for (const host of publicHosts) assert.equal(isPrivateHost(host), false, `expected public: ${JSON.stringify(host)}`);
+  assertPublicHttpUrl('https://example.com./path');
+  assert.throws(() => assertPublicHttpUrl('http://127.0.0.1./admin'), /私有|内部/);
+  assert.throws(() => assertPublicHttpUrl('http://2130706433/'), /私有|内部/);
+}
 await updatePublicSettings(new Request('https://example.com', { method: 'PATCH', body: JSON.stringify({ frontend_theme: 'cards' }) }), settingsEnv);
 assert.equal((await getPublicSettings(settingsEnv)).frontend_theme, 'classic');
 assert.equal(normalizeFrontendAppearance({ site_name: ' Demo ', brand_logo_url: 'javascript:bad', accent_color: 'red' }).site_name, 'Demo');
@@ -543,6 +623,42 @@ assert.deepEqual(metricColumns.fields, ['cpu']);
 assert.deepEqual(metricColumns.dt, [0, 1, 2]);
 assert.deepEqual(metricColumns.values.cpu, [0, 1, 2]);
 assert.deepEqual(metricPointsFromPayload({ series: metricColumns }, ['cpu']).map(p => p.cpu), [0, 1, 2]);
+const sensorPoints = [
+  {
+    ts: 2000,
+    cpu_temp: 40,
+    temperature_sensors: [
+      { id: 'nvme:temp1', label: 'Composite', kind: 'disk', temp_c: 31.9 },
+      { id: 'pch:temp1', label: 'PCH', kind: 'chipset', temp_c: 34 },
+    ],
+  },
+  {
+    ts: 2001,
+    cpu_temp: 41,
+    temperature_sensors: [{ id: 'nvme:temp1', label: 'Composite', kind: 'disk', temp_c: 32.1 }],
+  },
+];
+const sensorColumns = metricPointsToColumns(sensorPoints, ['cpu_temp']);
+assert.deepEqual(sensorColumns.temperature_sensors.map(sensor => sensor.id), ['nvme:temp1', 'pch:temp1']);
+assert.deepEqual(sensorColumns.temperature_sensors[0].temp_c, [31.9, 32.1]);
+assert.deepEqual(sensorColumns.temperature_sensors[1].temp_c, [34, null]);
+assert.deepEqual(metricPointsFromPayload({ series: sensorColumns }, ['cpu_temp']).map(point => point.temperature_sensors), [
+  [
+    { id: 'nvme:temp1', label: 'Composite', kind: 'disk', temp_c: 31.9 },
+    { id: 'pch:temp1', label: 'PCH', kind: 'chipset', temp_c: 34 },
+  ],
+  [{ id: 'nvme:temp1', label: 'Composite', kind: 'disk', temp_c: 32.1 }],
+]);
+const sensorR2Env = fakeR2Env();
+await writeAgentTelemetryR2History(sensorR2Env, 'sensor-vps', sensorPoints);
+const sensorTelemetry = [...sensorR2Env._objects.values()].find(item => item.key.endsWith('/telemetry.json'));
+assert.deepEqual(metricPointsFromPayload(sensorTelemetry.value.metrics).map(point => point.temperature_sensors), [
+  [
+    { id: 'nvme:temp1', label: 'Composite', kind: 'disk', temp_c: 31.9 },
+    { id: 'pch:temp1', label: 'PCH', kind: 'chipset', temp_c: 34 },
+  ],
+  [{ id: 'nvme:temp1', label: 'Composite', kind: 'disk', temp_c: 32.1 }],
+]);
 const boundedState = normalizeAgentMetricState({
   cpu_percent: 150,
   process_count: -5,
@@ -569,17 +685,17 @@ const boundedVpsInfo = normalizeAgentVpsInfo({
   total_disk_gb: 1e308,
   gpu_util: 150,
   temperature_sensors: [
-    { label: 'CPU', kind: 'cpu', temp_c: 5000 },
-    { label: 'Null', kind: 'cpu', temp_c: null },
-    { label: 'Empty', kind: 'cpu', temp_c: '' },
-    { label: 'NaN', kind: 'cpu', temp_c: 'not-a-number' },
+    { id: 'cpu-1', label: 'CPU', kind: 'cpu', temp_c: 5000 },
+    { id: 'null-1', label: 'Null', kind: 'cpu', temp_c: null },
+    { id: 'empty-1', label: 'Empty', kind: 'cpu', temp_c: '' },
+    { id: 'nan-1', label: 'NaN', kind: 'cpu', temp_c: 'not-a-number' },
   ],
 });
 assert.equal(boundedVpsInfo.cpu_model.length, 256);
 assert.equal(boundedVpsInfo.cpu_cores, 0);
 assert.equal(boundedVpsInfo.total_disk_gb, 1_000_000_000_000);
 assert.equal(boundedVpsInfo.gpu_util, 100);
-assert.deepEqual(boundedVpsInfo.temperature_sensors, [{ label: 'CPU', kind: 'cpu', temp_c: 1000 }]);
+assert.deepEqual(boundedVpsInfo.temperature_sensors, [{ id: 'cpu-1', label: 'CPU', kind: 'cpu', temp_c: 1000 }]);
 
 const r2Env = fakeR2Env();
 const hourStart = Math.floor(Date.now() / 3_600_000) * 3600;

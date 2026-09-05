@@ -37,7 +37,10 @@ const nqOptionsSource = await readFile(path.join(root, 'js', 'admin', 'nq-option
 assert.match(notFoundHtml, /<title>页面不存在 - NIE-SLA<\/title>/, '404 responses must retain the branded page title');
 assert.match(notFoundHtml, /class="not-found-code">404<\/div>/, '404 responses must visibly identify the status code');
 assert.match(notFoundHtml, /href="\/">返回状态页<\/a>[\s\S]*href="\/admin\.html">管理入口<\/a>/, '404 responses must retain both recovery links');
-assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260820-themecfg1"/, 'admin must import the configurable NodeQuality option helpers');
+assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260821-themecfg2"/, 'admin must import the configurable NodeQuality option helpers');
+assert.match(adminSource, /const hasSettings = Array\.isArray\(theme\.settings\)/, 'theme cards must derive their settings state from the API payload');
+assert.match(adminSource, /data-theme-action="settings"/, 'theme cards must always expose a settings action');
+assert.match(adminSource, /\/api\/themes\/\$\{encodeURIComponent\(theme\.id\)\}\/config/, 'theme settings must use the protected theme config endpoint');
 assert.match(nqOptionsSource, /data-nq-option="/, 'NodeQuality options must use stable data attributes for each select');
 assert.match(nqOptionsSource, /运行 HardwareQuality 测试/, 'NodeQuality options must expose the four upstream questions');
 assert.match(nqOptionsSource, /加速源/, 'NodeQuality options must expose the accelerator selector');
@@ -78,11 +81,11 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /href="\/admin\.css\?v=20260820-themecfg1"/, 'custom admin paths must load CSS from the site root');
+assert.match(adminHtml, /href="\/admin\.css\?v=20260821-themecfg2"/, 'custom admin paths must load CSS from the site root');
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
-assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260820-themecfg1"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260820-themecfg1"/, 'custom admin paths must load the admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260821-themecfg2"/, 'admin login must install a startup failure guard');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260904-fix1"/, 'custom admin paths must load the current admin module from the site root');
 assert.match(adminBootstrapSource, /后台脚本加载失败，请刷新页面/, 'admin startup failures must be visible on the login form');
 assert.match(adminBootstrapSource, /loginButton\.onclick = \(event\)/, 'the admin module must replace the startup guard only after it loads');
 assert.match(adminSource, /window\.__NIE_ADMIN_READY__ = true;[\s\S]*nie-admin-ready/, 'the admin module must dismiss its startup guard after binding controls');
@@ -110,6 +113,10 @@ assert.match(adminCss, /\.settings-panel-grid\s*\{[\s\S]*grid-template-columns:\
 assert.match(adminCss, /@media \(max-width: 820px\) \{[\s\S]*\.settings-panel-grid\s*\{\s*grid-template-columns:\s*1fr/, 'mobile settings panels must collapse to one column');
 assert.match(adminHtml, /id="sAdminPath"/, 'admin settings must expose the custom entry path');
 assert.match(adminHtml, /id="sAgentOrigin"/, 'admin settings must expose the Agent connection origin');
+assert.match(adminHtml, /id="sUsageSummaryAccess"/, 'admin security settings must expose the narrow usage-model credential');
+assert.match(adminSource, /apiAdmin\("\/api\/debug\/usage-access-token"[\s\S]{0,180}method:\s*"POST"/, 'admin must issue a usage-model credential through the protected Worker route');
+assert.match(adminSource, /apiAdmin\("\/api\/debug\/usage-access-token"[\s\S]{0,180}method:\s*"DELETE"/, 'admin must revoke usage-model credentials through the protected Worker route');
+assert.match(adminSource, /Worker 返回的只读凭据格式无效/, 'admin must validate the narrow token format before displaying it');
 assert.match(adminSource, /agent_public_base:[\s\S]*input\?\.value\.trim/, 'Agent connection origin must persist through authenticated settings');
 assert.doesNotMatch(adminSource, /prompt\("为受保护备份|prompt\("请输入敏感备份密码/, 'protected backup flows must not depend on native prompt dialogs');
 assert.match(adminSource, /function requestBackupPassword\([\s\S]*id="backupPassword"[\s\S]*value\.length < 10[\s\S]*openModal\(\)/, 'protected backup must collect and validate its password in the accessible admin modal');
@@ -121,7 +128,7 @@ assert.match(adminApiSource, /请求可能仍在服务端继续执行，请稍�
 assert.match(adminSource, /任务状态刷新失败[\s\S]*task-load-warning/, 'task polling failures must surface a visible warning');
 assert.match(adminSource, /async function queueAgentTask[\s\S]*catch \(error\) \{[\s\S]*await loadAgentTasks\(\)/, 'single-machine queue failures must refresh task state');
 assert.match(adminSource, /id="backupStatus"[\s\S]*正在加密 Agent Token/, 'protected backup must expose persistent progress next to its controls');
-assert.match(adminSource, /install-command\.js\?v=20260820-themecfg1/, 'Agent and Latency install clipboard fixes must use the current cache key');
+assert.match(adminSource, /install-command\.js\?v=20260904-fix2/, 'Agent and Latency install clipboard fixes must use the current cache key');
 assert.match(adminSource, /latencyInstallCommandFromPayload\(data, node\.id\);\s*await copyText\(command\)/, 'Latency deploy must validate and copy the one-time command without opening a dialog');
 const latencyDeploySource = adminSource.slice(adminSource.indexOf('async function deployLatencyNode'), adminSource.indexOf('async function loadPings'));
 assert.doesNotMatch(latencyDeploySource, /openModal\(\)/, 'Latency deploy must not open an install-command dialog');
@@ -140,8 +147,8 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260820-themecfg1/, 'frontend cache key must publish the current release');
-assert.match(indexHtml, /style\.css\?v=20260820-themecfg1/, 'frontend CSS cache key must publish the current release');
+assert.match(indexHtml, /app\.js\?v=20260904-fix1/, 'frontend cache key must publish the current release');
+assert.match(indexHtml, /style\.css\?v=20260821-themecfg2/, 'frontend CSS cache key must publish the current release');
 assert.doesNotMatch(appSource, /traffic\.reset === 'expiry-day'/, 'frontend traffic labels must not depend on expiry reset mode');
 assert.match(adminSource, /JSON\.stringify\(\{ admin_path: value \}\)/, 'admin settings must persist the custom entry path');
 assert.match(indexHtml, /class="theme-pending"[\s\S]*id="themeBoot"[\s\S]*id="themeCanvas"/, 'theme runtime must wait behind a first-paint shell');
@@ -159,6 +166,7 @@ assert.doesNotMatch(adminSource, /\/api\/(?:extensions|plugins)|pluginZip|data-e
 assert.match(appSource, /js\/themes\.js[\s\S]*initializeFrontendTheme\(\)/, 'frontend must initialize the active theme runtime');
 assert.match(themeSource, /frame\.sandbox = 'allow-scripts'/, 'canvas themes must execute in a script-only sandbox');
 assert.doesNotMatch(themeSource, /allow-same-origin/, 'canvas themes must never share the application origin');
+assert.match(themeSource, /fit_viewport === true[\s\S]*window\.innerHeight/, 'canvas detail overlays must fit the host viewport');
 assert.match(themeSource, /addEventListener\('load', \(\) => finish\(\)/, 'successful theme resource loads must not be treated as errors');
 assert.match(themeSource, /THEME_API_RESOURCES = new Set\(\['status', 'checks', 'metrics', 'pings', 'latency'\]\)/, 'canvas requests must use the explicit read-only resource allowlist');
 assert.match(themeSource, /permissions\?\.includes\('status:read'\)/, 'canvas requests must require the read-only theme permission');
@@ -171,8 +179,8 @@ assert.doesNotMatch(appSource, /serviceMetaHtml|class="service-target"/, 'coarse
 assert.doesNotMatch(appSource, /serviceLatencySourcesHtml|service-latency-source/, 'VPS rows must not display external Latency Agent names or values');
 assert.match(appSource, /\/api\/latency\?[\s\S]*externalLatencyChartSeries/, 'detailed latency charts must retain external Latency Agent history');
 assert.match(appSource, /function serviceCloudflareLatencyHtml[\s\S]*Cloudflare 延迟/, 'VPS rows must retain the unnamed Cloudflare latency value');
-assert.match(appSource, /function isTargetStale\(\)\s*\{[\s\S]*return false;/, 'successful Web checks must not be relabelled as delayed by a second heartbeat rule');
-assert.match(adminSource, /function isStatusStale\(\)\s*\{\s*return false;/, 'admin Web status must use the latest check result without a second stale state');
+assert.match(appSource, /function isTargetStale\(target = \{\}\)[\s\S]*timestampSeconds/, 'public status must distinguish an up result from stale data');
+assert.match(adminSource, /function isStatusStale\(status = \{\}\)[\s\S]*timestampSeconds/, 'admin status must distinguish an up result from stale data');
 assert.doesNotMatch(appSource, /meta-line">🔀/, 'line type metadata must use typography instead of decorative emoji');
 assert.doesNotMatch(appSource, /`📍 \$\{t\.location\}`/, 'fallback location metadata must not add decorative emoji');
 assert.match(appSource, /apac:\s*'亚太'/, 'probe region labels must be fully Chinese');
@@ -250,6 +258,9 @@ assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.service-list\s
 assert.match(styleSource, /@media \(max-width: 760px\) \{[\s\S]*\.chart-canvas-wrap\s*\{\s*height:\s*232px/, 'mobile charts must retain a readable height');
 assert.match(appSource, /const mobileChart = isMobileChartViewport\(\)/, 'Chart.js must apply its mobile label profile');
 assert.match(appSource, /isGpu && !hasGpuData\(info\)/, 'GPU tabs must stay hidden on VPS nodes without detected GPU hardware');
+assert.match(appSource, /if \(isValidTemperature\(value\)\) items\.push\(vpsItem\(label/, 'temperature sensor details must treat exact 0 as no data while keeping negative values');
+assert.match(appSource, /y: isValidTemperature\(point\[definition\.field\]\) \? Number\(point\[definition\.field\]\) : null/, 'temperature chart points must render exact 0 as a null gap');
+assert.match(appSource, /isValidTemperature\(gpuTempRaw\) \? ` · 温度 \$\{Number\(gpuTempRaw\)\.toFixed\(1\)\}°C` : ''/, 'GPU summary must hide the temperature part instead of falling back to 0°C');
 assert.match(styleSource, /\.vps-info-item\s*\{[\s\S]*flex-direction:\s*column/, 'VPS detail labels and values must keep their visual hierarchy');
 assert.doesNotMatch(styleSource, /\.vps-info-body\s*\{[^}]*font-family:/, 'VPS details must inherit the same font stack as the rest of the page');
 assert.match(appSource, /targetHasNodeQuality/, 'frontend must expose NQ only for targets with reports');

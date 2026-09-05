@@ -1,4 +1,4 @@
-import { readMigratedStorage, readStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260820-themecfg1";
+import { readMigratedStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260821-themecfg2";
 
 const SESSION_KEY = "nie_sla_admin_session";
 const SESSION_EXP_KEY = "nie_sla_admin_session_exp";

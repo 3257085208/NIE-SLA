@@ -1,11 +1,13 @@
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA, LEGACY_STATUS_SNAPSHOT_SCHEMA } from './utils.js';
 import { json } from './auth.js';
 import { validateAdminSession } from './totp.js';
-import { readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
-import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, getExchangeRates, convertPriceToCny, getMeta, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
+import { readR2JsonResult, readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
+import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, buildSummaryFallbackOptions, getExchangeRates, convertPriceToCny, getMeta, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
 import { summarizeTrafficWithPending, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 import { compactStatusPayload, refreshLatencySources } from './status-payload.js';
 import { mergeAgentAvailabilityRows } from './agent-availability.js';
+import { bufferedAgentStateEnabled, mergeAgentMetricRows } from './agent-state.js';
+import { readFleetLatestAgentStates } from './telemetry-buffer.js';
 
 export async function getStatusCached(request, env, url, ctx = null) {
   const ttl = clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300);
@@ -30,7 +32,7 @@ export async function getStatusCached(request, env, url, ctx = null) {
 
 function withCacheState(response, ttl, state) {
   const headers = new Headers(response.headers);
-  headers.set('cache-control', `public, max-age=${ttl}`);
+  headers.set('cache-control', `public, max-age=${ttl}, s-maxage=${ttl}, stale-while-revalidate=${Math.max(10, Math.min(60, ttl * 2))}`);
   headers.set('x-nie-sla-cache', state);
   headers.set('x-nstatus-cache', state);
   return new Response(response.body, {
@@ -61,12 +63,25 @@ export async function getStatusFresh(env, url) {
 
 
   await ensureV6Schema(env);
-  let payload = await buildStatusPayload(env, url);
+  const reuseSnapshotSummaries = url?.searchParams?.get('fresh') !== '1' && url?.searchParams?.get('cache') !== '0';
+  let payload = await buildStatusPayload(env, url, { reuseSnapshotSummaries });
   if (url?.searchParams?.get('lite') === '1') payload = compactStatusPayload(payload);
   return json(sanitizePublicStatusPayload(payload, env), 200, env);
 }
 
-async function buildStatusPayload(env, url = null) {
+async function readRecentSnapshotSummaries(env, startDay, currentDay, enabled) {
+  if (!enabled || !env.ARCHIVE || !parseBoolean(env.STATUS_SNAPSHOT_TO_R2 ?? true, true)) return [];
+  const key = String(env.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, '');
+  const result = await readR2JsonResult(env, key).catch(() => ({ ok: false }));
+  if (!result.ok || !result.found || !result.value?.ok) return [];
+  const generatedAt = Math.floor(new Date(result.value.generated_at || result.value.now || 0).getTime() / 1000);
+  const maxAge = clamp(Number(env.STATUS_SNAPSHOT_MAX_AGE_SEC || 420), 60, 86400);
+  if (!generatedAt || generatedAt < nowSec() - maxAge) return [];
+  return (Array.isArray(result.value.summaries) ? result.value.summaries : [])
+    .filter(row => row?.target_id && row?.day && String(row.day) >= String(startDay) && String(row.day) < String(currentDay));
+}
+
+async function buildStatusPayload(env, url = null, options = {}) {
   const warnings = [];
   const optionalQuery = (promise, warning) => promise.catch((error) => {
     console.error(`${warning}:`, String(error?.message || error));
@@ -86,15 +101,27 @@ async function buildStatusPayload(env, url = null) {
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.provider, t.line_type FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all())
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all());
   const metricsPromise = optionalQuery(env.DB.prepare(`SELECT * FROM agent_metrics_state`).all(), 'Agent metrics unavailable');
+  const bufferedMetricsPromise = bufferedAgentStateEnabled(env)
+    ? readFleetLatestAgentStates(env).catch((error) => {
+      console.error('Buffered Agent metrics unavailable:', String(error?.message || error));
+      warnings.push('Buffered Agent metrics unavailable');
+      return {};
+    })
+    : Promise.resolve({});
   const agentAvailabilityPromise = optionalQuery(env.DB.prepare(`SELECT agent_id, day, total_sec, online_sec FROM agent_daily_availability WHERE day >= ?`).bind(startDay).all(), 'Agent availability unavailable');
   const latestPromise = optionalQuery(env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo, uptime_24h, uptime_7d, avg_latency_24h, last_fail_at, current_outage_started_at, last_recover_at, status_changed_at FROM latest_status`).all(), 'Latest probe status unavailable');
   const pingTargetsPromise = optionalQuery(env.DB.prepare(`SELECT id, name, color FROM ping_targets WHERE enabled = 1 ORDER BY name`).all(), 'Ping target metadata unavailable');
-  const [targets, metricsResult, agentAvailabilityResult, latestResult, pingTargetsResult] = await Promise.all([targetsPromise, metricsPromise, agentAvailabilityPromise, latestPromise, pingTargetsPromise]);
+  const [targets, metricsResult, agentAvailabilityResult, latestResult, pingTargetsResult, bufferedMetrics] = await Promise.all([targetsPromise, metricsPromise, agentAvailabilityPromise, latestPromise, pingTargetsPromise, bufferedMetricsPromise]);
+  const metricRows = mergeAgentMetricRows(metricsResult.results, bufferedMetrics);
   const r2State = await readR2State(env).catch((error) => {
     console.error('R2 state unavailable:', String(error?.message || error));
     warnings.push('R2 state unavailable; using D1 fallback');
     return { targets: {} };
   });
+  const currentDay = dayFromSec(nowSec(), env);
+  const activeTargetIds = new Set((targets.results || []).map(target => String(target.id || '')).filter(Boolean));
+  const cachedHistoricalSummaries = (await readRecentSnapshotSummaries(env, startDay, currentDay, options.reuseSnapshotSummaries !== false))
+    .filter(row => activeTargetIds.has(String(row.target_id)));
   const r2SummaryRows = getSummaryRowsFromState(r2State, startDay);
   const latestMap = {};
   for (const row of latestResult.results || []) latestMap[row.target_id] = row;
@@ -108,8 +135,21 @@ async function buildStatusPayload(env, url = null) {
       || Number(latestMap[id]?.checked_at || 0) > Number(r2Target?.checked_at || 0);
   }).map(target => String(target.id));
   const noPublicTargetIds = new Set((targets.results || []).filter(target => Number(target.no_public_ip || 0) === 1).map(target => String(target.id)));
-  const summaries = mergeSummaryRows(r2SummaryRows, fallbackTargetIds.length
-    ? await getCheckBucketSummaries(env, startDay, { targetIds: fallbackTargetIds })
+  const staleR2TargetIds = fallbackTargetIds.filter((id) => {
+    const r2Target = r2State.targets?.[id];
+    return Number(latestMap[id]?.checked_at || 0) > Number(r2Target?.checked_at || 0);
+  });
+  const summaryFallbackOptions = buildSummaryFallbackOptions({
+    startDay,
+    days,
+    env,
+    r2State,
+    summaryCacheRows: cachedHistoricalSummaries,
+    targetIds: fallbackTargetIds,
+    forceHistoricalTargetIds: staleR2TargetIds,
+  });
+  const summaries = mergeSummaryRows(cachedHistoricalSummaries, r2SummaryRows, fallbackTargetIds.length
+    ? await getCheckBucketSummaries(env, startDay, summaryFallbackOptions)
     : [])
     .filter(summary => !noPublicTargetIds.has(String(summary.target_id)));
   const dayList = [];
@@ -130,7 +170,7 @@ async function buildStatusPayload(env, url = null) {
   }
   const metricsMap = {};
 
-  for (const r of metricsResult.results || []) {
+  for (const r of metricRows) {
     if (r.updated_at) {
       const key = sanitizeAgentId(r.agent_id);
       const settings = targetTrafficSettings[key] || { enabled: false, quota_gb: 0, quota_bytes: 0, ...traffic };
@@ -140,7 +180,7 @@ async function buildStatusPayload(env, url = null) {
   const noPublicTargetByAgent = new Map((targets.results || [])
     .filter(target => Number(target.no_public_ip || 0) === 1)
     .map(target => [sanitizeAgentId(target.id), target.id]));
-  for (const availability of mergeAgentAvailabilityRows(agentAvailabilityResult.results, metricsResult.results, env, nowSec(), targets.results)) {
+  for (const availability of mergeAgentAvailabilityRows(agentAvailabilityResult.results, metricRows, env, nowSec(), targets.results)) {
     const targetId = noPublicTargetByAgent.get(availability.agent_id);
     if (!targetId || availability.day < startDay) continue;
     summaries.push({ target_id: targetId, day: availability.day, total: availability.total, ok_count: availability.ok_count, sum_latency_ms: 0, source: 'agent' });
@@ -191,7 +231,7 @@ async function buildStatusPayload(env, url = null) {
     }
   }
   const frontend = await publicFrontend(env);
-  return { ok: true, name: frontend.appearance.site_name, now: new Date().toISOString(), days: dayList, regions: REGION_LABELS, region_proxy_enabled: Boolean(env.REGION_PROXY), frontend_theme: frontend.theme, frontend, traffic, ping_targets: pingTargetsResult.results || [], privacy: { mask_ips: maskIps, hide_ports: hidePorts, hide_colo: true }, storage: { mode: 'd1-check-buckets+r2-state', raw_checks_in_d1: false, raw_history_in_r2: Boolean(env.ARCHIVE), d1_regular_check_writes: true, status_cache_ttl: clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300) }, timezone: { offset_minutes: timezoneOffsetMin(env), label: timezoneLabel(env) }, targets: rows, summaries, incidents, warnings: [...new Set(warnings)] };
+  return { ok: true, name: frontend.appearance.site_name, now: new Date().toISOString(), days: dayList, regions: REGION_LABELS, region_proxy_enabled: Boolean(env.REGION_PROXY), frontend_theme: frontend.theme, frontend, traffic, ping_targets: pingTargetsResult.results || [], privacy: { mask_ips: maskIps, hide_ports: hidePorts, hide_colo: true }, storage: { mode: env.PROBE_HISTORY ? 'probe-history-durable-object+r2+d1-fallback' : 'd1-check-buckets+r2-state', raw_checks_in_d1: !env.PROBE_HISTORY, raw_history_in_r2: Boolean(env.ARCHIVE), d1_regular_check_writes: !env.PROBE_HISTORY, status_cache_ttl: clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300) }, timezone: { offset_minutes: timezoneOffsetMin(env), label: timezoneLabel(env) }, targets: rows, summaries, incidents, warnings: [...new Set(warnings)] };
 }
 
 function publicUnlockData(value, nqValue = null) {
@@ -306,14 +346,25 @@ async function overlayLiveTargetStatus(env, payload) {
         payload.warnings = [...new Set([...(payload.warnings || []), 'External latency unavailable'])];
         return new Map();
       });
-    const [rows, liveTargets, externalLatency] = await Promise.all([
+    const r2StatePromise = parseBoolean(env.PROBE_LATEST_STATUS_TO_D1 ?? true, true)
+      ? Promise.resolve({ targets: {} })
+      : readR2State(env).catch((error) => {
+        console.error('Snapshot R2 current status overlay failed:', String(error?.message || error));
+        return { targets: {} };
+      });
+    const [rows, liveTargets, externalLatency, r2State] = await Promise.all([
       env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo FROM latest_status`).all(),
       env.DB.prepare(`SELECT id, location, city, location_source, location_updated_at, unlock_data, unlock_updated_at, nq_unlock_data, nq_unlock_updated_at,
         CASE WHEN nq_report IS NULL OR nq_report = '' THEN 0 ELSE 1 END AS has_nq, nq_updated_at
         FROM targets WHERE enabled = 1`).all(),
       externalPromise,
+      r2StatePromise,
     ]);
     const byId = new Map((rows.results || []).map((r) => [String(r.target_id), r]));
+    for (const [targetId, state] of Object.entries(r2State.targets || {})) {
+      const current = byId.get(targetId);
+      if (!current || Number(state?.checked_at || 0) > Number(current?.checked_at || 0)) byId.set(targetId, { ...state, target_id: targetId });
+    }
     const liveTargetById = new Map((liveTargets.results || []).map((target) => [String(target.id), target]));
     const cloudflareColor = String(await getMeta(env, 'latency_cloudflare_color') || '#159754');
     payload.targets = payload.targets.map((t) => {
@@ -394,9 +445,13 @@ async function attachAgentState(payload, env) {
     const trafficMap = {};
     const trafficRows = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all();
     for (const row of trafficRows.results || []) trafficMap[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
-    const rows = await env.DB.prepare(`SELECT * FROM agent_metrics_state`).all();
+    const [rows, bufferedMetrics] = await Promise.all([
+      env.DB.prepare(`SELECT * FROM agent_metrics_state`).all(),
+      bufferedAgentStateEnabled(env) ? readFleetLatestAgentStates(env) : Promise.resolve({}),
+    ]);
+    const metricRows = mergeAgentMetricRows(rows.results, bufferedMetrics);
     const byAgent = {};
-    for (const row of rows.results || []) {
+    for (const row of metricRows) {
       const key = sanitizeAgentId(row.agent_id);
       const settings = targetTrafficSettings[key] || { enabled: false, quota_gb: 0, quota_bytes: 0, ...traffic };
       if (key) byAgent[key] = publicAgentSummary(row, summarizeTrafficWithPending(trafficMap[`${key}|${settings.month}`], settings, row));
@@ -473,5 +528,5 @@ async function getChecks(env, url) {
   const checks = allPoints.filter(p => Number(p.checked_at) >= since).sort((a, b) => Number(b.checked_at) - Number(a.checked_at)).slice(0, limit).map(publicCheckPoint);
   const daily = dailyPointsFromChecks(allPoints, env);
   const agentSeries = await getAgentSeriesForTarget(env, id, days, since, limit);
-  return json({ ok: true, source: 'd1-check-buckets', checks, daily_points: daily, agent_series: agentSeries }, 200, env);
+  return json({ ok: true, source: env.PROBE_HISTORY ? 'probe-history-buffer' : 'd1-check-buckets', checks, daily_points: daily, agent_series: agentSeries }, 200, env);
 }

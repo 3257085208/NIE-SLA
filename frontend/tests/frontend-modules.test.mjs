@@ -15,7 +15,7 @@ import { NQ_OPTION_DEFAULTS, nqOptionsHtml, normalizeNqOptions, readNqOptions } 
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from '../js/install-command.js';
 import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, normalizeGroupByMode, priceBandKey } from '../js/shared/grouping.js';
 import { readStorage, removeStorage, writeStorage } from '../js/shared/storage.js';
-import { canShowTemperature, hasGpuData, hasTemperatureData, isVirtualized } from '../js/shared/hardware.js';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isVirtualized, isValidTemperature } from '../js/shared/hardware.js';
 import {
   CURRENCIES,
   COUNTRIES,
@@ -251,6 +251,8 @@ for (const type of ['建站机', '线路机', '落地机', '中转机', '家宽�
   assert.equal(LINE_TYPE_OPTIONS.some((option) => option.id === type), true, `${type} must be available as a machine type`);
 }
 assert.match(lineTypeOptionsHtml('落地鸡'), /value="落地鸡" selected>落地鸡（旧数据）<\/option>/);
+assert.match(lineTypeOptionsHtml('" onfocus="alert(1)'), /value="&quot; onfocus=&quot;alert\(1\)"/);
+assert.match(lineTypeOptionsHtml('<img src=x onerror=alert(1)>'), /&lt;img src=x onerror=alert\(1\)&gt;/);
 assert.equal(groupKeyFor({}, 'line_type'), '未设置机器类型');
 assert.equal(countryFlagAsset('HK'), './assets/flags/4x3/hk.svg');
 assert.equal(isVirtualized({ virtualization: 'kvm' }), true);
@@ -260,6 +262,21 @@ assert.equal(canShowTemperature({ virtualization: '' }), true);
 assert.equal(hasTemperatureData({ virtualization: 'kvm', cpu_temp_c: 40 }), false);
 assert.equal(hasTemperatureData({ virtualization: '', disk_temp_c: 36 }), true);
 assert.equal(hasTemperatureData({ virtualization: '', temperature_sensors: [{ temp_c: 42 }] }), true);
+assert.equal(hasTemperatureData({ virtualization: '', cpu_temp_c: 0 }), false);
+assert.equal(hasTemperatureData({ virtualization: '', cpu_temp_c: 0, gpu_temp_c: 0, motherboard_temp_c: 0, disk_temp_c: 0, chipset_temp_c: 0 }), false);
+assert.equal(hasTemperatureData({ virtualization: '', temperature_sensors: [{ temp_c: 0 }] }), false);
+assert.equal(hasTemperatureData({ virtualization: '', cpu_temp_c: 0, disk_temp_c: 36 }), true);
+assert.equal(hasTemperatureData({ virtualization: '', temperature_sensors: [{ temp_c: 0 }, { temp_c: 42 }] }), true);
+assert.equal(hasTemperatureData({ virtualization: '', cpu_temp_c: -10 }), true);
+assert.equal(isValidTemperature(0), false);
+assert.equal(isValidTemperature('0'), false);
+assert.equal(isValidTemperature(-10), true);
+assert.equal(isValidTemperature(36.5), true);
+assert.equal(isValidTemperature(-0), false);
+assert.equal(isValidTemperature(null), false);
+assert.equal(isValidTemperature(Number.NaN), false);
+assert.equal(isValidTemperature(''), false);
+assert.equal(isValidTemperature('12.5'), true);
 assert.equal(hasGpuData({ gpu_util: 0 }), false);
 assert.equal(hasGpuData({ gpu_count: 1 }), true);
 assert.equal(hasGpuData({ gpu_name: 'NVIDIA RTX A4000' }), true);
@@ -476,8 +493,16 @@ const appSource = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const adminCss = readFileSync(new URL('../admin.css', import.meta.url), 'utf8');
 assert.match(adminSource, /document\.body\.classList\.add\("admin-modal-open"\)/, 'admin modals must lock background scrolling');
 assert.match(adminSource, /modalReturnFocus[\s\S]*returnFocus\.focus\(\)/, 'admin modals must restore focus to their opener');
+assert.match(adminSource, /const agentVersion = status\.agent_version \|\| target\.agent_runtime\?\.agent_version/, 'admin probe rows must fall back to the authenticated target runtime version');
 assert.match(adminSource, /onkeydown[\s\S]{0,900}event\.key !== "Tab"/, 'admin modals must trap keyboard focus');
 assert.equal(adminSource.match(/input:not\(\[disabled\]\):not\(\[type="hidden"\]\)/g)?.length, 2, 'admin modal focus management must exclude hidden form fields');
 assert.match(adminCss, /body\.admin-modal-open\s*\{\s*overflow:\s*hidden/, 'admin modal scroll locking must be styled');
 assert.match(appSource, /部分状态数据暂不可用/, 'public status warnings must not be rendered as real empty data');
+assert.match(appSource, /connectStatusStream\(\)/, 'public page must attempt the live status stream');
+assert.match(appSource, /statusStreamConnected[\s\S]{0,100}loadStatus\(\)/, 'status stream must retain polling fallback');
+assert.match(appSource, /setInterval\(\(\) => \{[\s\S]{0,140}10_000\)/, 'status polling fallback must refresh at ten-second cadence');
+assert.match(appSource, /fetch\(api\('\/api\/status\?days=30&lite=1'\), \{[\s\S]{0,80}cache: 'default'/, 'status polling must honor the ten-second public cache');
+assert.match(appSource, /data\.series\.temperature_sensors/, 'metric history must decode dynamic temperature sensors');
+assert.match(appSource, /temperatureSensorChartDefinitions\(latest, history\)/, 'temperature chart must include dynamic sensor series');
+assert.match(appSource, /currentOnly[\s\S]{0,220}pointRadius = 4/, 'current-only sensors must remain visible without fabricated history');
 console.log('NodeQuality frontend helpers ok');

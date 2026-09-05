@@ -29,6 +29,12 @@ Normal backups contain no credentials. Sensitive backup passwords need at least 
 
 ## Free-tier budget
 
+> **Current estimation rule:** use the versioned site-only model in
+> [`../usage-model.md`](../usage-model.md) and its
+> [`../../scripts/usage-model-calibration.json`](../../scripts/usage-model-calibration.json)
+> for current planning. The 100-VPS table below is a historical architecture scenario,
+> not a live usage reading and not a guarantee of the current Cloudflare Dashboard value.
+
 Actual usage depends on VPS count, public traffic, ping volume, retries, history range, and alerts. Default design:
 
 - Cron refreshes current state every minute; Agents still upload every 5 minutes.

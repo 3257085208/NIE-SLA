@@ -1,9 +1,9 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260820-themecfg1";
-import { createAdminClient } from "./admin/api.js?v=20260820-themecfg1";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260820-themecfg1";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260820-themecfg1";
+import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260904-fix2";
+import { createAdminClient } from "./admin/api.js?v=20260821-themecfg2";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260821-themecfg2";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260821-themecfg2";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260820-themecfg1";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260821-themecfg2";
 import {
   CURRENCIES,
   PROVIDERS,
@@ -14,8 +14,8 @@ import {
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260820-themecfg1";
-import { readMigratedStorage, readStorage, writeStorage } from "./shared/storage.js?v=20260820-themecfg1";
+} from "./shared/grouping.js?v=20260821-themecfg2";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260821-themecfg2";
 import { escapeHtml } from "./shared/html.js";
 import { fmtBytes } from "./shared/format.js";
 
@@ -129,8 +129,30 @@ function errBox(id, e) {
 function nowSec() {
   return Math.floor(Date.now() / 1000);
 }
-function isStatusStale() {
-  return false;
+function isStatusStale(status = {}) {
+  const source = status?.status_source === 'agent'
+    ? status.last_metrics_at
+    : (status.checked_at ?? status.last_checked_at);
+  const timestamp = timestampSeconds(source);
+  if (!timestamp) return false;
+  const age = nowSec() - timestamp;
+  if (age <= 0) return false;
+  const interval = boundedPositiveSeconds(status.interval_sec, 300, 60, 86_400);
+  const configured = boundedPositiveSeconds(status.agent_offline_after_sec || status.stale_after_sec, 0, 60, 86_400);
+  const grace = Math.min(900, Math.max(120, interval * 2));
+  return age > (configured || interval + grace);
+}
+
+function timestampSeconds(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric > 1e12 ? numeric / 1000 : numeric;
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed / 1000 : 0;
+}
+
+function boundedPositiveSeconds(value, fallback, min, max) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
 function configuredChartColor(value, fallback) {
@@ -754,9 +776,7 @@ function isAgentOnline(status) {
   if (status.status_source === "agent" && typeof status.agent_online === "boolean")
     return status.agent_online;
   if (!status.last_metrics_at) return false;
-  const lastMetricsAt = Math.floor(
-    new Date(status.last_metrics_at).getTime() / 1000,
-  );
+  const lastMetricsAt = timestampSeconds(status.last_metrics_at);
   return nowSec() - lastMetricsAt < Number(status.agent_offline_after_sec || 900);
 }
 
@@ -797,10 +817,10 @@ function betaTaskControlsHtml(target) {
   const taskStates = actionTasks.map((task) => {
     const queuedTooLong = task.status === "queued"
       && Number(task.requested_at || 0) > 0
-      && nowSec() - Number(task.requested_at) >= 120;
+      && nowSec() - Number(task.requested_at) >= 480;
     const cancelling = task.status === "running" && Number(task.cancel_requested_at || 0) > 0;
     const state = {
-      queued: queuedTooLong ? "排队超过 2 分钟，请检查 Manager 状态" : "排队中",
+      queued: queuedTooLong ? "排队超过 8 分钟，请检查 Manager 状态" : "排队中",
       running: cancelling ? "停止中" : "运行中",
       succeeded: "已完成",
       failed: "失败",
@@ -928,7 +948,7 @@ function showIpUnlockTaskReport(target, task) {
     report.tabs[0].content = reportText;
   } else {
     const services = Array.isArray(task?.result?.services) ? task.result.services : [];
-    const servicesHtml = renderUnlockServicesReportHtml(services);
+    renderUnlockServicesReportHtml(services);
     report.tabs[0].content = "";
   }
   root.innerHTML = buildNqModalHtml(report, { title: "IP 解锁" });
@@ -1027,7 +1047,7 @@ async function queueAgentTask(target, action, label) {
       body: JSON.stringify({ agent_id: target.id, action, options: action === "nodequality" ? readNqOptions(byId("modal")) : undefined }),
     }, 30000);
     closeModal();
-    toast(`${label} 已排队，Agent 最多约 5 分钟内领取`, "ok");
+    toast(`${label} 已排队，Agent 最多约 10 分钟内领取`, "ok");
     await loadAgentTasks();
   } catch (error) {
     toast(error.message, "err");
@@ -1063,9 +1083,10 @@ function targetRowHtml(target, index) {
     : status.uptime_24h == null
       ? "暂无 24h 数据"
       : `24h ${Number(status.uptime_24h).toFixed(2)}%`;
+  const agentVersion = status.agent_version || target.agent_runtime?.agent_version || "";
   const agentDetails = isWeb
     ? notApplicable
-    : `<div class="status-stack"><div>${agentTag}<code>${escapeHtml(status.agent_version || "-")}</code></div><small>${status.machine_uptime_sec ? `运行 ${escapeHtml(formatDuration(status.machine_uptime_sec))}` : "暂无运行时长"}</small></div>`;
+    : `<div class="status-stack"><div>${agentTag}<code>${escapeHtml(agentVersion || "-")}</code></div><small>${status.machine_uptime_sec ? `运行 ${escapeHtml(formatDuration(status.machine_uptime_sec))}` : "暂无运行时长"}</small></div>`;
   const cfDetails = noPublicIp
     ? ""
     : `<div class="monitoring-item"><span class="monitoring-label">CF</span><div class="status-stack"><div>${statusTag(state.text, state.className)}<strong>${status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`}</strong></div><small>${escapeHtml(probeUptime)}</small></div></div>`;
@@ -1219,10 +1240,10 @@ function bulkTaskModal(action) {
   const label = action === "nodequality" ? "NodeQuality" : "IP 解锁";
   byId("modal").className = "modal bulk-confirm-modal";
   byId("modal").innerHTML = `<h3>批量运行 ${escapeHtml(label)}</h3><p>将向 <strong>${selected.length}</strong> 台在线 VPS 排队提交任务；离线、能力不匹配或已有任务的 VPS 会单独返回原因。</p><div class="bulk-confirm-targets">${selected.slice(0, 14).map((target) => `<span>${escapeHtml(target.name)}</span>`).join("")}${selected.length > 14 ? `<span>另 ${selected.length - 14} 台</span>` : ""}</div>${action === "nodequality" ? nqOptionsHtml() : ""}<div class="bulk-target-warning">每台 VPS 仍保持单任务互斥，任务会在各 Agent 独立执行。</div><div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="confirmBulkTask">确认排队</button></div>`;
-  byId("confirmBulkTask").onclick = () => queueBulkAgentTasks(selected.map((target) => target.id), action, label);
+  byId("confirmBulkTask").onclick = () => queueBulkAgentTasks(selected.map((target) => target.id), action);
 }
 
-async function queueBulkAgentTasks(ids, action, label) {
+async function queueBulkAgentTasks(ids, action) {
   const options = action === "nodequality" ? readNqOptions(byId("modal")) : undefined;
   const count = ids.length;
   selectedTargetIds.clear();
@@ -1660,10 +1681,6 @@ function currencyOptionsHtml(current = "USD") {
 }
 
 
-function displayGroupName(value) {
-  return sharedDisplayGroupName(value);
-}
-
 function nullableNumber(id) {
   const raw = (byId(id)?.value || "").trim();
   if (raw === "") return null;
@@ -2069,7 +2086,7 @@ async function loadPings() {
     pingTargets = pd.targets || [];
     renderPings();
     shown = pingTargets.length > 0;
-  } catch (e) {}
+  } catch {}
   try {
     const d = await apiAdmin("/api/ping-targets", {}, 30000);
     pingTargets = d.targets || pingTargets;
@@ -2241,6 +2258,7 @@ async function loadSettings() {
   loadAppUpdate();
   loadTotp();
   loadEncryption();
+  loadUsageSummaryAccess();
   loadAccount();
   loadAdminPath();
   loadGeoIp();
@@ -2273,6 +2291,82 @@ async function loadEncryption() {
     byId("migrateEncryption").onclick = migrateEncryption;
   } catch (error) {
     errBox("sEncryption", error);
+  }
+}
+async function loadUsageSummaryAccess() {
+  const box = byId("sUsageSummaryAccess");
+  if (!box) return;
+  try {
+    const data = await apiAdmin("/api/debug/usage-access-token");
+    const activeCount = Math.max(0, Number(data.active_count || 0));
+    const maxTokens = Math.max(1, Number(data.max_active_tokens || 3));
+    const expiresAt = Number(data.latest_expires_at || 0);
+    const expiresText = expiresAt > 0
+      ? new Date(expiresAt * 1000).toLocaleString("zh-CN", { hour12: false })
+      : "—";
+    box.innerHTML = `
+      <p class="hint">只供本机用量模型读取聚合汇总；不能登录后台、读取原始调试日志或修改配置。新凭据只显示一次，最长 24 小时有效。</p>
+      <div class="security-key-status"><span>当前短期凭据</span><span class="tag ${activeCount ? "tag-on" : "tag-off"}">${activeCount ? `${activeCount} / ${maxTokens} 个有效` : "未创建"}</span></div>
+      <div class="security-key-status"><span>最晚到期</span><strong>${escapeHtml(expiresText)}</strong></div>
+      <div class="ma"><button type="button" class="btn btn-sm btn-blue" id="createUsageSummaryAccess">生成只读凭据</button><button type="button" class="btn btn-sm btn-danger" id="revokeUsageSummaryAccess"${activeCount ? "" : " disabled"}>全部撤销</button></div>`;
+    byId("createUsageSummaryAccess").onclick = issueUsageSummaryAccess;
+    byId("revokeUsageSummaryAccess").onclick = revokeUsageSummaryAccess;
+  } catch (error) {
+    errBox("sUsageSummaryAccess", error);
+  }
+}
+
+async function issueUsageSummaryAccess() {
+  const button = byId("createUsageSummaryAccess");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在生成...";
+  }
+  try {
+    const data = await apiAdmin("/api/debug/usage-access-token", { method: "POST" });
+    const token = String(data.access_token || "");
+    if (!/^nsu_[a-f0-9]{64}$/.test(token)) throw new Error("Worker 返回的只读凭据格式无效");
+    await loadUsageSummaryAccess();
+    byId("modal").className = "modal";
+    byId("modal").innerHTML = `<h3>保存只读凭据</h3><p>它只显示这一次。请复制到安全位置，然后在终端执行文档中的 <code>read -s NIE_SLA_USAGE_TOKEN</code> 命令时粘贴。</p><pre class="code">${escapeHtml(token)}</pre><div class="ma"><button type="button" class="btn" id="closeUsageSummaryToken">关闭</button><button type="button" class="btn btn-primary" id="copyUsageSummaryToken">复制凭据</button></div>`;
+    byId("closeUsageSummaryToken").onclick = closeModal;
+    byId("copyUsageSummaryToken").onclick = async () => {
+      try {
+        await copyText(token);
+        toast("只读凭据已复制；请勿写入命令历史或 Git", "ok");
+      } catch (error) {
+        toast(`复制失败：${error.message || "请手动复制"}`, "err");
+      }
+    };
+    openModal();
+  } catch (error) {
+    toast(`生成只读凭据失败：${error.message}`, "err");
+  } finally {
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = "生成只读凭据";
+    }
+  }
+}
+
+async function revokeUsageSummaryAccess() {
+  if (!confirm("将立即撤销全部用量模型只读凭据；已经打开的终端模型将无法再读取站点日志。继续吗？")) return;
+  const button = byId("revokeUsageSummaryAccess");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "正在撤销...";
+  }
+  try {
+    const data = await apiAdmin("/api/debug/usage-access-token", { method: "DELETE" });
+    toast(`已撤销 ${Math.max(0, Number(data.revoked_count || 0))} 个只读凭据`, "ok");
+    await loadUsageSummaryAccess();
+  } catch (error) {
+    toast(`撤销只读凭据失败：${error.message}`, "err");
+  } finally {
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = "全部撤销";
+    }
   }
 }
 
@@ -2658,7 +2752,7 @@ async function saveAppearance(reset) {
     appearance[input.dataset.appearanceKey] = input.type === 'checkbox' ? input.checked : input.value;
   });
   try {
-    const d = await api('/api/settings', { method: 'PATCH', body: JSON.stringify({ appearance }) });
+    await api('/api/settings', { method: 'PATCH', body: JSON.stringify({ appearance }) });
     toast(reset ? '已恢复默认外观' : '外观设置已保存', 'ok');
     loadAppearance();
   } catch (e) { toast(e.message, 'err'); }

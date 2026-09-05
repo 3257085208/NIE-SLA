@@ -2,7 +2,7 @@
 import { clamp, nowSec, sanitizeId, sanitizeAgentId, parseBoolean, normalizeTarget, parseExpectedStatus, REGION_LABELS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC } from '../utils.js';
 import { normalizeTrafficMode, normalizeTrafficQuotaGb, normalizeTrafficResetDay, summarizeTrafficWithPending, trafficSettingsFromTarget } from '../traffic.js';
 import { safeJson } from '../auth.js';
-import { removeTargetFromR2State, deleteTargetR2Data } from '../storage.js';
+import { readR2State, removeTargetFromR2State, deleteTargetR2Data } from '../storage.js';
 import { runTargetBatch } from '../probe.js';
 import { deleteAgentTelemetry, rebuildAgentTrafficPeriod } from '../metrics.js';
 import { ensureV6Schema, isMissingAgentCapabilitiesColumn } from './schema.js';
@@ -11,7 +11,9 @@ import { syncEnvTargetsMaybe, syncEnvTargets } from './sync.js';
 import { normalizeTargetOrder } from './target-order.js';
 import { convertPriceToCny, getExchangeRates, normalizeCurrency } from './settings.js';
 import { nodeQualityUnlockData, normalizeNodeQualityReport, normalizeNodeQualityReportUrl, publicNodeQualitySummary } from '../nodequality.js';
-import { applyBulkTargetColumns, normalizeBulkTargetUpdate } from './target-bulk.js';
+import { applyBulkTargetColumns, normalizeBulkTargetUpdate, normalizeLineType } from './target-bulk.js';
+import { bufferedAgentStateEnabled, mergeAgentMetricRows } from '../agent-state.js';
+import { readFleetLatestAgentStates } from '../telemetry-buffer.js';
 
 const TARGET_ORDER_SQL = `CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END, sort_order, group_name COLLATE NOCASE, name COLLATE NOCASE`;
 
@@ -51,9 +53,18 @@ export async function listTargets(env) {
   const rows = await env.DB.prepare(`SELECT t.*, COALESCE(s.checked_at, t.last_checked_at) AS last_checked_at
     FROM targets t LEFT JOIN latest_status s ON s.target_id = t.id
     ORDER BY CASE WHEN t.sort_order IS NULL THEN 1 ELSE 0 END, t.sort_order, t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all();
+  const r2State = await readR2State(env).catch(() => ({ targets: {} }));
+  const targetRows = (rows.results || []).map((target) => {
+    const current = r2State.targets?.[String(target.id)];
+    if (!current || Number(current.checked_at || 0) < Number(target.last_checked_at || 0)) return target;
+    const fields = ['checked_at', 'ok', 'latency_ms', 'status_code', 'error', 'probe_region', 'cf_colo', 'uptime_24h', 'uptime_7d', 'avg_latency_24h', 'last_fail_at', 'current_outage_started_at', 'last_recover_at', 'status_changed_at'];
+    const overlay = Object.fromEntries(fields.filter(key => current[key] !== undefined).map(key => [key, current[key]]));
+    return { ...target, ...overlay, last_checked_at: Number(current.checked_at || target.last_checked_at || 0) || null };
+  });
   const trafficRows = {};
   const agentStates = {};
   const agentTrafficStates = {};
+  let d1AgentRows = [];
   try {
     const result = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all();
     for (const row of result.results || []) trafficRows[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
@@ -66,7 +77,14 @@ export async function listTargets(env) {
       if (!isMissingAgentCapabilitiesColumn(err)) throw err;
       result = await env.DB.prepare(`SELECT agent_id, agent_version, updated_at, NULL AS capabilities FROM agent_metrics_state`).all();
     }
-    for (const row of result.results || []) {
+    d1AgentRows = result.results || [];
+    const bufferedAgentRows = bufferedAgentStateEnabled(env)
+      ? await readFleetLatestAgentStates(env).catch((error) => {
+        console.error('Buffered Agent runtime unavailable:', String(error?.message || error));
+        return {};
+      })
+      : {};
+    for (const row of mergeAgentMetricRows(d1AgentRows, bufferedAgentRows)) {
       agentStates[sanitizeAgentId(row.agent_id)] = {
         agent_version: row.agent_version || null,
         last_metrics_at: row.updated_at || null,
@@ -76,7 +94,7 @@ export async function listTargets(env) {
     }
   } catch (_) {}
   const rates = await getExchangeRates(env);
-  const targets = (rows.results || []).map((target) => {
+  const targets = targetRows.map((target) => {
     const settings = trafficSettingsFromTarget(target, env);
     const priceCny = convertPriceToCny(target.price, target.currency, rates);
     const nq = publicNodeQualitySummary(target);
@@ -110,7 +128,7 @@ export async function createTarget(request, env) {
   const location = String(body?.location || '').trim() || null;
   const city = String(body?.city || '').trim().slice(0, 64) || null;
   const provider = String(body?.provider || '').trim() || null;
-  const lineType = String(body?.line_type || '').trim() || null;
+  const lineType = normalizeLineType(body?.line_type) || null;
   const nq = body?.nq_report !== undefined
     ? normalizeNodeQualityReport(body.nq_report)
     : { report: null, updatedAt: null };
@@ -159,7 +177,7 @@ export async function bulkUpdateTargets(request, env) {
 function normalizeBulkTargetColumns(changes, env) {
   const normalized = {};
   if ('provider' in changes) normalized.provider = String(changes.provider || '').trim() || null;
-  if ('line_type' in changes) normalized.line_type = String(changes.line_type || '').trim() || null;
+  if ('line_type' in changes) normalized.line_type = normalizeLineType(changes.line_type) || null;
   if ('expires_at' in changes) normalized.expires_at = normalizeExpiresAt(changes.expires_at, env);
   if ('price' in changes) normalized.price = normalizePrice(changes.price);
   if ('currency' in changes) normalized.currency = normalizeCurrency(changes.currency, 'USD');
@@ -185,7 +203,7 @@ async function updateTargetRecord(id, body, existing, env, { updateMeta = true }
   const location = body?.location !== undefined ? (String(body.location || '').trim() || null) : (existing.location ?? null);
   const city = body?.city !== undefined ? (String(body.city || '').trim().slice(0, 64) || null) : (existing.city ?? null);
   const provider = body?.provider !== undefined ? (String(body.provider || '').trim() || null) : (existing.provider ?? null);
-  const lineType = body?.line_type !== undefined ? (String(body.line_type || '').trim() || null) : (existing.line_type ?? null);
+  const lineType = body?.line_type !== undefined ? (normalizeLineType(body.line_type) || null) : (existing.line_type ?? null);
   let nqReport = existing.nq_report ?? null;
   let nqUpdatedAt = existing.nq_updated_at ?? null;
   let nqUnlockData = existing.nq_unlock_data ?? null;

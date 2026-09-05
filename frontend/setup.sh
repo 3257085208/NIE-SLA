@@ -3,8 +3,44 @@ set -euo pipefail
 
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 CFTZ_URL_BASE="${CFTZ_URL_BASE:-$DOWNLOAD_BASE}"
+
+# ---------- 品牌横幅：仅交互终端输出；环境变量 NIE_SLA_BANNER=nie-sla|qq.sg|as218834 选择品牌 ----------
+print_brand_banner() {
+    local suffix="${1:-}"
+    if [ ! -t 1 ] || [ -n "${NO_COLOR:-}" ]; then return 0; fi
+    local esc reset bold dim NEU pad
+    esc='\033['
+    reset='\033[0m'
+    bold='\033[1;37m'
+    dim='\033[2m'
+    NEU="${esc}38;5;245m"
+    printf '\n'
+    printf '%b\n' "${esc}38;5;245m╔═══════════════════════════════════════════════════════╦═══════════════════════════════════════════════════════╗${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;51m█${esc}38;5;22m▓    ${esc}38;5;51m█${esc}38;5;22m▓ ${esc}38;5;51m█████${esc}38;5;22m▓ ${esc}38;5;51m██████${esc}38;5;22m▓        ${esc}38;5;51m██████${esc}38;5;22m▓ ${esc}38;5;51m█${esc}38;5;22m▓       ${esc}38;5;51m█████${esc}38;5;22m▓ ${reset}${esc}38;5;245m║${reset} ${esc}38;5;213m██████${esc}38;5;53m▓   ${esc}38;5;213m██████${esc}38;5;53m▓       ${esc}38;5;213m██████${esc}38;5;53m▓  ${esc}38;5;213m██████${esc}38;5;53m▓              ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;50m██${esc}38;5;22m▓   ${esc}38;5;50m█${esc}38;5;22m▓ ${esc}38;5;22m▓▓${esc}38;5;50m█${esc}38;5;22m▓▓  ${esc}38;5;50m█${esc}38;5;22m▓▓▓▓▓         ${esc}38;5;50m█${esc}38;5;22m▓▓▓▓▓  ${esc}38;5;50m█${esc}38;5;22m▓      ${esc}38;5;50m█${esc}38;5;22m▓▓▓▓▓${esc}38;5;50m█${esc}38;5;22m▓${reset}${esc}38;5;245m║${reset}${esc}38;5;207m██${esc}38;5;53m▓▓▓▓${esc}38;5;207m██${esc}38;5;53m▓ ${esc}38;5;207m██${esc}38;5;53m▓▓▓▓${esc}38;5;207m██${esc}38;5;53m▓      ${esc}38;5;207m█${esc}38;5;53m▓▓▓▓▓  ${esc}38;5;207m██${esc}38;5;53m▓▓▓▓▓               ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;49m█${esc}38;5;22m▓${esc}38;5;49m█${esc}38;5;22m▓  ${esc}38;5;49m█${esc}38;5;22m▓   ${esc}38;5;49m█${esc}38;5;22m▓   ${esc}38;5;49m█${esc}38;5;22m▓             ${esc}38;5;49m██████${esc}38;5;22m▓ ${esc}38;5;49m█${esc}38;5;22m▓      ${esc}38;5;49m███████${esc}38;5;22m▓${reset}${esc}38;5;245m║${reset}${esc}38;5;201m██${esc}38;5;53m▓   ${esc}38;5;201m██${esc}38;5;53m▓ ${esc}38;5;201m██${esc}38;5;53m▓   ${esc}38;5;201m██${esc}38;5;53m▓      ${esc}38;5;201m██████${esc}38;5;53m▓ ${esc}38;5;201m██${esc}38;5;53m▓  ${esc}38;5;201m███${esc}38;5;53m▓             ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;48m█${esc}38;5;22m▓▓${esc}38;5;48m█${esc}38;5;22m▓ ${esc}38;5;48m█${esc}38;5;22m▓   ${esc}38;5;48m█${esc}38;5;22m▓   ${esc}38;5;48m█████${esc}38;5;22m▓  ${esc}38;5;48m█████${esc}38;5;22m▓ ${esc}38;5;22m▓▓▓▓▓${esc}38;5;48m█${esc}38;5;22m▓ ${esc}38;5;48m█${esc}38;5;22m▓      ${esc}38;5;48m█${esc}38;5;22m▓▓▓▓▓${esc}38;5;48m█${esc}38;5;22m▓${reset}${esc}38;5;245m║${reset}${esc}38;5;176m██${esc}38;5;53m▓   ${esc}38;5;176m██${esc}38;5;53m▓ ${esc}38;5;176m██${esc}38;5;53m▓   ${esc}38;5;176m██${esc}38;5;53m▓      ${esc}38;5;53m▓▓▓▓▓${esc}38;5;176m█${esc}38;5;53m▓ ${esc}38;5;176m██${esc}38;5;53m▓  ${esc}38;5;53m▓${esc}38;5;176m██${esc}38;5;53m▓             ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;47m█${esc}38;5;22m▓ ${esc}38;5;22m▓${esc}38;5;47m█${esc}38;5;22m▓${esc}38;5;47m█${esc}38;5;22m▓   ${esc}38;5;47m█${esc}38;5;22m▓   ${esc}38;5;47m█${esc}38;5;22m▓▓▓▓   ${esc}38;5;22m▓▓▓▓▓  ${esc}38;5;47m██████${esc}38;5;22m▓ ${esc}38;5;47m█${esc}38;5;22m▓      ${esc}38;5;47m█${esc}38;5;22m▓    ${esc}38;5;47m█${esc}38;5;22m▓${reset}${esc}38;5;245m║${reset}${esc}38;5;171m██${esc}38;5;53m▓   ${esc}38;5;171m██${esc}38;5;53m▓ ${esc}38;5;171m██${esc}38;5;53m▓   ${esc}38;5;171m██${esc}38;5;53m▓  ${esc}38;5;171m█${esc}38;5;53m▓  ${esc}38;5;171m██████${esc}38;5;53m▓ ${esc}38;5;171m██${esc}38;5;53m▓   ${esc}38;5;171m██${esc}38;5;53m▓             ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;46m█${esc}38;5;22m▓  ${esc}38;5;22m▓${esc}38;5;46m██${esc}38;5;22m▓ ${esc}38;5;46m█████${esc}38;5;22m▓ ${esc}38;5;46m██████${esc}38;5;22m▓        ${esc}38;5;22m▓▓▓▓▓${esc}38;5;46m█${esc}38;5;22m▓ ${esc}38;5;46m██████${esc}38;5;22m▓ ${esc}38;5;46m█${esc}38;5;22m▓    ${esc}38;5;46m█${esc}38;5;22m▓${reset}${esc}38;5;245m║${reset}${esc}38;5;53m▓${esc}38;5;165m███████${esc}38;5;53m▓ ${esc}38;5;53m▓${esc}38;5;165m███████${esc}38;5;53m▓ ${esc}38;5;165m███${esc}38;5;53m▓ ${esc}38;5;53m▓▓▓▓▓${esc}38;5;165m█${esc}38;5;53m▓ ${esc}38;5;53m▓${esc}38;5;165m██████${esc}38;5;53m▓              ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;22m▓    ${esc}38;5;22m▓▓  ${esc}38;5;22m▓▓▓▓▓  ${esc}38;5;22m▓▓▓▓▓▓              ${esc}38;5;22m▓  ${esc}38;5;22m▓▓▓▓▓▓  ${esc}38;5;22m▓     ${esc}38;5;22m▓ ${reset}${esc}38;5;245m║${reset} ${esc}38;5;53m▓▓▓▓▓▓▓   ${esc}38;5;53m▓▓▓▓▓▓▓  ${esc}38;5;53m▓▓▓       ${esc}38;5;53m▓   ${esc}38;5;53m▓▓▓▓▓▓               ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}1;37m                        NIE-SLA                        ${reset}${esc}38;5;245m║${reset}${esc}1;37m                         QQ.SG                         ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m╠═══════════════════════════════════════════════════════╬═══════════════════════════════════════════════════════╣${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset} ${esc}38;5;220m█████${esc}38;5;52m▓  ${esc}38;5;220m██████${esc}38;5;52m▓ ${esc}38;5;220m██████${esc}38;5;52m▓    ${esc}38;5;220m█${esc}38;5;52m▓   ${esc}38;5;220m██████${esc}38;5;52m▓ ${esc}38;5;220m██████${esc}38;5;52m▓ ${esc}38;5;220m██████${esc}38;5;52m▓ ${esc}38;5;220m█${esc}38;5;52m▓    ${esc}38;5;220m█${esc}38;5;52m▓                                              ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;214m█${esc}38;5;52m▓▓▓▓▓${esc}38;5;214m█${esc}38;5;52m▓ ${esc}38;5;214m█${esc}38;5;52m▓▓▓▓▓  ${esc}38;5;52m▓▓▓▓▓${esc}38;5;214m██${esc}38;5;52m▓  ${esc}38;5;214m██${esc}38;5;52m▓   ${esc}38;5;214m█${esc}38;5;52m▓▓▓▓${esc}38;5;214m█${esc}38;5;52m▓ ${esc}38;5;214m█${esc}38;5;52m▓▓▓▓${esc}38;5;214m█${esc}38;5;52m▓ ${esc}38;5;52m▓▓▓▓▓${esc}38;5;214m█${esc}38;5;52m▓ ${esc}38;5;214m█${esc}38;5;52m▓    ${esc}38;5;214m█${esc}38;5;52m▓                                              ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;208m███████${esc}38;5;52m▓ ${esc}38;5;208m██████${esc}38;5;52m▓   ${esc}38;5;208m███${esc}38;5;52m▓▓  ${esc}38;5;208m█████${esc}38;5;52m▓ ${esc}38;5;208m██████${esc}38;5;52m▓ ${esc}38;5;208m██████${esc}38;5;52m▓ ${esc}38;5;208m██████${esc}38;5;52m▓ ${esc}38;5;208m█${esc}38;5;52m▓    ${esc}38;5;208m█${esc}38;5;52m▓                                              ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;202m█${esc}38;5;52m▓▓▓▓▓${esc}38;5;202m█${esc}38;5;52m▓ ${esc}38;5;52m▓▓▓▓▓${esc}38;5;202m█${esc}38;5;52m▓ ${esc}38;5;202m██${esc}38;5;52m▓▓▓    ${esc}38;5;52m▓▓${esc}38;5;202m█${esc}38;5;52m▓▓  ${esc}38;5;202m█${esc}38;5;52m▓▓▓▓${esc}38;5;202m█${esc}38;5;52m▓ ${esc}38;5;202m█${esc}38;5;52m▓▓▓▓${esc}38;5;202m█${esc}38;5;52m▓ ${esc}38;5;52m▓▓▓▓▓${esc}38;5;202m█${esc}38;5;52m▓ ${esc}38;5;202m███████${esc}38;5;52m▓                                              ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;196m█${esc}38;5;52m▓    ${esc}38;5;196m█${esc}38;5;52m▓ ${esc}38;5;196m██████${esc}38;5;52m▓ ${esc}38;5;196m██${esc}38;5;52m▓        ${esc}38;5;196m█${esc}38;5;52m▓   ${esc}38;5;196m█${esc}38;5;52m▓   ${esc}38;5;196m█${esc}38;5;52m▓ ${esc}38;5;196m█${esc}38;5;52m▓   ${esc}38;5;196m█${esc}38;5;52m▓      ${esc}38;5;196m█${esc}38;5;52m▓ ${esc}38;5;52m▓▓▓▓▓▓${esc}38;5;196m█${esc}38;5;52m▓                                              ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;202m█${esc}38;5;52m▓    ${esc}38;5;202m█${esc}38;5;52m▓ ${esc}38;5;52m▓▓▓▓▓${esc}38;5;202m█${esc}38;5;52m▓ ${esc}38;5;202m██████${esc}38;5;52m▓  ${esc}38;5;202m█████${esc}38;5;52m▓ ${esc}38;5;202m██████${esc}38;5;52m▓ ${esc}38;5;202m██████${esc}38;5;52m▓ ${esc}38;5;202m██████${esc}38;5;52m▓       ${esc}38;5;202m█${esc}38;5;52m▓                                              ${reset}${esc}38;5;245m║${reset}"
+    printf '%b\n' "${esc}38;5;245m║${reset}${esc}38;5;52m▓     ${esc}38;5;52m▓       ${esc}38;5;52m▓  ${esc}38;5;52m▓▓▓▓▓▓   ${esc}38;5;52m▓▓▓▓▓  ${esc}38;5;52m▓▓▓▓▓▓  ${esc}38;5;52m▓▓▓▓▓▓  ${esc}38;5;52m▓▓▓▓▓▓        ${esc}38;5;52m▓                                               ${reset}${esc}38;5;245m║${reset}"
+    pad=$(( 111 - 12 - ${#suffix} ))
+    (( pad < 0 )) && pad=0
+    printf '%b║%b AS218834 · %b%s%*s%b%b║%b\n' "${NEU}" "${bold}" "${dim}" "${suffix}" "$pad" "" "${reset}" "${NEU}" "${reset}"
+    printf '%b\n' "${esc}38;5;245m╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╝${reset}"
+    printf '\n'
+}
+
 DEFAULT_SHA256SUMS_SHA256=""
-DEFAULT_CFTZ_SHA256="40975e710f0c6f9a3115630d36d6431bb2a71ed615c1fc5c19fd7c8af9fb5e16"
+DEFAULT_CFTZ_SHA256="49a0a476bc9260e6e3b5631abf7c5dd537e8cf141657cb93358f68c4fc363256"
 DEFAULT_EXPECTED_VERSION=""
 BIN_NAME="nie-sla-agent"
 SERVICE_NAME="nie-sla-agent"
@@ -22,6 +58,18 @@ LEGACY_WORK_DIR="/opt/nstatus-metrics"
 LEGACY_STATE_DIR="/var/lib/nstatus-metrics"
 LEGACY_MANAGER_STATE_DIR="/var/lib/nstatus-manager"
 LEGACY_TASK_USER="nstatus-task"
+ROOTLESS_MODE=false
+case "${NIE_SLA_ROOTLESS:-${NSTATUS_ROOTLESS:-}}" in 1|true|TRUE|yes|YES) ROOTLESS_MODE=true ;; esac
+
+if [[ "$ROOTLESS_MODE" == "true" ]]; then
+  INSTALL_DIR="${HOME}/.local/bin"
+  WORK_DIR="${HOME}/nie-sla-agent"
+  STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nie-sla-agent"
+  MANAGER_STATE_DIR="$STATE_DIR"
+  ENV_FILE="$WORK_DIR/nie-sla-agent.env"
+  CFTZ_BIN="$INSTALL_DIR/cftz"
+fi
+
 CACHE_KEY="$(printf '%s' "${NIE_SLA_SHA256SUMS_SHA256:-${NSTATUS_SHA256SUMS_SHA256:-$(date +%s)}}" | tr -cd 'A-Za-z0-9._-')"
 [[ -n "$CACHE_KEY" ]] || CACHE_KEY="$(date +%s)"
 INSTALL_STARTED_AT="$(date +%s)"
@@ -230,6 +278,47 @@ write_env_file() {
   chmod 0600 "$ENV_FILE"
 }
 
+install_rootless_service() {
+  local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$unit_dir" "$STATE_DIR"
+  cat > "$unit_dir/${SERVICE_NAME}.service" <<EOF
+[Unit]
+Description=NIE-SLA VPS Metrics Agent (rootless)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${STATE_DIR}
+EnvironmentFile=${ENV_FILE}
+ExecStart=${WORK_DIR}/${BIN_NAME}
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+EOF
+  if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload >/dev/null 2>&1; then
+    systemctl --user enable "$SERVICE_NAME" >/dev/null 2>&1 || true
+    systemctl --user restart "$SERVICE_NAME"
+    if ! loginctl show-user "$USER" 2>/dev/null | grep -q '^Linger=yes'; then
+      if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        sudo loginctl enable-linger "$USER" >/dev/null 2>&1 || true
+      else
+        warn "未启用 linger：用户注销后 Agent 会停止；启用：sudo loginctl enable-linger $USER"
+      fi
+    fi
+  else
+    warn "systemd user 会话不可用；改为后台启动（重启后需手动拉起或改用完整版安装）"
+    set -a; . "$ENV_FILE"; set +a
+    ( cd "$STATE_DIR" && nohup "$WORK_DIR/$BIN_NAME" >> "$STATE_DIR/${SERVICE_NAME}.log" 2>&1 & )
+  fi
+}
+
 install_systemd_service() {
   cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<EOF
 [Unit]
@@ -242,7 +331,7 @@ Type=simple
 WorkingDirectory=${STATE_DIR}
 EnvironmentFile=${ENV_FILE}
 ExecStart=${WORK_DIR}/${BIN_NAME}
-Restart=always
+Restart=on-failure
 RestartSec=15
 User=${AGENT_USER}
 NoNewPrivileges=true
@@ -268,7 +357,7 @@ WorkingDirectory=${STATE_DIR}
 EnvironmentFile=${ENV_FILE}
 Environment=NIE_SLA_TASK_RUNNER_ONLY=1
 ExecStart=${WORK_DIR}/${BIN_NAME} --task-runner-only
-Restart=always
+Restart=on-failure
 RestartSec=20
 User=root
 PrivateTmp=true
@@ -324,6 +413,23 @@ systemd_agent_logs_since_install() {
 print_systemd_agent_diagnostics() {
   systemctl status "$SERVICE_NAME" --no-pager -l 2>&1 | redact_agent_output >&2 || true
   systemd_agent_logs_since_install | tail -n 80 | redact_agent_output >&2 || true
+}
+
+verify_rootless_agent_health() {
+  local waited=0 logs=""
+  while (( waited < HEALTH_CHECK_TIMEOUT_SEC )); do
+    logs="$(journalctl --user -u "$SERVICE_NAME" --since "@${INSTALL_STARTED_AT}" --no-pager -o cat 2>/dev/null || true)"
+    if systemctl --user is-active --quiet "$SERVICE_NAME" 2>/dev/null       && grep -q '"submitted_at"' <<<"$logs"; then
+      ok "rootless 服务运行正常，首包已上报"
+      return 0
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  err "Agent 未能在 ${HEALTH_CHECK_TIMEOUT_SEC}s 内完成首包上报，安装未通过健康检查"
+  systemctl --user status "$SERVICE_NAME" --no-pager -l 2>&1 | redact_agent_output >&2 || true
+  journalctl --user -u "$SERVICE_NAME" --since "@${INSTALL_STARTED_AT}" --no-pager -o cat 2>/dev/null | tail -n 80 | redact_agent_output >&2 || true
+  return 1
 }
 
 verify_systemd_agent_health() {
@@ -456,6 +562,18 @@ EOF
 }
 
 do_uninstall() {
+  case "${NIE_SLA_ROOTLESS:-${NSTATUS_ROOTLESS:-}}" in 1|true|TRUE|yes|YES)
+    title "卸载 NIE-SLA Agent (rootless)"
+    systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+    systemctl --user disable "$SERVICE_NAME" 2>/dev/null || true
+    rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${SERVICE_NAME}.service"
+    systemctl --user daemon-reload 2>/dev/null || true
+    pkill -f "${HOME}/nie-sla-agent/${BIN_NAME}" 2>/dev/null || true
+    rm -rf "$HOME/nie-sla-agent" "${XDG_STATE_HOME:-$HOME/.local/state}/nie-sla-agent" "${HOME}/.local/bin/${BIN_NAME}" "${HOME}/.local/bin/cftz"
+    ok "已卸载 (rootless)"
+    return 0
+    print_brand_banner "Agent 已卸载 · rootless"
+  esac
   need_root
   title "卸载 NIE-SLA Agent"
   case "$(detect_init)" in
@@ -483,6 +601,7 @@ do_uninstall() {
   userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
   userdel "$LEGACY_TASK_USER" 2>/dev/null || deluser "$LEGACY_TASK_USER" 2>/dev/null || true
   ok "已卸载"
+  print_brand_banner "Agent 已卸载"
 }
 
 NON_INTERACTIVE=false
@@ -501,7 +620,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-need_root
+if [[ "$ROOTLESS_MODE" != "true" ]]; then
+  need_root
+fi
 
 API_BASE="${NIE_SLA_API_BASE:-${NSTATUS_API_BASE:-}}"
 TOKEN="${NIE_SLA_AGENT_TOKEN:-${NSTATUS_AGENT_TOKEN:-}}"
@@ -540,14 +661,20 @@ download_to "$BIN_URL" "$TMPBIN"
 verify_binary_checksum "$TMPBIN" "${BIN_NAME}-linux-${ARCH}" "$TMPSUMS"
 chmod +x "$TMPBIN"
 verify_agent_version "$TMPBIN"
-stop_existing_agent
-create_users
-assert_safe_install_paths
-migrate_legacy_state
-mkdir -p "$WORK_DIR" "$INSTALL_DIR"
+if [[ "$ROOTLESS_MODE" == "true" ]]; then
+  mkdir -p "$WORK_DIR" "$INSTALL_DIR" "$STATE_DIR"
+else
+  stop_existing_agent
+  create_users
+  assert_safe_install_paths
+  migrate_legacy_state
+  mkdir -p "$WORK_DIR" "$INSTALL_DIR"
+fi
 install -m 0755 "$TMPBIN" "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || { cp "$TMPBIN" "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"; }
 ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
-ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${LEGACY_SERVICE_NAME}"
+if [[ "$ROOTLESS_MODE" != "true" ]]; then
+  ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${LEGACY_SERVICE_NAME}"
+fi
 
 CFTZ_URL="${CFTZ_URL_BASE%/}/cftz?v=${CACHE_KEY}"
 CFTZ_TMP="$(mktemp)"
@@ -566,13 +693,24 @@ install -m 0755 "$CFTZ_TMP" "$CFTZ_BIN" 2>/dev/null || { cp "$CFTZ_TMP" "$CFTZ_B
 rm -f "$CFTZ_TMP"
 
 write_env_file "$API_BASE" "$TOKEN" "$AGENT_ID" "$AGENT_LABEL" "$INTERVAL" "$PING_TARGETS" "$PING_SEC"
-secure_install_permissions
+if [[ "$ROOTLESS_MODE" == "true" ]]; then
+  chmod 0600 "$ENV_FILE"
+  chmod 0755 "$WORK_DIR" "${WORK_DIR}/${BIN_NAME}"
+else
+  secure_install_permissions
+fi
 
 case "$INIT" in
   systemd)
-    install_systemd_service
-    verify_systemd_agent_health
-    info "logs: journalctl -u ${SERVICE_NAME} -f"
+    if [[ "$ROOTLESS_MODE" == "true" ]]; then
+      install_rootless_service
+      verify_rootless_agent_health
+      info "logs: journalctl --user -u ${SERVICE_NAME} -f"
+    else
+      install_systemd_service
+      verify_systemd_agent_health
+      info "logs: journalctl -u ${SERVICE_NAME} -f"
+    fi
     ;;
   openrc)
     LOG_START_LINE="$(service_log_lines "/var/log/${SERVICE_NAME}.log")"
@@ -593,4 +731,14 @@ esac
 verify_agent_version "${WORK_DIR}/${BIN_NAME}"
 
 ok "安装完成"
-info "uninstall: curl -fsSL ${DOWNLOAD_BASE%/}/install.sh | sudo bash -s -- uninstall"
+if [[ "$ROOTLESS_MODE" == "true" ]]; then
+  info "卸载: NIE_SLA_ROOTLESS=1 bash $0 uninstall"
+else
+  info "uninstall: curl -fsSL ${DOWNLOAD_BASE%/}/install.sh | sudo bash -s -- uninstall"
+fi
+
+BANNER_SUFFIX="Agent ${NIE_SLA_EXPECTED_VERSION:-${NSTATUS_EXPECTED_VERSION:-$DEFAULT_EXPECTED_VERSION}} · ${DOWNLOAD_BASE}"
+if [[ "$ROOTLESS_MODE" == "true" ]]; then
+  BANNER_SUFFIX="${BANNER_SUFFIX} · rootless"
+fi
+print_brand_banner "$BANNER_SUFFIX"

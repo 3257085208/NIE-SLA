@@ -16,6 +16,7 @@ export default [
         Response: 'readonly',
         URL: 'readonly',
         URLSearchParams: 'readonly',
+        WebSocket: 'readonly',
         alert: 'readonly',
         caches: 'readonly',
         clearTimeout: 'readonly',

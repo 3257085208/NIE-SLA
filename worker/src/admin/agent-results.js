@@ -2,7 +2,7 @@
 import { nowSec, clamp, sanitizeAgentId, dayFromSec, parseExpectedStatus, BUCKET_SEC, publicCheckPoint } from '../utils.js';
 import { safeJson } from '../auth.js';
 import { readR2State, mergeR2StateUpdates, appendAgentR2HistoryPoints, acquireAgentHistoryLock, releaseAgentHistoryLock, setDailySummary, dailySummaryFromPoints, statsFromDailySummaries } from '../storage.js';
-import { readCheckBuckets, applyProbeWriteBatch } from './check-buckets.js';
+import { readCheckBuckets, applyProbeWriteBatch, latestStatusToD1Enabled, upsertLatestStatus } from './check-buckets.js';
 
 async function getTargetsById(env, ids) {
   const cleanIds = [...new Set((ids || []).map(id => String(id || '').trim()).filter(Boolean))].slice(0, 1000);
@@ -182,7 +182,19 @@ export async function submitAgentResults(request, env, parsedBody = null) {
   }
   const stateUpdates = [...latestUpdates.values()];
   if (stateUpdates.length) {
-    await mergeR2StateUpdates(env, stateUpdates);
+    let stateSync = null;
+    try {
+      stateSync = await mergeR2StateUpdates(env, stateUpdates);
+    } catch (error) {
+      console.error('Agent result R2 state sync failed:', String(error?.message || error));
+      stateSync = { ok: false };
+    }
+    if (!stateSync?.ok && !latestStatusToD1Enabled(env)) {
+      const fallback = await Promise.allSettled(stateUpdates.map(update => upsertLatestStatus(env, update)));
+      if (!fallback.every(result => result.status === 'fulfilled' && result.value?.ok)) {
+        throw new Error('Agent result current status fallback failed');
+      }
+    }
     for (const update of stateUpdates) {
       await applyProbeWriteBatch(env, update.target_id, update.checked_at, bucketWritesByTarget.get(update.target_id) || [], update, null);
     }

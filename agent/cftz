@@ -351,7 +351,7 @@ Type=simple
 WorkingDirectory=${STATE_DIR}
 EnvironmentFile=${ENV_FILE}
 ExecStart=${WORK_DIR}/${BIN_NAME}
-Restart=always
+Restart=on-failure
 RestartSec=15
 User=${AGENT_USER}
 NoNewPrivileges=true
@@ -377,7 +377,7 @@ WorkingDirectory=${STATE_DIR}
 EnvironmentFile=${ENV_FILE}
 Environment=NIE_SLA_TASK_RUNNER_ONLY=1
 ExecStart=${WORK_DIR}/${BIN_NAME} --task-runner-only
-Restart=always
+Restart=on-failure
 RestartSec=20
 User=root
 PrivateTmp=true

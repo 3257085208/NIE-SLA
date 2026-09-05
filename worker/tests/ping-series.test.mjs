@@ -30,4 +30,15 @@ assert.match(pingSeriesToPoints([{ target_id: 'x', t0, dt: [-1], latency_ms: [1]
 assert.match(pingSeriesToPoints([{ target_id: 'x', t0, dt: [0], latency_ms: [1], ok: [2] }]).error, /invalid sample/);
 assert.match(pingSeriesToPoints([...series, { ...series[0], target_id: 'overflow', dt: [0], latency_ms: [1], ok: [1] }]).error, /max 5000/);
 
+const clamped = pingSeriesToPoints([{
+  target_id: 'target-1',
+  t0,
+  dt: [0, 1, 2, 3],
+  latency_ms: [1500, 999, -5, Number.NaN],
+  ok: [1, 1, 1, 1],
+}]);
+assert.equal(clamped.error, '', 'out-of-range latencies must be clamped, not rejected');
+assert.deepEqual(clamped.pings.map(ping => ping.latency_ms), [null, 999, null, null], 'latencies above 1000ms clamp to null like legacy normalizePingPoint');
+assert.deepEqual(clamped.pings.map(ping => ping.ok), [0, 1, 0, 0], 'clamped samples are loss samples (ok=0)');
+
 console.log('compact Ping series tests passed');

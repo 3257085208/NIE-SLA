@@ -9,6 +9,10 @@ const BULK_TARGET_FIELDS = new Set([
 const BILLING_CYCLES = new Set(['', 'hourly', 'monthly', 'yearly', 'lifetime', 'onetime']);
 const TRAFFIC_MODES = new Set(['total', 'tx', 'rx', 'max']);
 
+export function normalizeLineType(value) {
+  return String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40);
+}
+
 export function normalizeBulkTargetUpdate(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return bulkError('请求格式无效');
   if (!Array.isArray(body.ids)) return bulkError('请选择要修改的 VPS');
@@ -26,7 +30,7 @@ export function normalizeBulkTargetUpdate(body) {
   const changes = { ...body.changes };
   for (const key of ['provider', 'line_type']) {
     if (!(key in changes)) continue;
-    changes[key] = String(changes[key] ?? '').trim();
+    changes[key] = normalizeLineType(changes[key]);
     const maxLength = key === 'provider' ? 80 : 40;
     if (changes[key].length > maxLength) return bulkError(`${key === 'provider' ? '商家' : '机器类型'}内容过长`);
   }
