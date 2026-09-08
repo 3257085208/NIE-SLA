@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.24",
-  "agent_version": "v1.1.24",
-  "source_ref": "app-v1.1.24",
-  "published_at": "2026-09-05T00:00:00Z",
-  "title": "NIE-SLA 1.1.24",
+  "version": "1.1.26",
+  "agent_version": "v1.1.26",
+  "source_ref": "app-v1.1.26",
+  "published_at": "2026-09-08T00:00:00Z",
+  "title": "NIE-SLA 1.1.26",
   "changelog": [
-    "探测调度回写节流：targets 调度镜像每目标每 30 分钟回写一次，探测节奏仍由状态存储驱动。",
-    "调试日志收缩：仅保留登录/账号安全与任务失败详情，Agent 轮询与管理操作不再写入。",
-    "Agent 新增无 root 安装形态（install.sh --rootless）与自更新回滚确认；NodeQuality 任务增加本地超时（默认 3600 秒）。",
-    "安装器新增品牌横幅（NIE_SLA_BANNER=nie-sla|qq.sg|as218834）；安装命令复制恢复为单条。"
+    "新增回程线路检测：三网 traceroute 自动识别 CN2/163/AS4837/9929/CMI，公开页 VPS 详情展示回程线路。",
+    "遥测与探针韧性：积压补录不再整包拒绝，单目标归档故障不扩散，告警状态可正确清理。",
+    "统计修正：聚合接口流量不重复计数，监听端口不计入连接数，protobuf 模式补齐多硬盘明细。",
+    "管理后台新增 CF 用量估算与实际消耗对比卡片。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
