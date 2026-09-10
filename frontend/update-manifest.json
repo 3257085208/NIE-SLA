@@ -1,14 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.35",
-  "agent_version": "v1.1.35",
-  "source_ref": "app-v1.1.35",
-  "published_at": "2026-09-10T16:30:00Z",
-  "title": "NIE-SLA 1.1.35",
+  "version": "1.1.36",
+  "agent_version": "v1.1.36",
+  "source_ref": "app-v1.1.36",
+  "published_at": "2026-09-10T17:30:00Z",
+  "title": "NIE-SLA 1.1.36",
   "changelog": [
-    "回程联通方向新增备用探测目标（上海联通 210.22.97.1、广东联通 221.5.88.88）：主目标无骨干跳点证据时自动换目标重试并合并结果，缓解 202.106.50.1 中间路由过滤导致的“联通未识别”。",
-    "电信/移动同样加入上海备用目标（202.96.209.133 / 211.136.192.6）；回程任务超时上限从 600 秒提升到 900 秒以容纳备用探测。",
-    "保留 v1.1.34 的 ASN 查询、9929/CMIN2 前缀修正与 v1.1.33 安全加固。"
+    "稳定性：移除 panic=abort，单个线程 panic 不再拖垮整个 Agent；Manager 心跳原子写使用唯一临时文件并 fsync；任务结果回传失败自动重试 3 次；采样队列损坏条目不再静默丢弃；大小写 API Base 的 WSS 地址归一化。",
+    "数据一致性：流量累计改为 CAS 条件更新，避免并发重复计数；主题 ZIP 改为流式解压并实时限制真实解压字节，阻止伪造 header 的 zip 炸弹。",
+    "回程探测在缺少 timeout 命令时回退 busybox timeout，避免脚本卡死。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -2659,7 +2659,9 @@ fn normalize_api_base(value: &str, allow_insecure_http: bool) -> Result<String> 
         return Err(anyhow!("Agent API base has an invalid authority"));
     }
     if scheme.eq_ignore_ascii_case("https") {
-        return Ok(base.to_string());
+        // Normalise the scheme: the WebSocket URL builder replaces the
+        // literal "https://" prefix, which silently failed for "HTTPS://".
+        return Ok(format!("https://{}", &base[scheme.len() + 3..]));
     }
     if !scheme.eq_ignore_ascii_case("http") {
         return Err(anyhow!("Agent API base must use HTTPS"));
@@ -2672,7 +2674,7 @@ fn normalize_api_base(value: &str, allow_insecure_http: bool) -> Result<String> 
         || authority == "[::1]"
         || authority.starts_with("[::1]:");
     if allow_insecure_http || local {
-        return Ok(base.to_string());
+        return Ok(format!("http://{}", &base[scheme.len() + 3..]));
     }
     Err(anyhow!(
         "Agent API base must use HTTPS; set NIE_SLA_ALLOW_INSECURE_HTTP=1 only for trusted private networks"

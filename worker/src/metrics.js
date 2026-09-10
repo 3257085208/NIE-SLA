@@ -662,14 +662,23 @@ export async function persistAgentTraffic(env, agentId, metrics, ts) {
     statements.push(env.DB.prepare(`UPDATE agent_traffic_monthly SET
       rx_bytes = rx_bytes + ?, tx_bytes = tx_bytes + ?, last_rx_bytes = ?, last_tx_bytes = ?,
       active_day = ?, day_rx_bytes = ?, day_tx_bytes = ?, updated_at = ?
-      WHERE agent_id = ? AND month = ?`)
+      WHERE agent_id = ? AND month = ? AND last_rx_bytes IS ? AND last_tx_bytes IS ?`)
       .bind(
         deltaRx, deltaTx, Math.floor(rxRaw), Math.floor(txRaw), today,
         crossedDay || !row.active_day ? deltaRx : Math.max(0, Number(row.day_rx_bytes || 0) || 0) + deltaRx,
         crossedDay || !row.active_day ? deltaTx : Math.max(0, Number(row.day_tx_bytes || 0) || 0) + deltaTx,
         ts, agentId, month,
+        row.last_rx_bytes ?? null, row.last_tx_bytes ?? null,
       ));
-    await env.DB.batch(statements);
+    const results = await env.DB.batch(statements);
+    const updateResult = results[results.length - 1];
+    if (Number(updateResult?.meta?.changes || 0) < 1) {
+      // A concurrent report (HTTP retry / second isolate) stored its counters
+      // first. Skipping is safe because the counters are cumulative: the next
+      // report's delta already includes this interval, and CAS prevents the
+      // same delta from being added twice.
+      return;
+    }
   } else {
     const daily = await dailyTrafficSum(env, agentId, settings.period_start, settings.period_end);
     const carryActive = dayInTrafficPeriod(latest?.active_day, settings);
@@ -690,7 +699,14 @@ export async function persistAgentTraffic(env, agentId, metrics, ts) {
         agentId, month, Math.floor(daily.rx + carriedRx + deltaRx), Math.floor(daily.tx + carriedTx + deltaTx),
         Math.floor(rxRaw), Math.floor(txRaw), today, activeRx, activeTx, updatedAt,
       ));
-    await env.DB.batch(statements);
+    try {
+      await env.DB.batch(statements);
+    } catch (error) {
+      // A concurrent first report won the INSERT race. The other writer owns
+      // the row now and cumulative counters make skipping lossless.
+      if (/unique|constraint/i.test(String(error?.message || error))) return;
+      throw error;
+    }
   }
   if (latest?.active_day !== today) {
     try {

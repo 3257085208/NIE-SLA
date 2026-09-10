@@ -32,7 +32,20 @@ pub(super) fn load_sample_queue(path: &Path) -> Result<VecDeque<SamplePoint>> {
     let values = values
         .as_array()
         .with_context(|| format!("sample queue {} is not an array", path.display()))?;
-    Ok(values.iter().filter_map(sample_from_json).collect())
+    let mut queue = VecDeque::with_capacity(values.len());
+    let mut dropped = 0usize;
+    for value in values {
+        match sample_from_json(value) {
+            Some(sample) => queue.push_back(sample),
+            None => dropped += 1,
+        }
+    }
+    if dropped > 0 {
+        // A damaged entry must not vanish silently: visibility matters more
+        // than the (bounded) extra log line.
+        eprintln!("{{\"ok\":false,\"queue_load_dropped_samples\":{dropped}}}");
+    }
+    Ok(queue)
 }
 
 pub(super) fn save_sample_queue(path: &Path, samples: &VecDeque<SamplePoint>) -> Result<()> {

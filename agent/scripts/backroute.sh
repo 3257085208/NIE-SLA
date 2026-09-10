@@ -30,6 +30,9 @@ run_probe() {
   if command -v timeout >/dev/null 2>&1; then
     probe_output="$(timeout 25s "$@" 2>&1)"
     rc=$?
+  elif command -v busybox >/dev/null 2>&1; then
+    probe_output="$(busybox timeout 25 "$@" 2>&1)"
+    rc=$?
   else
     probe_output="$("$@" 2>&1)"
     rc=$?

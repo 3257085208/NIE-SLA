@@ -689,11 +689,26 @@ fn write_if_changed(path: &Path, content: &[u8]) -> Result<bool> {
 fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
     let parent = path.parent().ok_or_else(|| anyhow!("path has no parent"))?;
     fs::create_dir_all(parent)?;
-    let temp = path.with_extension(format!("tmp-{}", std::process::id()));
+    // The manager main loop and the heartbeat thread both write this file.
+    // A fixed `<path>.tmp-<pid>` name let one writer rename the other's temp
+    // file, so the suffix must be unique per write.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    let temp = path.with_extension(format!("tmp-{}-{unique}", std::process::id()));
     if temp.exists() || temp.is_symlink() {
         fs::remove_file(&temp).context("remove stale temporary file")?;
     }
-    fs::write(&temp, content).with_context(|| format!("write {}", temp.display()))?;
+    {
+        let mut file =
+            fs::File::create(&temp).with_context(|| format!("create {}", temp.display()))?;
+        use std::io::Write;
+        file.write_all(content)
+            .with_context(|| format!("write {}", temp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("sync {}", temp.display()))?;
+    }
     fs::rename(&temp, path).with_context(|| format!("install {}", path.display()))
 }
 

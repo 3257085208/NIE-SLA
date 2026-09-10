@@ -135,8 +135,23 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
         percent_encode_query(task_id),
         percent_encode_query(&cfg.agent_id)
     );
-    http.post_json(&result_url, &cfg.token, &payload.to_string())?;
-    Ok(())
+    // Losing a finished result forces a full re-run after the Worker expires
+    // the orphaned task. Retry the delivery a few times before giving up so a
+    // short network or Worker blip does not discard minutes of probing.
+    let body = payload.to_string();
+    let mut last_error = None;
+    for attempt in 1..=3 {
+        match http.post_json(&result_url, &cfg.token, &body) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt < 3 {
+                    thread::sleep(Duration::from_secs(attempt * 2));
+                }
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| anyhow!("任务结果回传失败")))
 }
 
 struct TaskOutput {

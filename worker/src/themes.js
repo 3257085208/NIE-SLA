@@ -1,4 +1,4 @@
-import { unzipSync } from 'fflate';
+import { Unzip, UnzipInflate } from 'fflate';
 import { ApiError, resolveCorsOrigin, safeJson } from './auth.js';
 import { getMeta, setMeta } from './admin/settings.js';
 import { nowSec, parseBoolean } from './utils.js';
@@ -213,6 +213,51 @@ function validateThemeSettings(raw) {
   });
 }
 
+// Stream the archive instead of trusting ZIP header sizes: `filter` still
+// enforces paths/counts/declared sizes, while `ondata` aborts the moment the
+// real decompressed bytes exceed the cap. A hostile 8 MB package can no
+// longer expand to gigabytes inside the isolate.
+function safeUnzipEntries(bytes) {
+  const files = {};
+  const archiveNames = new Set();
+  let fileCount = 0;
+  let totalBytes = 0;
+  const unzipper = new Unzip((file) => {
+    const archivePath = String(file.name || '');
+    if (archiveNames.has(archivePath)) throw new Error(`ZIP 包含重复路径：${archivePath}`);
+    archiveNames.add(archivePath);
+    fileCount += 1;
+    if (fileCount > FILE_MAX_COUNT) throw new Error(`文件数不能超过 ${FILE_MAX_COUNT}`);
+    validatePackagePath(archivePath.endsWith('/') ? archivePath.slice(0, -1) : archivePath);
+    if (archivePath.endsWith('/')) return;
+    const chunks = [];
+    files[archivePath] = chunks;
+    file.ondata = (error, chunk, final) => {
+      if (error) throw error;
+      if (chunk && chunk.length) {
+        totalBytes += chunk.length;
+        if (totalBytes > EXPANDED_MAX_BYTES) throw new Error('解压后不能超过 16 MB');
+        chunks.push(chunk);
+      }
+    };
+    file.start();
+  });
+  unzipper.register(UnzipInflate);
+  unzipper.push(bytes, true);
+  const output = {};
+  for (const [name, chunks] of Object.entries(files)) {
+    const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    const data = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      data.set(chunk, offset);
+      offset += chunk.length;
+    }
+    output[name] = data;
+  }
+  return output;
+}
+
 export async function uploadTheme(request, env) {
   requireThemeStorage(env);
   const uploadType = String(request.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
@@ -229,25 +274,9 @@ export async function uploadTheme(request, env) {
   const packageSha256 = await sha256Bytes(bytes);
   if (packageSha256 !== expectedSha256) throw new ApiError(400, '主题 ZIP SHA-256 校验失败');
 
-  let expandedBytes = 0;
-  let fileCount = 0;
-  const archiveNames = new Set();
   let files;
   try {
-    files = unzipSync(bytes, {
-      filter(file) {
-        const archivePath = String(file.name || '');
-        if (archiveNames.has(archivePath)) throw new Error(`ZIP 包含重复路径：${archivePath}`);
-        archiveNames.add(archivePath);
-        fileCount += 1;
-        expandedBytes += Number(file.originalSize || 0);
-        if (fileCount > FILE_MAX_COUNT) throw new Error(`文件数不能超过 ${FILE_MAX_COUNT}`);
-        if (file.originalSize > FILE_MAX_BYTES) throw new Error('单个文件不能超过 4 MB');
-        if (expandedBytes > EXPANDED_MAX_BYTES) throw new Error('解压后不能超过 16 MB');
-        validatePackagePath(archivePath.endsWith('/') ? archivePath.slice(0, -1) : archivePath);
-        return !archivePath.endsWith('/');
-      },
-    });
+    files = safeUnzipEntries(bytes);
   } catch (error) {
     throw new ApiError(400, `主题 ZIP 无效：${String(error?.message || error)}`);
   }
