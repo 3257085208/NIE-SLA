@@ -18,6 +18,8 @@ const agentTasksSource = await readFile(new URL('../src/admin/agent-tasks.js', i
 const settingsSource = await readFile(new URL('../src/admin/settings.js', import.meta.url), 'utf8');
 const staticAssetsSource = await readFile(new URL('../src/static-assets.js', import.meta.url), 'utf8');
 const themesSource = await readFile(new URL('../src/themes.js', import.meta.url), 'utf8');
+const ratelimitSource = await readFile(new URL('../src/ratelimit.js', import.meta.url), 'utf8');
+const targetsSource = await readFile(new URL('../src/admin/targets.js', import.meta.url), 'utf8');
 assert.match(
   routesSource,
   /\/api\/settings\/geoip[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}'cache-control': 'no-store'/,
@@ -94,6 +96,8 @@ assert.match(routesSource, /getTurnstileSecret\(env\)/, 'Turnstile verification 
 assert.match(staticAssetsSource, /ADMIN_PATH_CACHE_SEC/, 'admin path resolution must use a cache to absorb anonymous scans');
 assert.match(themesSource, /new Unzip\(/, 'theme ZIP extraction must stream instead of trusting header sizes');
 assert.match(themesSource, /totalBytes > EXPANDED_MAX_BYTES/, 'streaming theme extraction must cap real decompressed bytes');
+assert.match(ratelimitSource, /keyPrefix \|\| 'global'/, 'global rate limits must be scoped per purpose instead of sharing one bucket');
+assert.match(targetsSource, /repair_needed: managerMode !== 'manager'/, 'admin target payloads must flag Agents without a privileged manager');
 assert.match(statusSource, /if \(!liveOverlay\) payload = await overlayLiveTargetStatus/, 'fresh snapshots must skip the per-request D1 overlay');
 assert.match(statusSource, /STATUS_SNAPSHOT_LIVE_WINDOW_SEC/, 'the snapshot live window must stay configurable');
 assert.match(statusSource, /else delete target\.status_source/, 'snapshot Agent overlay must not retain the Agent source for public-IP targets');

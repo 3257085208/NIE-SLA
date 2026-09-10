@@ -29,10 +29,11 @@ export async function rateLimitByIp(request, env, limit, windowSec = 60, options
 }
 
 export async function rateLimitGlobal(request, env, limit, windowSec = 60, options = {}) {
+  const key = `${String(options.keyPrefix || 'global')}:__global__`;
   if (useD1RateLimit(env, options)) {
-    return await rateLimitD1(env, '__global__', limit, windowSec);
+    return await rateLimitD1(env, key, limit, windowSec);
   }
-  return check('__global__', limit, windowSec * 1000);
+  return check(key, limit, windowSec * 1000);
 }
 
 function useD1RateLimit(env, options = {}) {

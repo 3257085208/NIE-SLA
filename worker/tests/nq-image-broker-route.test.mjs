@@ -36,14 +36,21 @@ try {
   assert.equal(tooLarge.headers.get('cache-control'), 'no-store');
   assert.equal(uploadCount, 0);
 
-  // Rate limiting for this public cache endpoint is in-isolation now: a
-  // successful request must not write any rate-limit rows to D1 (the old
-  // durable limiter cost two rows_written per image request).
-  const limitedDb = rateLimitDb({ denyKey: 'nq-broker:global' });
-  const dbFree = await worker.fetch(brokerRequest(payload), brokerEnv({ DB: limitedDb }), {});
-  assert.equal(dbFree.status, 200);
-  assert.equal(dbFree.headers.get('cache-control'), 'no-store');
-  assert.equal(limitedDb.keys.length, 0, 'broker rate limiting must not write D1 rows');
+  // The broker writes to the official image host, so rate limiting is
+  // durable: both the per-source and the global cap consume D1 rows, and the
+  // global cap bounds the total row creation of a distributed sweep.
+  const limitedDb = rateLimitDb({ denyKey: 'nq-broker:__global__' });
+  const limited = await worker.fetch(brokerRequest(payload), brokerEnv({ DB: limitedDb }), {});
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get('cache-control'), 'no-store');
+  assert.ok(limitedDb.keys.includes('nq-broker:__global__'), 'the global broker cap must be durable');
+
+  const durableEnv = brokerEnv();
+  const durable = await worker.fetch(brokerRequest(payload), durableEnv, {});
+  assert.equal(durable.status, 200);
+  assert.equal(durable.headers.get('cache-control'), 'no-store');
+  assert.ok(durableEnv.DB.keys.includes('nq-broker:__global__'), 'the global broker cap must persist a D1 row');
+  assert.ok(durableEnv.DB.keys.some(key => key.startsWith('nq-broker:ip:')), 'the per-source broker cap must persist a D1 row');
 
   const successEnv = brokerEnv();
   const success = await worker.fetch(brokerRequest(payload), successEnv, {});

@@ -15,12 +15,12 @@ const routesSource = await readFile(new URL('../src/routes.js', import.meta.url)
 assert.doesNotMatch(routesSource, /\/api\/settings\/nq-image-host/, 'image-host configuration must not be exposed through HTTP routes');
 assert.match(routesSource, /content-security-policy[^\n]+default-src 'none'[^\n]+sandbox/, 'proxied SVG reports need a sandboxed CSP');
 assert.match(routesSource, /nodeQualityImageSource\(target, tabId\)/, 'the image proxy must resolve the private upstream URL internally');
-// Durable rate limiting on this public cache endpoint would cost two D1
-// rows_written per image request (a quota bomb under crawler load); the
-// per-source and global hourly caps must stay, but in-isolation only.
-assert.match(routesSource, /100, 3600, \{ keyPrefix: ['"]nq-broker:ip['"], bestEffort: true \}/, 'the public broker needs a per-source hourly cap without D1 writes');
-assert.match(routesSource, /100, 3600, \{ keyPrefix: ['"]nq-broker:global['"], bestEffort: true \}/, 'the public broker needs a global hourly cap without D1 writes');
-assert.doesNotMatch(routesSource, /rateLimitD1\(env, [`']nq-broker/, 'the public broker must not write rate-limit rows to D1');
+// The broker uploads to the official shared image host, so both caps are
+// durable (D1 conditional inserts); the global cap also bounds how many
+// rate-limit rows a distributed sweep can create.
+assert.match(routesSource, /100, 3600, \{ keyPrefix: ['"]nq-broker:ip['"] \}/, 'the public broker needs a durable per-source hourly cap');
+assert.match(routesSource, /100, 3600, \{ keyPrefix: ['"]nq-broker['"] \}/, 'the public broker needs a durable global hourly cap');
+assert.doesNotMatch(routesSource, /nq-broker[^\n]*bestEffort/, 'broker limits must be durable, not in-isolation only');
 assert.match(routesSource, /safeJson\(request, 128 \* 1024\)/, 'the public broker request body must be bounded');
 
 assert.equal(validateUploadEndpoint('https://img.example.com/upload').toString(), 'https://img.example.com/upload');

@@ -1202,9 +1202,13 @@ function targetRowHtml(target, index) {
       ? "暂无 24h 数据"
       : `24h ${Number(status.uptime_24h).toFixed(2)}%`;
   const agentVersion = status.agent_version || target.agent_runtime?.agent_version || "";
+  const repairNeeded = target.agent_runtime?.repair_needed === true;
+  const repairTag = repairNeeded
+    ? ' <span class="tag tag-warn" title="该节点没有特权 Manager，无法自动更新或自愈；请在 VPS 上以 root 重新运行后台生成的安装命令">需修复</span>'
+    : "";
   const agentDetails = isWeb
     ? notApplicable
-    : `<div class="status-stack"><div>${agentTag}<code>${escapeHtml(agentVersion || "-")}</code></div><small>${status.machine_uptime_sec ? `运行 ${escapeHtml(formatDuration(status.machine_uptime_sec))}` : "暂无运行时长"}</small></div>`;
+    : `<div class="status-stack"><div>${agentTag}<code>${escapeHtml(agentVersion || "-")}</code>${repairTag}</div><small>${status.machine_uptime_sec ? `运行 ${escapeHtml(formatDuration(status.machine_uptime_sec))}` : "暂无运行时长"}</small></div>`;
   const cfDetails = noPublicIp
     ? ""
     : `<div class="monitoring-item"><span class="monitoring-label">CF</span><div class="status-stack"><div>${statusTag(state.text, state.className)}<strong>${status.latency_ms == null ? "-" : `${Number(status.latency_ms)}ms`}</strong></div><small>${escapeHtml(probeUptime)}</small></div></div>`;

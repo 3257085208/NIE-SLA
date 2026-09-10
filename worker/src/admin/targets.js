@@ -13,6 +13,7 @@ import { convertPriceToCny, getExchangeRates, normalizeCurrency } from './settin
 import { nodeQualityUnlockData, normalizeNodeQualityReport, normalizeNodeQualityReportUrl, publicNodeQualitySummary } from '../nodequality.js';
 import { applyBulkTargetColumns, normalizeBulkTargetUpdate, normalizeLineType } from './target-bulk.js';
 import { bufferedAgentStateEnabled, mergeAgentMetricRows } from '../agent-state.js';
+import { VERSION as APP_VERSION } from '../version.js';
 import { readFleetLatestAgentStates } from '../telemetry-buffer.js';
 
 const TARGET_ORDER_SQL = `CASE WHEN sort_order IS NULL THEN 1 ELSE 0 END, sort_order, group_name COLLATE NOCASE, name COLLATE NOCASE`;
@@ -101,6 +102,8 @@ export async function listTargets(env) {
     const nqUrl = normalizeNodeQualityReportUrl(target.nq_url) || normalizeNodeQualityReportUrl(nq?.link);
     const unlock = parseJsonObject(target.nq_unlock_data);
     const unlockData = Array.isArray(unlock?.services) ? unlock : parseJsonObject(target.unlock_data);
+    const runtime = agentStates[sanitizeAgentId(target.id)] || null;
+    const managerMode = runtime?.capabilities?.mode || null;
     return {
       ...target,
       ...(priceCny == null ? {} : { price_cny: priceCny }),
@@ -109,7 +112,16 @@ export async function listTargets(env) {
       nq_url: nqUrl || null,
       has_nq: Boolean(nq?.has_report || nqUrl),
       unlock: Array.isArray(unlockData?.services) ? unlockData : null,
-      agent_runtime: agentStates[sanitizeAgentId(target.id)] || null,
+      agent_runtime: runtime
+        ? {
+            ...runtime,
+            manager_mode: managerMode,
+            expected_version: `v${APP_VERSION}`,
+            // telemetry_only means no privileged manager exists, so this node
+            // can never self-update and needs a root reinstall/repair.
+            repair_needed: managerMode !== 'manager',
+          }
+        : null,
     };
   });
   return { ok: true, targets, regions: REGION_LABELS };

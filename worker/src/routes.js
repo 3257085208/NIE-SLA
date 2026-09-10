@@ -228,11 +228,11 @@ async function dispatchStatic(env, url, request, ctx) {
       const contentType = String(request.headers.get('content-type') || '').toLowerCase();
       if (!contentType.startsWith('application/json')) throw new ApiError(415, 'NQ 图片服务只接受 JSON');
       const sourceIp = String(request.headers.get('cf-connecting-ip') || 'unknown').slice(0, 80);
-      // A public cache endpoint must not pay durable-rate-limit D1 rows on
-      // every hit: a scanner sweeping many IPs could multiply those inserts
-      // into a quota incident. In-isolation limiting is enough here.
-      if (!await rateLimitByIp(request, env, 100, 3600, { keyPrefix: 'nq-broker:ip', bestEffort: true })
-        || !await rateLimitGlobal(request, env, 100, 3600, { keyPrefix: 'nq-broker:global', bestEffort: true })) {
+      // The broker writes to the official image host, so both limits are
+      // durable (D1 conditional inserts). The global cap also bounds how many
+      // rate-limit rows a distributed sweep can create (<= 100/hour total).
+      if (!await rateLimitByIp(request, env, 100, 3600, { keyPrefix: 'nq-broker:ip' })
+        || !await rateLimitGlobal(request, env, 100, 3600, { keyPrefix: 'nq-broker' })) {
         throw new ApiError(429, '请求过于频繁，请稍后重试。');
       }
       return json(await createNodeQualityBrokerImages(env, await safeJson(request, 128 * 1024)), 200, env, { 'cache-control': 'no-store' });
