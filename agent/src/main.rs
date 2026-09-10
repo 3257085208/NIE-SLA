@@ -41,6 +41,7 @@ const DEFAULT_UPDATE_CHECK_SEC: u64 = 86_400;
 const INITIAL_UPDATE_CHECK_SEC: u64 = 60;
 const REPORT_MAX_SAMPLES: usize = 900;
 const REPORT_MAX_PINGS: usize = 5_000;
+const UPLOAD_STALL_SEC: u64 = 180;
 const DEFAULT_QUEUE_MAX_SAMPLES: usize = 86_400;
 const QUEUE_FLUSH_SEC: u64 = 10;
 const MIN_PING_QUEUE_CAPACITY: usize = 200;
@@ -285,6 +286,7 @@ struct UploadResult {
     result: Result<WsSubmitResponse>,
     sample_count: usize,
     ping_count: usize,
+    generation: u64,
 }
 
 #[derive(Debug)]
@@ -481,6 +483,8 @@ fn run() -> Result<()> {
     let mut uploading = false;
     let mut last_upload_failed = false;
     let mut last_successful_upload = Instant::now();
+    let mut upload_started = Instant::now();
+    let mut upload_generation: u64 = 0;
     let mut report_interval_sec = cfg.report_sec;
     let mut retry_sec = report_interval_sec.clamp(10, 60);
     let (upload_tx, upload_rx) = mpsc::channel::<UploadResult>();
@@ -496,6 +500,12 @@ fn run() -> Result<()> {
         }
 
         while let Ok(result) = upload_rx.try_recv() {
+            if result.generation != upload_generation {
+                // A previous attempt was abandoned by the stall recovery
+                // below; its late result must not consume samples or reset
+                // the in-flight state of the newer attempt.
+                continue;
+            }
             uploading = false;
             match result.result {
                 Ok(upload) => {
@@ -593,6 +603,18 @@ fn run() -> Result<()> {
             }
         }
 
+        // A wedged upload thread used to block every later report forever on
+        // nodes without a service manager to restart the process. Abandon it
+        // after the transport timeouts have long passed; its late result is
+        // ignored via the generation counter.
+        if uploading && upload_started.elapsed() >= Duration::from_secs(UPLOAD_STALL_SEC) {
+            eprintln!(
+                "{{\"ok\":false,\"upload_stalled_sec\":{},\"recovering\":true}}",
+                upload_started.elapsed().as_secs()
+            );
+            uploading = false;
+        }
+
         let report_due = upload_report_due(
             first_report,
             cfg.once,
@@ -620,6 +642,9 @@ fn run() -> Result<()> {
             let ws_for_upload = ws_uploader.clone();
             let tx = upload_tx.clone();
             uploading = true;
+            upload_started = Instant::now();
+            upload_generation = upload_generation.wrapping_add(1);
+            let generation = upload_generation;
             first_report = false;
             last_report = Instant::now();
             thread::spawn(move || {
@@ -633,6 +658,7 @@ fn run() -> Result<()> {
                     result,
                     sample_count,
                     ping_count,
+                    generation,
                 });
             });
             if cfg.once {

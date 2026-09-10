@@ -85,7 +85,107 @@ pub(crate) fn poll_once_manager(cfg: &Config, http: &HttpClient) -> Result<()> {
     poll_once(cfg, http)
 }
 
+const PENDING_TASK_RESULT_FILE: &str = "pending-task-result.json";
+
+fn pending_task_result_path() -> PathBuf {
+    Path::new(crate::manager::MANAGER_STATE_DIR).join(PENDING_TASK_RESULT_FILE)
+}
+
+fn write_pending_task_result(path: &Path, task_id: &str, payload: &Value) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("pending task result path has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let body = serde_json::to_vec(&json!({ "task_id": task_id, "payload": payload }))?;
+    let temp = path.with_extension(format!("tmp-{}", std::process::id()));
+    if temp.exists() || temp.is_symlink() {
+        fs::remove_file(&temp).context("remove stale pending result temp")?;
+    }
+    {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&temp)
+            .with_context(|| format!("create {}", temp.display()))?;
+        use std::io::Write;
+        file.write_all(&body)?;
+        file.sync_all()?;
+    }
+    fs::rename(&temp, path).with_context(|| format!("install {}", path.display()))
+}
+
+fn read_pending_task_result(path: &Path) -> Result<Option<(String, Value)>> {
+    if !path.exists() || path.is_symlink() {
+        return Ok(None);
+    }
+    let data = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let value: Value =
+        serde_json::from_slice(&data).with_context(|| "parse pending task result")?;
+    let task_id = value
+        .get("task_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let Some(payload) = value.get("payload").cloned().filter(|item| !item.is_null()) else {
+        return Ok(None);
+    };
+    if task_id.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((task_id, payload)))
+}
+
+fn task_result_url(cfg: &Config, task_id: &str) -> String {
+    format!(
+        "{}/api/agent/tasks/{}?agent_id={}",
+        cfg.api.trim_end_matches('/'),
+        percent_encode_query(task_id),
+        percent_encode_query(&cfg.agent_id)
+    )
+}
+
+// A finished task result must not be lost just because the network dropped at
+// that exact second: the completed payload is persisted (0600) and retried on
+// the next poll before claiming anything new. Terminal 4xx answers mean the
+// Worker no longer accepts the result and the file is discarded.
+fn flush_pending_task_result(cfg: &Config, http: &HttpClient) -> Result<bool> {
+    let path = pending_task_result_path();
+    let Some((task_id, payload)) = read_pending_task_result(&path)? else {
+        return Ok(false);
+    };
+    let url = task_result_url(cfg, &task_id);
+    match http.post_json(&url, &cfg.token, &payload.to_string()) {
+        Ok(_) => {
+            let _ = fs::remove_file(&path);
+            println!("{{\"ok\":true,\"pending_task_result\":\"flushed\"}}");
+            Ok(true)
+        }
+        Err(error) => {
+            let text = format!("{error:#}");
+            if text.contains(" 404")
+                || text.contains("Status(404")
+                || text.contains(" 409")
+                || text.contains("Status(409")
+            {
+                let _ = fs::remove_file(&path);
+                eprintln!("{{\"ok\":false,\"pending_task_result\":\"discarded\"}}");
+                return Ok(false);
+            }
+            eprintln!("{{\"ok\":false,\"pending_task_result_retry\":true}}");
+            Ok(false)
+        }
+    }
+}
+
 fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
+    if flush_pending_task_result(cfg, http)? {
+        return Ok(());
+    }
     let url = format!(
         "{}/api/agent/tasks?agent_id={}&runner_instance_id={}",
         cfg.api.trim_end_matches('/'),
@@ -129,15 +229,10 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
             "agent_version": format!("v{}", AGENT_VERSION),
         }),
     };
-    let result_url = format!(
-        "{}/api/agent/tasks/{}?agent_id={}",
-        cfg.api.trim_end_matches('/'),
-        percent_encode_query(task_id),
-        percent_encode_query(&cfg.agent_id)
-    );
+    let result_url = task_result_url(cfg, task_id);
     // Losing a finished result forces a full re-run after the Worker expires
-    // the orphaned task. Retry the delivery a few times before giving up so a
-    // short network or Worker blip does not discard minutes of probing.
+    // the orphaned task. Retry delivery, then persist to disk so the next poll
+    // can flush it before claiming new work.
     let body = payload.to_string();
     let mut last_error = None;
     for attempt in 1..=3 {
@@ -150,6 +245,15 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
                 }
             }
         }
+    }
+    if let Err(write_error) =
+        write_pending_task_result(&pending_task_result_path(), task_id, &payload)
+    {
+        eprintln!(
+            "{{\"ok\":false,\"pending_task_result_write_error\":{}}}",
+            serde_json::to_string(&write_error.to_string())
+                .unwrap_or_else(|_| "\"write failed\"".into())
+        );
     }
     Err(last_error.unwrap_or_else(|| anyhow!("任务结果回传失败")))
 }
@@ -2513,6 +2617,28 @@ mod tests {
             .hops
             .iter()
             .any(|hop| hop.contains("219.158.1.1")));
+    }
+
+    #[test]
+    fn pending_task_result_round_trips_and_rejects_broken_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "nie-sla-pending-result-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("pending.json");
+        let payload = json!({"status": "succeeded", "result": {"routes": []}});
+        write_pending_task_result(&path, "task-1", &payload).unwrap();
+        let loaded = read_pending_task_result(&path).unwrap().unwrap();
+        assert_eq!(loaded.0, "task-1");
+        assert_eq!(loaded.1, payload);
+        fs::write(&path, b"{\"task_id\":\"\",\"payload\":null}").unwrap();
+        assert!(read_pending_task_result(&path).unwrap().is_none());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

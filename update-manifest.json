@@ -1,14 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.36",
-  "agent_version": "v1.1.36",
-  "source_ref": "app-v1.1.36",
-  "published_at": "2026-09-10T17:30:00Z",
-  "title": "NIE-SLA 1.1.36",
+  "version": "1.1.37",
+  "agent_version": "v1.1.37",
+  "source_ref": "app-v1.1.37",
+  "published_at": "2026-09-10T18:30:00Z",
+  "title": "NIE-SLA 1.1.37",
   "changelog": [
-    "稳定性：移除 panic=abort，单个线程 panic 不再拖垮整个 Agent；Manager 心跳原子写使用唯一临时文件并 fsync；任务结果回传失败自动重试 3 次；采样队列损坏条目不再静默丢弃；大小写 API Base 的 WSS 地址归一化。",
-    "数据一致性：流量累计改为 CAS 条件更新，避免并发重复计数；主题 ZIP 改为流式解压并实时限制真实解压字节，阻止伪造 header 的 zip 炸弹。",
-    "回程探测在缺少 timeout 命令时回退 busybox timeout，避免脚本卡死。"
+    "Agent 上报自愈增强：上传线程卡死超过 180 秒自动放弃并恢复下一轮上报（代际计数忽略迟到结果），无服务管理器的节点也能自恢复；上报周期与数据内容完全不变。",
+    "任务结果本地持久化：回传失败重试 3 次后写入 0600 待发文件，下次轮询优先补发；Worker 返回 404/409 时丢弃，避免结果永久丢失或重复执行。",
+    "遵循用户要求：本轮及后续不降低任何上报/探测频率，不让使用者在功能与体验层面感知变化。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
