@@ -146,7 +146,7 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
             if let Err(error) = crate::tasks::poll_once_manager(cfg, http) {
                 eprintln!(
                     "{{\"ok\":false,\"task_error\":{}}}",
-                    serde_json::to_string(&error.to_string())
+                    serde_json::to_string(&format!("{error:#}"))
                         .unwrap_or_else(|_| "\"task failed\"".into())
                 );
             }

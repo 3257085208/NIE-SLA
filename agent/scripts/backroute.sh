@@ -21,18 +21,64 @@ esac
 
 echo "target=$target_ip"
 
+probe_log=""
+
 run_probe() {
   label="$1"
   shift
   printf '\n=== %s ===\n' "$label"
   if command -v timeout >/dev/null 2>&1; then
-    timeout 25s "$@"
+    probe_output="$(timeout 25s "$@" 2>&1)"
     rc=$?
   else
-    "$@"
+    probe_output="$("$@" 2>&1)"
     rc=$?
   fi
+  printf '%s\n' "$probe_output"
   printf 'probe_exit=%s\n' "$rc"
+  probe_log="$probe_log
+$probe_output"
+}
+
+# True when any previous probe already produced a numbered hop line carrying
+# an IPv4 address (traceroute formats differ, so only this loose shape is
+# trusted across implementations).
+has_hop_evidence() {
+  printf '%s\n' "$probe_log" | grep -Eq '^[[:space:]]*[0-9]+[[:space:]]+.*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
+}
+
+# Last-resort path probe built on `ping -t TTL`, which exists on almost every
+# minimal Linux image where traceroute/tracepath were never installed. The
+# numbered hop lines below are parsed by the Agent exactly like traceroute
+# output, and the hop IP ranges are what the line classifier needs.
+run_ping_traceroute() {
+  command -v ping >/dev/null 2>&1 || return 0
+  printf '\n=== ping-ttl ===\n'
+  ping_out=""
+  ping_wait="-W 1"
+  if [ "$(uname -s 2>/dev/null || echo Linux)" = "Darwin" ]; then
+    ping_wait="-W 1000"
+  fi
+  ttl=1
+  while [ "$ttl" -le 20 ]; do
+    raw="$(ping -n -c 1 $ping_wait -t "$ttl" "$target_ip" 2>&1 || true)"
+    router="$(printf '%s\n' "$raw" | sed -n 's/.*[Ff]rom \([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' | head -n 1)"
+    if [ -n "$router" ]; then
+      hop_line="$(printf '%d %s' "$ttl" "$router")"
+    else
+      hop_line="$(printf '%d *' "$ttl")"
+    fi
+    printf '%s\n' "$hop_line"
+    ping_out="$ping_out
+$hop_line"
+    if printf '%s\n' "$raw" | grep -F "from $target_ip" >/dev/null 2>&1; then
+      break
+    fi
+    ttl=$((ttl + 1))
+  done
+  printf 'probe_exit=0\n'
+  probe_log="$probe_log
+$ping_out"
 }
 
 if command -v traceroute >/dev/null 2>&1; then
@@ -65,9 +111,20 @@ if command -v traceroute >/dev/null 2>&1; then
   if command -v tracepath >/dev/null 2>&1; then
     run_probe "tracepath" tracepath -n -m 20 "$target_ip"
   fi
+  if ! has_hop_evidence; then
+    run_ping_traceroute
+  fi
 elif command -v tracepath >/dev/null 2>&1; then
   run_probe "tracepath" tracepath -n -m 20 "$target_ip"
+  if ! has_hop_evidence; then
+    run_ping_traceroute
+  fi
 else
-  echo "system lacks traceroute or tracepath" >&2
-  exit 127
+  run_ping_traceroute
+  if [ -z "$probe_log" ]; then
+    echo "system lacks traceroute, tracepath and ping" >&2
+    exit 127
+  fi
 fi
+
+exit 0

@@ -114,7 +114,7 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
         }),
         Err(error) => json!({
             "status": "failed",
-            "error": error.to_string(),
+            "error": format!("{error:#}"),
             "agent_version": format!("v{}", AGENT_VERSION),
         }),
     };
@@ -2314,6 +2314,15 @@ mod tests {
             "202.106.50.1",
         );
         assert_eq!(cuii.line, "9929");
+
+        let ping_ttl = summarize_traceroute(
+            "=== ping-ttl ===\n 1 10.0.0.1\n 2 59.43.1.1\n 3 59.43.2.2\n",
+            "电信",
+            "219.141.136.12",
+        );
+        assert_eq!(ping_ttl.line, "CN2 GIA");
+        assert_eq!(ping_ttl.confidence, "medium");
+        assert!(ping_ttl.hops.iter().any(|hop| hop.contains("59.43.1.1")));
     }
 
     #[test]
@@ -2349,6 +2358,8 @@ mod tests {
         assert!(BACKROUTE_SCRIPT.contains("traceroute-icmp"));
         assert!(BACKROUTE_SCRIPT.contains("traceroute-udp"));
         assert!(BACKROUTE_SCRIPT.contains("tracepath"));
+        assert!(BACKROUTE_SCRIPT.contains("ping-ttl"));
+        assert!(BACKROUTE_SCRIPT.contains("system lacks traceroute, tracepath and ping"));
         assert!(BACKROUTE_SCRIPT.contains("timeout 25s"));
         assert!(!BACKROUTE_SCRIPT.contains("eval "));
     }
