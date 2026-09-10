@@ -9,6 +9,28 @@ const SCHEMA_MARKER = 'schema:worker-v26-20260810-quota';
 const NEXT_PROBE_SCHEMA_MARKER = 'schema:worker-v27-next-probe';
 const PROBE_BUFFER_SCHEMA_MARKER = 'schema:worker-v28-probe-buffer';
 const TASK_RETENTION_SCHEMA_MARKER = 'schema:worker-v29-agent-task-retention';
+const BACKROUTE_TASK_SCHEMA_MARKER = 'schema:worker-v30-backroute-task';
+
+function createAgentTasksTableSql(tableName = 'agent_tasks', ifNotExists = false) {
+  return `CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('nodequality', 'ip_unlock', 'backroute')),
+    options TEXT,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'expired', 'cancelled')),
+    requested_at INTEGER NOT NULL,
+    claimed_at INTEGER,
+    cancel_requested_at INTEGER,
+    runner_instance_id TEXT,
+    runner_heartbeat_at INTEGER,
+    finished_at INTEGER,
+    expires_at INTEGER NOT NULL,
+    result TEXT,
+    error TEXT,
+    output_excerpt TEXT,
+    agent_version TEXT
+  )`;
+}
 
 async function runOptionalSchemaChange(env, statement) {
   try {
@@ -46,12 +68,26 @@ export async function ensureV6Schema(env) {
   const nextProbeInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(NEXT_PROBE_SCHEMA_MARKER).first().catch(() => null);
   const probeBufferInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(PROBE_BUFFER_SCHEMA_MARKER).first().catch(() => null);
   const taskRetentionInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(TASK_RETENTION_SCHEMA_MARKER).first().catch(() => null);
-  if (installed?.value === '1' && nextProbeInstalled?.value === '1' && probeBufferInstalled?.value === '1' && taskRetentionInstalled?.value === '1') { schemaEnsured = true; return; }
+  const backrouteTaskInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(BACKROUTE_TASK_SCHEMA_MARKER).first().catch(() => null);
+  if (installed?.value === '1' && nextProbeInstalled?.value === '1' && probeBufferInstalled?.value === '1' && taskRetentionInstalled?.value === '1' && backrouteTaskInstalled?.value === '1') { schemaEnsured = true; return; }
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, no_public_ip INTEGER NOT NULL DEFAULT 0, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', city TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', traffic_reset_day INTEGER NOT NULL DEFAULT 1, alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '', nq_report TEXT DEFAULT '', nq_updated_at INTEGER)`).run();
   for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN traffic_reset_day INTEGER', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN no_public_ip INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN city TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_report TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_updated_at INTEGER', 'ALTER TABLE targets ADD COLUMN next_probe_at INTEGER']) {
     await runOptionalSchemaChange(env, stmt);
   }
-  for (const stmt of ['ALTER TABLE targets ADD COLUMN nq_unlock_data TEXT', 'ALTER TABLE targets ADD COLUMN nq_unlock_updated_at INTEGER']) {
+  for (const stmt of ['ALTER TABLE targets ADD COLUMN nq_unlock_data TEXT', 'ALTER TABLE targets ADD COLUMN nq_unlock_updated_at INTEGER', 'ALTER TABLE targets ADD COLUMN backroute_data TEXT', 'ALTER TABLE targets ADD COLUMN backroute_updated_at INTEGER']) {
+    await runOptionalSchemaChange(env, stmt);
+  }
+  for (const stmt of [
+    `CREATE TABLE IF NOT EXISTS check_bucket_days (
+      day TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      total INTEGER NOT NULL DEFAULT 0,
+      ok_count INTEGER NOT NULL DEFAULT 0,
+      sum_latency_ms INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (day, target_id)
+    )`,
+  ]) {
     await runOptionalSchemaChange(env, stmt);
   }
   for (const stmt of [
@@ -90,6 +126,18 @@ export async function ensureV6Schema(env) {
   // bucket without improving the current queries.
   await env.DB.prepare(`DROP INDEX IF EXISTS idx_check_buckets_target_time`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_check_buckets_target_day ON check_buckets(target_id, day, bucket_at)`).run();
+  try {
+    await env.DB.prepare(`INSERT OR IGNORE INTO check_bucket_days (day, target_id, total, ok_count, sum_latency_ms, updated_at)
+     SELECT day, target_id,
+            SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE total END),
+            SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE ok_count END),
+            SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE sum_latency_ms END),
+            strftime('%s','now')
+     FROM check_buckets GROUP BY day, target_id`).run();
+  } catch (_) {
+    // Keep schema initialization resilient if a legacy database lacks the
+    // check-bucket source table; the regular bucket refresh will backfill it.
+  }
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS incident_events (id TEXT PRIMARY KEY, target_id TEXT NOT NULL, started_at INTEGER NOT NULL, recovered_at INTEGER, last_checked_at INTEGER, start_colo TEXT, recover_colo TEXT, last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`).run();
   for (const stmt of ['ALTER TABLE incident_events ADD COLUMN recovered_at INTEGER', 'ALTER TABLE incident_events ADD COLUMN last_checked_at INTEGER', 'ALTER TABLE incident_events ADD COLUMN start_colo TEXT', 'ALTER TABLE incident_events ADD COLUMN recover_colo TEXT', 'ALTER TABLE incident_events ADD COLUMN last_error TEXT']) {
@@ -371,28 +419,12 @@ export async function ensureV6Schema(env) {
     probe_region, enabled, sort_order, created_at, updated_at
   FROM targets WHERE type = 'http' OR COALESCE(no_public_ip, 0) = 0`).run();
 
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_tasks (
-    id TEXT PRIMARY KEY,
-    agent_id TEXT NOT NULL,
-    action TEXT NOT NULL CHECK (action IN ('nodequality', 'ip_unlock')),
-    options TEXT,
-    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'expired', 'cancelled')),
-    requested_at INTEGER NOT NULL,
-    claimed_at INTEGER,
-    cancel_requested_at INTEGER,
-    runner_instance_id TEXT,
-    runner_heartbeat_at INTEGER,
-    finished_at INTEGER,
-    expires_at INTEGER NOT NULL,
-    result TEXT,
-    error TEXT,
-    output_excerpt TEXT,
-    agent_version TEXT
-  )`).run();
+  await env.DB.prepare(createAgentTasksTableSql('agent_tasks', true)).run();
   await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN options TEXT');
   await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN cancel_requested_at INTEGER');
   await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN runner_instance_id TEXT');
   await runOptionalSchemaChange(env, 'ALTER TABLE agent_tasks ADD COLUMN runner_heartbeat_at INTEGER');
+  await ensureAgentTaskBackrouteAction(env);
   await backfillNodeQualityUnlockData(env);
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_claim ON agent_tasks(agent_id, status, requested_at)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_agent_tasks_recent ON agent_tasks(requested_at DESC)`).run();
@@ -407,10 +439,33 @@ export async function ensureV6Schema(env) {
     .bind(PROBE_BUFFER_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
     .bind(TASK_RETENTION_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+    .bind(BACKROUTE_TASK_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   schemaEnsured = true;
   } catch (e) { schemaPromise = null; throw e; }
   })();
   await schemaPromise;
+}
+
+async function ensureAgentTaskBackrouteAction(env) {
+  const table = await env.DB.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_tasks'`).first();
+  const sql = String(table?.sql || '').toLowerCase();
+  if (!sql || sql.includes("'backroute'")) return;
+
+  const migrationTable = 'agent_tasks_backroute_migration';
+  const columns = 'id, agent_id, action, options, status, requested_at, claimed_at, cancel_requested_at, runner_instance_id, runner_heartbeat_at, finished_at, expires_at, result, error, output_excerpt, agent_version';
+  const statements = [
+    env.DB.prepare(`DROP TABLE IF EXISTS ${migrationTable}`),
+    env.DB.prepare(createAgentTasksTableSql(migrationTable)),
+    env.DB.prepare(`INSERT INTO ${migrationTable} (${columns}) SELECT ${columns} FROM agent_tasks`),
+    env.DB.prepare(`DROP TABLE agent_tasks`),
+    env.DB.prepare(`ALTER TABLE ${migrationTable} RENAME TO agent_tasks`),
+  ];
+  if (typeof env.DB.batch === 'function') {
+    await env.DB.batch(statements);
+    return;
+  }
+  for (const statement of statements) await statement.run();
 }
 
 async function backfillNodeQualityUnlockData(env) {

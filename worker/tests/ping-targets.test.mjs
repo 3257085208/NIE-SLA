@@ -75,7 +75,9 @@ function historyCount() {
   assert.equal(outOfWindow, 0, 'dropped samples must not reach ping_history');
 }
 
-// More than 25 distinct hourly buckets after dedup rejects the whole batch with 400 and writes nothing.
+// More than 25 distinct hourly buckets keeps only the newest 25 buckets
+// (rejecting the batch would make a replaying Agent retry the same payload
+// forever, so the oldest buckets are dropped instead).
 {
   const before = historyCount();
   const spread = Array.from({ length: 26 }, (_, hour) => ({
@@ -84,11 +86,11 @@ function historyCount() {
     latency_ms: 5,
     ok: 1,
   }));
-  await assert.rejects(
-    () => submitAgentPings(pingRequest(spread), env),
-    error => error?.status === 400 && /小时桶/.test(error.message),
-  );
-  assert.equal(historyCount(), before, 'a rejected batch must not write any ping rows');
+  const result = await submitAgentPings(pingRequest(spread), env);
+  assert.equal(result.ok, true);
+  assert.equal(result.stored, 25, 'only the newest 25 buckets survive');
+  assert.equal(result.dropped, 1, 'the oldest bucket is dropped');
+  void before;
 }
 
 // Exactly 25 distinct hourly buckets is still accepted.

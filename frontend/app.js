@@ -34,8 +34,9 @@ import {
 import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260821-themecfg2';
 import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
 import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
+import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260910-backroute3';
 import { targetSlaPercentage } from './js/shared/sla.js';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingLossSeries, pingSampleWindowSec } from './js/shared/ping.js';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260908-audit1';
 import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260821-vpsdetail1';
 import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260821-themecfg2';
 
@@ -82,6 +83,7 @@ const state = {
   metricsCache: new Map(),
   pingsCache: new Map(),
   metricsRequestSeq: 0,
+  checksRequestSeq: 0,
   pingsRequestSeq: 0,
   continuousLine: readMigratedStorage('localStorage', 'nie-sla.continuousLine', 'nstatus.continuousLine', '0') === '1',
   groupByMode: normalizeGroupByMode(readMigratedStorage('localStorage', 'nie-sla.groupByMode', 'nstatus.groupByMode', 'group')),
@@ -316,7 +318,11 @@ async function loadStatus() {
   if (state.statusController) state.statusController.abort();
   const controller = new AbortController();
   state.statusController = controller;
-  const timer = setTimeout(() => controller.abort(), 15000);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, 15000);
   try {
     const res = await fetch(api('/api/status?days=30&lite=1'), {
       cache: 'default',
@@ -334,7 +340,9 @@ async function loadStatus() {
     state.statusLastFullLoadedAt = Date.now();
     render(data);
   } catch (err) {
-    if (err.name === 'AbortError' || requestSeq !== state.statusRequestSeq) return;
+    // A manual abort (selection change) stays silent; a timeout is a real
+    // failure and must surface instead of leaving stale data on screen.
+    if ((err.name === 'AbortError' && !timedOut) || requestSeq !== state.statusRequestSeq) return;
     if (els.subline) {
       els.subline.textContent = `API 连接失败：${err.message}`;
     }
@@ -525,6 +533,43 @@ function appearanceText(template, count = 0, value = '') {
     .replaceAll('{site_name}', state.appearance.site_name);
 }
 
+let injectedHeadKey = '';
+
+function applyAppearanceInjections(appearance) {
+  const headKey = `${appearance.custom_head || ''}|${appearance.custom_script || ''}`;
+  if (injectedHeadKey && injectedHeadKey !== headKey) {
+    document.querySelectorAll('[data-appearance-injected]').forEach((node) => node.remove());
+    injectedHeadKey = '';
+  }
+  if (!headKey.trim() || injectedHeadKey === headKey) return;
+  injectedHeadKey = headKey;
+  if (appearance.custom_head) {
+    const fragment = document.createRange().createContextualFragment(appearance.custom_head);
+    fragment.querySelectorAll('*').forEach((node) => node.setAttribute('data-appearance-injected', ''));
+    document.head.appendChild(fragment);
+  }
+  if (appearance.custom_script) {
+    const script = document.createElement('script');
+    script.setAttribute('data-appearance-injected', '');
+    script.textContent = appearance.custom_script;
+    document.head.appendChild(script);
+  }
+}
+
+function applyAppearanceBackground(appearance) {
+  const wide = appearance.custom_bg || '';
+  const narrow = appearance.custom_bg_mobile || wide;
+  if (!wide && !narrow) {
+    document.body.classList.remove('has-custom-bg');
+    document.body.style.removeProperty('--appearance-custom-bg');
+    document.body.style.removeProperty('--appearance-custom-bg-mobile');
+    return;
+  }
+  document.body.classList.add('has-custom-bg');
+  document.body.style.setProperty('--appearance-custom-bg', `url("${wide}")`);
+  document.body.style.setProperty('--appearance-custom-bg-mobile', `url("${narrow || wide}")`);
+}
+
 function applyAppearance(raw) {
   state.appearance = normalizeAppearance(raw || {});
   document.title = state.appearance.page_title || state.appearance.site_name;
@@ -534,6 +579,8 @@ function applyAppearance(raw) {
   rootStyle?.setProperty('--appearance-surface', state.appearance.surface_color);
   rootStyle?.setProperty('--appearance-brand-logo-height', `${state.appearance.brand_logo_height}px`);
   rootStyle?.setProperty('--appearance-header-image-width', `${state.appearance.header_right_image_width}px`);
+  applyAppearanceBackground(state.appearance);
+  applyAppearanceInjections(state.appearance);
   let favicon = document.querySelector('link[rel~="icon"]');
   if (state.appearance.favicon_url) {
     if (!favicon) { favicon = document.createElement('link'); favicon.rel = 'icon'; document.head.appendChild(favicon); }
@@ -879,6 +926,10 @@ function renderService(t, days, summaries) {
   const nqButton = targetHasNodeQuality(t)
     ? `<button type="button" class="nq-report-btn" data-nq-target="${escapeAttr(t.id)}" data-nq-name="${escapeAttr(displayName)}" title="查看 NodeQuality 报告">NQ</button>`
     : '';
+  const backrouteBadges = normalizeBackrouteEntries(t.backroute);
+  const backrouteHtml = backrouteBadges.length
+    ? `<span class="backroute-summary" title="最近一次三网回程线路">${backrouteBadges.map((entry) => `<span class="backroute-badge"><span>${escapeHtml(entry.carrier)}</span>：<b>${escapeHtml(entry.line)}</b></span>`).join('')}</span>`
+    : '';
 
   let metaBadges = '';
   if (t.line_type) metaBadges += `<span class="meta-badge meta-line">${escapeHtml(t.line_type)}</span>`;
@@ -917,6 +968,7 @@ function renderService(t, days, summaries) {
         <span class="service-title-line">
           <span class="service-title-text">${escapeHtml(displayName)}</span>
           ${nqButton}
+          ${backrouteHtml}
         </span>
         ${metaBadges ? `<span class="service-meta">${metaBadges}</span>` : ''}
         ${unlockStrip}
@@ -1064,7 +1116,9 @@ function renderBars(targetId, days, summaries, count = 30) {
 }
 
 async function selectService(id, name, el) {
-  const isSame = state.selectedId === id && !els.inlineChartPanel.hidden;
+  // The panel can be hidden by the show_chart appearance setting; selection
+  // state alone decides whether a second click deselects.
+  const isSame = state.selectedId === id;
 
   document.querySelectorAll('.service').forEach(s => s.classList.remove('selected'));
 
@@ -1163,6 +1217,8 @@ function attachInlineChart(serviceEl) {
 }
 
 async function loadChecks(id, name, target = null, options = {}) {
+  const seq = ++state.checksRequestSeq;
+  const superseded = () => state.selectedId !== id || state.checksRequestSeq !== seq;
   const requestedHours = Math.max(rangeHours('day'), Number(options.hours || rangeHours('day')));
   const quiet = Boolean(options.quiet);
   if (!quiet) {
@@ -1193,7 +1249,7 @@ async function loadChecks(id, name, target = null, options = {}) {
       latencyRes?.ok ? latencyRes.json().catch(() => null) : null,
     ]);
 
-    if (state.selectedId !== id) return;
+    if (superseded()) return;
 
     if (!checksRes.ok || !data.ok) {
       throw new Error(data.error || `HTTP ${checksRes.status}`);
@@ -1211,11 +1267,11 @@ async function loadChecks(id, name, target = null, options = {}) {
     renderVPSInfo();
     ensureTargetMetricsLoaded();
   } catch (err) {
+    if (superseded()) return;
     state.allChecks = [];
     state.dailyPoints = [];
     state.checksSource = '';
     state.checksLoadedHours = 0;
-    if (state.selectedId !== id) return;
     state.externalLatencySources = [];
     state.latencyChartSources = [];
     state.latencyChartSamples = [];
@@ -1347,6 +1403,17 @@ function renderVPSInfo() {
   if (info.total_mem_mb) systemItems.push(vpsItem('内存', fmtSizeMB(info.total_mem_mb)));
   if (info.total_swap_mb) systemItems.push(vpsItem('Swap', fmtSizeMB(info.total_swap_mb)));
   if (info.total_disk_gb) systemItems.push(vpsItem('磁盘', `${info.total_disk_gb} GB`));
+  const diskRows = (Array.isArray(info.disk_list) ? info.disk_list : [])
+    .filter((entry) => entry && entry.total_gb > 0)
+    .sort((a, b) => b.total_gb - a.total_gb)
+    .slice(0, 16);
+  for (const [index, entry] of diskRows.entries()) {
+    const usedPct = Math.min(100, Math.max(0, Math.round(100 * entry.used_gb / entry.total_gb)));
+    const label = diskRows.length > 1
+      ? `磁盘 ${index + 1} · ${entry.mount || entry.device}`
+      : `磁盘 · ${entry.mount || entry.device}`;
+    systemItems.push(vpsItem(label, `${entry.total_gb} GB（已用 ${entry.used_gb} GB · ${usedPct}%）`));
+  }
   const configuredLocation = targetLocationLabel(selectedTarget || {});
   if (configuredLocation) {
     systemItems.push(vpsItem('位置', configuredLocation));
@@ -1569,7 +1636,10 @@ async function updatePingChart() {
     if (!targetId) continue;
     const arr = byTarget.get(targetId) || [];
     const ok = p.ok === undefined ? Number(p.latency_ms) >= 0 : Number(p.ok) === 1;
-    arr.push({ x: Number(p.ts), y: ok && Number(p.latency_ms) >= 0 ? Number(p.latency_ms) : null });
+    // Number(null) === 0: a missing latency on an ok point must stay a gap,
+    // not silently become a 0ms sample.
+    const latencyMs = p.latency_ms == null ? null : Number(p.latency_ms);
+    arr.push({ x: Number(p.ts), y: ok && latencyMs != null && latencyMs >= 0 ? latencyMs : null });
     byTarget.set(targetId, arr);
   }
 
@@ -1606,7 +1676,6 @@ async function updatePingChart() {
   delete state.chart.options.scales.y.max;
   state.chart.options.scales.y.min = 0;
   state.chart.options.scales.y.grace = '18%';
-  state.chart.options.scales.packetLoss = { axis: 'y', type: 'linear', display: false, min: 0, max: 4 };
 
   const allX = datasets.flatMap(ds => (ds.data || []).map(p => p.x)).filter(Number.isFinite);
   const { min: xMin, max: xMax } = minMax(allX);
@@ -1686,13 +1755,9 @@ function applyPingTargetSelection() {
 
 function applyLatencySourceSelection() {
   const visible = state.latencyVisibleSources;
-  const allIds = state.latencyChartSources.map(source => String(source.id));
   for (const dataset of state.chart?.data?.datasets || []) {
     if (dataset.latencySourceId) {
       dataset.hidden = visible instanceof Set && !visible.has(String(dataset.latencySourceId));
-    } else if (dataset.packetLoss) {
-      const selectedIds = visible instanceof Set ? allIds.filter(id => visible.has(id)) : allIds;
-      dataset.data = pingLossSeries(state.latencyChartSamples, selectedIds);
     }
   }
   els.pingLossStats?.querySelectorAll('.ping-loss-item[data-target-id]').forEach(item => {
@@ -1856,9 +1921,7 @@ function initChart() {
               family: 'Varela Round',
               size: mobileChart ? 10 : 12,
             },
-            filter(item) {
-              return !String(item.text || '').match(/\bDown\b/);
-            }
+
           },
         },
 
@@ -1875,10 +1938,6 @@ function initChart() {
             },
 
             label(context) {
-              if (context.dataset.packetLoss) {
-                const loss = Math.max(0, Number(context.parsed.y || 0) * 100);
-                return `丢包率：${loss.toFixed(loss > 0 && loss < 1 ? 2 : 1)}%`;
-              }
               const v = context.parsed.y;
               if (!Number.isFinite(v)) return `${context.dataset.label}: failed`;
               const m = state.selectedMetric;
@@ -1899,13 +1958,8 @@ function initChart() {
               return `${context.dataset.label}: ${v}${u}`;
             },
 
-            afterBody(items) {
-              const shown = new Set((items || [])
-                .filter(item => item.dataset.packetLoss)
-                .map(item => String(item.dataset.sourceLabel || ''))
-                .filter(Boolean));
-              const failures = chartTooltipFailures()
-                .filter(line => !shown.has(line.replace(/:\s*超时$/, '')));
+            afterBody() {
+              const failures = chartTooltipFailures();
               return failures.length ? ['', ...failures] : [];
             },
           }
@@ -2019,7 +2073,6 @@ function clearMetricChart() {
   delete state.chart.options.scales.y.beginAtZero;
   delete state.chart.options.scales.y.grace;
   delete state.chart.options.scales.y.suggestedMax;
-  delete state.chart.options.scales.packetLoss;
   delete state.chart.options.scales.x.min;
   delete state.chart.options.scales.x.max;
   state.chartZoomFullMin = null;
@@ -2033,9 +2086,9 @@ function updateMetricsChart() {
   const m = state.targetMetrics;
   const metric = state.selectedMetric;
   const range = state.selectedMetricRange;
-  const labels = { cpu: 'CPU 使用率', mem: '内存使用率', disk: '磁盘使用率', load: '平均负载', net: '网络速度', conns: '连接数', diskio: '磁盘 I/O', temp: '温度', gpu: 'GPU' };
-  const units = { cpu: '%', mem: '%', disk: '%', load: '', net: '', conns: '', diskio: '', temp: '°C', gpu: '%' };
-  const fields = { cpu: 'cpu', mem: 'mem', disk: 'disk', load: 'load1', net_rx: 'net_rx', net_tx: 'net_tx', tcp_conns: 'tcp_conns', udp_conns: 'udp_conns', disk_read: 'disk_read', disk_write: 'disk_write', temp: 'cpu_temp', gpu: 'gpu_util', cpu_temp: 'cpu_temp', gpu_temp: 'gpu_temp', gpu_util: 'gpu_util' };
+  const labels = { cpu: 'CPU 使用率', mem: '内存使用率', disk: '磁盘使用率', load: '平均负载', proc: '进程数', net: '网络速度', conns: '连接数', diskio: '磁盘 I/O', temp: '温度', gpu: 'GPU' };
+  const units = { cpu: '%', mem: '%', disk: '%', load: '', proc: '', net: '', conns: '', diskio: '', temp: '°C', gpu: '%' };
+  const fields = { cpu: 'cpu', mem: 'mem', disk: 'disk', proc: 'process_count', net_rx: 'net_rx', net_tx: 'net_tx', tcp_conns: 'tcp_conns', udp_conns: 'udp_conns', disk_read: 'disk_read', disk_write: 'disk_write', temp: 'cpu_temp', gpu: 'gpu_util', cpu_temp: 'cpu_temp', gpu_temp: 'gpu_temp', gpu_util: 'gpu_util' };
 
   const metricLabel = labels[metric] || metric;
   els.chartTitle.textContent = metricLabel;
@@ -2047,8 +2100,7 @@ function updateMetricsChart() {
     delete state.chart.options.scales.y.beginAtZero;
     delete state.chart.options.scales.y.grace;
     delete state.chart.options.scales.y.suggestedMax;
-    delete state.chart.options.scales.packetLoss;
-    state.chartZoomFullMin = null;
+      state.chartZoomFullMin = null;
     state.chartZoomFullMax = null;
   }
 
@@ -2065,6 +2117,8 @@ function updateMetricsChart() {
     m.history = [{
       ts: latestTs, cpu: m.latest.cpu_percent, mem: m.latest.memory?.percent || 0,
       disk: m.latest.disk?.percent || 0, load1: m.latest.load?.load1 || 0,
+      load5: m.latest.load?.load5 || 0, load15: m.latest.load?.load15 || 0,
+      process_count: m.latest.process_count || 0,
       net_rx: m.latest.net?.rx_bytes_sec || 0, net_tx: m.latest.net?.tx_bytes_sec || 0,
       tcp_conns: m.latest.net?.tcp_conns || 0, udp_conns: m.latest.net?.udp_conns || 0,
       disk_read: m.latest.diskio?.read_bytes_sec || 0, disk_write: m.latest.diskio?.write_bytes_sec || 0,
@@ -2100,6 +2154,40 @@ function updateMetricsChart() {
     if (b >= 1000000) return (b / 1000000).toFixed(1) + ' Mbps';
     if (b >= 1000) return (b / 1000).toFixed(1) + ' Kbps';
     return b.toFixed(0) + ' bps';
+  }
+
+  if (metric === 'load') {
+    const definitions = [
+      { field: 'load1', label: '1 分钟', color: '#e4572e' },
+      { field: 'load5', label: '5 分钟', color: '#2f80ed' },
+      { field: 'load15', label: '15 分钟', color: '#7c4dbe' },
+    ];
+    const datasets = definitions.map(definition => {
+      const points = history.map(point => ({
+        x: Number(point.ts),
+        y: Number.isFinite(Number(point[definition.field])) ? Number(point[definition.field]) : null,
+      })).filter(point => point.y != null);
+      return { definition, points };
+    }).filter(item => item.points.length);
+    els.chartMeta.textContent = datasets.length
+      ? `${datasets.map(item => `${item.definition.label} ${item.points[item.points.length - 1].y.toFixed(2)}`).join(' · ')} · ${history.length} 个采样点`
+      : '暂无负载数据';
+    const lastLoad = datasets[0]?.points?.[datasets[0].points.length - 1]?.y;
+    els.chartAvg.textContent = lastLoad != null ? `平均值：${lastLoad.toFixed(2)}` : '-';
+    if (!state.chart) return;
+    state.chart.data.datasets = datasets.map(({ definition, points }) => netDataset(`${definition.label} 负载`, points, definition.color));
+    return;
+  }
+
+  if (metric === 'proc') {
+    const points = history.map(point => ({ x: Number(point.ts), y: Number(point.process_count) || 0 }));
+    const values = points.map(point => point.y).filter(Number.isFinite);
+    const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+    els.chartMeta.textContent = `进程数平均 ${avg.toFixed(0)} · ${history.length} 个采样点`;
+    els.chartAvg.textContent = `平均值：${avg.toFixed(0)}`;
+    if (!state.chart) return;
+    state.chart.data.datasets = [netDataset('进程数', points, '#159754')];
+    return;
   }
 
   if (metric === 'temp') {
@@ -2311,7 +2399,6 @@ function updateChart(checks, name) {
   delete state.chart.options.scales.y.max;
   state.chart.options.scales.y.min = 0;
   state.chart.options.scales.y.grace = '18%';
-  state.chart.options.scales.packetLoss = { axis: 'y', type: 'linear', display: false, min: 0, max: 4 };
 
   const selectedTarget = (state.data?.targets || []).find(target => target.id === state.selectedId);
   const cloudflareSeries = cloudflareLatencyChartSeries(checks, cloudflareLatencyColor(selectedTarget));
@@ -2341,8 +2428,7 @@ function updateChart(checks, name) {
     state.latencyVisibleSources,
   );
 
-  const lossPoints = pingLossSeries(samples, visibleIds);
-  const allPoints = [...sources.flatMap(source => source.points), ...lossPoints];
+  const allPoints = [...sources.flatMap(source => source.points)];
   state.chart.data.datasets = buildLatencyChartDatasets(sources, samples, visibleIds);
   applyChartFullRange(allPoints);
   tuneChartAnimation(allPoints.length);
@@ -2363,22 +2449,6 @@ function buildLatencyChartDatasets(sources = [], samples = [], visibleIds = []) 
       hidden: !selected.has(String(source.id)),
     }));
   }
-  datasets.push({
-    label: '丢包率',
-    packetLoss: true,
-    data: pingLossSeries(samples, visibleIds),
-    yAxisID: 'packetLoss',
-    borderColor: 'rgba(202, 138, 4, 0.38)',
-    backgroundColor: 'rgba(250, 204, 21, 0.10)',
-    borderWidth: 1,
-    pointRadius: 0,
-    pointHoverRadius: 3,
-    pointHitRadius: 6,
-    tension: 0.12,
-    fill: 'origin',
-    spanGaps: true,
-    order: 10,
-  });
   return datasets;
 }
 

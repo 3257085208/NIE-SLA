@@ -145,6 +145,9 @@ fn encode_sample(sample: &SamplePoint) -> Vec<u8> {
     field_f64(&mut out, 6, sample.net_rx);
     field_f64(&mut out, 7, sample.net_tx);
     field_varint(&mut out, 8, sample.tcp_conns);
+    field_varint(&mut out, 18, sample.process_count as u64);
+    field_f64(&mut out, 19, sample.load5);
+    field_f64(&mut out, 20, sample.load15);
     field_varint(&mut out, 9, sample.udp_conns);
     field_f64(&mut out, 10, sample.disk_read);
     field_f64(&mut out, 11, sample.disk_write);
@@ -203,6 +206,14 @@ fn encode_vps_info(info: &VpsInfo) -> Vec<u8> {
         field_string(&mut nested, 3, &sensor.kind);
         field_f64(&mut nested, 4, sensor.temp_c);
         field_message(&mut out, 20, &nested);
+    }
+    for entry in &info.disk_list {
+        let mut nested = Vec::new();
+        field_string(&mut nested, 1, &entry.device);
+        field_string(&mut nested, 2, &entry.mount);
+        field_f64(&mut nested, 3, entry.total_gb);
+        field_f64(&mut nested, 4, entry.used_gb);
+        field_message(&mut out, 21, &nested);
     }
     out
 }

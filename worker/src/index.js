@@ -1,6 +1,6 @@
 import { enrichCfContext, probeTarget, saveCheck, runDueTargets, runFastStatusTargets } from './probe.js';
 import { writeStatusSnapshot } from './status.js';
-import { archiveYesterdayOncePerLocalDay, cleanupDebugLogs, cleanupFinishedAgentTasks, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates } from './admin.js';
+import { archiveYesterdayOncePerLocalDay, cleanupDebugLogs, cleanupFinishedAgentTasks, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates, refreshCheckBucketDays } from './admin.js';
 import { cleanupRateLimitsD1 } from './ratelimit.js';
 import { cleanupAgentMetricsR2 } from './metrics.js';
 import { runAlertChecks } from './alerts.js';
@@ -158,14 +158,10 @@ export async function runScheduledTasks(env, cron, options = {}) {
   const hasCurrentStatus = historyProbeCount > 0 || Number(results.fast_status?.count || 0) > 0;
   if (!shouldRunScheduledFollowups(results.probe) && !hasCurrentStatus) {
     results.followups = { ok: true, skipped: true, reason: results.probe_error ? 'probe_failed' : 'no_targets_due' };
-    results.timings_ms = timings;
-    if (results.probe_error || results.fast_status_error) {
-      try { await recordScheduledResult(env, cron, results); } catch (_) {}
-    }
-    return results;
+  } else {
+    try { results.alerts = await measure('alerts', () => runAlertChecks(env)); } catch (err) { results.alerts_error = String(err?.message || err); }
+    try { results.status_snapshot = await measure('status_snapshot', () => writeStatusSnapshot(env)); } catch (err) { results.status_snapshot_error = String(err?.message || err); }
   }
-  try { results.alerts = await measure('alerts', () => runAlertChecks(env)); } catch (err) { results.alerts_error = String(err?.message || err); }
-  try { results.status_snapshot = await measure('status_snapshot', () => writeStatusSnapshot(env)); } catch (err) { results.status_snapshot_error = String(err?.message || err); }
   let runHourlyMaintenance = false;
   try { runHourlyMaintenance = await claimHourlyMaintenanceSlot(env, cron); } catch (err) { results.hourly_claim_error = String(err?.message || err); }
   if (runHourlyMaintenance) {
@@ -174,6 +170,7 @@ export async function runScheduledTasks(env, cron, options = {}) {
     try { results.rate_limit_cleanup = await measure('rate_limit_cleanup', () => cleanupRateLimitsD1(env)); } catch (err) { results.rate_limit_cleanup_error = String(err?.message || err); }
     try { results.check_bucket_cleanup = await measure('check_bucket_cleanup', () => cleanupOldCheckBuckets(env, 31)); } catch (err) { results.check_bucket_cleanup_error = String(err?.message || err); }
     try { results.debug_log_cleanup = await measure('debug_log_cleanup', () => cleanupDebugLogs(env)); } catch (err) { results.debug_log_cleanup_error = String(err?.message || err); }
+    try { results.check_bucket_days = await measure('check_bucket_days', () => refreshCheckBucketDays(env)); } catch (err) { results.check_bucket_days_error = String(err?.message || err); }
     try { results.agent_metrics_r2_cleanup = await measure('agent_metrics_r2_cleanup', () => cleanupAgentMetricsR2(env)); } catch (err) { results.agent_metrics_r2_cleanup_error = String(err?.message || err); }
     try { results.agent_task_cleanup = await measure('agent_task_cleanup', () => cleanupFinishedAgentTasks(env)); } catch (err) { results.agent_task_cleanup_error = String(err?.message || err); }
   }

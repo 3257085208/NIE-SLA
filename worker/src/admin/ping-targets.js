@@ -101,8 +101,17 @@ export async function submitAgentPings(request, env) {
     }
     accepted.push({ target_id: targetId, ts, latency_ms: Number.isFinite(latency) && latency >= 0 ? latency : null, ok });
   }
-  if (new Set(accepted.map((p) => Math.floor(p.ts / 3600) * 3600)).size > MAX_PING_HOURS_PER_BATCH) {
-    throw new ApiError(400, `pings 时间跨度过大，单批最多覆盖 ${MAX_PING_HOURS_PER_BATCH} 个小时桶`);
+  // A backlog replay spanning more buckets keeps only the newest buckets.
+  // Rejecting the batch would make the Agent retry the same payload forever.
+  const byHourDesc = [...new Set(accepted.map((p) => Math.floor(p.ts / 3600) * 3600))].sort((a, b) => b - a);
+  if (byHourDesc.length > MAX_PING_HOURS_PER_BATCH) {
+    const allowed = new Set(byHourDesc.slice(0, MAX_PING_HOURS_PER_BATCH));
+    for (let i = accepted.length - 1; i >= 0; i -= 1) {
+      if (!allowed.has(Math.floor(accepted[i].ts / 3600) * 3600)) {
+        accepted.splice(i, 1);
+        dropped += 1;
+      }
+    }
   }
   if (accepted.length && env.ARCHIVE) await writeAgentTelemetryR2History(env, agentId, [], accepted);
   if (accepted.length && parseBoolean(env.AGENT_PINGS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE)) {

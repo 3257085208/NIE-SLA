@@ -34,7 +34,15 @@ export async function getPublicTheme(env) {
     const raw = await getMeta(env, configKey(activeTheme.id));
     if (raw) config = JSON.parse(raw);
   } catch (_) {}
-  const merged = validateThemeConfigValues(activeTheme, { ...themeSettingsDefaults(activeTheme), ...config });
+  // A config written by an older theme package (keys the current manifest no
+  // longer declares) must degrade to defaults here, not 400: the public
+  // endpoint has no admin to fix it and the whole page silently falls back.
+  let merged;
+  try {
+    merged = validateThemeConfigValues(activeTheme, { ...themeSettingsDefaults(activeTheme), ...config });
+  } catch (_) {
+    merged = validateThemeConfigValues(activeTheme, themeSettingsDefaults(activeTheme));
+  }
   return {
     ok: true,
     schema: 'nie-sla-themes-v1',

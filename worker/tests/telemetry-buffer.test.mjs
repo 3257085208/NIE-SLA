@@ -157,6 +157,42 @@ assert.equal(stateASecond.cpu_percent, 12);
 assert.deepEqual(stateASecond.pings.map(ping => ping.target_id), ['target-a'], 'follow-up reports merge against the Agent\'s own previous state');
 assert.deepEqual((await readLatest(wssBuffer, 'vps-b')).pings.map(ping => ping.target_id), ['target-b'], 'an Agent\'s follow-up report must not touch other Agents');
 
+const retryStorage = memoryStorage();
+let availabilityBatchAttempts = 0;
+const retryBuffer = new TelemetryBuffer({ storage: retryStorage }, testEnv({
+  DB: {
+    prepare() {
+      let values = [];
+      return {
+        bind(...params) { values = params; return this; },
+        async all() { return { results: [{ id: 'vps-retry' }] }; },
+        async first() { return null; },
+        async run() { return { meta: { changes: 1 }, values }; },
+      };
+    },
+    async batch(statements) {
+      availabilityBatchAttempts += 1;
+      if (availabilityBatchAttempts === 1) throw new Error('temporary D1 outage');
+      return Promise.all(statements.map(statement => statement.run()));
+    },
+  },
+}));
+const retryNow = nowSec();
+retryBuffer.memReports = [{
+  agent_id: 'vps-retry',
+  ts: retryNow,
+  prev_report_at: new Date((retryNow - 10) * 1000).toISOString(),
+  points: [],
+  pings: [],
+  net: null,
+  state: null,
+}];
+assert.equal(await retryBuffer.drainPendingReports(), 0, 'secondary availability failure must retain the report');
+assert.equal(retryBuffer.memReports.length, 1, 'failed secondary persistence must requeue the report');
+assert.equal(await retryBuffer.drainPendingReports(), 1, 'the requeued report must drain after D1 recovers');
+assert.equal(retryBuffer.memReports.length, 0);
+assert.equal(availabilityBatchAttempts, 2);
+
 const futureUpdated = new Date((nowSec() + 3600) * 1000).toISOString();
 await wssStorage.put('latest:state:vps-b', { agent_id: 'vps-b', updated_at: futureUpdated, cpu_percent: 99 });
 await sendAgentMetrics(wssBuffer, socketB, {
@@ -289,7 +325,7 @@ const firstControl = await controlBuffer.readControlSnapshot();
 const secondControl = await controlBuffer.readControlSnapshot();
 assert.deepEqual(secondControl, firstControl, 'WSS control snapshots must be cached in the DO');
 assert.equal(firstControl.ping_targets[0].protocol, 'tcp');
-assert.equal(controlQueries, 2, 'a cached WSS control snapshot should read D1 only once for targets and once for interval');
+assert.equal(controlQueries, 4, 'a cached WSS control snapshot should read D1 once for targets, interval and traffic corrections');
 
 const pagedStorage = memoryStorage();
 const pagedBuffer = new TelemetryBuffer({ storage: pagedStorage }, testEnv());

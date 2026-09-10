@@ -3,7 +3,7 @@ set -eu
 
 BASE_URL="${NIE_SLA_AGENT_BASE_URL:-${NSTATUS_AGENT_BASE_URL:-https://status.example.com}}"
 BASE_URL="${BASE_URL%/}"
-DEFAULT_SETUP_SHA256="ae186c01e001863fc46724c2e61954f65590fae0be27eca0dd03e5d3494a8c93"
+DEFAULT_SETUP_SHA256="84b3a700b2478a5c97949d16988d4b5059424c0ad59cee2b7c77552d79149ba4"
 
 need_root() {
   if [ "$(id -u 2>/dev/null || echo 1)" != "0" ]; then

@@ -1448,6 +1448,27 @@ body:not(.is-loaded) .incident-log {
   font: 800 10px/1.2 var(--font), "Noto Sans SC", sans-serif;
 }
 .nq-report-btn:hover { background: #d1fae5; }
+.backroute-summary {
+  display: inline-flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+.backroute-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 6px;
+  color: #36506b;
+  background: #f1f6fa;
+  border: 1px solid #b9c9d8;
+  border-radius: 4px;
+  font: 700 10px/1.2 var(--font), "Noto Sans SC", sans-serif;
+  white-space: nowrap;
+}
+.backroute-badge b { color: #075985; font-weight: 800; }
 body.nq-modal-open { overflow: hidden; }
 .nq-modal-root { position: relative; z-index: 1000; }
 .nq-modal-backdrop {

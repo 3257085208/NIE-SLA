@@ -8,6 +8,8 @@ import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn } from 
 import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry, readBufferedAgentLatestState } from './telemetry-buffer.js';
 import { bufferedAgentStateEnabled, newerAgentMetricRow } from './agent-state.js';
 import { getPingIntervalSec } from './ping-config.js';
+import { getAgentReportInterval } from './admin/settings.js';
+import { getTrafficCorrection } from './admin/traffic-corrections.js';
 
 const MAX_AGENT_SAMPLES_PER_REPORT = 910;
 const MAX_AGENT_PINGS_PER_REPORT = 5_000;
@@ -16,7 +18,7 @@ const MAX_TELEMETRY_AGE_SEC = 7 * 86400;
 const MAX_TELEMETRY_FUTURE_SEC = 300;
 const MAX_METRIC_RATE = 1024 ** 5;
 const MAX_METRIC_COUNT = 1_000_000_000;
-const AGENT_ACTIONS = new Set(['nodequality', 'ip_unlock']);
+const AGENT_ACTIONS = new Set(['nodequality', 'ip_unlock', 'backroute']);
 
 function boundedMetric(value, min, max, fallback = 0) {
   const number = Number(value);
@@ -88,6 +90,17 @@ export function normalizeAgentVpsInfo(value) {
   }
   const gpuUtil = Number(value.gpu_util);
   if (Number.isFinite(gpuUtil)) out.gpu_util = boundedMetric(gpuUtil, 0, 100);
+  if (Array.isArray(value.disk_list)) {
+    out.disk_list = value.disk_list.slice(0, 16).flatMap((entry) => {
+      const device = String(entry?.device || '').trim().slice(0, 32);
+      const mount = String(entry?.mount || '').trim().slice(0, 64);
+      const total = boundedMetric(entry?.total_gb, 0, 1_000_000_000_000);
+      const used = boundedMetric(entry?.used_gb, 0, 1_000_000_000_000);
+      if (!device || !mount || !total) return [];
+      return [{ device, mount, total_gb: total, used_gb: used }];
+    });
+    if (!out.disk_list.length) delete out.disk_list;
+  }
   if (Array.isArray(value.temperature_sensors)) {
     out.temperature_sensors = value.temperature_sensors.slice(0, 128).flatMap((sensor) => {
       const id = String(sensor?.id || '').trim().slice(0, 64);
@@ -231,28 +244,51 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   const decodedSeries = pingSeriesToPoints(metrics.ping_series);
   if (decodedSeries.error) throw new ApiError(400, decodedSeries.error);
   const pings = legacyPings.concat(decodedSeries.pings);
-  const telemetryError = validateTelemetryBatch(rawSamples, pings, ts);
-  if (telemetryError) throw new ApiError(400, telemetryError);
+  const telemetryBatch = filterTelemetryBatch(rawSamples, pings, ts);
+  if (telemetryBatch.error) throw new ApiError(400, telemetryBatch.error);
+  const telemetrySamples = telemetryBatch.samples;
+  const telemetryPings = telemetryBatch.pings;
+  const telemetryDropped = telemetryBatch.dropped;
+  if (telemetryDropped > 0 && options.wss !== true) {
+    console.error(`agent telemetry: dropped ${telemetryDropped} out-of-window points for ${agentId}`);
+  }
 
   let latestState = null;
+  let mapped = null;
   try {
-    latestState = await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts }, options);
+    const persisted = await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples: telemetrySamples, pings: telemetryPings, ts }, options);
+    if (persisted && typeof persisted === 'object' && 'latest_state' in persisted && options.wss === true) {
+      latestState = persisted.latest_state;
+      mapped = { points: persisted.mapped_points || [], pings: persisted.mapped_pings || [] };
+    } else {
+      latestState = persisted;
+    }
   } catch (err) {
     console.error('persistAgentMetrics failed:', String(err?.message || err));
     throw new ApiError(500, '保存 Agent 监控数据失败', { 'cache-control': 'no-store' });
   }
 
-  const trafficTask = persistAgentTraffic(env, agentId, metrics, ts)
-    .catch((err) => console.error('persistAgentTraffic failed:', String(err?.message || err)));
-  if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(trafficTask);
-  else await trafficTask;
+  if (options.wss !== true) {
+    const trafficTask = persistAgentTraffic(env, agentId, metrics, ts)
+      .catch((err) => console.error('persistAgentTraffic failed:', String(err?.message || err)));
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(trafficTask);
+    else await trafficTask;
+  }
 
   const result = {
     ok: true,
     agent_id: agentId,
+    server_time: ts,
     ping_interval_sec: await getPingIntervalSec(env),
+    report_interval_sec: await getAgentReportInterval(env),
+    traffic_correction: await getTrafficCorrection(env, agentId),
   };
   if (options.returnLatestState && latestState) result.latest_state = latestState;
+  if (options.wss === true) {
+    result.mapped_points = mapped?.points || [];
+    result.mapped_pings = mapped?.pings || [];
+    result.net = metrics?.net || null;
+  }
   return result;
 }
 
@@ -425,30 +461,43 @@ export function defaultMetricsMaxPointsForHours(hours, env = {}) {
   return clamp(Number(env.AGENT_METRICS_MAX_POINTS || 900), 60, 10000);
 }
 
-function validateTelemetryBatch(samples, pings, now) {
-  if (pings.length > MAX_AGENT_PINGS_PER_REPORT) return `too many pings; max ${MAX_AGENT_PINGS_PER_REPORT}`;
-  const hours = new Set();
-  const validatePoint = (point, kind) => {
+// Out-of-window points are dropped instead of rejecting the whole batch:
+// fresh installs on boxes with stale clocks or migrated offline queues used
+// to poison every report with one old timestamp (permanent HTTP 400 loop).
+function filterTelemetryBatch(samples, pings, now) {
+  if (pings.length > MAX_AGENT_PINGS_PER_REPORT) return { error: `too many pings; max ${MAX_AGENT_PINGS_PER_REPORT}` };
+  const candidates = [];
+  const keptSamples = [];
+  const keptPings = [];
+  let dropped = 0;
+  const keep = (point, sink) => {
     const ts = Math.floor(Number(point?.ts || 0));
-    if (!Number.isFinite(ts) || ts <= 0) return `${kind} has an invalid timestamp`;
-    if (ts < now - MAX_TELEMETRY_AGE_SEC) return `${kind} timestamp is too old`;
-    if (ts > now + MAX_TELEMETRY_FUTURE_SEC) return `${kind} timestamp is in the future`;
-    hours.add(hourStartSec(ts));
-    return '';
+    if (!Number.isFinite(ts) || ts <= 0) { dropped += 1; return; }
+    if (ts < now - MAX_TELEMETRY_AGE_SEC) { dropped += 1; return; }
+    if (ts > now + MAX_TELEMETRY_FUTURE_SEC) { dropped += 1; return; }
+    candidates.push({ point, ts, sink });
   };
-  for (const point of samples) {
-    const error = validatePoint(point, 'sample');
-    if (error) return error;
+  for (const point of samples) keep(point, keptSamples);
+  for (const point of pings) keep(point, keptPings);
+  // When a backlog replay spans more hourly buckets than a report may cover,
+  // keep only the newest buckets instead of rejecting the batch: a 400 here
+  // would make the Agent retry the same payload forever and its queue would
+  // never drain.
+  let allowedBuckets = null;
+  const bucketOf = (ts) => hourStartSec(ts);
+  const allBuckets = new Set(candidates.map(candidate => bucketOf(candidate.ts)));
+  if (allBuckets.size > MAX_TELEMETRY_HOURS_PER_REPORT) {
+    allowedBuckets = new Set([...allBuckets].sort((a, b) => b - a).slice(0, MAX_TELEMETRY_HOURS_PER_REPORT));
   }
-  for (const point of pings) {
-    const error = validatePoint(point, 'ping');
-    if (error) return error;
+  for (const candidate of candidates) {
+    if (allowedBuckets && !allowedBuckets.has(bucketOf(candidate.ts))) { dropped += 1; continue; }
+    candidate.sink.push(candidate.point);
   }
-  if (hours.size > MAX_TELEMETRY_HOURS_PER_REPORT) {
-    return `telemetry spans too many hourly buckets; max ${MAX_TELEMETRY_HOURS_PER_REPORT}`;
-  }
-  return '';
+  return { samples: keptSamples, pings: keptPings, dropped };
 }
+
+// 1 PB sanity cap for cumulative interface counters reported by Agents.
+const MAX_TRAFFIC_COUNTER_BYTES = 1e15;
 
 async function agentTrafficSettings(env, agentId, ts = nowSec()) {
   let row = null;
@@ -586,7 +635,10 @@ export async function persistAgentTraffic(env, agentId, metrics, ts) {
   if (!settings.enabled || !env.DB || !agentId) return;
   const rxRaw = Number(metrics?.net?.rx_bytes);
   const txRaw = Number(metrics?.net?.tx_bytes);
+  // Untrusted cumulative counters: an absurd value must never enter the
+  // traffic ledger and poison quota percentages and alerts.
   if (!Number.isFinite(rxRaw) || !Number.isFinite(txRaw) || rxRaw < 0 || txRaw < 0) return;
+  if (rxRaw > MAX_TRAFFIC_COUNTER_BYTES || txRaw > MAX_TRAFFIC_COUNTER_BYTES) return;
   const month = settings.month;
   const row = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? AND month = ?`)
     .bind(agentId, month).first();
@@ -791,7 +843,7 @@ export async function deleteAgentTelemetry(env, agentId) {
   const id = sanitizeAgentId(agentId);
   if (!id) return { d1: 0, r2: 0 };
   let d1 = 0;
-  for (const table of ['agent_metrics_state', 'agent_metrics_history', 'agent_traffic_monthly', 'agent_traffic_daily', 'ping_history']) {
+  for (const table of ['agent_metrics_state', 'agent_metrics_history', 'agent_daily_availability', 'agent_traffic_monthly', 'agent_traffic_daily', 'ping_history']) {
     const result = await env.DB.prepare(`DELETE FROM ${table} WHERE agent_id = ?`).bind(id).run().catch(() => null);
     d1 += Number(result?.meta?.changes || 0);
   }
@@ -931,12 +983,12 @@ async function mapWithConcurrency(items, limit, fn) {
   return out;
 }
 
-const METRIC_FIELDS = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write', 'cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp'];
+const METRIC_FIELDS = ['cpu', 'mem', 'disk', 'load1', 'load5', 'load15', 'process_count', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write', 'cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp'];
 const METRIC_FIELD_GROUPS = {
   cpu: ['cpu'],
   mem: ['mem'],
   disk: ['disk'],
-  load: ['load1'],
+  load: ['load1', 'load5', 'load15'],
   net: ['net_rx', 'net_tx'],
   conns: ['tcp_conns', 'udp_conns'],
   diskio: ['disk_read', 'disk_write'],
@@ -1031,7 +1083,7 @@ export function compactMetricPoints(points, maxPoints = 900) {
 }
 
 function averageMetricChunk(chunk) {
-  const keys = ['cpu', 'mem', 'disk', 'load1', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write', 'cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp'];
+  const keys = ['cpu', 'mem', 'disk', 'load1', 'load5', 'load15', 'process_count', 'net_rx', 'net_tx', 'tcp_conns', 'udp_conns', 'disk_read', 'disk_write', 'cpu_temp', 'gpu_temp', 'gpu_util', 'motherboard_temp', 'disk_temp', 'chipset_temp'];
   const out = { ts: Math.round(avgNumber(chunk, 'ts')) };
   for (const key of keys) {
     const avg = avgNumberOptional(chunk, key);
@@ -1113,6 +1165,9 @@ function normalizeMetricPoint(point) {
     mem: boundedMetric(point?.mem, 0, 100),
     disk: boundedMetric(point?.disk, 0, 100),
     load1: boundedMetric(point?.load1 ?? point?.load, 0, 1_000_000),
+    load5: boundedMetric(point?.load5, 0, 1_000_000),
+    load15: boundedMetric(point?.load15, 0, 1_000_000),
+    process_count: Math.floor(boundedMetric(point?.process_count, 0, MAX_METRIC_COUNT)),
     net_rx: boundedMetric(point?.net_rx, 0, MAX_METRIC_RATE),
     net_tx: boundedMetric(point?.net_tx, 0, MAX_METRIC_RATE),
     tcp_conns: Math.floor(boundedMetric(point?.tcp_conns, 0, MAX_METRIC_COUNT)),
@@ -1375,16 +1430,21 @@ function normalizeOkInt(value) {
 async function persistAgentMetrics(env, data, options = {}) {
   const { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts } = data;
   const rawPings = mapPings(pings, ts);
-  const d1PreviousState = await env.DB.prepare(`SELECT s.*,
-    COALESCE((SELECT no_public_ip FROM targets WHERE id = ?), 0) AS no_public_ip
-    FROM agent_metrics_state s WHERE s.agent_id = ?`)
-    .bind(agentId, agentId).first().catch(() => null);
+  // WSS messages run inside the shared telemetry DO: keep the message path
+  // free of D1 reads and R2 writes (buffered via the alarm drain instead).
+  const wssFast = options.wss === true;
+  const d1PreviousState = wssFast
+    ? null
+    : await env.DB.prepare(`SELECT s.*,
+        COALESCE((SELECT no_public_ip FROM targets WHERE id = ?), 0) AS no_public_ip
+        FROM agent_metrics_state s WHERE s.agent_id = ?`)
+      .bind(agentId, agentId).first().catch(() => null);
   const bufferedPreviousState = options.previousState && typeof options.previousState === 'object' && !Array.isArray(options.previousState)
     ? options.previousState
     : null;
   const previousState = bufferedPreviousState || d1PreviousState;
   const statePings = mergeStatePings(previousState?.pings ?? d1PreviousState?.pings, rawPings, env);
-  if (Number(d1PreviousState?.no_public_ip || 0) === 1) {
+  if (!wssFast && Number(d1PreviousState?.no_public_ip || 0) === 1) {
     await recordAgentAvailability(env, agentId, previousState?.updated_at || d1PreviousState?.updated_at, ts)
       .catch(err => console.error('recordAgentAvailability failed:', String(err?.message || err)));
   }
@@ -1412,9 +1472,7 @@ async function persistAgentMetrics(env, data, options = {}) {
   if (!rawPoints.length) rawPoints.push(toPoint(state));
   const temperatureSensors = normalizeTemperatureSensors(vpsInfo?.temperature_sensors);
   if (temperatureSensors.length) rawPoints[rawPoints.length - 1].temperature_sensors = temperatureSensors;
-  if (env.ARCHIVE) {
-
-
+  if (env.ARCHIVE && !wssFast) {
     await writeAgentTelemetryR2History(env, agentId, rawPoints, rawPings);
   }
 
@@ -1427,6 +1485,9 @@ async function persistAgentMetrics(env, data, options = {}) {
         .bind(agentId, ts, JSON.stringify(allPoints)).run();
     } catch (_) {}
     try { await env.DB.prepare(`DELETE FROM agent_metrics_history WHERE agent_id = ? AND ts < ?`).bind(agentId, ts - retentionSeconds(env, 'AGENT_METRICS_RETENTION_HOURS', 6, 1, 72)).run(); } catch (_) {}
+  }
+  if (wssFast) {
+    return { latest_state: latestState, mapped_points: rawPoints, mapped_pings: rawPings };
   }
   return latestState;
 }

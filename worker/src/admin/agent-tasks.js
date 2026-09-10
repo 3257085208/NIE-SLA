@@ -10,6 +10,7 @@ export const AGENT_TASK_ACTIONS = Object.freeze({
 
   nodequality: { timeout_sec: 3600, label: 'NodeQuality' },
   ip_unlock: { timeout_sec: 600, label: 'IP 解锁' },
+  backroute: { timeout_sec: 600, label: '回程检测' },
 });
 const NQ_TASK_EXPIRES_SEC = 7 * 24 * 60 * 60;
 const CANCEL_GRACE_SEC = 5 * 60;
@@ -119,7 +120,7 @@ export async function createAgentTasks(env, agentIdsValue, action, options = nul
 async function createAgentTaskForAgent(env, agentId, action, options = null) {
   const nqOptions = action === 'nodequality' ? normalizeNqOptions(options) : null;
   const policy = AGENT_TASK_ACTIONS[action];
-  if (!policy) throw new ApiError(400, '只允许 NodeQuality 或 IP 解锁任务');
+  if (!policy) throw new ApiError(400, '只允许 NodeQuality、IP 解锁或回程检测任务');
 
 
   const { target, canonical } = await resolveAgentTarget(env, agentId);
@@ -140,7 +141,7 @@ async function createAgentTaskForAgent(env, agentId, action, options = null) {
   if (!capabilities?.actions?.includes(action)) {
     throw new ApiError(409, action === 'nodequality'
       ? '该 VPS 尚未启用 root Manager，请等待自动迁移或查看 Agent 状态'
-      : '该 Agent 版本尚不支持此任务，请等待自动更新');
+      : `该 Agent 版本尚不支持“${policy.label}”任务，请等待自动更新`);
   }
   const taskIds = await agentTaskIds(env, agentId);
   const active = await env.DB.prepare(`SELECT id, action, status FROM agent_tasks WHERE agent_id IN (${inClause(taskIds)}) AND status IN ('queued', 'running') LIMIT 1`)
@@ -234,18 +235,39 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
   const body = await safeJson(request, MAX_RESULT_BYTES);
   const reportedSucceeded = body?.status === 'succeeded';
   if (!reportedSucceeded && body?.status !== 'failed') throw new ApiError(400, '任务状态只能是 succeeded 或 failed');
-  const cancelRequested = Number(row.cancel_requested_at || 0) > 0;
-  const succeeded = !cancelRequested && reportedSucceeded;
-  const result = succeeded ? normalizeTaskResult(row.action, body?.result) : null;
+  const cancelRequestedAt = Number(row.cancel_requested_at || 0);
+  const cancelRequested = cancelRequestedAt > 0;
+  let succeeded = !cancelRequested && reportedSucceeded;
+  // Result validation and report parsing must degrade the task to `failed`
+  // instead of throwing: an escape here would leave the task running forever,
+  // silently blocking every future task for this Agent until it expires.
+  let result = null;
+  let parseError = null;
+  if (succeeded) {
+    try {
+      result = normalizeTaskResult(row.action, body?.result);
+    } catch (parseErr) {
+      succeeded = false;
+      parseError = `结果校验失败: ${String(parseErr?.message || parseErr).slice(0, 400)}`;
+    }
+  }
   const error = String(body?.error || '').trim().slice(0, 2000) || null;
   const excerpt = String(body?.output_excerpt || '').slice(0, MAX_EXCERPT_CHARS) || null;
   const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
   const finishedAt = nowSec();
+  // Only a present-but-unparseable report body degrades the task to failed
+  // (a missing report body is a legal success with just the report URL).
+  let normalizedNq = null;
+  if (succeeded && row.action === 'nodequality' && result?.report) {
+    try {
+      normalizedNq = normalizeAgentNodeQualityReport(result, finishedAt);
+    } catch (reportError) {
+      succeeded = false;
+      parseError = parseError || `报告解析失败: ${String(reportError?.message || reportError).slice(0, 400)}`;
+    }
+  }
   const finalStatus = cancelRequested ? 'cancelled' : (succeeded ? 'succeeded' : 'failed');
-  const finalError = cancelRequested ? '任务已被管理员强制停止' : error;
-  let normalizedNq = succeeded && row.action === 'nodequality' && result?.report
-    ? normalizeAgentNodeQualityReport(result, finishedAt)
-    : null;
+  const finalError = cancelRequested ? '任务已被管理员强制停止' : (error || parseError);
   let imageUpload = null;
   if (normalizedNq) {
     try {
@@ -271,9 +293,17 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
         image_upload: imageUpload,
       }
     : result;
-  await env.DB.prepare(`UPDATE agent_tasks SET status = ?, finished_at = ?, result = ?, error = ?, output_excerpt = ?, agent_version = ?
-    WHERE id = ? AND agent_id = ? AND status = 'running'`)
-    .bind(finalStatus, finishedAt, storedResult ? JSON.stringify(storedResult) : null, finalError, excerpt, agentVersion, taskId, row.agent_id).run();
+  const update = await env.DB.prepare(`UPDATE agent_tasks SET status = ?, finished_at = ?, result = ?, error = ?, output_excerpt = ?, agent_version = ?
+    WHERE id = ? AND agent_id = ? AND status = 'running' AND COALESCE(cancel_requested_at, 0) = ?`)
+    .bind(finalStatus, finishedAt, storedResult ? JSON.stringify(storedResult) : null, finalError, excerpt, agentVersion, taskId, row.agent_id, cancelRequestedAt).run();
+  if (Number(update?.meta?.changes || 0) < 1) {
+    const current = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).bind(taskId).first();
+    if (!current || sanitizeAgentId(current.agent_id) !== agentId) throw new ApiError(404, '任务不存在');
+    // An administrator may have requested cancellation after the initial
+    // SELECT.  Returning the current row avoids applying a stale result to
+    // the target (NQ/backroute/unlock) after that cancellation wins the CAS.
+    return { ok: true, task: taskForAdmin(current) };
+  }
 
   if (succeeded && row.action === 'nodequality' && result?.report_url) {
     const nqUnlock = normalizedNq?.report ? nodeQualityUnlockData({ nq_report: normalizedNq.report, nq_updated_at: finishedAt }) : null;
@@ -283,6 +313,23 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
     } else {
       await env.DB.prepare(`UPDATE targets SET nq_url = ?, nq_report = COALESCE(?, nq_report), nq_updated_at = ?, updated_at = ? WHERE id = ?`)
         .bind(result.report_url, null, finishedAt, finishedAt, row.agent_id).run();
+    }
+  }
+  if (succeeded && row.action === 'backroute') {
+    // Keep only the compact per-direction records in targets. The complete
+    // report remains in the task result for the detail view.
+    const summary = (result.routes || [])
+      .filter((entry) => entry && entry.carrier && entry.target && entry.line)
+      .map((entry) => ({
+        carrier: entry.carrier,
+        target: entry.target,
+        line: entry.line,
+        ...(entry.confidence ? { confidence: entry.confidence } : {}),
+        ...(entry.asns?.length ? { asns: entry.asns } : {}),
+      }));
+    if (summary.length) {
+      await env.DB.prepare(`UPDATE targets SET backroute_data = ?, backroute_updated_at = ?, updated_at = ? WHERE id = ?`)
+        .bind(JSON.stringify(summary), finishedAt, finishedAt, row.agent_id).run();
     }
   }
   if (succeeded && row.action === 'ip_unlock' && Array.isArray(result?.services)) {
@@ -369,6 +416,16 @@ export function normalizeTaskResult(action, value) {
       : null;
     return { report_url: normalizedUrl, report };
   }
+  if (action === 'backroute') {
+    const routes = Array.isArray(result.routes)
+      ? result.routes.slice(0, 8).map(normalizeBackrouteRoute).filter(Boolean)
+      : [];
+    const report = typeof result.report === 'string' && result.report.trim()
+      ? sanitizeAnsiContent(result.report).slice(0, MAX_IP_UNLOCK_REPORT_CHARS)
+      : '';
+    if (!routes.length && !report) throw new ApiError(400, '回程检测结果为空');
+    return { routes, ...(report ? { report } : {}) };
+  }
   if (action === 'ip_unlock') {
     const services = Array.isArray(result.services) ? result.services.slice(0, 20).map(normalizeUnlockService).filter(Boolean) : [];
     if (!services.length) throw new ApiError(400, 'IP 解锁结果中没有可识别的 IPv4 解锁数据');
@@ -379,6 +436,80 @@ export function normalizeTaskResult(action, value) {
     return { services, ...(report ? { report } : {}) };
   }
   throw new ApiError(400, '未知任务类型');
+}
+
+const BACKROUTE_CARRIERS = new Set(['电信', '联通', '移动']);
+const BACKROUTE_LINE_NAMES = new Map([
+  ['163', '163'],
+  ['9929', '9929'],
+  ['10099', '10099'],
+  ['4837', '4837'],
+  ['cmi', 'CMI'],
+  ['cmin2', 'CMIN2'],
+  ['cmnet', 'CMNET'],
+  ['cn2', 'CN2'],
+  ['cn2 gt', 'CN2 GT'],
+  ['cn2 gia', 'CN2 GIA'],
+]);
+
+function normalizeBackrouteLine(value, carrier = '') {
+  const raw = String(value || '').trim().replace(/^线路\s*[:：]?\s*/u, '').replace(/^经由\s*[:：]?\s*/u, '').replace(/\s+/g, ' ').slice(0, 60);
+  const key = raw.toLowerCase();
+  if (!raw || raw === carrier || ['电信', '联通', '移动', '其他', '未知', '未识别', 'unknown', 'unidentified'].includes(key)) return '未识别';
+  return BACKROUTE_LINE_NAMES.get(key) || raw;
+}
+
+function normalizeBackrouteAsns(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => {
+    const match = String(item || '').match(/^(?:as)?(\d{1,10})$/i);
+    return match ? Number(match[1]) : 0;
+  }).filter((asn) => Number.isSafeInteger(asn) && asn > 0 && asn <= 4294967295))].slice(0, 16);
+}
+
+function lineFromBackrouteAsns(asns) {
+  const priority = [
+    [58807, 'CMIN2'], [58453, 'CMI'], [9929, '9929'], [10099, '10099'],
+    [4837, '4837'], [4809, 'CN2'], [4134, '163'], [9808, 'CMNET'],
+  ];
+  for (const [asn, line] of priority) if (asns.includes(asn)) return line;
+  return '';
+}
+
+function normalizeBackrouteRoute(value) {
+  if (typeof value === 'string') {
+    const text = value.trim().slice(0, MAX_IP_UNLOCK_REPORT_CHARS);
+    const match = text.match(/^(电信|联通|移动)\(([^)]+)\):\s*(?:经由|线路)\s*([^|\n]+)/u);
+    if (!match) return text ? { raw: text } : null;
+    return {
+      carrier: match[1],
+      target: match[2].trim().slice(0, 64),
+      line: normalizeBackrouteLine(match[3], match[1]),
+    };
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const carrier = String(value.carrier || '').trim().slice(0, 12);
+  if (!BACKROUTE_CARRIERS.has(carrier)) return null;
+  const target = String(value.target || '').trim().slice(0, 64);
+  const asns = normalizeBackrouteAsns(value.asns);
+  const line = normalizeBackrouteLine(value.line || lineFromBackrouteAsns(asns), carrier);
+  const confidence = ['high', 'medium', 'low'].includes(String(value.confidence || '').trim())
+    ? String(value.confidence).trim()
+    : null;
+  const hops = Array.isArray(value.hops)
+    ? value.hops.map((item) => String(item || '').trim().slice(0, 240)).filter(Boolean).slice(0, 24)
+    : [];
+  const raw = value.raw ? String(value.raw).trim().slice(0, 240) : '';
+  if (!target && !raw) return null;
+  return {
+    carrier,
+    target,
+    line,
+    ...(confidence ? { confidence } : {}),
+    ...(asns.length ? { asns } : {}),
+    ...(hops.length ? { hops } : {}),
+    ...(raw ? { raw } : {}),
+  };
 }
 
 function normalizeAgentNodeQualityReport(result, finishedAt) {

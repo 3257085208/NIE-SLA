@@ -199,6 +199,9 @@ function decodeSample(reader) {
     else if (field === 10) value.disk_read = reader.fixed64();
     else if (field === 11) value.disk_write = reader.fixed64();
     else if (field >= 12 && field <= 17) value[optional[field - 12]] = reader.fixed64();
+    else if (field === 18) value.process_count = reader.varint();
+    else if (field === 19) value.load5 = reader.fixed64();
+    else if (field === 20) value.load15 = reader.fixed64();
     else reader.skip(wire);
   }
   return value;
@@ -229,7 +232,23 @@ function decodeVpsInfo(reader) {
     else if (field === 20) {
       const sensor = decodeSensor(reader.message());
       (value.temperature_sensors ||= []).push(sensor);
+    } else if (field === 21) {
+      const entry = decodeDiskEntry(reader.message());
+      (value.disk_list ||= []).push(entry);
     } else reader.skip(wire);
+  }
+  return value;
+}
+
+function decodeDiskEntry(reader) {
+  const value = { device: '', mount: '', total_gb: 0, used_gb: 0 };
+  while (!reader.done()) {
+    const [field, wire] = reader.key();
+    if (field === 1) value.device = reader.string();
+    else if (field === 2) value.mount = reader.string();
+    else if (field === 3) value.total_gb = reader.fixed64();
+    else if (field === 4) value.used_gb = reader.fixed64();
+    else reader.skip(wire);
   }
   return value;
 }

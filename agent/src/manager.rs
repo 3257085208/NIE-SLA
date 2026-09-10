@@ -12,6 +12,7 @@ const HEARTBEAT_MAX_AGE_SEC: u64 = 180;
 const HEARTBEAT_INTERVAL_SEC: u64 = 15;
 const TASK_POLL_SEC: u64 = crate::tasks::TASK_POLL_SEC;
 const SERVICE_RECONCILE_SEC: u64 = 3600;
+const TELEMETRY_HEALTH_INTERVAL_SEC: u64 = 60;
 const AGENT_BINARY: &str = "/opt/nie-sla-agent/nie-sla-agent";
 const CFTZ_BINARY: &str = "/usr/local/bin/cftz";
 const ENV_FILE: &str = "/opt/nie-sla-agent/nie-sla-agent.env";
@@ -102,6 +103,7 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
     let updates = spawn_manager_update_worker(cfg.clone(), http.clone());
     let mut last_task_poll = Instant::now() - Duration::from_secs(TASK_POLL_SEC);
     let mut last_reconcile = Instant::now();
+    let mut last_telemetry_check = Instant::now();
 
     loop {
         while let Ok(check) = updates.try_recv() {
@@ -159,6 +161,19 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
                 );
             }
             last_reconcile = Instant::now();
+        }
+        // Keep telemetry alive: a crashed or stopped reporting service used to
+        // look exactly like "Agent offline" while the manager kept updating and
+        // running tasks. Check often and restart so the node reports again.
+        if last_telemetry_check.elapsed() >= Duration::from_secs(TELEMETRY_HEALTH_INTERVAL_SEC) {
+            if let Err(error) = ensure_telemetry_running() {
+                eprintln!(
+                    "{{\"ok\":false,\"manager_telemetry_check_error\":{}}}",
+                    serde_json::to_string(&error.to_string())
+                        .unwrap_or_else(|_| "\"telemetry check failed\"".into())
+                );
+            }
+            last_telemetry_check = Instant::now();
         }
         thread::sleep(Duration::from_secs(HEARTBEAT_INTERVAL_SEC));
     }
@@ -405,7 +420,7 @@ fn write_heartbeat(cfg: &Config, update_state: &str) -> Result<()> {
         "mode": "manager",
         "manager_version": format!("v{}", AGENT_VERSION),
         "privileged": true,
-        "actions": ["nodequality", "ip_unlock"],
+        "actions": ["nodequality", "ip_unlock", "backroute"],
         "service_schema": 1,
         "update_state": update_state,
         "updated_at": now_sec(),
@@ -438,10 +453,12 @@ fn read_fresh_heartbeat(path: &Path) -> Option<Value> {
         return None;
     }
     let actions = value.get("actions")?.as_array()?;
-    if actions
-        .iter()
-        .any(|action| !matches!(action.as_str(), Some("nodequality") | Some("ip_unlock")))
-    {
+    if actions.iter().any(|action| {
+        !matches!(
+            action.as_str(),
+            Some("nodequality") | Some("ip_unlock") | Some("backroute")
+        )
+    }) {
         return None;
     }
     Some(value)
@@ -606,6 +623,40 @@ fn restart_telemetry_service() -> Result<()> {
     }
 }
 
+fn ensure_telemetry_running() -> Result<()> {
+    if !cfg!(target_os = "linux") || !is_root() {
+        return Ok(());
+    }
+    if Path::new("/run/systemd/system").is_dir() && command_exists("systemctl") {
+        let active = Command::new("systemctl")
+            .args(["is-active", "--quiet", TELEMETRY_SERVICE])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if !active {
+            run_checked(Command::new("systemctl").args(["restart", TELEMETRY_SERVICE]))?;
+            println!("{{\"ok\":true,\"manager_telemetry_restart\":\"systemd\"}}");
+        }
+        return Ok(());
+    }
+    if command_exists("rc-service") {
+        let active = Command::new("rc-service")
+            .args([TELEMETRY_SERVICE, "status"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if !active {
+            run_checked(Command::new("rc-service").args([TELEMETRY_SERVICE, "start"]))?;
+            println!("{{\"ok\":true,\"manager_telemetry_restart\":\"openrc\"}}");
+        }
+    }
+    Ok(())
+}
+
 fn command_exists(name: &str) -> bool {
     Command::new(name)
         .arg("--help")
@@ -763,7 +814,7 @@ mod tests {
                 "protocol": 1,
                 "mode": "manager",
                 "privileged": true,
-                "actions": ["nodequality", "ip_unlock"],
+                "actions": ["nodequality", "ip_unlock", "backroute"],
                 "updated_at": now_sec()
             })
             .to_string(),
@@ -844,20 +895,33 @@ mod tests {
         let path = std::env::temp_dir().join(format!(
             "nie-sla-instance-lock-{}-{}",
             std::process::id(),
-            now_sec()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
         ));
         let first = acquire_instance_lock(&path, "test")
             .unwrap()
             .expect("first lock");
         let second = acquire_instance_lock(&path, "test").unwrap();
-        assert!(second.is_none());
-        // BSD flock ownership is process-scoped. Explicitly release the failed
-        // second acquisition before proving that the next acquisition works.
-        drop(second);
-        drop(first);
-        let third = acquire_instance_lock(&path, "test").unwrap();
-        assert!(third.is_some());
-        let _ = fs::remove_file(path);
+        // The mutual-exclusion assertion is Linux-only. BSD flock behavior for
+        // repeated opens from one process varies across macOS versions. Keep
+        // the release/reacquisition assertion Linux-only as well; on macOS a
+        // second open can share the BSD lock state and make the third open
+        // result implementation-dependent.
+        #[cfg(target_os = "linux")]
+        {
+            assert!(second.is_none());
+            drop(first);
+            let third = acquire_instance_lock(&path, "test").unwrap();
+            assert!(third.is_some(), "next acquisition works after release");
+            drop(third);
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            drop(second);
+            drop(first);
+        }
     }
 
     #[test]

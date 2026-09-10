@@ -90,7 +90,7 @@ function injectThemeConfig(theme) {
 }
 
 function cssEscape(value) {
-  return String(value).replace(/;/g, '').replace(/\n/g, ' ').slice(0, 600);
+  return String(value).replace(/[;}]/g, '').replace(/\n/g, ' ').slice(0, 600);
 }
 
 window.addEventListener('message', event => {

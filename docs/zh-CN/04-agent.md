@@ -30,7 +30,7 @@ systemd 或 OpenRC 服务 nie-sla-agent / nie-sla-agent-manager
 
 ## Beta 动作
 
-Agent 轮询 `/api/agent/tasks` 领取任务。只支持 NodeQuality 与 IPv4 解锁两个编译进二进制的动作，由 root Manager 执行，遥测服务保持低权限。任务接口只返回动作枚举，不返回脚本文本、参数或任意 stdin。
+Agent 轮询 `/api/agent/tasks` 领取任务。支持 NodeQuality、IPv4 解锁、三网回程检测三个编译进二进制的动作，由 root Manager 执行，遥测服务保持低权限。任务接口只返回动作枚举，不返回脚本文本、参数或任意 stdin。
 
 ## 排障
 

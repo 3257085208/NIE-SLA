@@ -26,6 +26,7 @@ await buffer.append({
   target_id: 'vps-a',
   writes: [{ day: previousDay, point: { checked_at: now - 86400 + 60, ok: 0, error: '连接失败', total: 1, ok_count: 0 } }],
 });
+await buffer.alarm();
 assert.equal(archive.puts, 1, 'completed days must use one R2 object');
 assert.equal((await storage.list({ prefix: 'day:' })).size, 1, 'only the current day remains hot');
 
@@ -40,11 +41,22 @@ const corruptStorage = memoryStorage();
 const corruptArchive = memoryR2();
 corruptArchive.objects.set(`probe-history-test/vps-corrupt/${previousDay}.json`, '{bad-json');
 const corruptBuffer = new ProbeHistoryBuffer({ storage: corruptStorage }, { ...env, ARCHIVE: corruptArchive });
-await assert.rejects(() => corruptBuffer.append({
+await corruptBuffer.append({
   target_id: 'vps-corrupt',
   writes: [{ day: previousDay, point: { checked_at: now - 86400 + 120, ok: 1, latency_ms: 10 } }],
-}), /R2 probe history read failed/);
+});
+// A corrupt archive object must not break the alarm chain: the alarm resolves
+// without throwing, the corrupt history is never overwritten, and the failing
+// day is retried a bounded number of times before being dropped.
+await corruptBuffer.alarm();
 assert.equal(corruptArchive.puts, 0, 'corrupt history must not be overwritten');
+await corruptBuffer.alarm();
+await corruptBuffer.alarm();
+assert.equal(corruptArchive.puts, 0, 'corrupt history must never be overwritten by retries');
+await corruptBuffer.alarm();
+assert.equal(corruptBuffer.memDays.size, 0, 'a permanently failing day must be dropped after the retry limit');
+const recovered = await corruptBuffer.read({ fromDay: previousDay, toDay: previousDay, since: now - 2 * 86400, until: now });
+assert.equal(recovered.points.length, 0, 'the dropped day must not surface corrupt points');
 
 console.log('probe history buffer tests passed');
 

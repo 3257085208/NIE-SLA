@@ -30,6 +30,29 @@ assert.deepEqual(
   },
 );
 
+assert.deepEqual(
+  normalizeAgentCapabilities({
+    protocol: 1,
+    mode: 'manager',
+    privileged: true,
+    manager_version: 'v1.1.26',
+    service_schema: 4,
+    update_state: 'current',
+    actions: ['nodequality', 'ip_unlock', 'backroute', 'shell'],
+  }, 456),
+  {
+    protocol: 1,
+    mode: 'manager',
+    manager_version: 'v1.1.26',
+    privileged: true,
+    actions: ['nodequality', 'ip_unlock', 'backroute'],
+    service_schema: 4,
+    update_state: 'current',
+    observed_at: 456,
+  },
+  'manager heartbeat normalization must preserve the backroute capability',
+);
+
 const sqlite = new DatabaseSync(':memory:');
 sqlite.exec(`CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`);
 sqlite.exec(`CREATE TABLE agent_metrics_state (
@@ -97,7 +120,7 @@ const managerCapabilities = JSON.stringify({
   protocol: 1,
   mode: 'manager',
   privileged: true,
-  actions: ['nodequality', 'ip_unlock'],
+  actions: ['nodequality', 'ip_unlock', 'backroute'],
 });
 sqlite.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at, capabilities) VALUES (?, ?, ?)`)
   .run('vps-a', new Date().toISOString(), managerCapabilities);
@@ -141,6 +164,44 @@ const batchClaim = await claimAgentTask(env, 'vps-a');
 await completeAgentTask(jsonRequest({ status: 'failed', error: 'batch cleanup' }), env, batchClaim.task.id, 'vps-a');
 const batchClaimB = await claimAgentTask(env, 'vps-b');
 await completeAgentTask(jsonRequest({ status: 'failed', error: 'batch cleanup' }), env, batchClaimB.task.id, 'vps-b');
+
+const backrouteTask = await createAgentTask(jsonRequest({ agent_id: 'vps-b', action: 'backroute' }), env);
+assert.equal(backrouteTask.task.action, 'backroute');
+assert.equal(backrouteTask.task.action_label, '回程检测');
+const backrouteClaim = await claimAgentTask(env, 'vps-b');
+assert.equal(backrouteClaim.task.action, 'backroute');
+assert.equal(backrouteClaim.task.timeout_sec, 600);
+const backrouteCompleted = await completeAgentTask(jsonRequest({
+  status: 'succeeded',
+  result: { routes: ['电信(203.0.113.8): 经由 CN2 | 线路识别'] },
+}), env, backrouteClaim.task.id, 'vps-b');
+assert.equal(backrouteCompleted.task.status, 'succeeded');
+assert.deepEqual(JSON.parse(sqlite.prepare(`SELECT backroute_data FROM targets WHERE id = ?`).get('vps-b').backroute_data), [
+  { carrier: '电信', target: '203.0.113.8', line: 'CN2' },
+]);
+
+const structuredBackrouteTask = await createAgentTask(jsonRequest({ agent_id: 'vps-b', action: 'backroute' }), env);
+assert.equal(structuredBackrouteTask.task.action, 'backroute');
+const structuredBackrouteClaim = await claimAgentTask(env, 'vps-b');
+await completeAgentTask(jsonRequest({
+  status: 'succeeded',
+  result: {
+    routes: [
+      { carrier: '电信', target: '219.141.136.12', line: '163', confidence: 'high', asns: [4134] },
+      { carrier: '联通', target: '202.106.50.1', line: '9929', confidence: 'high', asns: [9929] },
+      { carrier: '移动', target: '221.130.33.52', line: 'CMI', confidence: 'high', asns: [58453] },
+    ],
+    report: '电信(219.141.136.12): 线路 163\n联通(202.106.50.1): 线路 9929\n移动(221.130.33.52): 线路 CMI',
+  },
+}), env, structuredBackrouteClaim.task.id, 'vps-b');
+assert.deepEqual(JSON.parse(sqlite.prepare(`SELECT backroute_data FROM targets WHERE id = ?`).get('vps-b').backroute_data), [
+  { carrier: '电信', target: '219.141.136.12', line: '163', confidence: 'high', asns: [4134] },
+  { carrier: '联通', target: '202.106.50.1', line: '9929', confidence: 'high', asns: [9929] },
+  { carrier: '移动', target: '221.130.33.52', line: 'CMI', confidence: 'high', asns: [58453] },
+]);
+assert.equal(normalizeTaskResult('backroute', {
+  routes: [{ carrier: '电信', target: '203.0.113.8', line: '电信' }],
+}).routes[0].line, '未识别', 'a carrier name must never be stored as a line name');
 
 const rawId = 'bitsflowcloud-lax-9929&cmin2';
 const canonicalRawId = 'bitsflowcloud-lax-9929-cmin2';
@@ -346,6 +407,47 @@ const staleRow = staleList.tasks.find((task) => task.id === staleClaim.task.id);
 assert.equal(staleRow.status, 'cancelled');
 assert.equal(staleRow.error, '任务已被管理员强制停止');
 
+sqlite.prepare(`UPDATE targets SET backroute_data = NULL, backroute_updated_at = NULL WHERE id = ?`).run('vps-a');
+const raceTask = await createAgentTask(jsonRequest({ agent_id: 'vps-a', action: 'backroute' }), env);
+const raceClaim = await claimAgentTask(env, 'vps-a');
+assert.equal(raceClaim.task.id, raceTask.task.id);
+let raceInjected = false;
+const raceEnv = {
+  ...env,
+  DB: {
+    prepare(sql) {
+      let statement = env.DB.prepare(sql);
+      return {
+        bind(...params) {
+          statement = statement.bind(...params);
+          return this;
+        },
+        async run() {
+          if (!raceInjected && sql.includes('UPDATE agent_tasks SET status')) {
+            raceInjected = true;
+            const cancelAt = Math.floor(Date.now() / 1000);
+            sqlite.prepare(`UPDATE agent_tasks SET cancel_requested_at = ?, expires_at = MIN(expires_at, ?) WHERE id = ? AND status = 'running'`)
+              .run(cancelAt, cancelAt + 300, raceTask.task.id);
+          }
+          return statement.run();
+        },
+        async all() { return statement.all(); },
+        async first() { return statement.first(); },
+      };
+    },
+    async batch(statements) { return env.DB.batch(statements); },
+  },
+};
+const raceCompleted = await completeAgentTask(jsonRequest({
+  status: 'succeeded',
+  result: { routes: ['电信(203.0.113.8): 经由 CN2 | 线路识别'] },
+}), raceEnv, raceTask.task.id, 'vps-a');
+assert.equal(raceInjected, true);
+assert.equal(raceCompleted.task.status, 'running', 'a cancellation racing with completion must win the task CAS');
+assert.ok(Number(raceCompleted.task.cancel_requested_at) > 0);
+assert.equal(sqlite.prepare(`SELECT backroute_data FROM targets WHERE id = ?`).get('vps-a').backroute_data, null, 'stale completion must not update target backroute data');
+await completeAgentTask(jsonRequest({ status: 'failed', error: 'race cleanup' }), env, raceTask.task.id, 'vps-a');
+
 assert.equal((await getGeoIpSettings(env)).provider, 'ip_sb');
 await updateGeoIpSettings(jsonRequest({ provider: 'ipip_net' }), env);
 assert.equal((await getGeoIpSettings(env)).provider, 'ipip_net');
@@ -386,11 +488,15 @@ sqlite.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?), 
     'nq_image_host_settings', JSON.stringify({ endpoint: 'https://private-image-host.example/upload', upload_channel: 'cfr2', folder: 'legacy/path' }), now,
     'nq_image_host_token', 'enc:v1:private-token-ciphertext', now,
   );
+sqlite.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)`)
+  .run('cf_usage_api_token', 'cf-usage-secret-token', now);
 const portable = await exportBackup(new Request('https://example.test/api/backup/export'), env);
 assert.equal(portable.backup.portable.targets.length, 4);
 assert.equal('sensitive' in portable.backup, false);
 assert.equal(JSON.stringify(portable.backup).includes('private-image-host.example'), false);
+assert.equal(JSON.stringify(portable.backup).includes('cf-usage-secret-token'), false);
 assert.equal(portable.backup.portable.app_meta.some((row) => row.key.startsWith('nq_image_host_')), false);
+assert.equal(portable.backup.portable.app_meta.some((row) => row.key === 'cf_usage_api_token'), false);
 portable.backup.portable.targets[0].unknown_future_column = 'ignored';
 await restoreBackup(jsonRequest({ backup: portable.backup, mode: 'merge', confirm: 'RESTORE' }), env);
 const bulkBackup = structuredClone(portable.backup);
@@ -429,7 +535,7 @@ assert.equal(preview.preview.counts.targets, 4);
 assert.equal(preview.preview.sensitive_counts.agent_tokens, 1);
 assert.equal(preview.preview.sensitive_counts.agent_credentials, 0);
 assert.equal(preview.preview.agent_connections_preserved, true);
-assert.equal(preview.preview.sensitive_counts.app_meta, 2);
+assert.equal(preview.preview.sensitive_counts.app_meta, 3);
 await assert.rejects(
   () => previewBackup(jsonRequest({ backup: protectedBackup.backup, password: 'wrong-password' })),
   error => error?.status === 400,

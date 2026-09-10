@@ -12,7 +12,14 @@ export function normalizeLatencySample(sourceId, point, timeoutMs = 1000) {
   const latency = point?.latency_ms == null ? null : Number(point.latency_ms);
   const timeout = Math.max(1, Number(timeoutMs) || 1000);
   const withinBudget = Number.isFinite(latency) && latency >= 0 && latency <= timeout;
-  const ok = Number(point?.ok) === 1 && withinBudget;
+  // The server already applies its own probe budget when it sets ok; only
+  // infer success from the latency budget when the server did not judge.
+  // Re-judging server-approved samples here used to turn slow-but-successful
+  // probes into fake packet loss.
+  const serverJudged = point?.ok !== undefined;
+  const ok = serverJudged
+    ? Number(point.ok) === 1
+    : withinBudget;
   return {
     target_id: targetId,
     ts,

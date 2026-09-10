@@ -40,7 +40,7 @@ print_brand_banner() {
 }
 
 DEFAULT_SHA256SUMS_SHA256=""
-DEFAULT_CFTZ_SHA256="49a0a476bc9260e6e3b5631abf7c5dd537e8cf141657cb93358f68c4fc363256"
+DEFAULT_CFTZ_SHA256="c084ac9c10c492fc45df77df569262cd78ba5742c991e4b1c1607257a2c0addd"
 DEFAULT_EXPECTED_VERSION=""
 BIN_NAME="nie-sla-agent"
 SERVICE_NAME="nie-sla-agent"
@@ -162,6 +162,35 @@ verify_agent_version() {
     exit 1
   fi
   ok "Agent 版本：$actual"
+}
+
+legacy_install_detected() {
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep -q '^nstatus-metrics'; then
+    return 0
+  fi
+  [[ -d "$LEGACY_WORK_DIR" || -d "$LEGACY_STATE_DIR" || -d "$LEGACY_MANAGER_STATE_DIR" ]] && return 0
+  [[ -f "/usr/local/bin/${LEGACY_SERVICE_NAME}" || -f "/etc/init.d/${LEGACY_SERVICE_NAME}" ]] && return 0
+  return 1
+}
+
+purge_legacy_install() {
+  stop_existing_agent
+  case "$INIT" in
+    systemd)
+      rm -f "/etc/systemd/system/${LEGACY_SERVICE_NAME}.service"
+      rm -f "/etc/systemd/system/${LEGACY_TASK_SERVICE_NAME}.service"
+      rm -f "/etc/systemd/system/${LEGACY_SERVICE_NAME}-update.service" "/etc/systemd/system/${LEGACY_SERVICE_NAME}-update.timer"
+      systemctl daemon-reload 2>/dev/null || true
+      ;;
+    openrc)
+      rm -f "/etc/init.d/${LEGACY_SERVICE_NAME}" "/etc/init.d/${LEGACY_TASK_SERVICE_NAME}"
+      rm -f "/etc/periodic/hourly/${LEGACY_SERVICE_NAME}-update" "/etc/cron.hourly/${LEGACY_SERVICE_NAME}-update"
+      ;;
+  esac
+  rm -rf "$LEGACY_WORK_DIR" "$LEGACY_STATE_DIR" "$LEGACY_MANAGER_STATE_DIR"
+  rm -f "/usr/local/bin/${LEGACY_SERVICE_NAME}"
+  userdel "$LEGACY_TASK_USER" 2>/dev/null || deluser "$LEGACY_TASK_USER" 2>/dev/null || true
+  ok "旧版 nstatus-metrics 已删除"
 }
 
 stop_existing_agent() {
@@ -316,6 +345,7 @@ EOF
     warn "systemd user 会话不可用；改为后台启动（重启后需手动拉起或改用完整版安装）"
     set -a; . "$ENV_FILE"; set +a
     ( cd "$STATE_DIR" && nohup "$WORK_DIR/$BIN_NAME" >> "$STATE_DIR/${SERVICE_NAME}.log" 2>&1 & )
+    ROOTLESS_START_MODE="nohup"
   fi
 }
 
@@ -416,6 +446,10 @@ print_systemd_agent_diagnostics() {
 }
 
 verify_rootless_agent_health() {
+  if [[ "${ROOTLESS_START_MODE:-systemd}" == "nohup" ]]; then
+    verify_file_logged_agent_health "${STATE_DIR}/${SERVICE_NAME}.log" 0 "rootless"
+    return
+  fi
   local waited=0 logs=""
   while (( waited < HEALTH_CHECK_TIMEOUT_SEC )); do
     logs="$(journalctl --user -u "$SERVICE_NAME" --since "@${INSTALL_STARTED_AT}" --no-pager -o cat 2>/dev/null || true)"
@@ -571,8 +605,8 @@ do_uninstall() {
     pkill -f "${HOME}/nie-sla-agent/${BIN_NAME}" 2>/dev/null || true
     rm -rf "$HOME/nie-sla-agent" "${XDG_STATE_HOME:-$HOME/.local/state}/nie-sla-agent" "${HOME}/.local/bin/${BIN_NAME}" "${HOME}/.local/bin/cftz"
     ok "已卸载 (rootless)"
-    return 0
     print_brand_banner "Agent 已卸载 · rootless"
+    return 0
   esac
   need_root
   title "卸载 NIE-SLA Agent"
@@ -616,6 +650,7 @@ while [[ $# -gt 0 ]]; do
     --ping-targets) NIE_SLA_PING_TARGETS="$2"; shift 2 ;;
     --ping-sec) NIE_SLA_PING_SEC="$2"; shift 2 ;;
     --non-interactive|-y) NON_INTERACTIVE=true; shift ;;
+    --rootless) export NIE_SLA_ROOTLESS="${NIE_SLA_ROOTLESS:-1}"; ROOTLESS_MODE=true; shift ;;
     *) shift ;;
   esac
 done
@@ -647,6 +682,12 @@ if [[ -z "$AGENT_LABEL" ]]; then AGENT_LABEL="$AGENT_ID"; fi
 API_BASE="${API_BASE%/}"
 ARCH="$(detect_arch)"
 INIT="$(detect_init)"
+if [[ "$ROOTLESS_MODE" == "true" && "$INIT" != "systemd" ]]; then
+  err "rootless 模式需要 systemd 用户服务；此系统（OpenRC 或未知 init）不受支持。"
+  err "请改用完整版（root）安装，或在支持 systemd 的系统上重试。"
+  exit 1
+fi
+
 BIN_URL="${DOWNLOAD_BASE%/}/bin/${BIN_NAME}-linux-${ARCH}?v=${CACHE_KEY}"
 TMPBIN="$(mktemp)"
 TMPSUMS="$(mktemp)"
@@ -664,10 +705,27 @@ verify_agent_version "$TMPBIN"
 if [[ "$ROOTLESS_MODE" == "true" ]]; then
   mkdir -p "$WORK_DIR" "$INSTALL_DIR" "$STATE_DIR"
 else
+  if legacy_install_detected; then
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+      info "检测到旧版 nstatus-metrics 安装：默认保留并迁移数据。"
+    else
+      answer=""
+      read -r -p "检测到旧版 nstatus-metrics Agent，是否连同数据一并删除？[y/N] " answer </dev/tty || true
+      answer="${answer:-N}"
+      if [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]]; then
+        purge_legacy_install
+        LEGACY_PURGED=1
+      else
+        info "保留旧版安装，迁移其数据后继续。"
+      fi
+    fi
+  fi
   stop_existing_agent
   create_users
   assert_safe_install_paths
-  migrate_legacy_state
+  if [[ "${LEGACY_PURGED:-0}" != "1" ]]; then
+    migrate_legacy_state
+  fi
   mkdir -p "$WORK_DIR" "$INSTALL_DIR"
 fi
 install -m 0755 "$TMPBIN" "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || { cp "$TMPBIN" "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"; }

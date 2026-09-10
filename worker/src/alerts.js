@@ -418,12 +418,12 @@ async function collectExpiryAlert(env, settings, target, now, messages, maxMessa
   const daysThreshold = Number(settings.expiry_days || 0);
   const expiresAt = Number(target.expires_at || 0);
   if (!Number.isFinite(expiresAt) || expiresAt <= 0 || !Number.isFinite(daysThreshold) || daysThreshold <= 0) {
-    await clearIfActive(env, target.id, 'expiry', now);
+    await clearExpiryStates(env, target.id, now);
     return;
   }
   const daysLeft = Math.ceil((expiresAt - now) / 86400);
   if (daysLeft < 0 || daysLeft > daysThreshold) {
-    await clearIfActive(env, target.id, 'expiry', now);
+    await clearExpiryStates(env, target.id, now);
     return;
   }
   const text = [
@@ -500,6 +500,25 @@ async function clearTrafficStates(env, targetId, now) {
   }
   try {
     const rows = await env.DB.prepare(`SELECT rule_key FROM alert_state WHERE target_id = ? AND rule_key LIKE 'traffic:%' AND status = 'active'`).bind(targetId).all();
+    for (const row of rows.results || []) await markResolved(env, targetId, row.rule_key, now);
+  } catch (_) {}
+}
+
+// Expiry alert keys carry the timestamp (expiry:<expires_at>), so clearing
+// them requires prefix matching — a plain rule key would never hit and stale
+// rows would stay active forever.
+async function clearExpiryStates(env, targetId, now) {
+  const cache = env[ALERT_STATE_CACHE];
+  if (cache) {
+    for (const row of cache.values()) {
+      if (String(row.target_id) === String(targetId) && String(row.rule_key).startsWith('expiry:') && row.status === 'active') {
+        await markResolved(env, targetId, row.rule_key, now);
+      }
+    }
+    return;
+  }
+  try {
+    const rows = await env.DB.prepare(`SELECT rule_key FROM alert_state WHERE target_id = ? AND rule_key LIKE 'expiry:%' AND status = 'active'`).bind(targetId).all();
     for (const row of rows.results || []) await markResolved(env, targetId, row.rule_key, now);
   } catch (_) {}
 }

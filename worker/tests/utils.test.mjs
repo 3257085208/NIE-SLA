@@ -551,6 +551,9 @@ assert.equal(normalizeTargetOrder(['missing'], ['vps-a']).ok, false);
 const liveAgent = agentStatusFields({ updated_at: new Date().toISOString() }, {});
 assert.equal(liveAgent.status_source, 'agent');
 assert.equal(liveAgent.agent_online, true);
+const publicAgent = agentStatusFields({ updated_at: new Date().toISOString() }, {}, { includeStatusSource: false });
+assert.equal(publicAgent.status_source, undefined, 'public-IP targets must keep probe status as their primary status source');
+assert.equal(publicAgent.agent_online, true, 'public-IP targets must still expose Agent freshness separately');
 assert.equal(agentStatusFields({ updated_at: '2020-01-01T00:00:00.000Z' }, {}).agent_online, false);
 
 const availabilityEnv = { TIMEZONE_OFFSET_MINUTES: '0', AGENT_OFFLINE_AFTER_SEC: '900' };
@@ -606,6 +609,9 @@ const metricPoints = Array.from({ length: 1000 }, (_, i) => ({
   mem: 50,
   disk: 10,
   load1: 0.1,
+  load5: 0.2,
+  load15: 0.3,
+  process_count: 99,
   net_rx: i,
   net_tx: i * 2,
   tcp_conns: 1,
@@ -623,6 +629,11 @@ assert.deepEqual(metricColumns.fields, ['cpu']);
 assert.deepEqual(metricColumns.dt, [0, 1, 2]);
 assert.deepEqual(metricColumns.values.cpu, [0, 1, 2]);
 assert.deepEqual(metricPointsFromPayload({ series: metricColumns }, ['cpu']).map(p => p.cpu), [0, 1, 2]);
+const extendedMetricColumns = metricPointsToColumns(metricPoints.slice(0, 3), ['load1', 'load5', 'load15', 'process_count']);
+assert.deepEqual(extendedMetricColumns.values.load5, [0.2, 0.2, 0.2]);
+assert.deepEqual(extendedMetricColumns.values.load15, [0.3, 0.3, 0.3]);
+assert.deepEqual(extendedMetricColumns.values.process_count, [99, 99, 99]);
+assert.deepEqual(metricPointsFromPayload({ series: extendedMetricColumns }, ['load1', 'load5', 'load15', 'process_count']).map(point => [point.load5, point.load15, point.process_count]), [[0.2, 0.3, 99], [0.2, 0.3, 99], [0.2, 0.3, 99]]);
 const sensorPoints = [
   {
     ts: 2000,
@@ -706,6 +717,9 @@ await writeAgentTelemetryR2History(r2Env, 'vps-a', secondBatch);
 const telemetryObject = [...r2Env._objects.values()].find(item => item.key.endsWith('/telemetry.json'));
 assert.ok(telemetryObject, 'combined telemetry history should be written to R2');
 assert.equal(metricPointsFromPayload(telemetryObject.value.metrics).length, 600, 'successive reports must retain every raw sample');
+assert.deepEqual(metricPointsFromPayload(telemetryObject.value.metrics)[0].process_count, 99, 'process history must survive R2 normalization');
+assert.deepEqual(metricPointsFromPayload(telemetryObject.value.metrics)[0].load5, 0.2, '5-minute load history must survive R2 normalization');
+assert.deepEqual(metricPointsFromPayload(telemetryObject.value.metrics)[0].load15, 0.3, '15-minute load history must survive R2 normalization');
 assert.equal(r2Env._puts, 2, 'each report should use one R2 write');
 
 const pingPoints = Array.from({ length: 500 }, (_, i) => ({ target_id: 'a', ts: 2000 + i, latency_ms: 10 + i, ok: 1 }))

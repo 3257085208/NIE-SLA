@@ -22,6 +22,26 @@ database.exec(`
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
+  CREATE TABLE agent_tasks (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('nodequality', 'ip_unlock')),
+    options TEXT,
+    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'expired', 'cancelled')),
+    requested_at INTEGER NOT NULL,
+    claimed_at INTEGER,
+    cancel_requested_at INTEGER,
+    runner_instance_id TEXT,
+    runner_heartbeat_at INTEGER,
+    finished_at INTEGER,
+    expires_at INTEGER NOT NULL,
+    result TEXT,
+    error TEXT,
+    output_excerpt TEXT,
+    agent_version TEXT
+  );
+  INSERT INTO agent_tasks (id, agent_id, action, status, requested_at, expires_at)
+    VALUES ('legacy-task', 'legacy-agent', 'ip_unlock', 'succeeded', 1, 2);
 `);
 
 await ensureV6Schema({ DB: d1(database) });
@@ -32,6 +52,9 @@ assert.ok(database.prepare(`PRAGMA table_info(agent_install_tickets)`).all().som
 assert.ok(database.prepare(`PRAGMA table_info(agent_tasks)`).all().some(column => column.name === 'cancel_requested_at'));
 assert.ok(database.prepare(`PRAGMA table_info(agent_tasks)`).all().some(column => column.name === 'runner_instance_id'));
 assert.ok(database.prepare(`PRAGMA table_info(agent_tasks)`).all().some(column => column.name === 'runner_heartbeat_at'));
+const agentTasksSql = database.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'agent_tasks'`).get()?.sql || '';
+assert.match(agentTasksSql, /backroute/, 'existing agent_tasks tables must migrate to allow backroute tasks');
+assert.equal(database.prepare(`SELECT agent_id FROM agent_tasks WHERE id = 'legacy-task'`).get()?.agent_id, 'legacy-agent', 'agent task migration must preserve existing rows');
 assert.ok(database.prepare(`PRAGMA table_info(targets)`).all().some(column => column.name === 'nq_unlock_data'));
 assert.ok(database.prepare(`PRAGMA table_info(targets)`).all().some(column => column.name === 'nq_unlock_updated_at'));
 assert.equal(

@@ -6,6 +6,11 @@ const DAY_PREFIX = 'day:';
 const SCHEMA = 'nie-sla-probe-history-day-v1';
 const DEFAULT_MAX_POINTS = 2_000;
 const DAY_RANGE_LIMIT = 90;
+// A permanently failing day (e.g. corrupt archive object) is dropped after
+// this many alarm attempts instead of being retried forever.
+const MAX_MEM_DAY_ATTEMPTS = 3;
+// Same bounded-retry budget for the completed-day rotation path.
+const MAX_ARCHIVE_DAY_ATTEMPTS = 3;
 
 /**
  * Probe history is intentionally a per-target Durable Object.  The object
@@ -17,6 +22,12 @@ export class ProbeHistoryBuffer {
   constructor(state, env) {
     this.state = state;
     this.env = env;
+    // Quota mode: incoming probe points are batched in memory and flushed to
+    // SQLite storage / R2 by the alarm, instead of one storage write per probe.
+    this.memDays = new Map();
+    this.memDayAttempts = new Map();
+    this.archiveAttempts = new Map();
+    this.memMetaPut = false;
   }
 
   async fetch(request) {
@@ -48,7 +59,10 @@ export class ProbeHistoryBuffer {
 
   async append(body) {
     const targetId = sanitizeId(body?.target_id);
-    await this.state.storage.put('meta', { target_id: targetId, schema: SCHEMA });
+    if (!this.memMetaPut) {
+      await this.state.storage.put('meta', { target_id: targetId, schema: SCHEMA });
+      this.memMetaPut = true;
+    }
     const incoming = new Map();
     for (const item of Array.isArray(body?.writes) ? body.writes : []) {
       const point = normalizeProbePoint(item?.point || item);
@@ -60,20 +74,11 @@ export class ProbeHistoryBuffer {
     }
     if (!incoming.size) return { ok: true, skipped: true };
 
-    const currentDay = dayFromSec(nowSec(), this.env);
+    // Memory-first: batch incoming points and let the alarm persist them.
     for (const [day, points] of incoming) {
-      if (day < currentDay && this.env.ARCHIVE) {
-        await this.mergeArchiveDay(targetId, day, points);
-        continue;
-      }
-      const key = `${DAY_PREFIX}${day}`;
-      const existing = await this.state.storage.get(key);
-      const merged = mergeDay(existing, targetId, day, points, this.env);
-      await this.state.storage.put(key, merged);
+      this.memDays.set(day, (this.memDays.get(day) || []).concat(points));
     }
-
-    await this.flushCompletedDays(currentDay);
-    await this.scheduleFlush(currentDay);
+    await this.scheduleFlush(dayFromSec(nowSec(), this.env), this.memDays.size > 0);
     return { ok: true, target_id: targetId, days: incoming.size, points: [...incoming.values()].reduce((sum, rows) => sum + rows.length, 0) };
   }
 
@@ -87,10 +92,19 @@ export class ProbeHistoryBuffer {
 
     const points = [];
     for (const day of days) {
-      const archived = await this.readArchiveDay(day, stateByDay.get(day)?.target_id || null);
+      // One corrupt or unreadable archive day must not take down the whole
+      // read: skip its archived points and still serve live/memory data.
+      let archived = null;
+      try {
+        archived = await this.readArchiveDay(day, stateByDay.get(day)?.target_id || null);
+      } catch (error) {
+        console.error(`read probe archive day ${day} failed:`, String(error?.message || error));
+      }
       const live = stateByDay.get(day);
+      const memPoints = this.memDays.get(day) || [];
       const merged = mergeDay(archived, live?.target_id || '', day, [
         ...(Array.isArray(live?.points) ? live.points : []),
+        ...memPoints,
       ], this.env);
       for (const point of merged.points || []) {
         if (Number(point.checked_at) >= start && Number(point.checked_at) <= end) points.push(toPublicPoint(point));
@@ -118,7 +132,22 @@ export class ProbeHistoryBuffer {
     for (const [key, value] of rows) {
       const day = String(key).slice(DAY_PREFIX.length);
       if (!isDay(day) || day >= currentDay) continue;
-      await this.mergeArchiveDay(value?.target_id || '', day, Array.isArray(value?.points) ? value.points : []);
+      // Per-day isolation: one unreadable or failing day must not block the
+      // rotation of every later day (storage.list returns keys in lex order).
+      try {
+        await this.mergeArchiveDay(value?.target_id || '', day, Array.isArray(value?.points) ? value.points : []);
+      } catch (error) {
+        const attempts = Number(this.archiveAttempts.get(day) || 0) + 1;
+        if (attempts >= MAX_ARCHIVE_DAY_ATTEMPTS) {
+          console.error(`giving up archiving probe day ${day} after ${attempts} attempts:`, String(error?.message || error));
+          this.archiveAttempts.delete(day);
+          await this.state.storage.delete(key).catch(() => {});
+        } else {
+          this.archiveAttempts.set(day, attempts);
+        }
+        continue;
+      }
+      this.archiveAttempts.delete(day);
       await this.state.storage.delete(key);
       flushed += 1;
     }
@@ -126,15 +155,71 @@ export class ProbeHistoryBuffer {
   }
 
   async alarm() {
-    await this.flushCompletedDays(dayFromSec(nowSec(), this.env));
-    await this.scheduleFlush(dayFromSec(nowSec(), this.env));
+    // Stages are independent and the alarm must always reschedule itself:
+    // an exception escaping here would drop the alarm chain and silently
+    // stop persisting probe history until the next append.
+    try {
+      await this.flushMemDays();
+    } catch (error) {
+      console.error('flush mem probe days failed:', String(error?.message || error));
+    }
+    try {
+      await this.flushCompletedDays(dayFromSec(nowSec(), this.env));
+    } catch (error) {
+      console.error('flush completed probe days failed:', String(error?.message || error));
+    }
+    await this.scheduleFlush(dayFromSec(nowSec(), this.env), this.memDays.size > 0);
   }
 
-  async scheduleFlush(currentDay) {
+  // Persist memory-batched points: past days go straight to the R2 archive,
+  // the current day merges into its SQLite day chunk. One put per day bucket.
+  // A failed day keeps its points for the next alarm instead of losing the
+  // whole batch.
+  async flushMemDays() {
+    if (!this.memDays.size) return;
+    const currentDay = dayFromSec(nowSec(), this.env);
+    const failed = new Map();
+    for (const [day, points] of this.memDays) {
+      try {
+        if (day < currentDay && this.env.ARCHIVE) {
+          await this.mergeArchiveDay(await this.memTargetId(), day, points);
+          this.memDayAttempts.delete(day);
+          continue;
+        }
+        const key = `${DAY_PREFIX}${day}`;
+        const existing = await this.state.storage.get(key);
+        const merged = mergeDay(existing, await this.memTargetId(), day, points, this.env);
+        await this.state.storage.put(key, merged);
+        this.memDayAttempts.delete(day);
+      } catch (error) {
+        const attempts = Number(this.memDayAttempts.get(day) || 0) + 1;
+        if (attempts >= MAX_MEM_DAY_ATTEMPTS) {
+          console.error(`giving up on probe day ${day} after ${attempts} attempts:`, String(error?.message || error));
+          this.memDayAttempts.delete(day);
+          continue;
+        }
+        this.memDayAttempts.set(day, attempts);
+        failed.set(day, points);
+      }
+    }
+    this.memDays = failed;
+  }
+
+  async memTargetId() {
+    const meta = await this.state.storage.get('meta');
+    return sanitizeId(meta?.target_id);
+  }
+
+  async scheduleFlush(currentDay, memPending = false) {
     if (typeof this.state.storage.setAlarm !== 'function') return;
     const nextDay = addDays(currentDay, 1);
     const nextBoundary = dayStartSec(nextDay, this.env) + 300;
     const currentAlarm = await this.state.storage.getAlarm?.();
+    if (memPending) {
+      const soon = Date.now() + 30 * 60 * 1000;
+      if (currentAlarm == null || currentAlarm > soon) await this.state.storage.setAlarm(soon);
+      return;
+    }
     const nextAlarm = nextBoundary * 1000;
     if (currentAlarm == null || currentAlarm < Date.now() || currentAlarm > nextAlarm) await this.state.storage.setAlarm(nextAlarm);
   }

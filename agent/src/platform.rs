@@ -38,23 +38,63 @@ struct GpuCache {
 static GPU_CACHE: Mutex<Option<GpuCache>> = Mutex::new(None);
 const GPU_CACHE_TTL: Duration = Duration::from_secs(10);
 
+static INTERFACES_ALLOWLIST: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+fn interfaces_allowlist() -> &'static [String] {
+    INTERFACES_ALLOWLIST.get_or_init(|| {
+        std::env::var("NIE_SLA_INTERFACES")
+            .or_else(|_| std::env::var("NSTATUS_INTERFACES"))
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string)
+            .collect()
+    })
+}
+
 #[cfg(target_os = "linux")]
 pub(super) fn net_bytes() -> (u64, u64) {
     let Ok(text) = std::fs::read_to_string("/proc/net/dev") else {
         return (0, 0);
     };
-    net_bytes_from_proc(&text)
+    // Aggregate members (bond/bridge slaves) would double-count traffic that
+    // the aggregation interface already reports.
+    let mut excluded = std::collections::HashSet::new();
+    if let Ok(entries) = std::fs::read_dir("/sys/class/net") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if entry.path().join("master").exists() {
+                excluded.insert(name);
+            }
+        }
+    }
+    let allowlist = interfaces_allowlist();
+    net_bytes_from_proc_excluding(&text, &excluded, allowlist)
 }
 
 #[cfg(any(target_os = "linux", test))]
 fn net_bytes_from_proc(text: &str) -> (u64, u64) {
+    net_bytes_from_proc_excluding(text, &std::collections::HashSet::new(), &[])
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn net_bytes_from_proc_excluding(
+    text: &str,
+    excluded: &std::collections::HashSet<String>,
+    allowlist: &[String],
+) -> (u64, u64) {
     let mut rx = 0_u64;
     let mut tx = 0_u64;
     for line in text.lines().skip(2) {
         let Some((iface, data)) = line.split_once(':') else {
             continue;
         };
-        if !should_count_network_interface(iface.trim()) {
+        let iface = iface.trim();
+        if !should_count_network_interface(iface) || excluded.contains(iface) {
+            continue;
+        }
+        if !allowlist.is_empty() && !allowlist.iter().any(|allowed| allowed == iface) {
             continue;
         }
         let fields: Vec<&str> = data.split_whitespace().collect();
@@ -128,6 +168,26 @@ pub(super) fn disk_io_bytes() -> (u64, u64) {
 }
 
 #[cfg(target_os = "linux")]
+pub(super) fn process_count() -> u32 {
+    let mut count = 0_u32;
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.bytes().all(|byte| byte.is_ascii_digit()) && !name.is_empty() {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn process_count() -> u32 {
+    0
+}
+
+#[cfg(target_os = "linux")]
 pub(super) fn connection_counts() -> (u64, u64) {
     let tcp = count_conn_file("/proc/net/tcp") + count_conn_file("/proc/net/tcp6");
     let udp = count_conn_file("/proc/net/udp") + count_conn_file("/proc/net/udp6");
@@ -136,8 +196,16 @@ pub(super) fn connection_counts() -> (u64, u64) {
 
 #[cfg(target_os = "linux")]
 fn count_conn_file(path: &str) -> u64 {
+    // Listening sockets are not connections; counting them inflated the
+    // reported TCP/UDP connection totals.
     std::fs::read_to_string(path)
-        .map(|value| value.lines().skip(1).count() as u64)
+        .map(|value| {
+            value
+                .lines()
+                .skip(1)
+                .filter(|line| line.split_whitespace().nth(3) != Some("0A"))
+                .count() as u64
+        })
         .unwrap_or(0)
 }
 

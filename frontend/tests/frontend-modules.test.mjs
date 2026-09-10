@@ -15,6 +15,7 @@ import { NQ_OPTION_DEFAULTS, nqOptionsHtml, normalizeNqOptions, readNqOptions } 
 import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from '../js/install-command.js';
 import { LINE_TYPE_OPTIONS, groupByDimension, groupByMenuHtml, groupKeyFor, lineTypeOptionsHtml, normalizeGroupByMode, priceBandKey } from '../js/shared/grouping.js';
 import { readStorage, removeStorage, writeStorage } from '../js/shared/storage.js';
+import { normalizeBackrouteEntries } from '../js/shared/backroute.js';
 import { canShowTemperature, hasGpuData, hasTemperatureData, isVirtualized, isValidTemperature } from '../js/shared/hardware.js';
 import {
   CURRENCIES,
@@ -48,6 +49,17 @@ const rows = normalizeChartRows([
   { checked_at: 30, ok: 1, latency_ms: 20 },
   { checked_at: 10, ok: 0, latency_ms: null },
   { checked_at: 20, ok: 1, latency_ms: 10, missed: true },
+]);
+assert.deepEqual(normalizeBackrouteEntries({ routes: [
+  { carrier: '电信', line: '163' },
+  { carrier: '联通', line: '9929' },
+  { carrier: '移动', line: 'CMI' },
+  { carrier: '电信', line: '电信' },
+] }), [
+  { carrier: '电信', line: '163', target: '', confidence: '' },
+  { carrier: '联通', line: '9929', target: '', confidence: '' },
+  { carrier: '移动', line: 'CMI', target: '', confidence: '' },
+  { carrier: '电信', line: '未识别', target: '', confidence: '' },
 ]);
 assert.deepEqual(rows.map((row) => row.x), [10, 20, 30]);
 assert.deepEqual(buildLinePoints(rows), [{ x: 10, y: null }, { x: 30, y: 20 }]);
@@ -383,8 +395,14 @@ assert.equal(nextPingTargetSelection(new Set(['a']), 'a', ['a', 'b', 'c']), null
 assert.deepEqual(normalizeLatencySample('external-a', { checked_at: 200, latency_ms: 999, ok: true }), {
   target_id: 'external-a', ts: 200, latency_ms: 999, ok: true,
 });
+// Server-judged samples must keep their ok and latency even beyond the 1s
+// display budget: slow-but-successful probes are not packet loss.
 assert.deepEqual(normalizeLatencySample('external-a', { checked_at: 230, latency_ms: 1001, ok: true }), {
-  target_id: 'external-a', ts: 230, latency_ms: null, ok: false,
+  target_id: 'external-a', ts: 230, latency_ms: 1001, ok: true,
+});
+// Without a server verdict the latency budget still decides.
+assert.deepEqual(normalizeLatencySample('external-a', { checked_at: 240, latency_ms: 1001 }), {
+  target_id: 'external-a', ts: 240, latency_ms: null, ok: false,
 });
 console.log('SLA summary helpers ok');
 

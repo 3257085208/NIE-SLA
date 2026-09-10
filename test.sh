@@ -70,6 +70,8 @@ run_check "independent traffic reset day tests" node "$ROOT/worker/tests/traffic
 run_check "per-node Agent credential tests" node "$ROOT/worker/tests/agent-credentials.test.mjs"
 run_check "cftz authentication handshake tests" node "$ROOT/worker/tests/cftz-auth.test.mjs"
 run_check "Agent task, GeoIP, and backup tests" node "$ROOT/worker/tests/agent-tasks-backup.test.mjs"
+run_check "target deletion orphan cleanup tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/target-delete.test.mjs"
+run_check "finance summary tests" node "$ROOT/worker/tests/finance-summary.test.mjs"
 run_check "NQ image host tests" node "$ROOT/worker/tests/nq-image-host.test.mjs"
 run_check "NQ public image broker route tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/nq-image-broker-route.test.mjs"
 run_check "login route hardening tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/login-route.test.mjs"

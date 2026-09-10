@@ -236,10 +236,26 @@ export function assertPublicHttpUrl(url) {
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     throw new Error('URL 必须使用 http:// 或 https://');
   }
+  if (u.username || u.password) {
+    throw new Error('URL 不能包含账号密码（用户名或密码）');
+  }
   if (isPrivateHost(u.hostname)) {
     throw new Error('URL 不能指向私有或内部地址');
   }
   return u;
+}
+
+export async function fetchPublicHttpWithValidatedRedirects(url, options = {}, fetchImpl = fetch, maxRedirects = 4) {
+  let current = assertPublicHttpUrl(url);
+  for (let redirects = 0; redirects <= maxRedirects; redirects += 1) {
+    const response = await fetchImpl(current.toString(), { ...options, redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    const location = response.headers.get('location');
+    await response.body?.cancel().catch(() => {});
+    if (!location || redirects === maxRedirects) throw new Error('重定向过多或地址无效');
+    current = assertPublicHttpUrl(new URL(location, current).toString());
+  }
+  throw new Error('重定向过多或地址无效');
 }
 
 export async function fetchPublicHttpsWithValidatedRedirects(url, options = {}, fetchImpl = fetch, maxRedirects = 4) {
@@ -302,17 +318,18 @@ export async function findEnabledAgentTarget(env, agentIdValue) {
   return null;
 }
 
-export function agentStatusFields(state, env = {}) {
+export function agentStatusFields(state, env = {}, options = {}) {
   if (!state?.updated_at) return {};
   const updatedAt = Math.floor(new Date(state.updated_at).getTime() / 1000);
   const ageSec = Number.isFinite(updatedAt) && updatedAt > 0 ? Math.max(0, nowSec() - updatedAt) : null;
   const offlineAfterSec = clamp(Number(env.AGENT_OFFLINE_AFTER_SEC || 1800), 120, 3600);
-  return {
-    status_source: 'agent',
+  const fields = {
     agent_online: ageSec != null && ageSec <= offlineAfterSec,
     agent_last_seen_sec: ageSec,
     agent_offline_after_sec: offlineAfterSec,
   };
+  if (options.includeStatusSource !== false) fields.status_source = 'agent';
+  return fields;
 }
 
 

@@ -19,6 +19,7 @@ const SENSITIVE_META_KEYS = new Set([
   'totp_pending_secret',
   'alert_telegram_bot_token',
   'alert_resend_api_key',
+  'cf_usage_api_token',
   'nq_image_host_settings',
   'nq_image_host_token',
 ]);

@@ -36,13 +36,14 @@ try {
   assert.equal(tooLarge.headers.get('cache-control'), 'no-store');
   assert.equal(uploadCount, 0);
 
+  // Rate limiting for this public cache endpoint is in-isolation now: a
+  // successful request must not write any rate-limit rows to D1 (the old
+  // durable limiter cost two rows_written per image request).
   const limitedDb = rateLimitDb({ denyKey: 'nq-broker:global' });
-  const limited = await worker.fetch(brokerRequest(payload), brokerEnv({ DB: limitedDb }), {});
-  assert.equal(limited.status, 429);
-  assert.equal(limited.headers.get('cache-control'), 'no-store');
-  assert.equal(uploadCount, 0);
-  assert.ok(limitedDb.keys.includes('nq-broker:ip:198.51.100.10'));
-  assert.ok(limitedDb.keys.includes('nq-broker:global'));
+  const dbFree = await worker.fetch(brokerRequest(payload), brokerEnv({ DB: limitedDb }), {});
+  assert.equal(dbFree.status, 200);
+  assert.equal(dbFree.headers.get('cache-control'), 'no-store');
+  assert.equal(limitedDb.keys.length, 0, 'broker rate limiting must not write D1 rows');
 
   const successEnv = brokerEnv();
   const success = await worker.fetch(brokerRequest(payload), successEnv, {});
@@ -53,7 +54,7 @@ try {
   assert.equal(successBody.ok, true);
   assert.deepEqual(successBody.images, [{ id: 'network', url: 'https://img.example.com/public/route-test.svg' }]);
   assert.equal(JSON.stringify(successBody).includes(successEnv.NQ_IMGBED_TOKEN), false);
-  assert.equal(uploadCount, 1);
+  assert.equal(uploadCount, 2);
 
   globalThis.fetch = async () => new Response('private upstream details', { status: 401 });
   const failedEnv = brokerEnv();

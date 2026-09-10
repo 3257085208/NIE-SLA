@@ -44,7 +44,9 @@ assert.match(buildNqModalHtml({ name: 'vps-a', tabs: [] }), /<strong>NodeQuality
 const adminSource = readFileSync(new URL('../js/admin.js', import.meta.url), 'utf8');
 const adminCss = readFileSync(new URL('../admin.css', import.meta.url), 'utf8');
 assert.match(adminSource, /task\.action === "ip_unlock"[\s\S]*showIpUnlockTaskReport/, 'IP unlock task details must open the structured report dialog');
-assert.match(adminSource, /function showIpUnlockTaskReport[\s\S]*renderUnlockServicesReportHtml\(services\)[\s\S]*buildNqModalHtml\(report,\s*\{\s*title:\s*"IP 解锁"\s*\}\)/, 'IP unlock task details must render the structured NQ-style dialog');
+const ipUnlockReportSource = adminSource.match(/function showIpUnlockTaskReport[\s\S]*?(?=\nfunction |$)/)?.[0] || '';
+assert.match(ipUnlockReportSource, /renderUnlockServicesReportHtml\(services\)/, 'IP unlock task details must render the structured service result');
+assert.match(ipUnlockReportSource, /buildNqModalHtml\(report,\s*\{\s*title:\s*"IP 解锁"\s*\}\)/, 'IP unlock task details must use the NQ-style dialog shell with an accurate title');
 assert.match(adminSource, /trimReportAdFooter\(task\.result\.report\)/, 'full IPQuality reports must strip sponsor ads before rendering in the admin dialog');
 assert.match(adminSource, /task\.error[\s\S]*ip-unlock-raw[\s\S]*原始输出/, 'IP unlock failures must keep the raw output available but collapsed');
 const adReport = 'IP 质量体检报告：117.55.*.*\n五、流媒体解锁检测\n========================================================================\n今日IP检测量：1；总检测量：2。感谢使用xy系列脚本！\nTERM environment variable not set.\nSPONSORSPONSORSPONSOR\nIPWOIPWOIPWO https://www.ipwo.net/\n';

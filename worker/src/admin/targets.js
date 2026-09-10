@@ -261,12 +261,14 @@ export async function reorderTargets(request, env) {
 export async function deleteTarget(id, env) {
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM check_buckets WHERE target_id = ?`).bind(id),
+    env.DB.prepare(`DELETE FROM check_bucket_days WHERE target_id = ? OR target_id = ?`).bind(id, sanitizeId(id)),
     env.DB.prepare(`DELETE FROM latest_status WHERE target_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM incident_events WHERE target_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM alert_state WHERE target_id = ?`).bind(id),
     env.DB.prepare(`DELETE FROM agent_credentials WHERE subject_type = 'agent' AND subject_id = ?`).bind(sanitizeAgentId(id)),
     env.DB.prepare(`DELETE FROM agent_install_tickets WHERE target_id = ?`).bind(sanitizeAgentId(id)),
     env.DB.prepare(`DELETE FROM agent_tasks WHERE agent_id = ? OR agent_id = ?`).bind(id, sanitizeAgentId(id)),
+    env.DB.prepare(`DELETE FROM app_meta WHERE key = ?`).bind(`traffic_corr:${sanitizeAgentId(id)}`),
     env.DB.prepare(`DELETE FROM checks WHERE legacy_target_id = ? OR node_id = ?`).bind(id, id),
     env.DB.prepare(`DELETE FROM nodes WHERE legacy_target_id = ? OR id = ?`).bind(id, id),
     env.DB.prepare(`DELETE FROM targets WHERE id = ?`).bind(id),

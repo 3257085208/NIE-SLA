@@ -475,7 +475,10 @@ start_service() {
             systemctl enable "$SERVICE_NAME" >/dev/null 2>&1 || true
             systemctl enable "$TASK_SERVICE_NAME" >/dev/null 2>&1 || true
             systemctl enable --now "${SERVICE_NAME}-update.timer" >/dev/null 2>&1 || true
-            systemctl restart "$SERVICE_NAME"
+            systemctl restart "$SERVICE_NAME" || return 1
+            if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+                return 1
+            fi
             systemctl restart "$TASK_SERVICE_NAME"
             ;;
         openrc)
@@ -755,7 +758,7 @@ do_set_target() {
         return
     fi
 
-    if ! echo "$list_json" | grep -q '"ok": true'; then
+    if ! echo "$list_json" | grep -Eq '"ok"[: ] ?true'; then
         warn "API 错误: $(echo "$list_json" | head -c 120)" >&2
         read -rp "  目标 ID [${cur}]: " v </dev/tty
         echo "${v:-$cur}"
@@ -904,7 +907,7 @@ do_admin() {
         err "API 不可达: ${api}"
         return 1
     fi
-    if ! echo "$check" | grep -q '"ok": true'; then
+    if ! echo "$check" | grep -Eq '"ok"[: ] ?true'; then
         err "管理会话无效: $(echo "$check" | head -c 200)"
         return 1
     fi
@@ -989,7 +992,7 @@ do_admin_targets() {
                 local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets" -X POST \
                     -H "Content-Type: application/json" \
                     -d "$body" 2>/dev/null)
-                echo "$result" | grep -q '"ok": true' && ok "添加成功" || err "失败: $result"
+                echo "$result" | grep -Eq '"ok"[: ] ?true' && ok "添加成功" || err "失败: $result"
                 ;;
             e|E)
                 read -rp "  编辑编号: " num </dev/tty
@@ -1025,7 +1028,7 @@ do_admin_targets() {
                     -H "Content-Type: application/json" \
                             -d "$body" 2>/dev/null)
                     fi
-                    echo "$result" | grep -q '"ok": true' && ok "已迁移至 $nid" || err "失败"
+                    echo "$result" | grep -Eq '"ok"[: ] ?true' && ok "已迁移至 $nid" || err "失败"
                 else
                     local body="{\"name\":\"$name\",\"group_name\":\"$group\""
                     if [[ "$tt" == "http" ]]; then
@@ -1044,7 +1047,7 @@ do_admin_targets() {
                     -H "Content-Type: application/json" \
                             -d "$body" 2>/dev/null)
                     fi
-                    echo "$result" | grep -q '"ok": true' && ok "已更新" || err "失败"
+                    echo "$result" | grep -Eq '"ok"[: ] ?true' && ok "已更新" || err "失败"
                 fi
                 ;;
             d|D)
@@ -1053,7 +1056,7 @@ do_admin_targets() {
                 local idx=$((num - 1))
                 local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/${tids[$idx]}" -X DELETE \
                     2>/dev/null)
-                echo "$result" | grep -q '"ok": true' && ok "已删除 ${tids[$idx]}" || err "失败"
+                echo "$result" | grep -Eq '"ok"[: ] ?true' && ok "已删除 ${tids[$idx]}" || err "失败"
                 ;;
             t|T)
                 read -rp "  切换编号: " num </dev/tty
@@ -1063,7 +1066,7 @@ do_admin_targets() {
                 local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/targets/${tids[$idx]}" -X PATCH \
                     -H "Content-Type: application/json" \
                     -d "{\"enabled\":$nv}" 2>/dev/null)
-                echo "$result" | grep -q '"ok": true' && ok "已切换 ${tids[$idx]}" || err "失败"
+                echo "$result" | grep -Eq '"ok"[: ] ?true' && ok "已切换 ${tids[$idx]}" || err "失败"
                 ;;
             *) warn "无效选择" ;;
         esac
@@ -1115,7 +1118,7 @@ do_admin_pings() {
                 local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets" -X POST \
                     -H "Content-Type: application/json" \
                     -d "{\"id\":\"${nid:-$nname}\",\"name\":\"$nname\",\"target\":\"$ntarget\"}" 2>/dev/null)
-                echo "$result" | grep -q '"ok": true' && ok "添加成功" || err "失败"
+                echo "$result" | grep -Eq '"ok"[: ] ?true' && ok "添加成功" || err "失败"
                 ;;
             d)
                 read -rp "  删除编号: " num </dev/tty
@@ -1123,7 +1126,7 @@ do_admin_pings() {
                 local idx=$((num - 1))
                 local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets/${pids[$idx]}" -X DELETE \
                     2>/dev/null)
-                echo "$result" | grep -q '"ok": true' && ok "已删除 ${pids[$idx]}" || err "失败"
+                echo "$result" | grep -Eq '"ok"[: ] ?true' && ok "已删除 ${pids[$idx]}" || err "失败"
                 ;;
             t)
                 read -rp "  切换编号: " num </dev/tty
@@ -1133,7 +1136,7 @@ do_admin_pings() {
                 local result=$(curl_admin_api "$tok" "${totp:-}" -sL --max-time 10 "${api}/api/ping-targets/${pids[$idx]}" -X PATCH \
                     -H "Content-Type: application/json" \
                     -d "{\"enabled\":$nv}" 2>/dev/null)
-                echo "$result" | grep -q '"ok": true' && ok "已切换 ${pids[$idx]}" || err "失败"
+                echo "$result" | grep -Eq '"ok"[: ] ?true' && ok "已切换 ${pids[$idx]}" || err "失败"
                 ;;
             *) warn "无效选择" ;;
         esac
@@ -1155,7 +1158,7 @@ do_totp_setup() {
     local result=$(curl_admin_api "$session" "" -sS --max-time 10 "${api}/api/totp/setup" \
         -X POST 2>&1) || true
 
-    if ! echo "$result" | grep -q '"ok": true'; then
+    if ! echo "$result" | grep -Eq '"ok"[: ] ?true'; then
         err "设置失败: $result"
         return 1
     fi
@@ -1182,7 +1185,7 @@ do_totp_setup() {
         -H "Content-Type: application/json" \
         -d "{\"code\":\"$code\"}" 2>&1) || true
 
-    if echo "$verify" | grep -q '"ok": true'; then
+    if echo "$verify" | grep -Eq '"ok"[: ] ?true'; then
         ok "TOTP 已启用。以后 cftz admin 需要输入验证码。"
     else
         err "验证失败，请重新运行 cftz totp-setup。"

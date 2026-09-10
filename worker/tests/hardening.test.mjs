@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolvePublicMetricsQuery, defaultMetricsMaxPointsForHours } from '../src/metrics.js';
-import { isPrivateHost, assertPublicHttpUrl, buildOpenMissedPoints, fetchPublicHttpsWithValidatedRedirects } from '../src/utils.js';
+import { isPrivateHost, assertPublicHttpUrl, buildOpenMissedPoints, fetchPublicHttpWithValidatedRedirects, fetchPublicHttpsWithValidatedRedirects } from '../src/utils.js';
 import { resolveCorsOrigin, internalRequestAuthorized, internalRequestHeaders } from '../src/auth.js';
 import { getDeveloperApiManifest, resolveDeveloperApiOrigin, withDeveloperApiHeaders } from '../src/developer-api.js';
 
@@ -44,9 +44,12 @@ assert.doesNotMatch(dueTargetsSource, /previousById\.get\(target\.id\)\?\.checke
 assert.match(indexSource, /scheduled\(controller, env, ctx\)[\s\S]{0,160}dispatchScheduledTasks/, 'cron triggers must delegate work outside the 10ms scheduled CPU budget');
 assert.match(indexSource, /signInternalSchedule[\s\S]{0,500}HMAC[\s\S]{0,100}SHA-256/, 'delegated cron requests must be HMAC authenticated');
 assert.match(indexSource, /historyProbeCount > 0[\s\S]{0,180}history_probe_completed/, 'a full history probe must suppress the duplicate fast probe');
+const scheduledTasksSource = indexSource.slice(indexSource.indexOf('export async function runScheduledTasks'), indexSource.indexOf('async function dispatchScheduledTasks'));
+assert.match(scheduledTasksSource, /results\.followups = \{[\s\S]{0,700}claimHourlyMaintenanceSlot/, 'hourly maintenance must still run when no target is due');
 assert.doesNotMatch(probeSource, /FROM latest_status[\s\S]{0,240}\.all\(\)\.catch\(\(\) => \(\{ results: \[\] \}\)\)/, 'latest probe state read failures must not be treated as an empty database');
 assert.match(probeSource, /stateSyncWarning = 'r2_state_sync_failed'/, 'D1 probe success with an R2 sync failure must return a warning');
 assert.match(probeSource, /groupTargetsByRegion/, 'region probes must be grouped by region before dispatch');
+assert.match(probeSource, /fetchPublicHttpWithValidatedRedirects/, 'HTTP probes must validate every redirect hop');
 assert.match(probeSource, /batch-probe-and-save/, 'history probes must support one Durable Object per region');
 assert.match(probeSource, /batch-current-status/, 'fast status must support one Durable Object per region');
 assert.match(indexSource, /batchProbeAndSave/, 'ProbeRegion must handle history batches');
@@ -66,7 +69,8 @@ assert.match(wranglerSource, /AGENT_METRICS_STATE_TO_D1 = "false"/, 'production 
 assert.match(wranglerSource, /PROBE_LATEST_STATUS_TO_D1 = "false"/, 'production must keep high-frequency probe current state out of D1');
 assert.match(metricsSource, /skipStateD1/, 'the WebSocket metrics path must be able to skip the D1 current-state write');
 assert.match(metricsSource, /persistAgentMetricsStateFallback/, 'buffer failures must retain a D1 latest-state compatibility fallback');
-assert.match(telemetrySource, /fallback Agent latest state to D1 failed/, 'buffer failures must not silently lose the latest visible state');
+assert.match(telemetrySource, /persist latest agent state failed/, 'buffer failures must not silently lose the latest visible state');
+assert.doesNotMatch(telemetrySource.slice(telemetrySource.indexOf('webSocketMessage(socket'), telemetrySource.indexOf('scheduleReportDrain()')), /persistAgentMetricsStateFallback/, 'the per-message path must never write D1 (a slow D1 write stalls the shared DO)');
 assert.match(telemetrySource, /LATEST_STATE_PREFIX = 'latest:state:'/, 'the telemetry buffer must retain per-Agent latest state keys');
 assert.match(telemetrySource, /AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream'/, 'latest-state readers must target the same shared WSS Durable Object instance');
 assert.doesNotMatch(telemetrySource, /idFromName\(`agent:\$\{id\}`\)[\s\S]{0,200}\/latest/, 'per-Agent latest state must never be read from the chunk-buffer instance');
@@ -75,6 +79,9 @@ assert.match(wranglerSource, /REGION_PROXY_BATCH_ENABLED = "true"/, 'production 
 assert.match(indexSource, /out\.probe\.results\.map\(item => item\?\.warning\)/, 'scheduled probe diagnostics must retain state sync warnings');
 assert.match(statusSource, /optionalQuery[\s\S]{0,220}warnings\.push\(warning\)/, 'partial status query failures must be visible in the status warnings');
 assert.match(statusSource, /Live status overlay unavailable/, 'snapshot overlay failures must remain visible to status consumers');
+assert.match(statusSource, /if \(!liveOverlay\) payload = await overlayLiveTargetStatus/, 'fresh snapshots must skip the per-request D1 overlay');
+assert.match(statusSource, /STATUS_SNAPSHOT_LIVE_WINDOW_SEC/, 'the snapshot live window must stay configurable');
+assert.match(statusSource, /else delete target\.status_source/, 'snapshot Agent overlay must not retain the Agent source for public-IP targets');
 assert.match(statusSource, /parsed && typeof parsed === 'object' && !Array\.isArray\(parsed\) \? parsed : \{\}/, 'stored status JSON nulls and arrays must not be treated as metric objects');
 assert.match(metricsSource, /warnings\.push\('Latest Agent metrics unavailable'\)/, 'latest metrics read failures must not look like an empty Agent');
 assert.match(wranglerSource, /MAX_TARGETS_PER_RUN = "20"/, 'cron work must be spread across minute slots while retaining 100 targets per five minutes');
@@ -133,6 +140,7 @@ assert.equal(isPrivateHost('example.com'), false);
 assert.throws(() => assertPublicHttpUrl('not a url'), /无效|invalid/i);
 assert.throws(() => assertPublicHttpUrl('ftp://example.com'), /http/i);
 assert.throws(() => assertPublicHttpUrl('http://127.0.0.1/'), /私有|内部|private/i);
+assert.throws(() => assertPublicHttpUrl('https://user:pass@example.com/'), /账号|密码/);
 assert.throws(() => assertPublicHttpUrl('https://[::ffff:7f00:1]/'), /私有|内部|private/i);
 assert.ok(assertPublicHttpUrl('https://example.com/path'));
 
@@ -147,6 +155,19 @@ assert.ok(assertPublicHttpUrl('https://example.com/path'));
     /HTTPS|私有|内部/,
   );
   assert.deepEqual(requested, ['https://images.example.test/start']);
+}
+
+{
+  const requested = [];
+  const fetchImpl = async (url) => {
+    requested.push(String(url));
+    return new Response(null, { status: 302, headers: { location: 'http://127.0.0.1/private' } });
+  };
+  await assert.rejects(
+    () => fetchPublicHttpWithValidatedRedirects('https://public.example.test/start', {}, fetchImpl),
+    /私有|内部|private/,
+  );
+  assert.deepEqual(requested, ['https://public.example.test/start']);
 }
 
 

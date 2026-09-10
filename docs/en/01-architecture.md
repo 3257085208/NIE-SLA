@@ -11,7 +11,7 @@ Worker + Static Assets
 
 Rust Agent
   |-- unprivileged telemetry service
-  |-- root Manager (only the two fixed Beta actions)
+  |-- root Manager (only the three fixed Beta actions)
   |-- outbound HTTPS only
 ```
 

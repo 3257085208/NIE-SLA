@@ -24,6 +24,13 @@ const MAX_NODEQUALITY_CAPTURE_CHARS: usize = 180 * 1024;
 const IP_UNLOCK_TIMEOUT_SEC: u64 = 600;
 const NODEQUALITY_DEFAULT_TIMEOUT_SEC: u64 = 3600;
 const NODEQUALITY_MAX_TIMEOUT_SEC: u64 = 7200;
+pub(crate) const BACKROUTE_TIMEOUT_SEC: u64 = 600;
+const BACKROUTE_TARGETS: [(&str, &str, &str); 3] = [
+    ("telecom", "219.141.136.12", "电信"),
+    ("unicom", "202.106.50.1", "联通"),
+    ("mobile", "221.130.33.52", "移动"),
+];
+const BACKROUTE_SCRIPT: &str = include_str!("../scripts/backroute.sh");
 const NODEQUALITY_CAPTURE_BEGIN: &str = "__NIE_SLA_NQ_ARTIFACTS_V1_BEGIN__";
 const NODEQUALITY_CAPTURE_END: &str = "__NIE_SLA_NQ_ARTIFACTS_V1_END__";
 
@@ -198,6 +205,7 @@ fn execute_fixed_task(
     match action {
         "nodequality" => run_nodequality(cfg, http, timeout_sec, options, cancellation),
         "ip_unlock" => run_ip_unlock(cfg, http, timeout_sec, cancellation),
+        "backroute" => run_backroute(timeout_sec, cancellation),
         _ => Err(anyhow!("unsupported fixed task action")),
     }
 }
@@ -276,6 +284,370 @@ fn nodequality_task_output(output: &FixedScriptOutput) -> Result<TaskOutput> {
     }
     ensure_script_success(output)?;
     Err(anyhow!("NodeQuality completed without a report URL"))
+}
+
+fn backroute_timeout_sec(timeout_sec: Option<u64>) -> u64 {
+    timeout_sec
+        .unwrap_or(BACKROUTE_TIMEOUT_SEC)
+        .min(BACKROUTE_TIMEOUT_SEC)
+}
+
+// The line names are deliberately derived from route evidence, never from
+// the destination carrier label. A Telecom destination can therefore still
+// be reached over 9929/CMI/CMIN2, and an unknown route is shown as unknown
+// instead of the misleading "电信/联通/移动" fallback.
+fn line_from_asn(asn: u32) -> Option<&'static str> {
+    match asn {
+        4134 => Some("163"),
+        4809 => Some("CN2"),
+        4837 => Some("4837"),
+        9929 => Some("9929"),
+        10099 => Some("10099"),
+        58453 => Some("CMI"),
+        58807 => Some("CMIN2"),
+        9808 => Some("CMNET"),
+        _ => None,
+    }
+}
+
+fn line_priority(line: &str) -> u8 {
+    match line {
+        "CN2 GIA" => 100,
+        "CN2 GT" => 95,
+        "CMIN2" => 90,
+        "CMI" => 85,
+        "9929" => 80,
+        "10099" => 75,
+        "4837" => 70,
+        "CN2" => 65,
+        "163" => 60,
+        "CMNET" => 50,
+        _ => 0,
+    }
+}
+
+fn line_from_text(text: &str) -> Option<&'static str> {
+    let normalized = text.to_ascii_lowercase().replace('-', " ");
+    if normalized.contains("cn2 gia") {
+        Some("CN2 GIA")
+    } else if normalized.contains("cn2 gt") {
+        Some("CN2 GT")
+    } else if normalized.contains("cmin2") {
+        Some("CMIN2")
+    } else if normalized.contains("cmi") {
+        Some("CMI")
+    } else {
+        None
+    }
+}
+
+fn line_from_ip(ip: &str) -> Option<&'static str> {
+    let address = ip.parse::<std::net::IpAddr>().ok()?;
+    let octets = match address {
+        std::net::IpAddr::V4(value) => value.octets(),
+        std::net::IpAddr::V6(_) => return None,
+    };
+    let [a, b, c, _] = octets;
+    match (a, b, c) {
+        (59, 43, _) => Some("CN2"),
+        (202, 97, _) => Some("163"),
+        (58, _, c) if (14..=60).contains(&c) => Some("163"),
+        (219, 158, _) | (218, 105, _) => Some("4837"),
+        (210, 78, _) => Some("9929"),
+        (112, 4, _) => Some("9929"),
+        (223, 120, _) | (223, 121, _) | (221, 176, _) | (221, 183, _) | (211, 136, _) => {
+            Some("CMI")
+        }
+        _ => None,
+    }
+}
+
+// CN2 GT (Global Transit) keeps the Telecom 163 backbone (202.97.x.x) for the
+// domestic leg, while CN2 GIA runs on 59.43.x.x end to end. That difference is
+// only visible in the hop addresses, so the two are separated here and kept at
+// medium confidence unless the route text itself names the product.
+fn cn2_family_line(hop_ips: &[String]) -> Option<&'static str> {
+    let has_cn2 = hop_ips.iter().any(|ip| ip.starts_with("59.43."));
+    if !has_cn2 {
+        return None;
+    }
+    if hop_ips.iter().any(|ip| ip.starts_with("202.97.")) {
+        return Some("CN2 GT");
+    }
+    let last_hop = hop_ips
+        .iter()
+        .rev()
+        .find(|ip| ip.parse::<std::net::IpAddr>().is_ok())?;
+    if last_hop.starts_with("59.43.") {
+        Some("CN2 GIA")
+    } else {
+        Some("CN2")
+    }
+}
+
+fn parse_asn_token(token: &str) -> Option<u32> {
+    let trimmed = token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric());
+    let number = trimmed
+        .strip_prefix("AS")
+        .or_else(|| trimmed.strip_prefix("as"))?;
+    number.parse::<u32>().ok()
+}
+
+fn extract_asns(text: &str) -> Vec<u32> {
+    let mut asns = Vec::new();
+    for token in text.split(|ch: char| !ch.is_ascii_alphanumeric()) {
+        if let Some(asn) = parse_asn_token(token) {
+            if !asns.contains(&asn) {
+                asns.push(asn);
+            }
+        }
+    }
+    asns
+}
+
+fn route_line(asns: &[u32], hop_ips: &[String], text: &str) -> (&'static str, &'static str) {
+    if let Some(line) = line_from_text(text) {
+        return (line, "high");
+    }
+    let mut best_asn: Option<&'static str> = None;
+    for asn in asns {
+        if let Some(line) = line_from_asn(*asn) {
+            if best_asn
+                .as_ref()
+                .map(|current| line_priority(current))
+                .unwrap_or(0)
+                < line_priority(line)
+            {
+                best_asn = Some(line);
+            }
+        }
+    }
+    if let Some(line) = best_asn {
+        if line == "CN2" && hop_ips.iter().any(|ip| ip.starts_with("202.97.")) {
+            return ("CN2 GT", "high");
+        }
+        return (line, "high");
+    }
+    if let Some(line) = cn2_family_line(hop_ips) {
+        return (line, "medium");
+    }
+    let mut best_ip: Option<&'static str> = None;
+    for ip in hop_ips {
+        if let Some(line) = line_from_ip(ip) {
+            if best_ip
+                .as_ref()
+                .map(|current| line_priority(current))
+                .unwrap_or(0)
+                < line_priority(line)
+            {
+                best_ip = Some(line);
+            }
+        }
+    }
+    best_ip
+        .map(|line| (line, "medium"))
+        .unwrap_or(("未识别", "low"))
+}
+
+struct RouteSummary {
+    line: String,
+    confidence: String,
+    asns: Vec<u32>,
+    hops: Vec<String>,
+    report: String,
+}
+
+fn summarize_traceroute(text: &str, target_label: &str, target_ip: &str) -> RouteSummary {
+    let mut hops = Vec::new();
+    let mut hop_ips = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        let Some((prefix, rest)) = trimmed.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let prefix = prefix.trim_end_matches([':', '?']);
+        if !prefix.chars().all(|ch| ch.is_ascii_digit()) {
+            continue;
+        }
+        let hop: usize = prefix.parse().unwrap_or(0);
+        if hop == 0 {
+            continue;
+        }
+        let ips: Vec<String> = rest
+            .split_whitespace()
+            .filter_map(|token| {
+                token.parse::<std::net::IpAddr>().ok().or_else(|| {
+                    token
+                        .trim_matches(|ch: char| "()[]<>,;".contains(ch))
+                        .parse()
+                        .ok()
+                })
+            })
+            .map(|ip| ip.to_string())
+            .collect();
+        if ips.is_empty() {
+            hops.push(format!("{hop}: *"));
+            continue;
+        }
+        hop_ips.extend(ips.iter().cloned());
+        let asns = extract_asns(rest);
+        let asn_text = if asns.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " [{}]",
+                asns.iter()
+                    .map(|asn| format!("AS{asn}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        };
+        hops.push(format!("{hop}: {}{asn_text}", ips[0]));
+    }
+    let asns = extract_asns(text);
+    let (line, confidence) = route_line(&asns, &hop_ips, text);
+    let hops_text = if hops.is_empty() {
+        "无回显".to_string()
+    } else {
+        hops.join(" | ")
+    };
+    let asn_text = if asns.is_empty() {
+        "未获得 ASN".to_string()
+    } else {
+        asns.iter()
+            .map(|asn| format!("AS{asn}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let diagnostics = if hops.is_empty() {
+        text.lines()
+            .filter(|raw| {
+                let line = raw.trim().to_ascii_lowercase();
+                line.contains("probe_exit=")
+                    || line.contains("probe_skip=")
+                    || line.contains("permission")
+                    || line.contains("operation not permitted")
+                    || line.contains("usage:")
+                    || line.contains("error")
+            })
+            .take(12)
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join(" | ")
+    } else {
+        String::new()
+    };
+    let report = if diagnostics.is_empty() {
+        format!(
+            "{target_label}({target_ip}): 线路 {line}（识别置信度 {confidence}；观测 {asn_text}）\n  {hops_text}"
+        )
+    } else {
+        format!(
+            "{target_label}({target_ip}): 线路 {line}（识别置信度 {confidence}；观测 {asn_text}）\n  {hops_text}\n  诊断：{diagnostics}"
+        )
+    };
+    RouteSummary {
+        line: line.to_string(),
+        confidence: confidence.to_string(),
+        asns,
+        hops,
+        report,
+    }
+}
+
+fn backroute_script_command(target_ip: &str) -> Command {
+    // `sh -s <name> <arg>` assigns <name> to $1, so passing the target as an
+    // operand made the script receive the script name instead of the IP and
+    // silently answer "unsupported backroute destination" for every run.
+    // The fixed target is therefore injected through the environment; PATH is
+    // reset so no caller environment can influence the probe.
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-s")
+        .env_clear()
+        .env("PATH", SYSTEM_TASK_PATH)
+        .env("NIE_SLA_BACKROUTE_TARGET", target_ip)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+fn run_backroute_script(target_ip: &str) -> Result<String> {
+    let mut child = backroute_script_command(target_ip)
+        .spawn()
+        .context("启动固定回程检测脚本")?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("无法打开回程检测脚本 stdin"))?;
+    stdin.write_all(BACKROUTE_SCRIPT.as_bytes())?;
+    drop(stdin);
+    let output = child.wait_with_output().context("等待固定回程检测脚本")?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if !output.status.success() {
+        return Err(anyhow!(
+            "回程检测脚本执行失败（exit {}）：{}",
+            output
+                .status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "signal".to_string()),
+            text.trim().chars().take(240).collect::<String>()
+        ));
+    }
+    Ok(text)
+}
+
+fn run_backroute(
+    timeout_sec: Option<u64>,
+    cancellation: Option<&TaskCancellation>,
+) -> Result<TaskOutput> {
+    if !cfg!(target_os = "linux") {
+        return Err(anyhow!("回程检测目前仅支持 Linux"));
+    }
+    let total_deadline =
+        std::time::Instant::now() + Duration::from_secs(backroute_timeout_sec(timeout_sec));
+    let mut routes = Vec::new();
+    let mut reports = Vec::new();
+    for (_key, ip, label) in BACKROUTE_TARGETS {
+        if Instant::now() >= total_deadline {
+            return Err(anyhow!("回程检测总超时，已跳过剩余方向"));
+        }
+        if let Some(cancellation) = cancellation {
+            if cancellation.is_cancelled() {
+                return Err(anyhow!("回程检测已被取消"));
+            }
+        }
+        let text =
+            run_backroute_script(ip).with_context(|| format!("运行固定回程检测脚本 {ip}"))?;
+        let summary = summarize_traceroute(&text, label, ip);
+        let RouteSummary {
+            line,
+            confidence,
+            asns,
+            hops,
+            report,
+        } = summary;
+        routes.push(json!({
+            "carrier": label,
+            "target": ip,
+            "line": line,
+            "confidence": confidence,
+            "asns": asns,
+            "hops": hops,
+        }));
+        reports.push(report);
+    }
+    let report = reports.join("\n\n");
+    Ok(TaskOutput {
+        result: json!({ "routes": routes, "report": report }),
+        excerpt: output_excerpt(&report),
+    })
 }
 
 fn run_ip_unlock(
@@ -1711,7 +2083,10 @@ mod tests {
     fn nodequality_tasks_get_a_bounded_local_timeout() {
         use std::ffi::OsStr;
 
-        assert_eq!(nodequality_timeout_sec(None), NODEQUALITY_DEFAULT_TIMEOUT_SEC);
+        assert_eq!(
+            nodequality_timeout_sec(None),
+            NODEQUALITY_DEFAULT_TIMEOUT_SEC
+        );
         assert_eq!(nodequality_timeout_sec(Some(1800)), 1800);
         assert_eq!(
             nodequality_timeout_sec(Some(999_999)),
@@ -1734,8 +2109,9 @@ mod tests {
     #[test]
     fn nodequality_runner_wires_the_bounded_timeout_through() {
         let source = include_str!("tasks.rs");
-        assert!(source
-            .contains("\"nodequality\" => run_nodequality(cfg, http, timeout_sec, options, cancellation)"));
+        assert!(source.contains(
+            "\"nodequality\" => run_nodequality(cfg, http, timeout_sec, options, cancellation)"
+        ));
         assert!(source.contains("Some(nodequality_timeout_sec(timeout_sec))"));
     }
 
@@ -1874,6 +2250,107 @@ mod tests {
             "--dns-compat dig example.com"
         );
         fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn backroute_summary_uses_line_evidence_instead_of_destination_carrier() {
+        let cn2 = summarize_traceroute(
+            "traceroute -A\n 1 10.0.0.1 1 ms [AS4134]\n 2 59.43.1.1 2 ms [AS4809]\n",
+            "电信",
+            "219.141.136.12",
+        );
+        assert_eq!(cn2.line, "CN2");
+        assert_eq!(cn2.confidence, "high");
+        assert!(cn2.report.contains("线路 CN2"));
+        assert!(!cn2.report.contains("经由 电信"));
+
+        let cross_carrier = summarize_traceroute(
+            "traceroute -A\n 1 203.0.113.1 1 ms [AS9929]\n 2 203.0.113.2 2 ms [AS4134]\n",
+            "电信",
+            "219.141.136.12",
+        );
+        assert_eq!(cross_carrier.line, "9929");
+
+        let unknown =
+            summarize_traceroute("traceroute\n 1 203.0.113.1 1 ms\n", "移动", "221.130.33.52");
+        assert_eq!(unknown.line, "未识别");
+        assert_eq!(unknown.confidence, "low");
+
+        let punctuation = summarize_traceroute(
+            "=== traceroute-icmp ===\n 1 10.0.0.1 (1 ms) [AS4134,]\n 2 59.43.1.1, 2 ms (AS4809)\n",
+            "电信",
+            "219.141.136.12",
+        );
+        assert_eq!(punctuation.line, "CN2");
+        assert_eq!(punctuation.asns, vec![4134, 4809]);
+        assert!(punctuation.hops.iter().any(|hop| hop.contains("10.0.0.1")));
+
+        let no_echo = summarize_traceroute(
+            "=== traceroute-udp ===\nprobe_exit=124\n",
+            "移动",
+            "221.130.33.52",
+        );
+        assert!(no_echo.report.contains("probe_exit=124"));
+
+        let cn2_gt = summarize_traceroute(
+            "=== traceroute-tcp443 ===\n 1 59.43.1.1 2 ms\n 2 202.97.2.2 3 ms\n",
+            "电信",
+            "219.141.136.12",
+        );
+        assert_eq!(cn2_gt.line, "CN2 GT");
+        assert_eq!(cn2_gt.confidence, "medium");
+
+        let cn2_gia = summarize_traceroute(
+            "=== traceroute-tcp443 ===\n 1 59.43.1.1 2 ms\n 2 59.43.2.2 3 ms\n",
+            "电信",
+            "219.141.136.12",
+        );
+        assert_eq!(cn2_gia.line, "CN2 GIA");
+        assert_eq!(cn2_gia.confidence, "medium");
+
+        let cuii = summarize_traceroute(
+            "=== traceroute-icmp ===\n 1 210.78.1.1 2 ms\n",
+            "联通",
+            "202.106.50.1",
+        );
+        assert_eq!(cuii.line, "9929");
+    }
+
+    #[test]
+    fn backroute_script_receives_target_through_environment() {
+        let command = backroute_script_command("219.141.136.12");
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, vec!["-s"]);
+        let env: Vec<(String, Option<String>)> = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|item| item.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        assert!(env.iter().any(|(key, value)| {
+            key == "NIE_SLA_BACKROUTE_TARGET" && value.as_deref() == Some("219.141.136.12")
+        }));
+        assert!(env
+            .iter()
+            .any(|(key, value)| key == "PATH" && value.is_some()));
+    }
+
+    #[test]
+    fn backroute_script_has_a_fixed_destination_allowlist() {
+        assert!(BACKROUTE_SCRIPT.contains("219.141.136.12|202.106.50.1|221.130.33.52"));
+        assert!(BACKROUTE_SCRIPT.contains("NIE_SLA_BACKROUTE_TARGET"));
+        assert!(BACKROUTE_SCRIPT.contains("traceroute-tcp443"));
+        assert!(BACKROUTE_SCRIPT.contains("traceroute-icmp"));
+        assert!(BACKROUTE_SCRIPT.contains("traceroute-udp"));
+        assert!(BACKROUTE_SCRIPT.contains("tracepath"));
+        assert!(BACKROUTE_SCRIPT.contains("timeout 25s"));
+        assert!(!BACKROUTE_SCRIPT.contains("eval "));
     }
 
     #[test]

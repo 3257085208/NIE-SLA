@@ -97,6 +97,7 @@ export const DEFAULT_FRONTEND_APPEARANCE = Object.freeze({
   summary_degraded: '{count} 个延迟', summary_unknown: '{count} 个待检查', summary_latency: '平均延迟 {value}',
   summary_updated: '更新于 {value}', footer_text: '版权所有 © {site_name} 2026', footer_link_text: '', footer_link_url: '',
   accent_color: '#2ea36d', page_background: '#f4f8fc', surface_color: '#ffffff',
+  custom_head: '', custom_script: '', custom_bg: '', custom_bg_mobile: '',
   show_header: true, show_banner: true, show_summary: true, show_search: true, show_group_by: true,
   show_incidents: true, show_chart: true, show_vps_details: true, show_checks: true, show_footer: true,
 });
@@ -155,6 +156,10 @@ export function normalizeFrontendAppearance(input = {}, env = {}) {
     brand_logo_url: appearanceOptionalUrl(raw, 'brand_logo_url', d.brand_logo_url),
     brand_logo_alt: appearanceText(raw.brand_logo_alt, d.brand_logo_alt, 80),
     brand_logo_height: appearanceInteger(raw, 'brand_logo_height', d.brand_logo_height, 20, 64),
+    custom_head: appearanceOptionalText(raw, 'custom_head', d.custom_head, 4000),
+    custom_script: appearanceOptionalText(raw, 'custom_script', d.custom_script, 4000),
+    custom_bg: appearanceOptionalUrl(raw, 'custom_bg', d.custom_bg),
+    custom_bg_mobile: appearanceOptionalUrl(raw, 'custom_bg_mobile', d.custom_bg_mobile),
     header_right_text: appearanceOptionalText(raw, 'header_right_text', d.header_right_text, 120),
     header_right_image_url: appearanceOptionalUrl(raw, 'header_right_image_url', d.header_right_image_url),
     header_right_image_alt: appearanceText(raw.header_right_image_alt, d.header_right_image_alt, 80),
@@ -228,6 +233,41 @@ export async function getAgentPublicBase(env) {
   } catch (_) {
     return '';
   }
+}
+
+export async function getAgentReportInterval(env) {
+  try {
+    const raw = await getMeta(env, 'agent_report_interval');
+    const value = Number(raw);
+    if (Number.isFinite(value) && value >= 10 && value <= 3600) return Math.floor(value);
+  } catch (_) {}
+  return 300;
+}
+
+export async function setAgentReportInterval(env, seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 10 || value > 3600) throw new Error('上报间隔必须在 10-3600 秒之间');
+  await setMeta(env, 'agent_report_interval', String(Math.floor(value)));
+  return Math.floor(value);
+}
+
+export async function getTurnstileConfig(env) {
+  const [siteKey, secretKey, enabled] = await Promise.all([
+    getMeta(env, 'turnstile_site_key').catch(() => null),
+    getMeta(env, 'turnstile_secret_key').catch(() => null),
+    getMeta(env, 'turnstile_enabled').catch(() => null),
+  ]);
+  return {
+    enabled: parseBoolean(enabled, false) && Boolean(siteKey && secretKey),
+    site_key: siteKey || null,
+  };
+}
+
+export async function saveTurnstileConfig(env, { site_key, secret_key, enabled }) {
+  if (site_key !== undefined) await setMeta(env, 'turnstile_site_key', String(site_key || '').trim());
+  if (secret_key !== undefined && String(secret_key).trim()) await setMeta(env, 'turnstile_secret_key', String(secret_key).trim());
+  if (enabled !== undefined) await setMeta(env, 'turnstile_enabled', parseBoolean(enabled, false) ? '1' : '0');
+  return getTurnstileConfig(env);
 }
 
 export async function getPublicSettings(env, { includeAdmin = false } = {}) {

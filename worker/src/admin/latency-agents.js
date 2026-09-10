@@ -405,6 +405,14 @@ async function readArchiveObjectStrict(bucket, key) {
 }
 
 async function writeLatencyD1Fallback(env, nodeId, points) {
+  if (!points.length) return;
+  // This path only runs while R2 is failing; skip when the newest bucket was
+  // already written so every per-minute retry doesn't multiply D1 rows_written
+  // by the retry count.
+  const newestBucket = Math.max(...points.map((point) => Math.floor(Number(point.checked_at) / D1_FALLBACK_BUCKET_SEC) * D1_FALLBACK_BUCKET_SEC));
+  const alreadyStored = await env.DB.prepare(`SELECT 1 FROM latency_results WHERE node_id = ? AND checked_at >= ? LIMIT 1`)
+    .bind(nodeId, newestBucket).first().catch(() => null);
+  if (alreadyStored) return;
   const statements = [];
   for (const point of points) {
     const checkedAt = Math.floor(Number(point.checked_at) / D1_FALLBACK_BUCKET_SEC) * D1_FALLBACK_BUCKET_SEC;

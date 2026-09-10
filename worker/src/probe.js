@@ -1,5 +1,5 @@
 import { connect } from 'cloudflare:sockets';
-import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatus, withTimeout, ALLOWED_REGIONS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC, BUCKET_SEC, isPrivateHost, buildMissedPoints, lastPersistedCheckAt } from './utils.js';
+import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatus, withTimeout, ALLOWED_REGIONS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC, BUCKET_SEC, isPrivateHost, buildMissedPoints, lastPersistedCheckAt, assertPublicHttpUrl, fetchPublicHttpWithValidatedRedirects } from './utils.js';
 import { internalRequestHeaders } from './auth.js';
 import { readR2State, mergeR2StateUpdates, setDailySummary, cachedDailySummaryBefore, dailySummaryFromPoints, statsFromDailySummaries } from './storage.js';
 import { applyProbeWriteBatch, readCheckBucketDaySummary, latestStatusToD1Enabled, upsertLatestStatus } from './admin.js';
@@ -77,7 +77,11 @@ async function probeHttp(target, cf) {
   const started = Date.now();
   try {
     const followRedirects = target.follow_redirects !== false && target.follow_redirects !== 0 && String(target.follow_redirects ?? 'true') !== 'false';
-    const res = await fetch(target.url, { method, redirect: followRedirects ? 'follow' : 'manual', cache: 'no-store', signal: controller.signal, headers: { 'user-agent': 'NIE-SLA/0.1 Cloudflare Worker Monitor', 'accept': '*/*' } });
+    const publicUrl = assertPublicHttpUrl(target.url);
+    const options = { method, cache: 'no-store', signal: controller.signal, headers: { 'user-agent': 'NIE-SLA/0.1 Cloudflare Worker Monitor', 'accept': '*/*' } };
+    const res = followRedirects
+      ? await fetchPublicHttpWithValidatedRedirects(publicUrl, options)
+      : await fetch(publicUrl.toString(), { ...options, redirect: 'manual' });
     const latency = Date.now() - started;
     const ok = expected.length ? expected.includes(res.status) : res.status >= 200 && res.status < 400;
     return { ok, latency_ms: latency, status_code: res.status, error: ok ? null : `Unexpected HTTP ${res.status}`, cf_colo: cf.colo || null };

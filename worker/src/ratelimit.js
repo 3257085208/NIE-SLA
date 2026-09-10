@@ -61,7 +61,10 @@ export async function rateLimitD1(env, key, limit, windowSec = 60) {
     return Number(result?.meta?.changes || 0) === 1;
   } catch (err) {
     console.error('rateLimitD1 failed:', String(err?.message || err));
-    return false;
+    // A storage outage must not turn into a control-plane outage: fall back
+    // to the in-isolation limiter so a D1 quota/error incident degrades to
+    // per-instance limits instead of rejecting every request.
+    return check(key, limit, windowSec * 1000);
   }
 }
 
@@ -83,7 +86,8 @@ export async function rateLimitStatusD1(env, key, limit, windowSec = 60) {
     };
   } catch (err) {
     console.error('rateLimitStatusD1 failed:', String(err?.message || err));
-    return { limited: true, count: limit, retryAfter: windowSec };
+    const allowed = check(`status:${key}`, limit, windowSec * 1000);
+    return { limited: !allowed, count: allowed ? 0 : limit, retryAfter: allowed ? 0 : windowSec };
   }
 }
 

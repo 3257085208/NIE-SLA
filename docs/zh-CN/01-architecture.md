@@ -11,7 +11,7 @@ Worker + Static Assets
 
 Rust Agent
   |-- 低权限遥测服务
-  |-- root Manager（只执行两个固定 Beta 动作）
+  |-- root Manager（只执行三个固定 Beta 动作）
   |-- 仅主动 HTTPS 访问 Worker
 ```
 

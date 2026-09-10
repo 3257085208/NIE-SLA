@@ -36,6 +36,7 @@ export function agentInstallCommandFromPayload(payload, expectedTargetId) {
 // appended to the copied command: the second download would 401 on the
 // already-consumed ticket. Use this with a dedicated copy action instead.
 export function agentRootlessInstallCommandFromPayload(payload, expectedTargetId) {
+  if (!payload || payload.linux_command_rootless == null) return '';
   return agentCommandFromPayload(payload, expectedTargetId, 'linux_command_rootless');
 }
 

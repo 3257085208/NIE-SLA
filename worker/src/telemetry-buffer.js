@@ -1,10 +1,12 @@
 import { nowSec, sanitizeAgentId } from './utils.js';
+import { recordAgentAvailability } from './agent-availability.js';
 import { agentStateTimestamp } from './agent-state.js';
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
-import { persistAgentMetricsStateFallback, processAgentMetricsPayload } from './metrics.js';
+import { persistAgentMetricsStateFallback, persistAgentTraffic, processAgentMetricsPayload } from './metrics.js';
 import { readR2JsonResult } from './storage.js';
 import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
 import { getPingIntervalSec } from './ping-config.js';
+import { getAgentReportInterval } from './admin/settings.js';
 import { pingTargetProtocol } from './ping-target-protocol.js';
 import { decodeAgentMetricsProtobuf } from './telemetry-protobuf.js';
 
@@ -26,6 +28,11 @@ const LATEST_STATE_PREFIX = 'latest:state:';
 // the full range (startAfter acts as the continuation cursor).
 const STORAGE_LIST_PAGE_LIMIT = 500;
 const FLUSH_GRACE_SEC = 600;
+// Retained failed drain groups (bounded so a persistent downstream failure
+// cannot grow memory without limit) and the minimum interval between
+// per-Agent crash-fallback writes of the latest state.
+const MAX_MEM_REPORTS = 5_000;
+const LATEST_PERSIST_THROTTLE_SEC = 300;
 
 function latestStateKey(agentId) {
   return `${LATEST_STATE_PREFIX}${sanitizeAgentId(agentId)}`;
@@ -35,6 +42,16 @@ export class TelemetryBuffer {
   constructor(state, env) {
     this.state = state;
     this.env = env;
+    // Emergency quota mode: per-message work is memory-only (SQLite storage
+    // writes drained by the alarm), so wall time collapses and the
+    // rows_written quota stops absorbing telemetry traffic.
+    this.memLatest = new Map();
+    this.memReports = [];
+    // Per-Agent throttle for the alarm-drain persistence of latest states
+    // (both the DO storage mirror and the D1 fallback). The message handler
+    // must stay free of D1 work: a slow or rate-limited D1 write here once
+    // stalled this shared DO and blocked telemetry for every Agent.
+    this.latestPersistAt = new Map();
   }
 
   async fetch(request) {
@@ -46,12 +63,21 @@ export class TelemetryBuffer {
     if (request.method === 'GET' && url.pathname === '/latest') {
       const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
       if (!agentId) return Response.json({ ok: false, error: 'Agent ID 无效' }, { status: 400 });
+      const memo = this.memLatest.get(agentId);
+      if (memo) return Response.json({ ok: true, state: memo });
       return Response.json({ ok: true, state: await this.state.storage.get(latestStateKey(agentId)) || null });
     }
     if (request.method === 'DELETE' && url.pathname === '/latest') {
       const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
       if (!agentId) return Response.json({ ok: false, error: 'Agent ID 无效' }, { status: 400 });
+      // Dropping the in-memory layer (and hanging up the Agent's sockets) is
+      // required: otherwise the next message would silently re-create the
+      // deleted target's latest state, D1 row, and telemetry chunks.
+      this.memLatest.delete(agentId);
       await this.state.storage.delete(latestStateKey(agentId));
+      for (const socket of this.state.getWebSockets(`agent:${agentId}`)) {
+        try { socket.close(1000, 'agent deleted'); } catch (_) {}
+      }
       return Response.json({ ok: true, agent_id: agentId });
     }
     if (request.method === 'GET' && url.pathname === '/fleet/latest') {
@@ -98,40 +124,65 @@ export class TelemetryBuffer {
       }
       const attachment = socket.deserializeAttachment() || {};
       const payload = body?.type === 'metrics' ? body.payload : body;
-      // previousState must be THIS Agent's own latest state (per-Agent key in
-      // this shared instance), never another Agent's state.
       const agentId = sanitizeAgentId(attachment.agent_id || '');
-      const previousState = agentId ? await this.state.storage.get(latestStateKey(agentId)) || null : null;
+      // Fast path: keep the message handler free of D1/R2/subrequest work so
+      // this shared DO can hibernate between messages (DO duration is billed
+      // per wall second while awake). Validation and normalization happen
+      // here; persistence is buffered locally and drained by the alarm.
+      let previousState = null;
+      if (agentId) {
+        const memo = this.memLatest.get(agentId) || null;
+        const stored = await this.state.storage.get(latestStateKey(agentId)) || null;
+        previousState = agentStateTimestamp(stored?.updated_at || 0) > agentStateTimestamp(memo?.updated_at || 0) ? stored : memo;
+      }
       const result = await processAgentMetricsPayload(this.env, payload, null, attachment.agent_id, {
         previousState,
         skipStateD1: true,
         returnLatestState: true,
+        wss: true,
       });
       const latestState = result?.latest_state;
+      let acceptedState = null;
       if (latestState) {
-        try {
-          const latestKey = latestStateKey(latestState.agent_id || agentId);
-          // A late message from a stale socket (reconnect race) must not
-          // overwrite a newer state already stored for this Agent.
-          if (agentStateTimestamp(previousState?.updated_at) <= agentStateTimestamp(latestState.updated_at)) {
-            await this.state.storage.put(latestKey, latestState);
-          }
-        } catch (error) {
-          console.error('store buffered Agent latest state failed:', String(error?.message || error));
-          try {
-            await persistAgentMetricsStateFallback(this.env, latestState);
-          } catch (fallbackError) {
-            console.error('fallback Agent latest state to D1 failed:', String(fallbackError?.message || fallbackError));
-          }
+        // A late message from a stale socket (reconnect race) must not
+        // overwrite a newer state already stored for this Agent.
+        if (agentStateTimestamp(previousState?.updated_at) <= agentStateTimestamp(latestState.updated_at)) {
+          this.memLatest.set(latestState.agent_id || agentId, latestState);
+          acceptedState = latestState;
+        } else if (previousState) {
+          // Rejected: a newer state already exists — re-sync the memory layer
+          // with it so subsequent reads stay consistent.
+          this.memLatest.set(latestState.agent_id || agentId, previousState);
         }
       }
-      const { latest_state: _latestState, ...ack } = result || {};
+      const reportTs = nowSec();
+      this.memReports.push({
+        agent_id: agentId,
+        ts: reportTs,
+        prev_report_at: previousState?.updated_at || null,
+        updated_at: acceptedState?.updated_at || null,
+        state: acceptedState,
+        points: result?.mapped_points || [],
+        pings: result?.mapped_pings || [],
+        net: result?.net || null,
+      });
+      await this.scheduleReportDrain();
+      const { latest_state: _latestState, mapped_points: _p, mapped_pings: _q, net: _n, ...ack } = result || {};
       const control = await this.readControlSnapshot();
-      socket.send(JSON.stringify({ ...ack, ...(control ? { control } : {}), type: 'metrics_ack' }));
+      const scopedControl = control
+        ? { ...control, traffic_correction: control.traffic_corrections?.[agentId] || null, traffic_corrections: undefined }
+        : null;
+      socket.send(JSON.stringify({ ...ack, ...(scopedControl ? { control: scopedControl } : {}), type: 'metrics_ack' }));
     } catch (error) {
       const status = Number(error?.status || 400);
       socket.send(JSON.stringify({ ok: false, type: 'metrics_ack', error: String(error?.message || 'WS metrics failed'), retryable: status >= 500 }));
     }
+  }
+
+  async scheduleReportDrain() {
+    const existing = await this.state.storage.getAlarm();
+    if (existing != null) return;
+    await this.state.storage.setAlarm(Date.now() + 30_000);
   }
 
   webSocketClose() {}
@@ -141,7 +192,144 @@ export class TelemetryBuffer {
   }
 
   async alarm() {
-    await this.flushCompletedHours(nowSec());
+    // Each stage is independent and must always reschedule: a failure in one
+    // stage (or an exception escaping the alarm) would otherwise leave this DO
+    // with no alarm at all and silently stop all draining.
+    try {
+      await this.drainPendingReports();
+    } catch (error) {
+      console.error('drain pending reports failed:', String(error?.message || error));
+      const existing = await this.state.storage.getAlarm();
+      const retryAt = Date.now() + 60_000;
+      if (existing == null || existing > retryAt) await this.state.storage.setAlarm(retryAt).catch(() => {});
+    }
+    try {
+      await this.flushCompletedHours(nowSec());
+    } catch (error) {
+      console.error('flush completed hours failed:', String(error?.message || error));
+      const existing = await this.state.storage.getAlarm();
+      const retryAt = Date.now() + 5 * 60 * 1000;
+      if (existing == null || existing > retryAt) await this.state.storage.setAlarm(retryAt).catch(() => {});
+    }
+  }
+
+  async drainPendingReports() {
+    if (!this.memReports.length) return 0;
+    const reports = this.memReports.splice(0, this.memReports.length);
+    reports.sort((a, b) => a.ts - b.ts);
+    const groups = new Map();
+    for (const report of reports) {
+      const id = sanitizeAgentId(String(report.agent_id || ''));
+      if (!id) continue;
+      const group = groups.get(id) || [];
+      group.push(report);
+      groups.set(id, group);
+    }
+    const noPublicIpAgents = await this.loadNoPublicIpAgents([...groups.keys()]);
+    const failures = [];
+    let drained = 0;
+    for (const [agentId, group] of groups) {
+      const drainState = (item) => {
+        if (!item.__drainState) item.__drainState = {};
+        return item.__drainState;
+      };
+      let groupFailed = false;
+      try {
+        const points = group.flatMap(item => item.points || []);
+        const pings = group.flatMap(item => item.pings || []);
+        if ((points.length || pings.length) && !group.every(item => drainState(item).telemetryAppended)) {
+          await appendBufferedAgentTelemetry(this.env, agentId, points, pings);
+          for (const item of group) drainState(item).telemetryAppended = true;
+        }
+      } catch (error) {
+        console.error('drain buffered agent reports failed:', String(error?.message || error));
+        failures.push(...group);
+        continue;
+      }
+      // Availability counters are additive (UPSERT accumulates seconds).  Mark
+      // the aggregate only after it succeeds so a transient D1 failure keeps
+      // the reports queued without duplicating a later successful append.
+      if ((noPublicIpAgents.get(agentId) || 0) === 1 && group[0].prev_report_at && !drainState(group[0]).availabilityPersisted) {
+        const lastAt = group[group.length - 1].ts;
+        try {
+          await recordAgentAvailability(this.env, agentId, group[0].prev_report_at, lastAt);
+          drainState(group[0]).availabilityPersisted = true;
+        } catch (error) {
+          groupFailed = true;
+          console.error('record agent availability failed:', String(error?.message || error));
+        }
+      }
+      for (const item of group) {
+        if (item.net && !drainState(item).trafficPersisted) {
+          try {
+            await persistAgentTraffic(this.env, agentId, { net: item.net }, item.ts);
+            drainState(item).trafficPersisted = true;
+          } catch (error) {
+            groupFailed = true;
+            console.error('replay agent traffic failed:', String(error?.message || error));
+          }
+        }
+      }
+      const latestItem = group.reduce((latest, item) => (
+        item.state && (!latest || agentStateTimestamp(item.state.updated_at) > agentStateTimestamp(latest.state?.updated_at)) ? item : latest
+      ), null);
+      if (latestItem?.state && !drainState(latestItem).latestStatePersisted) {
+        try {
+          await this.persistLatestState(agentId, latestItem.state);
+          drainState(latestItem).latestStatePersisted = true;
+        } catch (error) {
+          groupFailed = true;
+          console.error('persist latest agent state failed:', String(error?.message || error));
+        }
+      }
+      if (groupFailed) {
+        failures.push(...group);
+        continue;
+      }
+      drained += group.length;
+    }
+    if (failures.length) {
+      this.memReports = [...failures, ...this.memReports];
+      // Cap from the head (oldest) side so the newest reports survive an
+      // outage backlog; stale points age out server-side anyway.
+      if (this.memReports.length > MAX_MEM_REPORTS) {
+        this.memReports = this.memReports.slice(this.memReports.length - MAX_MEM_REPORTS);
+      }
+      const existing = await this.state.storage.getAlarm();
+      const retryAt = Date.now() + 60_000;
+      if (existing == null || existing > retryAt) await this.state.storage.setAlarm(retryAt);
+    }
+    return drained;
+  }
+
+  // Latest states live in memory while the DO is up; the D1 row and the
+  // storage mirror below are only crash fallbacks, so per-Agent throttling is
+  // enough (the message path itself never touches D1).
+  async persistLatestState(agentId, state) {
+    const now = nowSec();
+    if (now - Number(this.latestPersistAt.get(agentId) || 0) < LATEST_PERSIST_THROTTLE_SEC) return;
+    this.latestPersistAt.set(agentId, now);
+    await this.state.storage.put(latestStateKey(agentId), state);
+    await persistAgentMetricsStateFallback(this.env, state);
+  }
+
+  async loadNoPublicIpAgents(agentIds) {
+    const map = new Map();
+    if (!this.env.DB || !agentIds.length) return map;
+    // D1 caps bound parameters at 100; chunk so a large fleet degrades to
+    // multiple queries instead of one failing query that skips availability
+    // for every Agent.
+    for (let offset = 0; offset < agentIds.length; offset += 90) {
+      const chunk = agentIds.slice(offset, offset + 90);
+      try {
+        const rows = await this.env.DB.prepare(`SELECT id FROM targets WHERE no_public_ip = 1 AND id IN (${chunk.map(() => '?').join(',')})`)
+          .bind(...chunk).all();
+        for (const row of rows.results || []) map.set(String(row.id), 1);
+      } catch (error) {
+        console.error('load no-public-ip targets failed:', String(error?.message || error));
+      }
+    }
+    return map;
   }
 
   async append(body) {
@@ -186,7 +374,17 @@ export class TelemetryBuffer {
         enabled: Number(row.enabled || 0) === 1,
         protocol: pingTargetProtocol(row.target),
       })).filter(row => row.id && row.target && ['tcp', 'http'].includes(row.protocol));
-      const control = { ping_interval_sec: await getPingIntervalSec(this.env), ping_targets: targets };
+      let trafficCorrections = {};
+      try {
+        const rows = await this.env.DB.prepare(`SELECT key, value FROM app_meta WHERE key LIKE 'traffic_corr:%'`).all();
+        for (const row of rows.results || []) {
+          try {
+            trafficCorrections[String(row.key).slice('traffic_corr:'.length)] = JSON.parse(row.value);
+          } catch (_) {}
+        }
+      } catch (_) {}
+      const reportInterval = await getAgentReportInterval(this.env);
+      const control = { ping_interval_sec: await getPingIntervalSec(this.env), ping_targets: targets, traffic_corrections: trafficCorrections, report_interval_sec: reportInterval };
       await this.state.storage.put('control:ping', { fetched_at: now, control });
       return control;
     } catch (error) {
@@ -244,7 +442,7 @@ export class TelemetryBuffer {
       }
     }
     await this.flushPendingExports(currentAt);
-    if (retry) await this.state.storage.setAlarm(Date.now() + 5 * 60 * 1000);
+    if (retry) await this.scheduleAlarmIfSooner(5 * 60 * 1000);
     else if ((await this.bufferRows(1)).size) await this.scheduleFlush();
   }
 
@@ -287,7 +485,15 @@ export class TelemetryBuffer {
         retry = true;
       }
     }
-    if (retry) await this.state.storage.setAlarm(Date.now() + 5 * 60 * 1000);
+    if (retry) await this.scheduleAlarmIfSooner(5 * 60 * 1000);
+  }
+
+  // Retry scheduling must never postpone an earlier pending alarm (a failing
+  // drain's 60s retry loses to a later flush retry otherwise).
+  async scheduleAlarmIfSooner(delayMs) {
+    const at = Date.now() + delayMs;
+    const existing = await this.state.storage.getAlarm();
+    if (existing == null || existing > at) await this.state.storage.setAlarm(at);
   }
 
   async scheduleFlush() {

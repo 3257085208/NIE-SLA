@@ -1,6 +1,4 @@
-use super::{
-    drop_samples_through, json_string, sample_json, QueueCommand, SamplePoint, QUEUE_FLUSH_SEC,
-};
+use super::{json_string, sample_json, QueueCommand, SamplePoint, QUEUE_FLUSH_SEC};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::env;
@@ -146,8 +144,10 @@ pub(super) fn spawn_queue_writer(
                     }
                     dirty = true;
                 }
-                Ok(QueueCommand::Acknowledge(ts)) => {
-                    drop_samples_through(&mut samples, ts);
+                Ok(QueueCommand::AcknowledgeCount(count)) => {
+                    // Count-based drop stays correct across clock steps where
+                    // a timestamp comparison would delete fresh samples.
+                    samples.drain(0..count.min(samples.len()));
                     dirty = persist_sample_queue(&path, &samples);
                     last_flush = Instant::now();
                 }
@@ -196,6 +196,12 @@ fn sample_from_json(value: &serde_json::Value) -> Option<SamplePoint> {
         mem: json_f64(value, "mem"),
         disk: json_f64(value, "disk"),
         load: json_f64(value, "load"),
+        load5: json_f64(value, "load5"),
+        load15: json_f64(value, "load15"),
+        process_count: value
+            .get("process_count")
+            .and_then(|item| item.as_u64())
+            .unwrap_or(0) as u32,
         net_rx: json_f64(value, "net_rx"),
         net_tx: json_f64(value, "net_tx"),
         tcp_conns: value

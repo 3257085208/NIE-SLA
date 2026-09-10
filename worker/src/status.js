@@ -96,7 +96,7 @@ async function buildStatusPayload(env, url = null, options = {}) {
   }
   const days = clamp(Number(url?.searchParams?.get('days') || DEFAULT_STATUS_DAYS), 1, 90);
   const startDay = dateAddLocal(env, -days + 1);
-  const targetsPromise = env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.no_public_ip, t.sort_order, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.city, t.location_source, t.location_updated_at, t.provider, t.line_type, t.traffic_enabled, t.traffic_quota_gb, t.traffic_mode, t.traffic_reset_day, t.nq_updated_at, t.nq_unlock_data, t.nq_unlock_updated_at, t.unlock_data, t.unlock_updated_at, CASE WHEN t.nq_report IS NULL OR t.nq_report = '' THEN 0 ELSE 1 END AS has_nq FROM targets t WHERE t.enabled = 1 ORDER BY CASE WHEN t.sort_order IS NULL THEN 1 ELSE 0 END, t.sort_order, t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all()
+  const targetsPromise = env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.no_public_ip, t.sort_order, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.city, t.location_source, t.location_updated_at, t.provider, t.line_type, t.traffic_enabled, t.traffic_quota_gb, t.traffic_mode, t.traffic_reset_day, t.nq_updated_at, t.nq_unlock_data, t.nq_unlock_updated_at, t.unlock_data, t.unlock_updated_at, t.backroute_data, t.backroute_updated_at, CASE WHEN t.nq_report IS NULL OR t.nq_report = '' THEN 0 ELSE 1 END AS has_nq FROM targets t WHERE t.enabled = 1 ORDER BY CASE WHEN t.sort_order IS NULL THEN 1 ELSE 0 END, t.sort_order, t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all()
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.provider, t.line_type, t.traffic_enabled, t.traffic_quota_gb FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all())
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location, t.provider, t.line_type FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all())
     .catch(() => env.DB.prepare(`SELECT t.id, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.method, t.expected_status, t.timeout_ms, t.interval_sec, t.probe_region, t.enabled, t.created_at, t.updated_at, t.last_checked_at, t.expires_at, t.price, t.currency, t.billing_cycle, t.tags, t.location FROM targets t WHERE t.enabled = 1 ORDER BY t.group_name COLLATE NOCASE, t.name COLLATE NOCASE`).all());
@@ -207,11 +207,34 @@ async function buildStatusPayload(env, url = null, options = {}) {
     const agentState = metricsMap[sanitizeAgentId(targetRow.id)] || null;
     const hasNq = targetRow.type === 'tcp' && Number(targetRow.has_nq || 0) === 1;
     const unlock = publicUnlockData(targetRow.unlock_data, targetRow.nq_unlock_data);
-    const publicRow = { ...row, no_public_ip: noPublicIp ? 1 : 0, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || '自动', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, has_nq: hasNq, nq: hasNq ? { has_report: true, updated_at: targetRow.nq_updated_at ? Number(targetRow.nq_updated_at) : null } : null, unlock, ...agentStatusFields(agentState, env) };
+    let backroute = null;
+    if (targetRow.backroute_data) {
+      try {
+        const parsed = JSON.parse(targetRow.backroute_data);
+        if (Array.isArray(parsed) && parsed.length) {
+          backroute = {
+            updated_at: Number(targetRow.backroute_updated_at || 0) || null,
+            routes: parsed.slice(0, 4).map((entry) => ({
+              carrier: String(entry?.carrier || '').slice(0, 12),
+              target: String(entry?.target || '').slice(0, 40),
+              line: ['电信', '联通', '移动', '其他', '未知', '未识别'].includes(String(entry?.line || '').trim())
+                ? '未识别'
+                : String(entry?.line || '').slice(0, 60),
+              confidence: ['high', 'medium', 'low'].includes(String(entry?.confidence || '').trim()) ? String(entry.confidence).trim() : undefined,
+              raw: entry?.raw ? String(entry.raw).slice(0, 200) : undefined,
+            })),
+          };
+        }
+      } catch (_) {}
+    }
+    const publicRow = { ...row, no_public_ip: noPublicIp ? 1 : 0, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || '自动', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, has_nq: hasNq, nq: hasNq ? { has_report: true, updated_at: targetRow.nq_updated_at ? Number(targetRow.nq_updated_at) : null } : null, unlock, ...agentStatusFields(agentState, env, { includeStatusSource: noPublicIp }) };
     delete publicRow.nq_report;
     delete publicRow.unlock_data;
     delete publicRow.nq_unlock_data;
     delete publicRow.nq_unlock_updated_at;
+    delete publicRow.backroute_data;
+    delete publicRow.backroute_updated_at;
+    if (backroute) publicRow.backroute = backroute;
     publicRow.latency_sources = noPublicIp ? [] : refreshLatencySources(publicRow, externalLatency.get(String(targetRow.id)) || [], cloudflareColor).latency_sources;
     if (noPublicIp) {
       Object.assign(publicRow, { status_source: 'agent', agent_online: Boolean(agentState && agentStatusFields(agentState, env).agent_online), latency_ms: null, checked_at: null, ok: null, uptime_24h: null, uptime_7d: null, avg_latency_24h: null, error: null });
@@ -413,13 +436,21 @@ export async function getStatusSnapshot(env, url) {
     let payload = await object.json();
     const generatedAt = Math.floor(new Date(payload?.generated_at || payload?.now || 0).getTime() / 1000);
     if (!payload?.ok || ![STATUS_SNAPSHOT_SCHEMA, LEGACY_STATUS_SNAPSHOT_SCHEMA].includes(payload?.schema) || !Number.isFinite(generatedAt) || !generatedAt || generatedAt < nowSec() - clamp(Number(env.STATUS_SNAPSHOT_MAX_AGE_SEC || 150), 60, 86400)) return null;
-    payload = await overlayLiveTargetStatus(env, payload);
+    // Quota guard: a snapshot younger than the live window already contains
+    // probe state, Agent state and traffic figures from its build. Re-reading
+    // D1 + the shared telemetry DO on every edge-cache miss was the single
+    // largest D1 read source. Live changes still arrive through the status
+    // WebSocket, and `fresh=1` admin requests bypass this cache entirely.
+    const snapshotAgeSec = Math.max(0, nowSec() - generatedAt);
+    const liveWindowSec = clamp(Number(env.STATUS_SNAPSHOT_LIVE_WINDOW_SEC || 150), 0, 86400);
+    const liveOverlay = snapshotAgeSec <= liveWindowSec;
+    if (!liveOverlay) payload = await overlayLiveTargetStatus(env, payload);
     const frontend = await publicFrontend(env);
     payload.frontend_theme = frontend.theme;
     payload.frontend = { ...(payload.frontend || {}), ...frontend };
-    await attachAgentState(payload, env);
-    if (url?.searchParams?.get('lite') === '1') payload = compactStatusPayload(payload);
-    return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300)}`, 'x-nie-sla-source': 'r2-status-snapshot', 'x-nstatus-source': 'r2-status-snapshot' });
+    if (!liveOverlay) await attachAgentState(payload, env);
+    if (url?.searchParams.get('lite') === '1') payload = compactStatusPayload(payload);
+    return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300)}`, 'x-nie-sla-source': 'r2-status-snapshot', 'x-nstatus-source': 'r2-status-snapshot', 'x-nie-sla-live': liveOverlay ? 'snapshot' : 'overlay', 'x-nstatus-live': liveOverlay ? 'snapshot' : 'overlay' });
   } catch (error) {
     console.error('Status snapshot read failed:', String(error?.message || error));
     return null;
@@ -460,14 +491,17 @@ async function attachAgentState(payload, env) {
       const state = byAgent[sanitizeAgentId(target.id)];
       if (!state) {
         if (Number(target.no_public_ip || 0) === 1) Object.assign(target, { status_source: 'agent', agent_online: false, latency_ms: null, checked_at: null, ok: null, error: null });
+        else delete target.status_source;
         continue;
       }
       target.last_metrics_at = state.updated_at || null;
       target.agent_version = state.agent_version || null;
       target.machine_uptime_sec = Number(state.uptime_sec || 0) || null;
       target.agent_metrics = state;
-      Object.assign(target, agentStatusFields(state, env));
-      if (Number(target.no_public_ip || 0) === 1) Object.assign(target, { status_source: 'agent', latency_ms: null, checked_at: null, ok: null, error: null });
+      const noPublicIp = Number(target.no_public_ip || 0) === 1;
+      Object.assign(target, agentStatusFields(state, env, { includeStatusSource: noPublicIp }));
+      if (noPublicIp) Object.assign(target, { status_source: 'agent', latency_ms: null, checked_at: null, ok: null, error: null });
+      else delete target.status_source;
     }
     if (targetOrder) payload.targets.sort((a, b) => (targetOrder.get(String(a.id)) ?? Number.MAX_SAFE_INTEGER) - (targetOrder.get(String(b.id)) ?? Number.MAX_SAFE_INTEGER));
   } catch (error) {

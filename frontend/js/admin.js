@@ -1,4 +1,4 @@
-import { agentInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260904-fix2";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260908-backroute1";
 import { createAdminClient } from "./admin/api.js?v=20260821-themecfg2";
 import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260821-themecfg2";
 import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260821-themecfg2";
@@ -16,7 +16,7 @@ import {
   displayGroupName as sharedDisplayGroupName,
 } from "./shared/grouping.js?v=20260821-themecfg2";
 import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260821-themecfg2";
-import { escapeHtml } from "./shared/html.js";
+import { escapeAttr, escapeHtml } from "./shared/html.js";
 import { fmtBytes } from "./shared/format.js";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
@@ -28,6 +28,110 @@ const API = String(
 ).replace(/\/+$/, "");
 function byId(id) {
   return document.getElementById(id);
+}
+
+const USAGE_LABELS = {
+  workers_calls: ["Workers 请求", 100_000],
+  do_requests: ["DO 请求", 100_000],
+  do_rows_written: ["DO SQLite 写行", 100_000],
+  d1_rows_written: ["D1 写行", 100_000],
+  d1_rows_read: ["D1 读行", 5_000_000],
+  r2_class_a: ["R2 A 类", 1_000_000],
+  r2_class_b: ["R2 B 类", 10_000_000],
+};
+
+let usageEstimateData = null;
+
+let usageActualConfigured = null;
+
+async function loadUsageActual() {
+  const box = byId("sUsageActual");
+  if (!box) return;
+  try {
+    const config = await apiAdmin("/api/usage-actual/config", {}, 15_000);
+    usageActualConfigured = Boolean(config?.configured);
+  } catch (_) { usageActualConfigured = false; }
+  const form = `
+    <div class="usage-config">
+      <input id="cfApiToken" type="password" placeholder="CF API Token" autocomplete="off">
+      <div class="usage-config-row">
+        <input id="cfAccountId" type="text" placeholder="Account ID（32 位）" autocomplete="off">
+        <button type="button" class="btn btn-sm" id="saveUsageActualConfig">保存并查询</button>
+      </div>
+    </div>`;
+  box.innerHTML = `${form}<div id="usageActualData"><small class="muted">保存后自动查询最近 24h 实际计量，并与模型估算对比。</small></div>`;
+  byId("saveUsageActualConfig")?.addEventListener("click", async () => {
+    const token = byId("cfApiToken").value.trim();
+    const accountTag = byId("cfAccountId").value.trim();
+    if (!accountTag || !token) { toast("请填写 Token 与 Account ID", "err"); return; }
+    try {
+      await apiAdmin("/api/usage-actual/config", { method: "POST", body: JSON.stringify({ api_token: token, account_tag: accountTag }) });
+      toast("已保存，正在查询实际消耗", "ok");
+      await loadUsageActualData();
+    } catch (error) {
+      toast(`保存失败：${error?.message || "未知错误"}`, "err");
+    }
+  });
+  if (usageActualConfigured) await loadUsageActualData();
+}
+
+async function loadUsageActualData() {
+  const dataBox = byId("usageActualData");
+  if (!dataBox) return;
+  dataBox.innerHTML = '<small class="muted">查询中...</small>';
+  let actual;
+  try {
+    actual = await apiAdmin("/api/usage-actual?hours=24", {}, 30_000);
+  } catch (error) {
+    dataBox.innerHTML = `<div class="error">查询失败：${escapeHtml(error?.message || "未知错误")}</div>`;
+    return;
+  }
+  if (!actual?.ok) {
+    dataBox.innerHTML = `<div class="error">${escapeHtml(actual?.error || "查询失败")}</div>`;
+    return;
+  }
+  const compare = (key, label) => {
+    const actualValue = actual.actual[key];
+    const estimate = usageEstimateData?.estimates?.[key];
+    const actualText = actualValue == null ? "控制台查看" : Math.round(actualValue).toLocaleString();
+    const delta = actualValue != null && estimate ? `（偏差 ${(((actualValue - estimate) / estimate) * 100).toFixed(1)}%）` : "";
+    const estimateText = estimate ? Math.round(estimate).toLocaleString() : "-";
+    return `<div class="usage-row"><span class="usage-label">${escapeHtml(label)}</span><span class="usage-value">${actualText}</span><span class="usage-value muted">估 ${estimateText}${delta}</span></div>`;
+  };
+  const estimateNote = usageEstimateData ? "" : '<small class="muted">模型估算尚未加载，偏差列暂缺。</small>';
+  dataBox.innerHTML = `
+    <div class="usage-rows">
+      <div class="usage-row"><span class="usage-label">维度</span><span class="usage-value"><b>实际</b></span><span class="usage-value muted">模型估算</span></div>
+      ${compare("do_requests", "DO 请求")}
+      ${compare("do_rows_written", "DO SQLite 写行")}
+      ${compare("d1_rows_written", "D1 写行")}
+      ${compare("d1_rows_read", "D1 读行")}
+    </div>
+    <small class="muted">最近 ${escapeHtml(String(actual.window_hours || 24))}h 实测${actual.cached ? "（缓存）" : ""}${estimateNote}</small>`;
+}
+
+async function loadUsageEstimate() {
+  const box = byId("sUsageEstimate");
+  if (!box) return;
+  try {
+    const data = await apiAdmin("/api/usage-estimate?hours=24", {}, 20_000);
+    if (!data?.estimates) throw new Error(data?.error || "无数据");
+    usageEstimateData = data;
+    const rows = Object.entries(data.estimates).map(([key, used]) => {
+      const [label] = USAGE_LABELS[key] || [key, 0];
+      const quota = data.quota[key];
+      const pct = quota ? Math.min(100, quota.pct) : 0;
+      const bar = quota
+        ? `<div class="usage-bar"><i style="width:${pct}%;${pct > 70 ? "background:#c0392b" : ""}"></i></div>`
+        : "";
+      const right = quota ? `${Math.round(used).toLocaleString()} · ${quota.pct.toFixed(1)}%` : Math.round(used).toLocaleString();
+      return `<div class="usage-row"><span class="usage-label">${escapeHtml(label)}</span>${bar}<span class="usage-value">${right}</span></div>`;
+    }).join("");
+    const notes = (data.notes || []).map((note) => `<small>${escapeHtml(note)}</small>`).join("<br>");
+    box.innerHTML = `<div class="usage-model-box"><small>模型 ${escapeHtml(data.model_version)} · 24h 窗口 · 当前规模估算</small><div class="usage-rows">${rows}</div>${notes}</div>`;
+  } catch (error) {
+    box.innerHTML = `<div class="error">加载失败：${escapeHtml(error?.message || "未知错误")}</div>`;
+  }
 }
 
 const adminClient = createAdminClient({
@@ -796,7 +900,7 @@ function targetActionsHtml(target) {
 
 function betaTaskControlsHtml(target) {
   if (target.type !== "tcp" || !targetAdminLoaded) return "";
-  const actionTasks = ["nodequality", "ip_unlock"]
+  const actionTasks = ["nodequality", "ip_unlock", "backroute"]
     .map((action) => agentTasksByAction.get(`${target.id}:${action}`))
     .filter(Boolean);
   const active = actionTasks.some((task) => ["queued", "running"].includes(task.status));
@@ -805,6 +909,7 @@ function betaTaskControlsHtml(target) {
   const actions = new Set(Array.isArray(capabilities.actions) ? capabilities.actions : []);
   const nqAvailable = actions.has("nodequality");
   const unlockAvailable = actions.has("ip_unlock");
+  const backrouteAvailable = actions.has("backroute");
   const managerState = capabilities.mode === "manager"
     ? "Manager 已接管"
     : capabilities.mode === "compatibility"
@@ -813,7 +918,9 @@ function betaTaskControlsHtml(target) {
         ? "等待 Agent 自动更新"
         : "Agent 尚未上报";
   const nqTask = agentTasksByAction.get(`${target.id}:nodequality`);
-  const reportUrl = target.nq_url || nqTask?.result?.report_url || "";
+  // Agent-supplied URLs must pass the https/nodequality.com allowlist before
+  // landing in an href on the admin origin.
+  const reportUrl = normalizeNqReportLink(target.nq_url) || normalizeNqReportLink(nqTask?.result?.report_url) || "";
   const taskStates = actionTasks.map((task) => {
     const queuedTooLong = task.status === "queued"
       && Number(task.requested_at || 0) > 0
@@ -838,8 +945,9 @@ function betaTaskControlsHtml(target) {
       <small class="task-mode" title="Agent ${escapeHtml(runtime.agent_version || "未知版本")}">${escapeHtml(managerState)}</small>
     </div>
     <div class="beta-task-buttons">
-      <button type="button" class="btn btn-xs" data-a="task-nq"${active || !nqAvailable ? " disabled" : ""} title="${escapeHtml(nqAvailable ? "运行固定 NodeQuality 任务" : "此 Agent 尚未上报 NQ 能力")}">运行 NQ</button>
-      <button type="button" class="btn btn-xs" data-a="task-unlock"${active || !unlockAvailable ? " disabled" : ""} title="${escapeHtml(unlockAvailable ? "运行固定 IP 解锁任务" : "此 Agent 尚未上报 IP 解锁能力")}">IP 解锁</button>
+      <button type="button" class="btn btn-xs" data-a="task-nq" data-task-action="nodequality"${active || !nqAvailable ? " disabled" : ""} title="${escapeHtml(nqAvailable ? "运行固定 NodeQuality 任务" : "此 Agent 尚未上报 NQ 能力")}">运行 NQ</button>
+      <button type="button" class="btn btn-xs" data-a="task-unlock" data-task-action="ip_unlock"${active || !unlockAvailable ? " disabled" : ""} title="${escapeHtml(unlockAvailable ? "运行固定 IP 解锁任务" : "此 Agent 尚未上报 IP 解锁能力")}">IP 解锁</button>
+      <button type="button" class="btn btn-xs" data-a="task-backroute" data-task-action="backroute"${active || !backrouteAvailable ? " disabled" : ""} title="${escapeHtml(backrouteAvailable ? "固定脚本检测三网回程并识别线路（约 1-2 分钟）" : "此 Agent 尚未上报回程检测能力（需 v1.1.30+）")}">回程</button>
       ${reportUrl ? `<a class="btn btn-xs btn-blue" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">NQ 报告</a>` : ""}
     </div>
     ${taskStates}
@@ -948,7 +1056,6 @@ function showIpUnlockTaskReport(target, task) {
     report.tabs[0].content = reportText;
   } else {
     const services = Array.isArray(task?.result?.services) ? task.result.services : [];
-    renderUnlockServicesReportHtml(services);
     report.tabs[0].content = "";
   }
   root.innerHTML = buildNqModalHtml(report, { title: "IP 解锁" });
@@ -1019,10 +1126,17 @@ async function loadAgentTasks(render = true) {
 }
 
 function runAgentTask(target, action) {
-  const label = action === "nodequality" ? "NodeQuality" : "IP 解锁";
+  const taskLabels = {
+    nodequality: "NodeQuality",
+    ip_unlock: "IP 解锁",
+    backroute: "回程检测",
+  };
+  const label = taskLabels[action] || "Agent 任务";
   const detail = action === "nodequality"
     ? "Agent 将运行固定的 NodeQuality 官方脚本，通常需要数分钟，可能需要较高系统权限。"
-    : "Agent 将运行固定的 IP.Check.Place 完整报告模式（-4 -n -p），保存有界完整报告与最终 IPv4 媒体解锁结果；隐私模式不向第三方上传报告。";
+    : action === "backroute"
+      ? "Agent 将执行固定的三网回程检测，识别电信、联通、移动线路，并保存检测结果；通常需要 1–2 分钟。"
+      : "Agent 将运行固定的 IP.Check.Place 完整报告模式（-4 -n -p），保存有界完整报告与最终 IPv4 媒体解锁结果；隐私模式不向第三方上传报告。";
   byId("modal").className = "modal task-confirm-modal";
   byId("modal").innerHTML = `
     <h3>运行 ${escapeHtml(label)}</h3>
@@ -1078,7 +1192,7 @@ function targetRowHtml(target, index) {
   const enabledTag = target.enabled
     ? statusTag("已启用", "tag-on")
     : statusTag("已禁用", "tag-off");
-  const probeUptime = status.status_source === "agent"
+  const probeUptime = typeof status.agent_online === "boolean"
     ? (status.agent_online === true ? "Agent 在线" : "Agent 离线")
     : status.uptime_24h == null
       ? "暂无 24h 数据"
@@ -1924,24 +2038,59 @@ async function deploy(t, trigger = null) {
     trigger.disabled = true;
     trigger.textContent = "生成中...";
   }
-  toast("正在生成安装命令...", "info");
   try {
     const d = await apiAdmin(
       "/api/agent/install-command?target_id=" + encodeURIComponent(t.id),
       {},
       20000,
     );
-    const cmd = agentInstallCommandFromPayload(d, t.id);
-    await copyText(cmd);
-    toast("已复制“" + (t.name || t.id) + "”的 Agent 安装命令（含一次性凭据，10 分钟内有效）", "ok");
+    const command = agentInstallCommandFromPayload(d, t.id);
+    const rootlessCommand = agentRootlessInstallCommandFromPayload(d, t.id);
+    if (trigger && document.body.contains(trigger)) {
+      trigger.disabled = false;
+      trigger.textContent = oldText;
+    }
+    installModeModal(t, command, rootlessCommand);
   } catch (e) {
-    toast("安装命令复制失败：" + (e?.message || "未知错误"), "err");
-  } finally {
+    toast("安装命令生成失败：" + (e?.message || "未知错误"), "err");
     if (trigger && document.body.contains(trigger)) {
       trigger.disabled = false;
       trigger.textContent = oldText;
     }
   }
+}
+
+function installModeModal(target, command, rootlessCommand) {
+  byId("modal").className = "modal install-mode-modal";
+  byId("modal").innerHTML = `
+    <h3>安装 Agent · ${escapeHtml(target.name || target.id)}</h3>
+    <p class="hint">命令含一次性凭据，10 分钟内有效；生成后请尽快在目标机器上执行。两个版本共用同一凭据，只需安装其中一个。</p>
+    <div class="install-mode-options">
+      <div class="install-mode-card">
+        <h4>完整版<span class="install-mode-tag">推荐</span></h4>
+        <p>支持网页一键运行 NodeQuality / IP 质量检测与系统服务自愈，需要 root 权限安装。</p>
+        <button type="button" class="btn btn-primary" data-copy-cmd="${escapeAttr(command)}">复制完整版命令</button>
+      </div>
+      ${rootlessCommand ? `
+      <div class="install-mode-card">
+        <h4>无 root 版<span class="install-mode-tag install-mode-tag-quiet">安全</span></h4>
+        <p>仅遥测与 Ping，零特权操作：安装在用户目录，不创建系统服务、不含任务 Manager，自动更新同样可用。</p>
+        <button type="button" class="btn" data-copy-cmd="${escapeAttr(rootlessCommand)}">复制无 root 命令</button>
+      </div>` : ""}
+    </div>
+    <div class="ma"><button type="button" class="btn" data-close>关闭</button></div>`;
+  byId("modal").querySelectorAll("[data-copy-cmd]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const text = button.getAttribute("data-copy-cmd") || "";
+      try {
+        await copyText(text);
+        toast("已复制安装命令（10 分钟内有效）", "ok");
+      } catch (error) {
+        toast(error?.message || "复制失败", "err");
+      }
+    });
+  });
+  openModal();
 }
 
 async function loadLatencyNodes() {
@@ -2256,6 +2405,8 @@ async function deletePing(p) {
 async function loadSettings() {
   loadSysInfo();
   loadAppUpdate();
+  loadUsageEstimate();
+  loadUsageActual();
   loadTotp();
   loadEncryption();
   loadUsageSummaryAccess();
@@ -2604,13 +2755,36 @@ async function loadAppUpdate(refresh = false) {
         <button class="btn btn-sm" id="checkAppUpdate">检查更新</button>
         <button class="btn btn-primary btn-sm" id="showAppUpdateGuide">更新指引</button>
         <button class="btn btn-sm" id="showAppUpdateChangelog">更新日志</button>
-      </div>`;
+      </div>
+      <div id="fleetVersions" class="fleet-versions"><small class="muted">Agent 舰队版本检查中...</small></div>`;
     byId("checkAppUpdate").onclick = () => loadAppUpdate(true);
     byId("showAppUpdateGuide").onclick = showAppUpdateGuide;
     byId("showAppUpdateChangelog").onclick = showAppUpdateChangelog;
+    byId("fleetVersions").innerHTML = '<small class="muted">Agent 舰队版本检查中...</small>';
+    loadFleetVersions(data.current_version);
   } catch (error) {
     appUpdateInfo = null;
     errBox("sAppUpdate", error);
+  }
+}
+
+async function loadFleetVersions(currentVersion) {
+  const box = byId("fleetVersions");
+  if (!box) return;
+  try {
+    const data = await apiAdmin("/api/fleet-versions", {}, 20_000);
+    const versions = (data.versions || []).filter((entry) => entry.version);
+    const outdated = versions.filter((entry) => entry.version !== `v${currentVersion}` && entry.version !== currentVersion);
+    const total = versions.reduce((sum, entry) => sum + entry.count, 0);
+    const detail = versions
+      .sort((a, b) => b.count - a.count)
+      .map((entry) => `${escapeHtml(entry.version)}×${entry.count}`)
+      .join('，');
+    box.innerHTML = total
+      ? `<small>Agent 舰队：${detail}。${outdated.length ? `<b class="fail-text">${outdated.reduce((sum, entry) => sum + entry.count, 0)} 台待升级</b>（自动更新将陆续完成）` : '全部为最新版本'}</small>`
+      : '<small class="muted">暂无 Agent 上报。</small>';
+  } catch (_) {
+    box.innerHTML = '';
   }
 }
 
@@ -2694,6 +2868,10 @@ const appearanceSections = [
     ['header_right_text', '右上角文字'], ['header_right_image_url', '右上角图片 URL'],
     ['header_right_image_alt', '右上角图片替代文字'], ['header_right_image_width', '右上角图片宽度（40-240px）', 'number'],
     ['header_right_link', '右上角跳转链接'],
+  ] },
+  { title: '代码与背景注入', fields: [
+    ['custom_bg', '桌面背景图 URL'], ['custom_bg_mobile', '移动端背景图 URL'],
+    ['custom_head', '自定义 <head> 内容（HTML）'], ['custom_script', '自定义脚本（JS）'],
   ] },
   { title: '状态与导航文案', fields: [
     ['search_placeholder', '搜索框提示'], ['group_by_title', '分组栏标题'],
@@ -2825,8 +3003,22 @@ async function saveAgentUpdate() {
 async function loadTraffic() {
   try {
     await api("/api/settings");
+    const finance = await api("/api/finance-summary");
+    const f = finance || {};
+    const expiring = (f.expiring_30d || []).map((item) => {
+      const days = Math.ceil((item.expires_at - nowSec()) / 86400);
+      return `<li>${escapeHtml(item.name || item.id)} · ${days} 天 · ¥${item.monthly_cny}/月</li>`;
+    }).join("");
     byId("sTraffic").innerHTML =
-      `<p class="hint">流量统计按 VPS 单独设置。到“探针管理”里编辑某台 VPS，可分别设置每月上限、计费方式和流量重置日。</p><div class="traffic-settings"><p class="hint">流量重置日与 VPS 到期时间完全独立；续期或修改到期时间不会改变流量周期。数据保存在 CF/D1。</p></div>`;
+      `<div class="traffic-settings finance-summary-card">
+        <div class="usage-rows">
+          <div class="usage-row"><span class="usage-label">月均成本</span><span class="usage-value">¥${f.monthly_total_cny || 0}</span></div>
+          <div class="usage-row"><span class="usage-label">年化成本</span><span class="usage-value">¥${f.yearly_total_cny || 0}</span></div>
+          <div class="usage-row"><span class="usage-label">计费 VPS</span><span class="usage-value">${f.counted || 0} 台</span></div>
+        </div>
+        <details><summary>30 天内到期</summary><ul>${expiring || "<li>无</li>"}</ul></details>
+      </div>
+      <p class="hint">流量统计按 VPS 单独设置，到“探针管理”里编辑某台 VPS 可分别配置。</p>`;
   } catch (e) {
     errBox("sTraffic", e);
   }
@@ -3382,8 +3574,10 @@ byId("tTable").onclick = (e) => {
   if (b.dataset.a === "toggle") toggleTarget(t);
   if (b.dataset.a === "delete") deleteTarget(t);
   if (b.dataset.a === "deploy") deploy(t, b);
-  if (b.dataset.a === "task-nq") runAgentTask(t, "nodequality");
-  if (b.dataset.a === "task-unlock") runAgentTask(t, "ip_unlock");
+  if (["task-nq", "task-unlock", "task-backroute"].includes(b.dataset.a)) {
+    const action = b.dataset.taskAction;
+    if (["nodequality", "ip_unlock", "backroute"].includes(action)) runAgentTask(t, action);
+  }
   if (b.dataset.a === "task-details") showAgentTaskDetails(t, b.dataset.taskAction || "");
   if (b.dataset.a === "task-cancel") forceStopAgentTask(b.dataset.taskId);
   if (b.dataset.a === "move-up") moveTarget(t, -1);

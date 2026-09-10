@@ -30,7 +30,7 @@ Controlled dynamically by the admin toggle. When on, the Agent updates on its ne
 
 ## Beta actions
 
-The Agent polls `/api/agent/tasks`. Only two compiled-in actions exist — NodeQuality and the IPv4 unlock check — executed by the root Manager while telemetry stays unprivileged. The task API returns action identifiers only, never script text, arguments, or stdin.
+The Agent polls `/api/agent/tasks`. Three compiled-in actions exist — NodeQuality, the IPv4 unlock check, and the three-carrier backroute check — executed by the root Manager while telemetry stays unprivileged. The task API returns action identifiers only, never script text, arguments, or stdin.
 
 ## Troubleshooting
 

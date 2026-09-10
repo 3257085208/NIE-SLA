@@ -289,11 +289,23 @@ export function checkBucketSummaryQueryPlan(startDay, options = {}) {
     });
   }
   if (targetIds) {
-    const marks = targetIds.map(() => '?').join(',');
-    for (const plan of plans) {
-      plan.where = `(${plan.where}) AND target_id IN (${marks})`;
-      plan.params.push(...targetIds);
+    // D1 caps bound parameters at 100 per statement; chunk so a growing fleet
+    // degrades to more queries instead of silently empty summaries.
+    const chunks = [];
+    for (let offset = 0; offset < targetIds.length; offset += 90) {
+      chunks.push(targetIds.slice(offset, offset + 90));
     }
+    const chunked = [];
+    for (const plan of plans) {
+      for (const chunk of chunks) {
+        chunked.push({
+          ...plan,
+          where: `(${plan.where}) AND target_id IN (${chunk.map(() => '?').join(',')})`,
+          params: [...plan.params, ...chunk],
+        });
+      }
+    }
+    return chunked;
   }
   return plans;
 }
@@ -363,7 +375,30 @@ export async function getCheckBucketSummaries(env, startDay, options = {}) {
   if (!env.DB) return [];
   try {
     const byKey = new Map();
-    for (const plan of checkBucketSummaryQueryPlan(startDay, options)) {
+    // Completed days read from the pre-aggregated table (a few thousand rows
+    // total); only today's live buckets still scan raw check_buckets.
+    const today = dayFromSec(nowSec(), env);
+    try {
+      const aggRows = await env.DB.prepare(
+        `SELECT target_id, day, total, ok_count, sum_latency_ms
+         FROM check_bucket_days
+         WHERE day >= ? AND day < ?
+         ORDER BY day ASC, target_id ASC`
+      ).bind(String(startDay), today).all();
+      for (const row of aggRows.results || []) {
+        byKey.set(`${row.target_id}|${row.day}`, {
+          target_id: row.target_id,
+          day: row.day,
+          total: Number(row.total || 0),
+          ok_count: Number(row.ok_count || 0),
+          sum_latency_ms: Number(row.sum_latency_ms || 0),
+        });
+      }
+    } catch (_) {}
+    // Historical day-range plans are covered by check_bucket_days; the live
+    // plan (day >= without an upper bound) still scans today's raw buckets.
+    const plans = checkBucketSummaryQueryPlan(startDay, options).filter((plan) => !plan.where.includes('day <'));
+    for (const plan of plans) {
       const rows = await env.DB.prepare(
         `SELECT target_id, day,
               SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE total END) as total,
@@ -481,6 +516,31 @@ export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrite
   if (!stmts.length) return { ok: true, writes: 0, bucket_storage: bucketStorage };
   await env.DB.batch(stmts);
   return { ok: true, writes: stmts.length, bucket_storage: bucketStorage };
+}
+
+// Rebuild per-day summaries for the live window only (today + yesterday).
+// Historical days are backfilled once at schema-ensure time and never change,
+// so the expensive full-window scans disappear from the hot path.
+export async function refreshCheckBucketDays(env) {
+  if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
+  try {
+    const today = dayFromSec(nowSec(), env);
+    const yesterday = dayFromSec(nowSec() - 86400, env);
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM check_bucket_days WHERE day IN (?, ?)`).bind(today, yesterday),
+      env.DB.prepare(`INSERT INTO check_bucket_days (day, target_id, total, ok_count, sum_latency_ms, updated_at)
+        SELECT day, target_id,
+               SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE total END),
+               SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE ok_count END),
+               SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE sum_latency_ms END),
+               strftime('%s','now')
+        FROM check_buckets WHERE day IN (?, ?) GROUP BY day, target_id`).bind(today, yesterday, today, yesterday),
+    ]);
+    return { ok: true };
+  } catch (error) {
+    console.error('refreshCheckBucketDays failed:', String(error?.message || error));
+    return { ok: false, error: String(error?.message || error) };
+  }
 }
 
 export async function cleanupOldCheckBuckets(env, daysToKeep = 31) {

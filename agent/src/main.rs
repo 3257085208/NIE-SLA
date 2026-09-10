@@ -168,6 +168,14 @@ struct DiskInfo {
 }
 
 #[derive(Clone, Debug, Default)]
+struct DiskEntry {
+    device: String,
+    mount: String,
+    total_gb: f64,
+    used_gb: f64,
+}
+
+#[derive(Clone, Debug, Default)]
 struct NetInfo {
     rx_bytes_sec: f64,
     tx_bytes_sec: f64,
@@ -226,6 +234,7 @@ struct VpsInfo {
     disk_temp_c: Option<f64>,
     chipset_temp_c: Option<f64>,
     temperature_sensors: Vec<platform::TemperatureSensor>,
+    disk_list: Vec<DiskEntry>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -235,6 +244,9 @@ struct SamplePoint {
     mem: f64,
     disk: f64,
     load: f64,
+    load5: f64,
+    load15: f64,
+    process_count: u32,
     net_rx: f64,
     net_tx: f64,
     tcp_conns: u64,
@@ -270,7 +282,6 @@ struct Metrics {
 #[derive(Debug)]
 struct UploadResult {
     result: Result<WsSubmitResponse>,
-    last_sample_ts: i64,
     sample_count: usize,
     ping_count: usize,
 }
@@ -305,7 +316,7 @@ struct UpdatePolicy {
 
 enum QueueCommand {
     Append(SamplePoint),
-    Acknowledge(i64),
+    AcknowledgeCount(usize),
     Flush(mpsc::Sender<std::result::Result<(), String>>),
 }
 
@@ -340,7 +351,19 @@ struct PingPlan {
 #[derive(Debug, Default)]
 struct WsSubmitResponse {
     ping_interval_sec: Option<u64>,
+    report_interval_sec: Option<u64>,
     ping_plan: Option<PingPlan>,
+}
+
+static TRAFFIC_CORRECTION: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static TRAFFIC_CORRECTION_TX: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+fn traffic_correction_rx() -> i64 {
+    TRAFFIC_CORRECTION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn traffic_correction_tx() -> i64 {
+    TRAFFIC_CORRECTION_TX.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[derive(Debug)]
@@ -456,7 +479,9 @@ fn run() -> Result<()> {
     }
     let mut uploading = false;
     let mut last_upload_failed = false;
-    let retry_sec = cfg.report_sec.clamp(10, 60);
+    let mut last_successful_upload = Instant::now();
+    let mut report_interval_sec = cfg.report_sec;
+    let mut retry_sec = report_interval_sec.clamp(10, 60);
     let (upload_tx, upload_rx) = mpsc::channel::<UploadResult>();
     let sample_period = Duration::from_secs(cfg.sample_sec);
     let mut next_sample = Instant::now();
@@ -479,13 +504,22 @@ fn run() -> Result<()> {
                     if let Some(interval) = upload.ping_interval_sec {
                         apply_ping_interval(&ping_interval_sec, interval);
                     }
+                    if let Some(interval) = upload.report_interval_sec {
+                        report_interval_sec = normalize_report_interval(interval);
+                        retry_sec = report_interval_sec.clamp(10, 60);
+                    }
                     last_upload_failed = false;
+                    last_successful_upload = Instant::now();
                     #[cfg(target_os = "linux")]
                     {
                         let _ = confirm_pending_update();
                     }
-                    drop_samples_through(&mut samples, result.last_sample_ts);
-                    let _ = queue_tx.send(QueueCommand::Acknowledge(result.last_sample_ts));
+                    // Count-based drops stay correct across clock steps: a
+                    // timestamp comparison would delete freshly sampled points
+                    // after a backwards NTP correction.
+                    let drop = result.sample_count.min(samples.len());
+                    samples.drain(0..drop);
+                    let _ = queue_tx.send(QueueCommand::AcknowledgeCount(result.sample_count));
                     drop_ping_prefix(&mut pings, result.ping_count);
                     println!(
                         "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
@@ -505,8 +539,7 @@ fn run() -> Result<()> {
         }
 
         while let Ok(batch) = ping_rx.try_recv() {
-            let expected_cycles = cfg
-                .report_sec
+            let expected_cycles = report_interval_sec
                 .div_ceil(batch.interval_sec)
                 .saturating_add(2) as usize;
             ping_queue_capacity = ping_queue_capacity
@@ -565,7 +598,7 @@ fn run() -> Result<()> {
             samples.len(),
             last_upload_failed,
             last_report.elapsed(),
-            Duration::from_secs(cfg.report_sec),
+            Duration::from_secs(report_interval_sec),
             Duration::from_secs(retry_sec),
         );
         if !uploading && report_due {
@@ -579,7 +612,6 @@ fn run() -> Result<()> {
             );
             metrics.samples = upload_samples.clone();
             metrics.stats = Some(aggregate(&upload_samples));
-            let last_sample_ts = upload_samples.last().map(|s| s.ts).unwrap_or(0);
             let sample_count = upload_samples.len();
             let ping_count = upload_pings.len();
             let cfg_for_upload = cfg.clone();
@@ -598,7 +630,6 @@ fn run() -> Result<()> {
                 );
                 let _ = tx.send(UploadResult {
                     result,
-                    last_sample_ts,
                     sample_count,
                     ping_count,
                 });
@@ -612,7 +643,7 @@ fn run() -> Result<()> {
                     if let Some(interval) = upload.ping_interval_sec {
                         apply_ping_interval(&ping_interval_sec, interval);
                     }
-                    let _ = queue_tx.send(QueueCommand::Acknowledge(result.last_sample_ts));
+                    let _ = queue_tx.send(QueueCommand::AcknowledgeCount(result.sample_count));
                     flush_sample_queue(&queue_tx)?;
                     println!(
                         "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
@@ -625,11 +656,34 @@ fn run() -> Result<()> {
             }
         }
 
+        // Self-healing watchdog: if uploads have failed for several report
+        // periods the process is probably wedged on a dead connection. Exiting
+        // non-zero hands the restart to systemd/OpenRC (or the privileged
+        // manager health check), which is far more reliable than staying
+        // silently offline while the manager keeps working.
+        let stalled = last_successful_upload.elapsed();
+        let stall_limit =
+            Duration::from_secs(report_interval_sec.max(300).saturating_mul(3).min(3600));
+        if !cfg.once && stalled >= stall_limit && telemetry_restart_available() {
+            eprintln!(
+                "{{\"ok\":false,\"telemetry_stalled_sec\":{},\"restarting\":true}}",
+                stalled.as_secs()
+            );
+            std::process::exit(1);
+        }
+
         let now = Instant::now();
         next_sample = advance_sample_deadline(next_sample, now, sample_period);
         thread::sleep(next_sample.saturating_duration_since(now));
     }
     Ok(())
+}
+
+fn telemetry_restart_available() -> bool {
+    cfg!(target_os = "linux")
+        && (Path::new("/run/systemd/system").is_dir()
+            || Path::new("/sbin/rc-service").is_file()
+            || Path::new("/usr/sbin/rc-service").is_file())
 }
 
 impl Config {
@@ -784,6 +838,7 @@ impl Collector {
         let (read_raw, write_raw) = platform::disk_io_bytes();
         let (disk_read, disk_write) = rate_pair(&mut self.prev_disk, now, read_raw, write_raw);
         let (tcp_conns, udp_conns) = platform::connection_counts();
+        let process_count = platform::process_count();
         let memory = self.memory();
         let disk = self.disk();
         let load = load_info();
@@ -795,10 +850,13 @@ impl Collector {
             mem: memory.percent,
             disk: disk.percent,
             load: load.load1,
+            load5: load.load5,
+            load15: load.load15,
             net_rx,
             net_tx,
             tcp_conns,
             udp_conns,
+            process_count,
             disk_read,
             disk_write,
             cpu_temp: thermal.cpu_temp_c,
@@ -850,8 +908,8 @@ impl Collector {
             net: NetInfo {
                 rx_bytes_sec: latest.net_rx,
                 tx_bytes_sec: latest.net_tx,
-                rx_bytes: platform::net_bytes().0,
-                tx_bytes: platform::net_bytes().1,
+                rx_bytes: (platform::net_bytes().0 as i64 + traffic_correction_rx()).max(0) as u64,
+                tx_bytes: (platform::net_bytes().1 as i64 + traffic_correction_tx()).max(0) as u64,
                 tcp_conns: latest.tcp_conns,
                 udp_conns: latest.udp_conns,
             },
@@ -889,6 +947,11 @@ impl Collector {
     }
 
     fn disk(&self) -> DiskInfo {
+        let rows = self.disk_rows();
+        let (summed, _) = consolidate_disk_rows(rows);
+        if summed.total_gb > 0.0 {
+            return summed;
+        }
         let disks = self.disks.list();
         let mount_points: Vec<_> = disks.iter().map(|disk| disk.mount_point()).collect();
         let preferred_paths = preferred_disk_paths();
@@ -908,9 +971,30 @@ impl Collector {
             .unwrap_or_default()
     }
 
+    fn disk_rows(&self) -> Vec<(String, String, u64, u64, bool)> {
+        self.disks
+            .list()
+            .iter()
+            .map(|disk| {
+                (
+                    disk.name().to_string_lossy().to_string(),
+                    disk.mount_point().to_string_lossy().to_string(),
+                    disk.total_space(),
+                    disk.available_space(),
+                    disk.is_removable(),
+                )
+            })
+            .collect()
+    }
+
+    fn disk_list(&self) -> Vec<DiskEntry> {
+        consolidate_disk_rows(self.disk_rows()).1
+    }
+
     fn vps_info(&mut self) -> VpsInfo {
         let memory = self.memory();
         let disk = self.disk();
+        let disk_list = self.disk_list();
         let cpu_model = self
             .sys
             .cpus()
@@ -942,6 +1026,7 @@ impl Collector {
             disk_temp_c: thermal.disk_temp_c,
             chipset_temp_c: thermal.chipset_temp_c,
             temperature_sensors: thermal.sensors,
+            disk_list,
         }
     }
 }
@@ -974,6 +1059,62 @@ fn select_mount_index(mount_points: &[&Path], preferred_paths: &[&Path]) -> Opti
             .max_by_key(|(_, mount)| mount.components().count())
             .map(|(index, _)| index)
     })
+}
+
+// Multi-disk reporting: dedupe mounts by backing device (bind mounts share the
+// device), skip removable and pseudo devices, and sum the rest so multi-disk
+// machines report real total capacity. Disk entries stay bounded for payload.
+fn consolidate_disk_rows<'a, I>(rows: I) -> (DiskInfo, Vec<DiskEntry>)
+where
+    I: IntoIterator<Item = (String, String, u64, u64, bool)>,
+{
+    let mut by_device: std::collections::HashMap<String, (String, u64, u64)> =
+        std::collections::HashMap::new();
+    for (device, mount, total, avail, removable) in rows {
+        let name = device.trim_start_matches("/dev/");
+        if removable
+            || name.is_empty()
+            || name.starts_with("loop")
+            || name.starts_with("ram")
+            || name.starts_with("zram")
+        {
+            continue;
+        }
+        if total == 0 {
+            continue;
+        }
+        let entry = by_device
+            .entry(device.clone())
+            .or_insert((mount.clone(), total, avail));
+        if total > entry.1 {
+            *entry = (mount, total, avail);
+        }
+    }
+    let mut rows: Vec<(String, String, u64, u64)> = by_device
+        .into_iter()
+        .map(|(device, (mount, total, avail))| (device, mount, total, avail))
+        .collect();
+    rows.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
+    let mut entries: Vec<DiskEntry> = rows
+        .iter()
+        .map(|(device, mount, total, avail)| DiskEntry::from_parts(device, mount, *total, *avail))
+        .collect();
+    entries.truncate(16);
+    let sum_total: u64 = rows.iter().map(|row| row.2).sum();
+    let sum_avail: u64 = rows.iter().map(|row| row.3).sum();
+    (disk_info(sum_total, sum_avail), entries)
+}
+
+impl DiskEntry {
+    fn from_parts(device: &str, mount: &str, total: u64, avail: u64) -> Self {
+        let info = disk_info(total, avail);
+        DiskEntry {
+            device: device.chars().take(32).collect(),
+            mount: mount.chars().take(64).collect(),
+            total_gb: info.total_gb,
+            used_gb: info.used_gb,
+        }
+    }
 }
 
 fn disk_info(total: u64, avail: u64) -> DiskInfo {
@@ -1189,11 +1330,48 @@ fn parse_submit_response(response: &str) -> Result<WsSubmitResponse> {
         .get("ping_interval_sec")
         .and_then(serde_json::Value::as_u64)
         .filter(|value| (5..=300).contains(value));
+    let report_interval_sec = value
+        .get("report_interval_sec")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|value| (10..=3600).contains(value))
+        .or_else(|| {
+            value
+                .get("control")
+                .and_then(|control| control.get("report_interval_sec"))
+                .and_then(serde_json::Value::as_u64)
+                .filter(|value| (10..=3600).contains(value))
+        });
+    if let Some(server_time) = value.get("server_time").and_then(serde_json::Value::as_i64) {
+        learn_clock_offset(server_time);
+    }
+    if let Some(control) = value.get("control") {
+        learn_traffic_correction(control);
+    }
+    if value.get("traffic_correction").is_some() {
+        learn_traffic_correction(&value);
+    }
     let ping_plan = value.get("control").and_then(parse_control_ping_plan);
     Ok(WsSubmitResponse {
         ping_interval_sec,
+        report_interval_sec,
         ping_plan,
     })
+}
+
+fn learn_traffic_correction(value: &serde_json::Value) {
+    let Some(correction) = value.get("traffic_correction") else {
+        return;
+    };
+    let rx = correction
+        .get("rx_bytes")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    let tx = correction
+        .get("tx_bytes")
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0);
+    TRAFFIC_CORRECTION.store(rx, std::sync::atomic::Ordering::Relaxed);
+    TRAFFIC_CORRECTION_TX.store(tx, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn parse_control_ping_plan(value: &serde_json::Value) -> Option<PingPlan> {
@@ -1357,6 +1535,7 @@ fn stat_json(s: &Stats) -> serde_json::Value {
 fn sample_json(s: &SamplePoint) -> serde_json::Value {
     let mut value = serde_json::json!({
         "ts": s.ts, "cpu": s.cpu, "mem": s.mem, "disk": s.disk, "load": s.load,
+        "load5": s.load5, "load15": s.load15, "process_count": s.process_count,
         "net_rx": s.net_rx, "net_tx": s.net_tx, "tcp_conns": s.tcp_conns, "udp_conns": s.udp_conns,
         "disk_read": s.disk_read, "disk_write": s.disk_write
     });
@@ -1404,6 +1583,21 @@ fn vps_info_json(v: &VpsInfo) -> serde_json::Value {
     }
     if v.gpu_accessible {
         obj.insert("gpu_accessible".to_string(), serde_json::json!(true));
+    }
+    if !v.disk_list.is_empty() {
+        let list: Vec<serde_json::Value> = v
+            .disk_list
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "device": entry.device,
+                    "mount": entry.mount,
+                    "total_gb": entry.total_gb,
+                    "used_gb": entry.used_gb,
+                })
+            })
+            .collect();
+        obj.insert("disk_list".to_string(), serde_json::json!(list));
     }
     if let Some(t) = v.cpu_temp_c {
         obj.insert("cpu_temp_c".to_string(), serde_json::json!(t));
@@ -1807,6 +2001,10 @@ fn apply_ping_interval(interval: &AtomicU64, value: u64) {
     }
 }
 
+fn normalize_report_interval(value: u64) -> u64 {
+    value.clamp(10, 3600)
+}
+
 fn next_ping_worker_sleep(
     refresh_elapsed: Duration,
     refresh_period: Duration,
@@ -1832,10 +2030,22 @@ fn run_pings(targets: &[PingTarget], selector: &str, http: &HttpClient) -> Vec<P
             .cloned()
             .map(|target| {
                 let http = http.clone();
-                thread::spawn(move || ping_target(&target, &http))
+                let fallback_target = target.clone();
+                // A thread-spawn failure (resource exhaustion) must not unwind
+                // and silently kill the whole ping worker: fall back to an
+                // inline probe on this thread instead.
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                    thread::spawn(move || ping_target(&target, &http))
+                }))
+                .map_err(|_| fallback_target)
             })
             .collect();
-        results.extend(handles.into_iter().filter_map(|handle| handle.join().ok()));
+        for handle in handles {
+            match handle {
+                Ok(handle) => results.extend(handle.join().ok()),
+                Err(target) => results.push(ping_target(&target, http)),
+            }
+        }
     }
     results
 }
@@ -1961,13 +2171,6 @@ fn aggregate(samples: &[SamplePoint]) -> AggStats {
     }
 }
 
-fn drop_samples_through(samples: &mut VecDeque<SamplePoint>, ts: i64) {
-    if ts <= 0 {
-        return;
-    }
-    samples.retain(|sample| sample.ts > ts);
-}
-
 fn drop_ping_prefix(pings: &mut Vec<PingResult>, count: usize) {
     pings.drain(0..count.min(pings.len()));
 }
@@ -2003,6 +2206,88 @@ fn upload_report_due(
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn disk_rows_dedupe_bind_mounts_and_exclude_pseudo_devices() {
+        let rows = vec![
+            (
+                "/dev/vda1".to_string(),
+                "/".to_string(),
+                40_000_000_000,
+                10_000_000_000,
+                false,
+            ),
+            (
+                "/dev/vda1".to_string(),
+                "/etc/hosts".to_string(),
+                40_000_000_000,
+                10_000_000_000,
+                false,
+            ),
+            (
+                "loop0".to_string(),
+                "/snap/core".to_string(),
+                100_000_000,
+                0,
+                false,
+            ),
+            (
+                "/dev/sdb".to_string(),
+                "/mnt/data".to_string(),
+                100_000_000_000,
+                50_000_000_000,
+                false,
+            ),
+            (
+                "/dev/sdc".to_string(),
+                "/media/usb".to_string(),
+                8_000_000_000,
+                1_000_000_000,
+                true,
+            ),
+        ];
+        let (info, entries) = consolidate_disk_rows(rows);
+        assert!(
+            (info.total_gb - bytes_to_gb(140_000_000_000)).abs() < 0.01,
+            "bind mounts and pseudo devices must not double count"
+        );
+        assert_eq!(
+            entries.len(),
+            2,
+            "removable and pseudo devices are excluded"
+        );
+        assert_eq!(entries[0].device, "/dev/sdb");
+        assert_eq!(entries[1].device, "/dev/vda1");
+        assert_eq!(entries[1].mount, "/");
+    }
+
+    #[test]
+    fn disk_entries_are_bounded_and_sorted_by_size() {
+        let rows: Vec<(String, String, u64, u64, bool)> = (0..24)
+            .map(|i| {
+                (
+                    format!("/dev/sd{i}"),
+                    format!("/mnt/d{i}"),
+                    1_000_000_000 * (i as u64 + 1),
+                    0,
+                    false,
+                )
+            })
+            .collect();
+        let (_, entries) = consolidate_disk_rows(rows);
+        assert_eq!(entries.len(), 16);
+        assert_eq!(entries[0].device, "/dev/sd23");
+        assert_eq!(entries[15].device, "/dev/sd8");
+    }
+
+    #[test]
+    fn empty_disk_rows_fall_back_to_zero_info() {
+        let (info, entries) = consolidate_disk_rows(Vec::new());
+        assert_eq!(info.total_gb, 0.0);
+        assert!(entries.is_empty());
+    }
+
     use super::*;
 
     #[test]
@@ -2101,6 +2386,37 @@ mod tests {
         assert_eq!(current_ping_interval(&interval), 300);
         apply_ping_interval(&interval, 301);
         assert_eq!(current_ping_interval(&interval), 300);
+    }
+
+    #[test]
+    fn server_report_interval_and_traffic_correction_controls_apply_to_http_responses() {
+        assert_eq!(normalize_report_interval(1), 10);
+        assert_eq!(normalize_report_interval(600), 600);
+        assert_eq!(normalize_report_interval(7200), 3600);
+        assert_eq!(
+            parse_submit_response(r#"{"ok":true,"report_interval_sec":900}"#)
+                .unwrap()
+                .report_interval_sec,
+            Some(900)
+        );
+        assert_eq!(
+            parse_submit_response(r#"{"ok":true,"control":{"report_interval_sec":600}}"#)
+                .unwrap()
+                .report_interval_sec,
+            Some(600)
+        );
+
+        TRAFFIC_CORRECTION.store(123, Ordering::Relaxed);
+        TRAFFIC_CORRECTION_TX.store(456, Ordering::Relaxed);
+        parse_submit_response(r#"{"ok":true,"traffic_correction":null}"#).unwrap();
+        assert_eq!(traffic_correction_rx(), 0);
+        assert_eq!(traffic_correction_tx(), 0);
+        parse_submit_response(
+            r#"{"ok":true,"traffic_correction":{"rx_bytes":789,"tx_bytes":987}}"#,
+        )
+        .unwrap();
+        assert_eq!(traffic_correction_rx(), 789);
+        assert_eq!(traffic_correction_tx(), 987);
     }
 
     #[test]
@@ -2511,11 +2827,23 @@ fn parse_u64(value: Option<String>, default: u64) -> u64 {
     value.and_then(|s| s.parse().ok()).unwrap_or(default)
 }
 
+static CLOCK_OFFSET_SEC: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
 fn now_sec() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+        + CLOCK_OFFSET_SEC.load(Ordering::Relaxed)
+}
+
+fn learn_clock_offset(server_time: i64) {
+    let local = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let offset = (server_time - local).clamp(-600, 600);
+    CLOCK_OFFSET_SEC.store(offset, Ordering::Relaxed);
 }
 
 fn pct(used: f64, total: f64) -> f64 {

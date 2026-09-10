@@ -19,6 +19,7 @@ export default [
         WebSocket: 'readonly',
         alert: 'readonly',
         caches: 'readonly',
+        clearInterval: 'readonly',
         clearTimeout: 'readonly',
         confirm: 'readonly',
         console: 'readonly',
