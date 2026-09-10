@@ -98,8 +98,16 @@ assert.match(wrangler, /name = "STATUS_STREAM"/);
 assert.match(wrangler, /STATUS_SNAPSHOT_EVERY_SEC = "60"/);
 assert.match(wrangler, /STATUS_SNAPSHOT_LIVE_WINDOW_SEC = "150"/);
 assert.match(wrangler, /AGENT_UPDATE_CHECK_SEC = "900"/);
-assert.match(wrangler, /PUBLIC_WORKER_URL = "https:\/\/sla\.niekaixiang\.com"/);
-assert.match(wrangler, /PUBLIC_AGENT_API_BASE = "https:\/\/sla\.niekaixiang\.com"/);
+// The public snapshot is domain-sanitized, so only the private workspace can
+// assert the production hostnames; both layouts must keep the variables set.
+const sanitizedSnapshot = /example\.com|00000000-0000-0000-0000-000000000000/.test(wrangler);
+if (sanitizedSnapshot) {
+  assert.match(wrangler, /PUBLIC_WORKER_URL = "https:\/\/[a-z0-9.-]+"/);
+  assert.match(wrangler, /PUBLIC_AGENT_API_BASE = "https:\/\/[a-z0-9.-]+"/);
+} else {
+  assert.match(wrangler, /PUBLIC_WORKER_URL = "https:\/\/sla\.niekaixiang\.com"/);
+  assert.match(wrangler, /PUBLIC_AGENT_API_BASE = "https:\/\/sla\.niekaixiang\.com"/);
+}
 assert.match(wrangler, /AGENT_CREDENTIAL_TOUCH_SEC = "21600"/);
 assert.match(wrangler, /TRAFFIC_PERSIST_INTERVAL_SEC = "1800"/);
 

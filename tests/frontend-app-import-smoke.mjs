@@ -55,16 +55,21 @@ globalThis.fetch = async () => ({
 });
 globalThis.CSS = { escape: (value) => String(value) };
 
-await import('../frontend/app.js');
+const root = path.resolve(import.meta.dirname, '..');
+const siblingFrontend = path.resolve(root, '..', 'frontend');
+const frontendRoot = existsSync(path.join(siblingFrontend, 'AGENTS.md')) ? siblingFrontend : path.join(root, 'frontend');
+
+await import(pathToFileURL(path.join(frontendRoot, 'app.js')).href);
 await new Promise((resolve) => setTimeout(resolve, 0));
 
-const adminSource = readFileSync(new URL('../frontend/js/admin.js', import.meta.url), 'utf8');
+const adminSource = readFileSync(path.join(frontendRoot, 'js/admin.js'), 'utf8');
 assert.match(adminSource, /if \(t\.type === "http"\) return '<span class="hint">不适用<\/span>'/);
 assert.match(adminSource, /const agentTag = isWeb\s+\? notApplicable/);
 if (adminSource.includes('btn-deploy')) {
   assert.match(adminSource, /class="btn btn-xs btn-deploy" data-a="deploy" data-target-id=/);
-  assert.match(adminSource, /toast\("正在生成安装命令\.\.\."[\s\S]*apiAdmin\([\s\S]*"\/api\/agent\/install-command\?target_id="[\s\S]*20000[\s\S]*await copyText\(cmd\)/);
-  assert.match(adminSource, /finally \{[\s\S]*trigger\.disabled = false;[\s\S]*trigger\.textContent = oldText;/);
+  assert.match(adminSource, /"\/api\/agent\/install-command\?target_id=" \+ encodeURIComponent\(t\.id\)/);
+  assert.match(adminSource, /installModeModal\(t, command, rootlessCommand\)/);
+  assert.match(adminSource, /trigger\.textContent = oldText;/);
   assert.doesNotMatch(adminSource, /showInstallProgress\(/);
 } else {
   assert.match(adminSource, /isWeb \? "" : '<button class="btn btn-xs" data-a="deploy">部署 Agent<\/button>'/);
@@ -75,4 +80,6 @@ assert.match(adminSource, /function bindTargetSorting\(\)/);
 
 console.log('frontend app import smoke test passed');
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';

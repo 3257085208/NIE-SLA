@@ -102,8 +102,8 @@ if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
 fi
 run_check "site-only usage model syntax" node --check "$ROOT/scripts/usage-model.mjs"
 run_check "site-only usage model tests" node "$ROOT/tests/usage-model.test.mjs"
-run_shell "worker module bundle" "cd '$ROOT' && $PACKAGE_EXEC esbuild worker/src/index.js --bundle --format=esm --platform=browser --external:cloudflare:sockets --outfile='$TMP_DIR/nstatus-worker-bundle.mjs' && rm -f '$TMP_DIR/nstatus-worker-bundle.mjs'"
-run_shell "js undefined references" "cd '$ROOT' && $PACKAGE_EXEC eslint@10.6.0 -c tests/eslint.config.mjs worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests --no-error-on-unmatched-pattern"
+run_shell "worker module bundle" "cd '$ROOT' && node --experimental-loader '$ROOT/worker/tests/cloudflare-sockets-loader.mjs' --input-type=module -e \"import('file://$ROOT/worker/src/index.js').then((m) => { const worker = m.default; if (!worker || typeof worker.fetch !== 'function' || typeof worker.scheduled !== 'function') { console.error('worker entry missing fetch/scheduled'); process.exit(1); } }).catch((error) => { console.error(error); process.exit(1); })\""
+run_shell "js undefined references" "cd '$ROOT' && set -f && FILES=\$(git ls-files -- worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests 2>/dev/null) && if [ -z \"\$FILES\" ]; then FILES=\"worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests\"; fi && $PACKAGE_EXEC eslint@10.6.0 -c tests/eslint.config.mjs --no-error-on-unmatched-pattern \$FILES"
 
 echo ""
 echo "=== Frontend JS Syntax ==="

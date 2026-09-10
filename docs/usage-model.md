@@ -3,7 +3,7 @@
 ## 目的
 
 `usage-model-v1.3.3` 是 NIE-SLA 的固定用量估算方法。它的**观测输入**只来自
-`sla.example.com` 的公开状态接口，以及在提供管理员会话时的站点
+`status.example.com` 的公开状态接口，以及在提供管理员会话时的站点
 `/api/debug/usage-summary` 聚合接口；固定计算系数来自仓库内版本化的 calibration 文件。运行时不会访问
 Cloudflare Dashboard、Cloudflare API 或浏览器会话。当前系数用一组同拓扑的人工
 Cloudflare 24 小时对账数据校准，并明确保存在 calibration 文件中；这不是运行时读取 CF。

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-/**
- * Post-deploy production smoke checks for NIE-SLA Worker + Pages.
- * Usage: node scripts/smoke-prod.mjs [apiBase] [pagesBase]
- */
-const apiBase = (process.argv[2] || process.env.NSTATUS_API_BASE || '').replace(/\/+$/, '');
-const pagesBase = (process.argv[3] || process.env.NSTATUS_PAGES_BASE || '').replace(/\/+$/, '');
+
+
+
+
+const apiBase = (process.argv[2] || process.env.NIE_SLA_API_BASE || process.env.NSTATUS_API_BASE || 'https://api.example.com').replace(/\/+$/, '');
+const siteBase = (process.argv[3] || process.env.NIE_SLA_SITE_BASE || process.env.NSTATUS_SITE_BASE || process.env.NSTATUS_PAGES_BASE || apiBase).replace(/\/+$/, '');
 
 async function get(url) {
   const res = await fetch(url, { redirect: 'follow' });
@@ -23,9 +23,8 @@ function pass(name) { results.push(['PASS', name]); console.log('  PASS', name);
 function fail(name, err) { results.push(['FAIL', name, String(err)]); console.error('  FAIL', name, err); }
 
 async function main() {
-  assert(apiBase && pagesBase, 'usage: node scripts/smoke-prod.mjs <apiBase> <pagesBase>');
   console.log('Smoke API:', apiBase);
-  console.log('Smoke Pages:', pagesBase);
+  console.log('Smoke Site:', siteBase);
 
   try {
     const { res, json } = await get(apiBase + '/api/health');
@@ -43,7 +42,7 @@ async function main() {
   try {
     const { res, json } = await get(apiBase + '/api/agent/metrics?agent_id=vps&hours=168&max_points=0');
     assert(res.ok && json?.ok, 'metrics not ok');
-    // unlimited request must be capped server-side: history/series should not explode to 7d*86400
+
     let points = 0;
     if (Array.isArray(json.history)) points = json.history.length;
     else if (json.series?.dt) points = json.series.dt.length;
@@ -52,13 +51,22 @@ async function main() {
   } catch (e) { fail('metrics-cap', e.message || e); }
 
   try {
-    const { res } = await get(pagesBase + '/');
-    assert(res.ok, 'pages status ' + res.status);
-    pass('pages home');
-  } catch (e) { fail('pages', e.message || e); }
+    const { res } = await get(siteBase + '/');
+    assert(res.ok, 'site status ' + res.status);
+    pass('site home');
+  } catch (e) { fail('site', e.message || e); }
 
   try {
-    const { res, text } = await get(pagesBase + '/config.js');
+    const { res, text } = await get(siteBase + '/__nie_sla_smoke__/missing-page');
+    assert(res.status === 404, 'unknown route status ' + res.status);
+    assert(/^text\/html(?:;|$)/i.test(res.headers.get('content-type') || ''), 'unknown route is not HTML');
+    assert(/<title>页面不存在 - NIE-SLA<\/title>/.test(text), 'unknown route is missing the branded 404 page');
+    assert(/class="not-found-code">404<\/div>/.test(text), 'unknown route is missing the visible 404 code');
+    pass('site branded 404');
+  } catch (e) { fail('site-404', e.message || e); }
+
+  try {
+    const { res, text } = await get(siteBase + '/config.js');
     assert(res.ok, 'config.js missing');
     assert(!/apiFromUrl|params\.get\(['"]api['"]\)/.test(text), 'config.js still allows ?api= override');
     pass('config no api override');
