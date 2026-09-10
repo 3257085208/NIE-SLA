@@ -188,6 +188,12 @@ run_shell "Manager capabilities are allow-listed end to end" "cd '$ROOT' && grep
 run_shell "fixed tasks do not use remote shell strings" "cd '$ROOT' && ! grep -q 'bash <(curl' agent/src/tasks.rs && ! grep -q '\.arg(\"-lc\")' agent/src/tasks.rs && grep -q '\.env_clear()' agent/src/tasks.rs"
 run_shell "IP unlock dependencies stay task-local" "cd '$ROOT' && grep -q 'OPTIONAL_DIG_HELPER' agent/src/tasks.rs && grep -q 'OPTIONAL_NSLOOKUP_HELPER' agent/src/tasks.rs && grep -q 'NIE_SLA_DNS_COMPAT_EXECUTABLE' agent/src/tasks.rs && grep -q 'task_dir.join(\"bin\")' agent/src/tasks.rs && grep -q 'set_private_executable_permissions' agent/src/tasks.rs && ! grep -qE 'Command::new\(\"(apt|apt-get|dnf|yum|pacman|apk)\"\)|\b(apt|apt-get|dnf|yum|pacman|apk) (install|add)\b' agent/src/tasks.rs"
 
+if command -v shellcheck >/dev/null 2>&1; then
+  run_shell "shellcheck tracked scripts (errors only)" "cd '$ROOT' && FILES=\$(git ls-files -- '*.sh' cftz 2>/dev/null | grep -v '/vendor/' || true) && if [ -z \"\$FILES\" ]; then exit 0; fi && shellcheck -S error \$FILES"
+else
+  echo "  SKIP shellcheck (not installed; install it to enable the static scan)"
+fi
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ $FAIL -eq 0 ]] || exit 1
