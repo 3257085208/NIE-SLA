@@ -15,6 +15,8 @@ const wranglerSource = await readFile(new URL('../wrangler.toml', import.meta.ur
 const adminAuthSource = await readFile(new URL('../src/admin-auth.js', import.meta.url), 'utf8');
 const telemetrySource = await readFile(new URL('../src/telemetry-buffer.js', import.meta.url), 'utf8');
 const agentTasksSource = await readFile(new URL('../src/admin/agent-tasks.js', import.meta.url), 'utf8');
+const settingsSource = await readFile(new URL('../src/admin/settings.js', import.meta.url), 'utf8');
+const staticAssetsSource = await readFile(new URL('../src/static-assets.js', import.meta.url), 'utf8');
 assert.match(
   routesSource,
   /\/api\/settings\/geoip[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}'cache-control': 'no-store'/,
@@ -84,6 +86,11 @@ assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS agent_contacts/, 'manager
 assert.match(schemaSource, /schema:worker-v31-agent-contacts/, 'agent contacts migration must be tracked');
 assert.match(agentTasksSource, /touchAgentManagerContact\(env, rawAgentId\)/, 'task claiming must record manager liveness');
 assert.match(statusSource, /manager_online/, 'status payload must expose manager liveness');
+assert.match(routesSource, /totp\/disable[\s\S]{0,220}disableTOTP\(request, env\)/, 'disabling TOTP must pass the verification request through');
+assert.match(settingsSource, /encryptSecretValue\(String\(secret_key\)/, 'Turnstile secrets must be stored encrypted');
+assert.match(settingsSource, /migrateTurnstileEncryption/, 'legacy Turnstile secrets must be migratable');
+assert.match(routesSource, /getTurnstileSecret\(env\)/, 'Turnstile verification must read the decrypted secret');
+assert.match(staticAssetsSource, /ADMIN_PATH_CACHE_SEC/, 'admin path resolution must use a cache to absorb anonymous scans');
 assert.match(statusSource, /if \(!liveOverlay\) payload = await overlayLiveTargetStatus/, 'fresh snapshots must skip the per-request D1 overlay');
 assert.match(statusSource, /STATUS_SNAPSHOT_LIVE_WINDOW_SEC/, 'the snapshot live window must stay configurable');
 assert.match(statusSource, /else delete target\.status_source/, 'snapshot Agent overlay must not retain the Agent source for public-IP targets');

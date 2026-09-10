@@ -1,3 +1,4 @@
+use crate::asn_lookup::AsnResolver;
 use crate::{percent_encode_query, Config, HttpClient, AGENT_VERSION};
 use anyhow::{anyhow, Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -352,12 +353,15 @@ fn line_from_ip(ip: &str) -> Option<&'static str> {
         (59, 43, _) => Some("CN2"),
         (202, 97, _) => Some("163"),
         (58, _, c) if (14..=60).contains(&c) => Some("163"),
-        (219, 158, _) | (218, 105, _) => Some("4837"),
+        (219, 158, _) => Some("4837"),
+        (218, 105, _) => Some("9929"),
         (210, 78, _) => Some("9929"),
         (112, 4, _) => Some("9929"),
-        (223, 120, _) | (223, 121, _) | (221, 176, _) | (221, 183, _) | (211, 136, _) => {
-            Some("CMI")
-        }
+        // Team Cymru confirms 223.120.128.0/17 is AS58807 (CMIN2) while the
+        // lower half of 223.120/16 and 223.118/119/121 belong to AS58453.
+        (223, 120, c) if c >= 128 => Some("CMIN2"),
+        (223, 120, _) | (223, 121, _) | (223, 118, _) | (223, 119, _) => Some("CMI"),
+        (221, 176, _) | (221, 183, _) | (211, 136, _) | (120, 192, _) => Some("CMNET"),
         _ => None,
     }
 }
@@ -373,6 +377,10 @@ fn cn2_family_line(hop_ips: &[String]) -> Option<&'static str> {
     }
     if hop_ips.iter().any(|ip| ip.starts_with("202.97.")) {
         return Some("CN2 GT");
+    }
+    let cn2_hops = hop_ips.iter().filter(|ip| ip.starts_with("59.43.")).count();
+    if cn2_hops < 2 {
+        return Some("CN2");
     }
     let last_hop = hop_ips
         .iter()
@@ -423,8 +431,20 @@ fn route_line(asns: &[u32], hop_ips: &[String], text: &str) -> (&'static str, &'
         }
     }
     if let Some(line) = best_asn {
-        if line == "CN2" && hop_ips.iter().any(|ip| ip.starts_with("202.97.")) {
-            return ("CN2 GT", "high");
+        if line == "CN2" {
+            if hop_ips.iter().any(|ip| ip.starts_with("202.97.")) {
+                return ("CN2 GT", "high");
+            }
+            let cn2_hops = hop_ips.iter().filter(|ip| ip.starts_with("59.43.")).count();
+            if cn2_hops >= 2
+                && hop_ips
+                    .iter()
+                    .rev()
+                    .find(|ip| ip.parse::<std::net::IpAddr>().is_ok())
+                    .is_some_and(|ip| ip.starts_with("59.43."))
+            {
+                return ("CN2 GIA", "high");
+            }
         }
         return (line, "high");
     }
@@ -457,7 +477,7 @@ struct RouteSummary {
     report: String,
 }
 
-fn summarize_traceroute(text: &str, target_label: &str, target_ip: &str) -> RouteSummary {
+fn parse_trace_hops(text: &str) -> (Vec<String>, Vec<String>) {
     let mut hops = Vec::new();
     let mut hop_ips = Vec::new();
     for line in text.lines() {
@@ -504,7 +524,22 @@ fn summarize_traceroute(text: &str, target_label: &str, target_ip: &str) -> Rout
         };
         hops.push(format!("{hop}: {}{asn_text}", ips[0]));
     }
-    let asns = extract_asns(text);
+    (hops, hop_ips)
+}
+
+fn summarize_traceroute_with_asns(
+    text: &str,
+    target_label: &str,
+    target_ip: &str,
+    resolved_asns: &[u32],
+) -> RouteSummary {
+    let (hops, hop_ips) = parse_trace_hops(text);
+    let mut asns = extract_asns(text);
+    for asn in resolved_asns {
+        if !asns.contains(asn) {
+            asns.push(*asn);
+        }
+    }
     let (line, confidence) = route_line(&asns, &hop_ips, text);
     let hops_text = if hops.is_empty() {
         "无回显".to_string()
@@ -553,6 +588,10 @@ fn summarize_traceroute(text: &str, target_label: &str, target_ip: &str) -> Rout
         hops,
         report,
     }
+}
+
+fn summarize_traceroute(text: &str, target_label: &str, target_ip: &str) -> RouteSummary {
+    summarize_traceroute_with_asns(text, target_label, target_ip, &[])
 }
 
 fn backroute_script_command(target_ip: &str) -> Command {
@@ -612,6 +651,7 @@ fn run_backroute(
     }
     let total_deadline =
         std::time::Instant::now() + Duration::from_secs(backroute_timeout_sec(timeout_sec));
+    let mut asn_resolver = AsnResolver::new();
     let mut routes = Vec::new();
     let mut reports = Vec::new();
     for (_key, ip, label) in BACKROUTE_TARGETS {
@@ -625,7 +665,22 @@ fn run_backroute(
         }
         let text =
             run_backroute_script(ip).with_context(|| format!("运行固定回程检测脚本 {ip}"))?;
-        let summary = summarize_traceroute(&text, label, ip);
+        // Authoritative ASN data beats the small IP-prefix table: dedicated
+        // lines (9929/10099/CMIN2…) are otherwise reported as 4837/CMI/163.
+        let (_, hop_ips) = parse_trace_hops(&text);
+        let resolve_deadline = Instant::now() + Duration::from_secs(10);
+        let mut resolved_asns = Vec::new();
+        for hop in hop_ips.iter().take(24) {
+            if Instant::now() >= resolve_deadline {
+                break;
+            }
+            if let Some(asn) = asn_resolver.resolve(hop) {
+                if !resolved_asns.contains(&asn) {
+                    resolved_asns.push(asn);
+                }
+            }
+        }
+        let summary = summarize_traceroute_with_asns(&text, label, ip, &resolved_asns);
         let RouteSummary {
             line,
             confidence,
@@ -2323,6 +2378,61 @@ mod tests {
         assert_eq!(ping_ttl.line, "CN2 GIA");
         assert_eq!(ping_ttl.confidence, "medium");
         assert!(ping_ttl.hops.iter().any(|hop| hop.contains("59.43.1.1")));
+
+        let resolved_9929 = summarize_traceroute_with_asns(
+            "=== traceroute-icmp ===\n 1 203.0.113.1 2 ms\n 2 203.0.113.2 3 ms\n",
+            "联通",
+            "202.106.50.1",
+            &[9929],
+        );
+        assert_eq!(resolved_9929.line, "9929");
+        assert_eq!(resolved_9929.confidence, "high");
+
+        let resolved_cug = summarize_traceroute_with_asns(
+            "=== traceroute-icmp ===\n 1 203.0.113.1 2 ms\n",
+            "联通",
+            "202.106.50.1",
+            &[10099],
+        );
+        assert_eq!(resolved_cug.line, "10099");
+
+        let resolved_cmin2 = summarize_traceroute_with_asns(
+            "=== traceroute-icmp ===\n 1 203.0.113.1 2 ms\n",
+            "移动",
+            "221.130.33.52",
+            &[58807],
+        );
+        assert_eq!(resolved_cmin2.line, "CMIN2");
+
+        let resolved_cn2_gia = summarize_traceroute_with_asns(
+            "=== traceroute-icmp ===\n 1 59.43.1.1 2 ms\n 2 59.43.2.2 3 ms\n",
+            "电信",
+            "219.141.136.12",
+            &[4809],
+        );
+        assert_eq!(resolved_cn2_gia.line, "CN2 GIA");
+        assert_eq!(resolved_cn2_gia.confidence, "high");
+
+        let cmin2_prefix = summarize_traceroute(
+            "=== traceroute-icmp ===\n 1 223.120.130.1 2 ms\n",
+            "移动",
+            "221.130.33.52",
+        );
+        assert_eq!(cmin2_prefix.line, "CMIN2");
+
+        let cmi_prefix = summarize_traceroute(
+            "=== traceroute-icmp ===\n 1 223.120.1.1 2 ms\n",
+            "移动",
+            "221.130.33.52",
+        );
+        assert_eq!(cmi_prefix.line, "CMI");
+
+        let cuii_prefix = summarize_traceroute(
+            "=== traceroute-icmp ===\n 1 218.105.1.1 2 ms\n",
+            "联通",
+            "202.106.50.1",
+        );
+        assert_eq!(cuii_prefix.line, "9929");
     }
 
     #[test]

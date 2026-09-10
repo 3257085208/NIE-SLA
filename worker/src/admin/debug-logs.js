@@ -128,7 +128,14 @@ function integerCount(value) {
 // 其余操作（Agent 轮询、配置读取、管理列表等）不再写 debug_logs。
 export function shouldLogDebugOperation(path, method, failed = false) {
   if (path === '/api/debug/logs') return false;
-  if (path === '/api/auth/' || path.startsWith('/api/auth/') || path.startsWith('/api/totp/')) return true;
+  if (path === '/api/auth/' || path.startsWith('/api/auth/')) {
+    // Public config discovery and OAuth start are GETs that anonymous scanners
+    // hammer; logging every success would let anyone inflate D1 writes. Keep
+    // all failures and all POST login/account actions.
+    if (failed === true) return true;
+    return String(method || 'GET').toUpperCase() === 'POST';
+  }
+  if (path.startsWith('/api/totp/')) return true;
   if (failed !== true) return false;
   const upper = String(method || 'GET').toUpperCase();
   return path === '/api/agent/tasks' || path.startsWith('/api/agent/tasks/')

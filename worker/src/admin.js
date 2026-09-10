@@ -51,5 +51,5 @@ export { estimateUsageFromEnv, estimateUsage, MODEL_VERSION as USAGE_MODEL_VERSI
 export { getUsageActualConfig, saveUsageActualConfig, fetchActualUsage } from './admin/usage-actual.js';
 export { getFleetVersions } from './admin/fleet-versions.js';
 export { listTrafficCorrections, saveTrafficCorrection, getTrafficCorrectionsMap, getTrafficCorrection } from './admin/traffic-corrections.js';
-export { getTurnstileConfig, saveTurnstileConfig } from './admin/settings.js';
+export { getTurnstileConfig, getTurnstileSecret, saveTurnstileConfig, migrateTurnstileEncryption } from './admin/settings.js';
 export { getAgentReportInterval, setAgentReportInterval } from './admin/settings.js';

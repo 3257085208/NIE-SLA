@@ -2,6 +2,7 @@ import { migrateAgentCredentialEncryption } from './agent-credentials.js';
 import { migrateAlertEncryption } from './alerts.js';
 import { migrateNqImageHostEncryption } from './nq-image-host.js';
 import { migrateTOTPEncryption } from './totp.js';
+import { migrateTurnstileEncryption } from './admin/settings.js';
 
 export function encryptionKeyStatus(env) {
   return {
@@ -26,6 +27,7 @@ export async function migrateEncryptionMaterials(env) {
     ['agent_credentials', migrateAgentCredentialEncryption],
     ['alerts', migrateAlertEncryption],
     ['legacy_nq_image_host', migrateNqImageHostEncryption],
+    ['turnstile', migrateTurnstileEncryption],
   ]) {
     try {
       results[name] = await migrate(env);

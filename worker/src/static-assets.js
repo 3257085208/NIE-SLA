@@ -1,7 +1,22 @@
 import { DEFAULT_ADMIN_PATH, getAdminPath } from './admin-path.js';
+import { clamp } from './utils.js';
 
 const ADMIN_HTML_PATH = '/admin.html';
 const ADMIN_CANDIDATE = /^\/[A-Za-z0-9][A-Za-z0-9_-]{2,63}\/?$/;
+
+// Anonymous scanners hit every single-segment path, so resolving the custom
+// admin path straight from D1 made each probe a database read. A short-lived
+// isolate cache keeps the routing correct while collapsing that traffic.
+let adminPathCache = { value: null, expiresAt: 0 };
+
+async function resolveAdminPath(env) {
+  const ttlSec = clamp(Number(env.ADMIN_PATH_CACHE_SEC || 60), 0, 3600);
+  const now = Date.now();
+  if (ttlSec > 0 && adminPathCache.value && adminPathCache.expiresAt > now) return adminPathCache.value;
+  const value = await getAdminPath(env);
+  adminPathCache = { value, expiresAt: now + ttlSec * 1000 };
+  return value;
+}
 
 export async function routeStaticAssets(request, env) {
   if (!env?.ASSETS || !['GET', 'HEAD'].includes(request.method)) return null;
@@ -13,7 +28,7 @@ export async function routeStaticAssets(request, env) {
     || ADMIN_CANDIDATE.test(pathname);
 
   if (shouldResolveAdminPath) {
-    const adminPath = await getAdminPath(env);
+    const adminPath = await resolveAdminPath(env);
     if (pathname === `${adminPath}/`) {
       url.pathname = adminPath;
       return Response.redirect(url.toString(), 308);

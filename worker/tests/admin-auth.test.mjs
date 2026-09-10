@@ -66,6 +66,30 @@ function jsonRequest(url, body) {
   });
 }
 
+function base32Decode(value) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const ch of String(value).toUpperCase().replace(/=+$/, '')) {
+    const index = alphabet.indexOf(ch);
+    if (index < 0) throw new Error('invalid base32');
+    bits += index.toString(2).padStart(5, '0');
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  return new Uint8Array(bytes);
+}
+
+async function totpCodeFor(secret, at = Date.now()) {
+  const counter = Math.floor(at / 1000 / 30);
+  const message = new Uint8Array(8);
+  new DataView(message.buffer).setUint32(4, counter);
+  const key = await crypto.subtle.importKey('raw', base32Decode(secret), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, message));
+  const offset = digest[digest.length - 1] & 0x0f;
+  const binary = ((digest[offset] & 0x7f) << 24) | (digest[offset + 1] << 16) | (digest[offset + 2] << 8) | digest[offset + 3];
+  return String(binary % 1_000_000).padStart(6, '0');
+}
+
 async function encryptLegacySecret(secret, material) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(material));
@@ -95,8 +119,12 @@ async function encryptLegacySecret(secret, material) {
   assert.equal(login.provider, 'password');
   assert.equal((await validateAdminSession(env, login.session_id)).valid, true);
   env.DB.meta.set('totp_secret', 'JBSWY3DPEHPK3PXP');
-  const disabled = await disableTOTP(env);
+  const noCode = await disableTOTP(jsonRequest('https://status.example/api/totp/disable', {}), env);
+  assert.equal(noCode.status, 400, 'disabling TOTP without a code must be rejected');
+  assert.equal(env.DB.meta.get('totp_secret'), 'JBSWY3DPEHPK3PXP', 'the secret must survive a rejected disable');
+  const disabled = await disableTOTP(jsonRequest('https://status.example/api/totp/disable', { code: await totpCodeFor('JBSWY3DPEHPK3PXP') }), env);
   assert.equal(disabled.status, 200);
+  assert.equal(env.DB.meta.has('totp_secret'), false, 'a verified disable must remove the secret');
   assert.equal((await validateAdminSession(env, login.session_id)).valid, true);
   await assert.rejects(
     passwordLogin(jsonRequest('https://status.example/api/auth/login', { username: 'owner', password: 'wrong' }), env),

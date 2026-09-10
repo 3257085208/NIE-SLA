@@ -6,7 +6,6 @@ const PENDING_SECRET_KEY = 'totp_pending_secret';
 const SESSION_ID_KEY = 'totp_session_id';
 const SESSION_EXPIRES_KEY = 'totp_session_expires';
 const SESSIONS_KEY = 'totp_sessions';
-const ENCRYPTED_SECRET_PREFIX = 'enc:v1:';
 const HASHED_SESSION_PREFIX = 'sha256:';
 const MAX_ADMIN_SESSIONS = 5;
 
@@ -55,17 +54,45 @@ export async function verifyTOTP(request, env) {
   }
 }
 
-export async function disableTOTP(env) {
+export async function disableTOTP(request, env) {
   if (!env.DB) return json({ ok: false, error: '需要 D1 数据库' }, 500, env);
 
   const activeSecret = await getMeta(env, ACTIVE_SECRET_KEY);
-  const pendingSecret = await getMeta(env, PENDING_SECRET_KEY);
-  if (!activeSecret && !pendingSecret) return json({ ok: false, error: 'TOTP not enabled' }, 400, env);
+  const pendingSecret = activeSecret ? null : await getMeta(env, PENDING_SECRET_KEY);
+  const storedSecret = activeSecret || pendingSecret;
+  if (!storedSecret) return json({ ok: false, error: 'TOTP not enabled' }, 400, env);
+
+  // Disabling 2FA is itself a security-sensitive operation: a stolen admin
+  // session must not be able to remove the second factor. Require a current
+  // TOTP code before deleting the secret.
+  const code = await readCode(request);
+  if (!/^\d{6}$/.test(code)) {
+    return json({ ok: false, error: '关闭 TOTP 需要当前 6 位验证码' }, 400, env);
+  }
+  try {
+    const stored = await readStoredSecret(storedSecret, env);
+    if (!await verifyCode(stored.secret, code)) {
+      return json({ ok: false, error: 'TOTP 验证码无效' }, 401, env);
+    }
+  } catch (err) {
+    console.error('disableTOTP verify error:', String(err?.message || err));
+    return json({ ok: false, error: 'TOTP 验证失败' }, 400, env);
+  }
 
   await deleteMeta(env, ACTIVE_SECRET_KEY);
   await deleteMeta(env, PENDING_SECRET_KEY);
   return json({ ok: true }, 200, env);
 }
+
+export async function encryptSecretValue(value, env) {
+  return encryptSecret(value, env);
+}
+
+export async function decryptSecretValue(payload, env) {
+  return decryptSecret(payload, env);
+}
+
+export const ENCRYPTED_SECRET_PREFIX = 'enc:v1:';
 
 export async function checkTOTP(env) {
   if (!env.DB) return { ok: false, totp_enabled: false };

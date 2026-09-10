@@ -56,6 +56,8 @@ assert.equal(afterCleanup.logs[0].ip, '198.51.100.7');
 
 assert.equal(shouldLogDebugOperation('/api/auth/login', 'POST'), true);
 assert.equal(shouldLogDebugOperation('/api/auth/login', 'POST', true), true, 'login failures must be logged');
+assert.equal(shouldLogDebugOperation('/api/auth/config', 'GET'), false, 'public auth config discovery must not write D1');
+assert.equal(shouldLogDebugOperation('/api/auth/config', 'GET', true), true, 'failed auth config lookups must stay visible');
 assert.equal(shouldLogDebugOperation('/api/totp/verify', 'POST'), true);
 assert.equal(shouldLogDebugOperation('/api/status', 'GET'), false);
 assert.equal(shouldLogDebugOperation('/api/debug/logs', 'GET'), false);

@@ -3436,14 +3436,23 @@ async function verifyTotp() {
   }
 }
 async function disableTotp() {
-  if (!confirm("关闭 TOTP？")) return;
-  try {
-    await api("/api/totp/disable", { method: "POST", body: "{}" });
-    toast("已关闭", "ok");
-    loadTotp();
-  } catch (e) {
-    toast(e.message, "err");
-  }
+  byId("modal").className = "modal";
+  byId("modal").innerHTML = `<h3>关闭 TOTP</h3><p class="hint">请输入当前 6 位验证码，验证通过后才会关闭双因素验证。</p><div class="f"><label>验证码</label><input id="disableTotpCode" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" autocomplete="one-time-code"></div><div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-danger" id="confirmDisableTotp">确认关闭</button></div>`;
+  openModal();
+  const input = byId("disableTotpCode");
+  input?.focus();
+  byId("confirmDisableTotp").onclick = async () => {
+    const code = input.value.trim();
+    if (!/^\d{6}$/.test(code)) return toast("请输入当前的 6 位验证码", "err");
+    try {
+      await api("/api/totp/disable", { method: "POST", body: JSON.stringify({ code }) });
+      closeModal();
+      toast("已关闭", "ok");
+      loadTotp();
+    } catch (e) {
+      toast(e.message, "err");
+    }
+  };
 }
 function openModal() {
   const overlay = byId("overlay");

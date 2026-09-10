@@ -22,6 +22,7 @@ const SENSITIVE_META_KEYS = new Set([
   'cf_usage_api_token',
   'nq_image_host_settings',
   'nq_image_host_token',
+  'turnstile_secret_key',
 ]);
 const OMIT_META_KEYS = new Set([
   'totp_session_id', 'totp_session_expires', 'totp_sessions',

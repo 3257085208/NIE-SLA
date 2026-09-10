@@ -17,6 +17,7 @@ use tungstenite::client::IntoClientRequest;
 use tungstenite::{connect, Message};
 use ureq::{config::IpFamily, http::Uri, ResponseExt};
 
+mod asn_lookup;
 mod dns_compat;
 mod geoip;
 mod manager;

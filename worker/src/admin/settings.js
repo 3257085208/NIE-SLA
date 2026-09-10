@@ -2,6 +2,7 @@
 import { nowSec, clamp, parseBoolean, sha256Hex, assertPublicHttpUrl } from '../utils.js';
 import { ApiError, safeJson } from '../auth.js';
 import { getAdminPath, setAdminPath } from '../admin-path.js';
+import { encryptSecretValue, decryptSecretValue, ENCRYPTED_SECRET_PREFIX } from '../totp.js';
 
 const EXCHANGE_RATE_TTL_SEC = 86400;
 const EXCHANGE_RATE_RETRY_SEC = 3600;
@@ -251,10 +252,26 @@ export async function setAgentReportInterval(env, seconds) {
   return Math.floor(value);
 }
 
+export async function getTurnstileSecret(env) {
+  const stored = String(await getMeta(env, 'turnstile_secret_key').catch(() => null) || '').trim();
+  if (!stored) return null;
+  if (stored.startsWith(ENCRYPTED_SECRET_PREFIX)) {
+    try {
+      const decrypted = await decryptSecretValue(stored.slice(ENCRYPTED_SECRET_PREFIX.length), env);
+      return String(decrypted?.secret || '').trim() || null;
+    } catch (error) {
+      console.error('turnstile secret decrypt failed:', String(error?.message || error));
+      return null;
+    }
+  }
+  // Legacy plaintext value written before encryption was introduced.
+  return stored;
+}
+
 export async function getTurnstileConfig(env) {
   const [siteKey, secretKey, enabled] = await Promise.all([
     getMeta(env, 'turnstile_site_key').catch(() => null),
-    getMeta(env, 'turnstile_secret_key').catch(() => null),
+    getTurnstileSecret(env),
     getMeta(env, 'turnstile_enabled').catch(() => null),
   ]);
   return {
@@ -265,9 +282,19 @@ export async function getTurnstileConfig(env) {
 
 export async function saveTurnstileConfig(env, { site_key, secret_key, enabled }) {
   if (site_key !== undefined) await setMeta(env, 'turnstile_site_key', String(site_key || '').trim());
-  if (secret_key !== undefined && String(secret_key).trim()) await setMeta(env, 'turnstile_secret_key', String(secret_key).trim());
+  if (secret_key !== undefined && String(secret_key).trim()) {
+    await setMeta(env, 'turnstile_secret_key', await encryptSecretValue(String(secret_key).trim(), env));
+  }
   if (enabled !== undefined) await setMeta(env, 'turnstile_enabled', parseBoolean(enabled, false) ? '1' : '0');
   return getTurnstileConfig(env);
+}
+
+export async function migrateTurnstileEncryption(env) {
+  const stored = String(await getMeta(env, 'turnstile_secret_key').catch(() => null) || '').trim();
+  if (!stored) return { migrated: 0, reason: 'not_configured' };
+  if (stored.startsWith(ENCRYPTED_SECRET_PREFIX)) return { migrated: 0, reason: 'already_encrypted' };
+  await setMeta(env, 'turnstile_secret_key', await encryptSecretValue(stored, env));
+  return { migrated: 1 };
 }
 
 export async function getPublicSettings(env, { includeAdmin = false } = {}) {
