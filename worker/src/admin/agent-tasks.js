@@ -10,7 +10,7 @@ export const AGENT_TASK_ACTIONS = Object.freeze({
 
   nodequality: { timeout_sec: 3600, label: 'NodeQuality' },
   ip_unlock: { timeout_sec: 600, label: 'IP 解锁' },
-  backroute: { timeout_sec: 600, label: '回程检测' },
+  backroute: { timeout_sec: 900, label: '回程检测' },
 });
 const NQ_TASK_EXPIRES_SEC = 7 * 24 * 60 * 60;
 const CANCEL_GRACE_SEC = 5 * 60;

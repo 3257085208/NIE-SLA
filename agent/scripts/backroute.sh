@@ -12,7 +12,7 @@ export PATH
 # environment variable is the only safe channel for fixed-task arguments.
 target_ip="${NIE_SLA_BACKROUTE_TARGET:-${1:-}}"
 case "$target_ip" in
-  219.141.136.12|202.106.50.1|221.130.33.52) ;;
+  219.141.136.12|202.106.50.1|221.130.33.52|202.96.209.133|210.22.97.1|221.5.88.88|211.136.192.6) ;;
   *)
     echo "unsupported backroute destination: ${target_ip:-<empty>}" >&2
     exit 64

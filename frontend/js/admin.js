@@ -947,7 +947,7 @@ function betaTaskControlsHtml(target) {
     <div class="beta-task-buttons">
       <button type="button" class="btn btn-xs" data-a="task-nq" data-task-action="nodequality"${active || !nqAvailable ? " disabled" : ""} title="${escapeHtml(nqAvailable ? "运行固定 NodeQuality 任务" : "此 Agent 尚未上报 NQ 能力")}">运行 NQ</button>
       <button type="button" class="btn btn-xs" data-a="task-unlock" data-task-action="ip_unlock"${active || !unlockAvailable ? " disabled" : ""} title="${escapeHtml(unlockAvailable ? "运行固定 IP 解锁任务" : "此 Agent 尚未上报 IP 解锁能力")}">IP 解锁</button>
-      <button type="button" class="btn btn-xs" data-a="task-backroute" data-task-action="backroute"${active || !backrouteAvailable ? " disabled" : ""} title="${escapeHtml(backrouteAvailable ? "固定脚本检测三网回程并识别线路（约 1-2 分钟）" : "此 Agent 尚未上报回程检测能力（需 v1.1.30+）")}">回程</button>
+      <button type="button" class="btn btn-xs" data-a="task-backroute" data-task-action="backroute"${active || !backrouteAvailable ? " disabled" : ""} title="${escapeHtml(backrouteAvailable ? "固定脚本检测三网回程并识别线路（约 1–4 分钟，失败方向自动换目标重试）" : "此 Agent 尚未上报回程检测能力（需 v1.1.30+）")}">回程</button>
       ${reportUrl ? `<a class="btn btn-xs btn-blue" href="${escapeHtml(reportUrl)}" target="_blank" rel="noopener noreferrer">NQ 报告</a>` : ""}
     </div>
     ${taskStates}
@@ -1135,7 +1135,7 @@ function runAgentTask(target, action) {
   const detail = action === "nodequality"
     ? "Agent 将运行固定的 NodeQuality 官方脚本，通常需要数分钟，可能需要较高系统权限。"
     : action === "backroute"
-      ? "Agent 将执行固定的三网回程检测，识别电信、联通、移动线路，并保存检测结果；通常需要 1–2 分钟。"
+      ? "Agent 将执行固定的三网回程检测，识别电信、联通、移动线路，并保存检测结果；通常需要 1–4 分钟，个别方向会自动更换探测目标重试。"
       : "Agent 将运行固定的 IP.Check.Place 完整报告模式（-4 -n -p），保存有界完整报告与最终 IPv4 媒体解锁结果；隐私模式不向第三方上传报告。";
   byId("modal").className = "modal task-confirm-modal";
   byId("modal").innerHTML = `

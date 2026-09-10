@@ -25,11 +25,21 @@ const MAX_NODEQUALITY_CAPTURE_CHARS: usize = 180 * 1024;
 const IP_UNLOCK_TIMEOUT_SEC: u64 = 600;
 const NODEQUALITY_DEFAULT_TIMEOUT_SEC: u64 = 3600;
 const NODEQUALITY_MAX_TIMEOUT_SEC: u64 = 7200;
-pub(crate) const BACKROUTE_TIMEOUT_SEC: u64 = 600;
+pub(crate) const BACKROUTE_TIMEOUT_SEC: u64 = 900;
 const BACKROUTE_TARGETS: [(&str, &str, &str); 3] = [
     ("telecom", "219.141.136.12", "电信"),
     ("unicom", "202.106.50.1", "联通"),
     ("mobile", "221.130.33.52", "移动"),
+];
+// Beijing Unicom's DNS target frequently answers only from the destination
+// itself while every transit router filters TTL-exceeded replies, leaving the
+// 联通 direction with no backbone evidence. When a direction is unresolved the
+// Agent probes these additional well-known carrier targets and merges the hop
+// evidence before giving up.
+const BACKROUTE_FALLBACKS: [(&str, &[&str]); 3] = [
+    ("telecom", &["202.96.209.133"]),
+    ("unicom", &["210.22.97.1", "221.5.88.88"]),
+    ("mobile", &["211.136.192.6"]),
 ];
 const BACKROUTE_SCRIPT: &str = include_str!("../scripts/backroute.sh");
 const NODEQUALITY_CAPTURE_BEGIN: &str = "__NIE_SLA_NQ_ARTIFACTS_V1_BEGIN__";
@@ -642,6 +652,26 @@ fn run_backroute_script(target_ip: &str) -> Result<String> {
     Ok(text)
 }
 
+fn resolve_asns_for_text(
+    resolver: &mut AsnResolver,
+    text: &str,
+    resolved: &mut Vec<u32>,
+    budget: Duration,
+) {
+    let (_, hop_ips) = parse_trace_hops(text);
+    let deadline = Instant::now() + budget;
+    for hop in hop_ips.iter().take(24) {
+        if Instant::now() >= deadline {
+            break;
+        }
+        if let Some(asn) = resolver.resolve(hop) {
+            if !resolved.contains(&asn) {
+                resolved.push(asn);
+            }
+        }
+    }
+}
+
 fn run_backroute(
     timeout_sec: Option<u64>,
     cancellation: Option<&TaskCancellation>,
@@ -654,7 +684,7 @@ fn run_backroute(
     let mut asn_resolver = AsnResolver::new();
     let mut routes = Vec::new();
     let mut reports = Vec::new();
-    for (_key, ip, label) in BACKROUTE_TARGETS {
+    for (key, ip, label) in BACKROUTE_TARGETS {
         if Instant::now() >= total_deadline {
             return Err(anyhow!("回程检测总超时，已跳过剩余方向"));
         }
@@ -663,24 +693,47 @@ fn run_backroute(
                 return Err(anyhow!("回程检测已被取消"));
             }
         }
-        let text =
+        let mut text =
             run_backroute_script(ip).with_context(|| format!("运行固定回程检测脚本 {ip}"))?;
         // Authoritative ASN data beats the small IP-prefix table: dedicated
         // lines (9929/10099/CMIN2…) are otherwise reported as 4837/CMI/163.
-        let (_, hop_ips) = parse_trace_hops(&text);
-        let resolve_deadline = Instant::now() + Duration::from_secs(10);
         let mut resolved_asns = Vec::new();
-        for hop in hop_ips.iter().take(24) {
-            if Instant::now() >= resolve_deadline {
-                break;
-            }
-            if let Some(asn) = asn_resolver.resolve(hop) {
-                if !resolved_asns.contains(&asn) {
-                    resolved_asns.push(asn);
+        resolve_asns_for_text(
+            &mut asn_resolver,
+            &text,
+            &mut resolved_asns,
+            Duration::from_secs(10),
+        );
+        let mut summary = summarize_traceroute_with_asns(&text, label, ip, &resolved_asns);
+        if summary.line == "未识别" {
+            if let Some((_, fallbacks)) = BACKROUTE_FALLBACKS.iter().find(|(name, _)| *name == key)
+            {
+                for fallback in fallbacks.iter() {
+                    if Instant::now() >= total_deadline {
+                        break;
+                    }
+                    if let Some(cancellation) = cancellation {
+                        if cancellation.is_cancelled() {
+                            return Err(anyhow!("回程检测已被取消"));
+                        }
+                    }
+                    let Ok(extra) = run_backroute_script(fallback) else {
+                        continue;
+                    };
+                    text = format!("{text}\n=== fallback {fallback} ===\n{extra}");
+                    resolve_asns_for_text(
+                        &mut asn_resolver,
+                        &extra,
+                        &mut resolved_asns,
+                        Duration::from_secs(10),
+                    );
+                    summary = summarize_traceroute_with_asns(&text, label, ip, &resolved_asns);
+                    if summary.line != "未识别" {
+                        break;
+                    }
                 }
             }
         }
-        let summary = summarize_traceroute_with_asns(&text, label, ip, &resolved_asns);
         let RouteSummary {
             line,
             confidence,
@@ -2433,6 +2486,18 @@ mod tests {
             "202.106.50.1",
         );
         assert_eq!(cuii_prefix.line, "9929");
+
+        let merged_fallback = summarize_traceroute_with_asns(
+            "=== traceroute-tcp443 ===\n 1 5.56.17.190 2 ms\n 2 *\n 3 202.106.50.1\n=== fallback 210.22.97.1 ===\n 1 10.0.0.1\n 2 219.158.1.1 3 ms\n",
+            "联通",
+            "202.106.50.1",
+            &[],
+        );
+        assert_eq!(merged_fallback.line, "4837");
+        assert!(merged_fallback
+            .hops
+            .iter()
+            .any(|hop| hop.contains("219.158.1.1")));
     }
 
     #[test]
@@ -2462,7 +2527,9 @@ mod tests {
 
     #[test]
     fn backroute_script_has_a_fixed_destination_allowlist() {
-        assert!(BACKROUTE_SCRIPT.contains("219.141.136.12|202.106.50.1|221.130.33.52"));
+        assert!(BACKROUTE_SCRIPT.contains(
+            "219.141.136.12|202.106.50.1|221.130.33.52|202.96.209.133|210.22.97.1|221.5.88.88|211.136.192.6"
+        ));
         assert!(BACKROUTE_SCRIPT.contains("NIE_SLA_BACKROUTE_TARGET"));
         assert!(BACKROUTE_SCRIPT.contains("traceroute-tcp443"));
         assert!(BACKROUTE_SCRIPT.contains("traceroute-icmp"));

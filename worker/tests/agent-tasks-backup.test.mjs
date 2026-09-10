@@ -170,7 +170,7 @@ assert.equal(backrouteTask.task.action, 'backroute');
 assert.equal(backrouteTask.task.action_label, '回程检测');
 const backrouteClaim = await claimAgentTask(env, 'vps-b');
 assert.equal(backrouteClaim.task.action, 'backroute');
-assert.equal(backrouteClaim.task.timeout_sec, 600);
+assert.equal(backrouteClaim.task.timeout_sec, 900);
 const backrouteCompleted = await completeAgentTask(jsonRequest({
   status: 'succeeded',
   result: { routes: ['电信(203.0.113.8): 经由 CN2 | 线路识别'] },
