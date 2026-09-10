@@ -183,6 +183,7 @@ export async function claimAgentTask(env, agentIdValue, allowedActionsValue = ''
   const rawAgentId = String(agentIdValue || '').trim();
   const agentId = sanitizeAgentId(rawAgentId);
   if (!agentId) throw new ApiError(400, '缺少 agent_id');
+  await touchAgentManagerContact(env, rawAgentId);
   const allowedActions = normalizeAllowedActions(allowedActionsValue);
   const taskIds = await agentTaskIds(env, rawAgentId);
   await expireStaleTasks(env, rawAgentId);
@@ -215,6 +216,25 @@ export async function claimAgentTask(env, agentIdValue, allowedActionsValue = ''
       ...(row.action === 'nodequality' ? { options: parseStoredOptions(row.options) } : {}),
     },
   };
+}
+
+// Manager liveness probe: the privileged poller is the only Agent component
+// that survives a broken telemetry process. A conditional UPSERT keeps the
+// write rate at one row per Agent per ten minutes without an extra SELECT.
+export async function touchAgentManagerContact(env, agentIdValue) {
+  const agentId = sanitizeAgentId(agentIdValue);
+  if (!agentId || !env?.DB) return;
+  const now = nowSec();
+  try {
+    await env.DB.prepare(`INSERT INTO agent_contacts (agent_id, manager_seen_at, manager_version, updated_at)
+      VALUES (?, ?, NULL, ?)
+      ON CONFLICT(agent_id) DO UPDATE SET manager_seen_at = excluded.manager_seen_at, updated_at = excluded.updated_at
+      WHERE excluded.manager_seen_at - agent_contacts.manager_seen_at >= ?`)
+      .bind(agentId, now, now, AGENT_TASK_POLL_SEC)
+      .run();
+  } catch (error) {
+    console.error('agent manager contact update failed:', String(error?.message || error));
+  }
 }
 
 function normalizeAllowedActions(value) {

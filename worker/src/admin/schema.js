@@ -10,6 +10,7 @@ const NEXT_PROBE_SCHEMA_MARKER = 'schema:worker-v27-next-probe';
 const PROBE_BUFFER_SCHEMA_MARKER = 'schema:worker-v28-probe-buffer';
 const TASK_RETENTION_SCHEMA_MARKER = 'schema:worker-v29-agent-task-retention';
 const BACKROUTE_TASK_SCHEMA_MARKER = 'schema:worker-v30-backroute-task';
+const AGENT_CONTACTS_SCHEMA_MARKER = 'schema:worker-v31-agent-contacts';
 
 function createAgentTasksTableSql(tableName = 'agent_tasks', ifNotExists = false) {
   return `CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
@@ -69,7 +70,8 @@ export async function ensureV6Schema(env) {
   const probeBufferInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(PROBE_BUFFER_SCHEMA_MARKER).first().catch(() => null);
   const taskRetentionInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(TASK_RETENTION_SCHEMA_MARKER).first().catch(() => null);
   const backrouteTaskInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(BACKROUTE_TASK_SCHEMA_MARKER).first().catch(() => null);
-  if (installed?.value === '1' && nextProbeInstalled?.value === '1' && probeBufferInstalled?.value === '1' && taskRetentionInstalled?.value === '1' && backrouteTaskInstalled?.value === '1') { schemaEnsured = true; return; }
+  const agentContactsInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(AGENT_CONTACTS_SCHEMA_MARKER).first().catch(() => null);
+  if (installed?.value === '1' && nextProbeInstalled?.value === '1' && probeBufferInstalled?.value === '1' && taskRetentionInstalled?.value === '1' && backrouteTaskInstalled?.value === '1' && agentContactsInstalled?.value === '1') { schemaEnsured = true; return; }
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, no_public_ip INTEGER NOT NULL DEFAULT 0, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', city TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', traffic_reset_day INTEGER NOT NULL DEFAULT 1, alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '', nq_report TEXT DEFAULT '', nq_updated_at INTEGER)`).run();
   for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN traffic_reset_day INTEGER', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN no_public_ip INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN city TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_report TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_updated_at INTEGER', 'ALTER TABLE targets ADD COLUMN next_probe_at INTEGER']) {
     await runOptionalSchemaChange(env, stmt);
@@ -175,6 +177,17 @@ export async function ensureV6Schema(env) {
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN thread_count INTEGER`);
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN pings TEXT`);
   await ensureAgentCapabilitiesColumn(env);
+
+  // Lightweight manager liveness evidence: the privileged task poller hits
+  // /api/agent/tasks every 10 minutes. Recording that contact (throttled by
+  // SQL, no extra read) lets the status page distinguish "Agent telemetry is
+  // stale" from "the whole VPS/Agent is offline".
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_contacts (
+    agent_id TEXT PRIMARY KEY,
+    manager_seen_at INTEGER NOT NULL,
+    manager_version TEXT,
+    updated_at INTEGER NOT NULL
+  )`).run();
 
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_metrics_history (
     agent_id TEXT NOT NULL,
@@ -441,6 +454,8 @@ export async function ensureV6Schema(env) {
     .bind(TASK_RETENTION_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
     .bind(BACKROUTE_TASK_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+    .bind(AGENT_CONTACTS_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   schemaEnsured = true;
   } catch (e) { schemaPromise = null; throw e; }
   })();

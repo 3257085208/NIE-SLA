@@ -111,7 +111,8 @@ async function buildStatusPayload(env, url = null, options = {}) {
   const agentAvailabilityPromise = optionalQuery(env.DB.prepare(`SELECT agent_id, day, total_sec, online_sec FROM agent_daily_availability WHERE day >= ?`).bind(startDay).all(), 'Agent availability unavailable');
   const latestPromise = optionalQuery(env.DB.prepare(`SELECT target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo, uptime_24h, uptime_7d, avg_latency_24h, last_fail_at, current_outage_started_at, last_recover_at, status_changed_at FROM latest_status`).all(), 'Latest probe status unavailable');
   const pingTargetsPromise = optionalQuery(env.DB.prepare(`SELECT id, name, color FROM ping_targets WHERE enabled = 1 ORDER BY name`).all(), 'Ping target metadata unavailable');
-  const [targets, metricsResult, agentAvailabilityResult, latestResult, pingTargetsResult, bufferedMetrics] = await Promise.all([targetsPromise, metricsPromise, agentAvailabilityPromise, latestPromise, pingTargetsPromise, bufferedMetricsPromise]);
+  const contactsPromise = optionalQuery(env.DB.prepare(`SELECT agent_id, manager_seen_at, manager_version FROM agent_contacts`).all(), 'Agent manager contacts unavailable');
+  const [targets, metricsResult, agentAvailabilityResult, latestResult, pingTargetsResult, bufferedMetrics, contactsResult] = await Promise.all([targetsPromise, metricsPromise, agentAvailabilityPromise, latestPromise, pingTargetsPromise, bufferedMetricsPromise, contactsPromise]);
   const metricRows = mergeAgentMetricRows(metricsResult.results, bufferedMetrics);
   const r2State = await readR2State(env).catch((error) => {
     console.error('R2 state unavailable:', String(error?.message || error));
@@ -169,6 +170,21 @@ async function buildStatusPayload(env, url = null, options = {}) {
     warnings.push('Traffic totals unavailable');
   }
   const metricsMap = {};
+  const managerContactMap = {};
+  for (const row of contactsResult.results || []) {
+    const key = sanitizeAgentId(row.agent_id);
+    if (key) managerContactMap[key] = row;
+  }
+  const managerStatusFields = (targetId) => {
+    const contact = managerContactMap[sanitizeAgentId(targetId)] || null;
+    const seenAt = Number(contact?.manager_seen_at || 0);
+    const ageSec = seenAt > 0 ? Math.max(0, nowSec() - seenAt) : null;
+    return {
+      manager_online: ageSec != null && ageSec <= 1800,
+      manager_last_seen_sec: ageSec,
+      manager_version: contact?.manager_version || null,
+    };
+  };
 
   for (const r of metricRows) {
     if (r.updated_at) {
@@ -227,7 +243,7 @@ async function buildStatusPayload(env, url = null, options = {}) {
         }
       } catch (_) {}
     }
-    const publicRow = { ...row, no_public_ip: noPublicIp ? 1 : 0, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || '自动', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, has_nq: hasNq, nq: hasNq ? { has_report: true, updated_at: targetRow.nq_updated_at ? Number(targetRow.nq_updated_at) : null } : null, unlock, ...agentStatusFields(agentState, env, { includeStatusSource: noPublicIp }) };
+    const publicRow = { ...row, no_public_ip: noPublicIp ? 1 : 0, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || '自动', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, has_nq: hasNq, nq: hasNq ? { has_report: true, updated_at: targetRow.nq_updated_at ? Number(targetRow.nq_updated_at) : null } : null, unlock, ...agentStatusFields(agentState, env, { includeStatusSource: noPublicIp }), ...managerStatusFields(targetRow.id) };
     delete publicRow.nq_report;
     delete publicRow.unlock_data;
     delete publicRow.nq_unlock_data;
@@ -476,10 +492,13 @@ async function attachAgentState(payload, env) {
     const trafficMap = {};
     const trafficRows = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all();
     for (const row of trafficRows.results || []) trafficMap[`${sanitizeAgentId(row.agent_id)}|${row.month}`] = row;
-    const [rows, bufferedMetrics] = await Promise.all([
+    const [rows, bufferedMetrics, contactRows] = await Promise.all([
       env.DB.prepare(`SELECT * FROM agent_metrics_state`).all(),
       bufferedAgentStateEnabled(env) ? readFleetLatestAgentStates(env) : Promise.resolve({}),
+      env.DB.prepare(`SELECT agent_id, manager_seen_at, manager_version FROM agent_contacts`).all().catch(() => ({ results: [] })),
     ]);
+    const contactMap = {};
+    for (const row of contactRows.results || []) contactMap[sanitizeAgentId(row.agent_id)] = row;
     const metricRows = mergeAgentMetricRows(rows.results, bufferedMetrics);
     const byAgent = {};
     for (const row of metricRows) {
@@ -488,6 +507,14 @@ async function attachAgentState(payload, env) {
       if (key) byAgent[key] = publicAgentSummary(row, summarizeTrafficWithPending(trafficMap[`${key}|${settings.month}`], settings, row));
     }
     for (const target of payload.targets) {
+      const contact = contactMap[sanitizeAgentId(target.id)] || null;
+      const managerSeenAt = Number(contact?.manager_seen_at || 0);
+      const managerAgeSec = managerSeenAt > 0 ? Math.max(0, nowSec() - managerSeenAt) : null;
+      Object.assign(target, {
+        manager_online: managerAgeSec != null && managerAgeSec <= 1800,
+        manager_last_seen_sec: managerAgeSec,
+        manager_version: contact?.manager_version || null,
+      });
       const state = byAgent[sanitizeAgentId(target.id)];
       if (!state) {
         if (Number(target.no_public_ip || 0) === 1) Object.assign(target, { status_source: 'agent', agent_online: false, latency_ms: null, checked_at: null, ok: null, error: null });

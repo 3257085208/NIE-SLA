@@ -1184,16 +1184,20 @@ function targetRowHtml(target, index) {
       : statusTag("TCP", "tag-tcp");
   const isWeb = target.type === "http";
   const notApplicable = '<span class="hint">不适用</span>';
+  const agentOnline = isAgentOnline(status);
+  const managerOnline = status.manager_online === true;
   const agentTag = isWeb
     ? notApplicable
-    : isAgentOnline(status)
+    : agentOnline
       ? statusTag("在线", "tag-on")
-      : statusTag("离线", "tag-off");
+      : managerOnline
+        ? `<span class="tag tag-warn" title="管理进程仍在轮询任务；只是指标上报中断">上报中断</span>`
+        : statusTag("离线", "tag-off");
   const enabledTag = target.enabled
     ? statusTag("已启用", "tag-on")
     : statusTag("已禁用", "tag-off");
   const probeUptime = typeof status.agent_online === "boolean"
-    ? (status.agent_online === true ? "Agent 在线" : "Agent 离线")
+    ? (status.agent_online === true ? "Agent 在线" : managerOnline ? "管理端在线，指标上报中断" : "Agent 离线")
     : status.uptime_24h == null
       ? "暂无 24h 数据"
       : `24h ${Number(status.uptime_24h).toFixed(2)}%`;
@@ -1275,7 +1279,7 @@ function targetBulkBarHtml(vpsCount) {
   if (!targetAdminLoaded || !vpsCount) return "";
   return `<div class="target-bulk-bar">
     <div><strong>批量管理</strong><span class="target-bulk-count">可一次修改多台 VPS 的商家、到期时间、费用、流量与报警设置</span></div>
-    <div class="target-bulk-actions"><button type="button" class="btn btn-sm btn-primary" id="editBulkTargets">批量设置</button><button type="button" class="btn btn-sm" id="runBulkNq">批量运行 NQ</button><button type="button" class="btn btn-sm" id="runBulkUnlock">批量 IP 解锁</button></div>
+    <div class="target-bulk-actions"><button type="button" class="btn btn-sm btn-primary" id="editBulkTargets">批量设置</button><button type="button" class="btn btn-sm" id="runBulkNq">批量运行 NQ</button><button type="button" class="btn btn-sm" id="runBulkUnlock">批量 IP 解锁</button><button type="button" class="btn btn-sm" id="runBulkBackroute">批量回程检测</button></div>
   </div>`;
 }
 
@@ -1283,6 +1287,7 @@ function bindTargetBulkControls() {
   if (byId("editBulkTargets")) byId("editBulkTargets").onclick = () => openBulkTargetPicker();
   if (byId("runBulkNq")) byId("runBulkNq").onclick = () => openBulkTargetPicker(false, () => bulkTaskModal("nodequality"), 50);
   if (byId("runBulkUnlock")) byId("runBulkUnlock").onclick = () => openBulkTargetPicker(false, () => bulkTaskModal("ip_unlock"), 50);
+  if (byId("runBulkBackroute")) byId("runBulkBackroute").onclick = () => openBulkTargetPicker(false, () => bulkTaskModal("backroute"), 50);
 }
 
 function bulkTargetSelectionLimit() {
@@ -1351,7 +1356,7 @@ function openBulkTargetPicker(preserveSelection = false, next = bulkTargetModal,
 function bulkTaskModal(action) {
   const selected = targets.filter((target) => target.type === "tcp" && selectedTargetIds.has(target.id));
   if (!selected.length) return toast("请选择至少一台 VPS", "err");
-  const label = action === "nodequality" ? "NodeQuality" : "IP 解锁";
+  const label = action === "nodequality" ? "NodeQuality" : action === "backroute" ? "回程检测" : "IP 解锁";
   byId("modal").className = "modal bulk-confirm-modal";
   byId("modal").innerHTML = `<h3>批量运行 ${escapeHtml(label)}</h3><p>将向 <strong>${selected.length}</strong> 台在线 VPS 排队提交任务；离线、能力不匹配或已有任务的 VPS 会单独返回原因。</p><div class="bulk-confirm-targets">${selected.slice(0, 14).map((target) => `<span>${escapeHtml(target.name)}</span>`).join("")}${selected.length > 14 ? `<span>另 ${selected.length - 14} 台</span>` : ""}</div>${action === "nodequality" ? nqOptionsHtml() : ""}<div class="bulk-target-warning">每台 VPS 仍保持单任务互斥，任务会在各 Agent 独立执行。</div><div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="confirmBulkTask">确认排队</button></div>`;
   byId("confirmBulkTask").onclick = () => queueBulkAgentTasks(selected.map((target) => target.id), action);

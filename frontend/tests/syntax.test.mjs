@@ -90,7 +90,10 @@ assert.match(adminHtml, /href="\/admin\.css\?v=20260909-usage1"/, 'custom admin 
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
 assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260821-themecfg2"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260910-backroute4"/, 'custom admin paths must load the current admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260910-backroute5"/, 'custom admin paths must load the current admin module from the site root');
+assert.match(adminSource, /id="runBulkBackroute"/, 'admin must render a bulk backroute button');
+assert.match(adminSource, /bulkTaskModal\("backroute"\)/, 'bulk backroute button must open the task confirmation');
+assert.match(adminSource, /manager_online === true/, 'admin must distinguish stale telemetry from a fully offline Agent');
 assert.match(adminBootstrapSource, /后台脚本加载失败，请刷新页面/, 'admin startup failures must be visible on the login form');
 assert.match(adminBootstrapSource, /loginButton\.onclick = \(event\)/, 'the admin module must replace the startup guard only after it loads');
 assert.match(adminSource, /window\.__NIE_ADMIN_READY__ = true;[\s\S]*nie-admin-ready/, 'the admin module must dismiss its startup guard after binding controls');
