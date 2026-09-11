@@ -192,6 +192,7 @@ const UPDATE_PENDING_CONFIRM_WINDOW_SEC: u64 = 1_800;
 #[cfg(any(target_os = "linux", test))]
 const BACKUP_FILE_NAME: &str = "nie-sla-agent.bak";
 #[cfg(any(target_os = "linux", test))]
+#[allow(dead_code)]
 const FAILED_FILE_NAME: &str = "nie-sla-agent.failed";
 
 #[cfg(target_os = "linux")]

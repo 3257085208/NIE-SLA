@@ -4,6 +4,29 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+const GPU_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn command_output_with_timeout(
+    mut child: std::process::Child,
+    timeout: Duration,
+) -> Option<std::process::Output> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct ThermalSnapshot {
     pub cpu_temp_c: Option<f64>,
@@ -38,8 +61,10 @@ struct GpuCache {
 static GPU_CACHE: Mutex<Option<GpuCache>> = Mutex::new(None);
 const GPU_CACHE_TTL: Duration = Duration::from_secs(10);
 
+#[allow(dead_code)]
 static INTERFACES_ALLOWLIST: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
 
+#[allow(dead_code)]
 fn interfaces_allowlist() -> &'static [String] {
     INTERFACES_ALLOWLIST.get_or_init(|| {
         std::env::var("NIE_SLA_INTERFACES")
@@ -807,13 +832,21 @@ fn probe_gpu() -> (Option<f64>, Option<f64>, String, usize) {
 }
 
 fn probe_nvidia_smi() -> Option<(Option<f64>, Option<f64>, String, usize)> {
-    let output = Command::new("nvidia-smi")
+    let Ok(child) = Command::new("nvidia-smi")
         .args([
             "--query-gpu=name,utilization.gpu,temperature.gpu",
             "--format=csv,noheader,nounits",
         ])
-        .output()
-        .ok()?;
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return None;
+    };
+    // A wedged NVIDIA driver makes nvidia-smi hang forever; without a bound
+    // the whole sampling loop would stall silently.
+    let output = command_output_with_timeout(child, GPU_PROBE_TIMEOUT)?;
     if !output.status.success() {
         return None;
     }
@@ -960,6 +993,21 @@ fn gpu_vendor_name(vendor: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn command_output_timeout_kills_a_hung_child() {
+        let child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let start = Instant::now();
+        assert!(command_output_with_timeout(child, Duration::from_secs(1)).is_none());
+        assert!(start.elapsed() < Duration::from_secs(10));
+    }
 
     #[test]
     fn normalize_virt_labels() {

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    mpsc, Arc,
+    mpsc, Arc, Mutex,
 };
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -375,10 +375,12 @@ struct PingBatch {
     interval_sec: u64,
 }
 
+type DiskRowsCache = Arc<Mutex<Vec<(String, String, u64, u64, bool)>>>;
+
 #[derive(Default)]
 struct Collector {
     sys: System,
-    disks: Disks,
+    disk_rows: DiskRowsCache,
     prev_net: Option<(Instant, u64, u64)>,
     prev_disk: Option<(Instant, u64, u64)>,
 }
@@ -414,6 +416,10 @@ fn run() -> Result<()> {
     if cfg.api.is_empty() {
         return Err(anyhow!("NIE_SLA_API_BASE or --api is required"));
     }
+    // Earliest liveness marker: the privileged Manager restarts the telemetry
+    // service when this file goes stale, so it must exist before any of the
+    // initialization steps below can wedge.
+    write_telemetry_progress(&cfg);
 
     let http = HttpClient::new();
     let telemetry_lock = if cfg.task_runner_only {
@@ -431,7 +437,9 @@ fn run() -> Result<()> {
         return manager::run(&cfg, &http);
     }
     manager::bootstrap_if_root();
-    let mut collector = Collector::new();
+    let disk_rows: DiskRowsCache = Arc::new(Mutex::new(Vec::new()));
+    spawn_disk_worker(disk_rows.clone());
+    let mut collector = Collector::new(disk_rows);
     let hostname = hostname_string();
     let vps_info = collector.vps_info();
     let mut samples = match load_sample_queue(&cfg.queue_file) {
@@ -490,7 +498,6 @@ fn run() -> Result<()> {
     let (upload_tx, upload_rx) = mpsc::channel::<UploadResult>();
     let sample_period = Duration::from_secs(cfg.sample_sec);
     let mut next_sample = Instant::now();
-    write_telemetry_progress(&cfg);
 
     loop {
         let sample = collector.sample();
@@ -718,15 +725,44 @@ fn telemetry_restart_available() -> bool {
 // The privileged Manager watches this file's mtime to notice a telemetry
 // process that is still "active" from systemd's point of view but has wedged
 // before its next successful upload.
-fn write_telemetry_progress(cfg: &Config) {
-    let path = cfg.queue_file.with_file_name("telemetry-progress");
+fn spawn_disk_worker(disk_rows: DiskRowsCache) {
+    thread::spawn(move || {
+        // Enumerating and refreshing mounts can block on a dead device; it
+        // must never stall the sampling/upload loop.
+        let mut disks = Disks::new_with_refreshed_list();
+        loop {
+            disks.refresh_list();
+            disks.refresh();
+            let rows = disks
+                .list()
+                .iter()
+                .map(|disk| {
+                    (
+                        disk.name().to_string_lossy().to_string(),
+                        disk.mount_point().to_string_lossy().to_string(),
+                        disk.total_space(),
+                        disk.available_space(),
+                        disk.is_removable(),
+                    )
+                })
+                .collect();
+            if let Ok(mut guard) = disk_rows.lock() {
+                *guard = rows;
+            }
+            thread::sleep(Duration::from_secs(60));
+        }
+    });
+}
+
+fn write_telemetry_progress(_cfg: &Config) {
+    let path = Path::new(crate::manager::TELEMETRY_PROGRESS);
     let temp = path.with_extension(format!("tmp-{}", std::process::id()));
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs())
         .unwrap_or(0);
     if fs::write(&temp, format!("{now}\n")).is_ok() {
-        let _ = fs::rename(&temp, &path);
+        let _ = fs::rename(&temp, path);
     }
 }
 
@@ -857,14 +893,14 @@ impl Config {
 }
 
 impl Collector {
-    fn new() -> Self {
+    fn new(disk_rows: DiskRowsCache) -> Self {
         let mut sys = System::new_all();
         sys.refresh_all();
         thread::sleep(Duration::from_millis(200));
         sys.refresh_cpu();
         Collector {
             sys,
-            disks: Disks::new_with_refreshed_list(),
+            disk_rows,
             prev_net: None,
             prev_disk: None,
         }
@@ -873,8 +909,6 @@ impl Collector {
     fn sample(&mut self) -> SamplePoint {
         self.sys.refresh_cpu();
         self.sys.refresh_memory();
-        self.disks.refresh_list();
-        self.disks.refresh();
 
         let now = Instant::now();
         let (rx_raw, tx_raw) = platform::net_bytes();
@@ -991,44 +1025,18 @@ impl Collector {
     }
 
     fn disk(&self) -> DiskInfo {
-        let rows = self.disk_rows();
-        let (summed, _) = consolidate_disk_rows(rows);
+        let (summed, _) = consolidate_disk_rows(self.disk_rows());
         if summed.total_gb > 0.0 {
             return summed;
         }
-        let disks = self.disks.list();
-        let mount_points: Vec<_> = disks.iter().map(|disk| disk.mount_point()).collect();
-        let preferred_paths = preferred_disk_paths();
-        let preferred_refs: Vec<_> = preferred_paths.iter().map(PathBuf::as_path).collect();
-        let selected = select_mount_index(&mount_points, &preferred_refs)
-            .and_then(|index| disks.get(index))
-            .or_else(|| {
-                disks
-                    .iter()
-                    .filter(|disk| !disk.is_removable())
-                    .max_by_key(|disk| disk.total_space())
-            })
-            .or_else(|| disks.iter().max_by_key(|disk| disk.total_space()));
-
-        selected
-            .map(|disk| disk_info(disk.total_space(), disk.available_space()))
-            .unwrap_or_default()
+        DiskInfo::default()
     }
 
     fn disk_rows(&self) -> Vec<(String, String, u64, u64, bool)> {
-        self.disks
-            .list()
-            .iter()
-            .map(|disk| {
-                (
-                    disk.name().to_string_lossy().to_string(),
-                    disk.mount_point().to_string_lossy().to_string(),
-                    disk.total_space(),
-                    disk.available_space(),
-                    disk.is_removable(),
-                )
-            })
-            .collect()
+        self.disk_rows
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
     }
 
     fn disk_list(&self) -> Vec<DiskEntry> {
@@ -1075,25 +1083,7 @@ impl Collector {
     }
 }
 
-fn preferred_disk_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-    #[cfg(unix)]
-    paths.push(PathBuf::from("/"));
-    #[cfg(windows)]
-    if let Some(drive) = env::var_os("SystemDrive") {
-        paths.push(PathBuf::from(format!(
-            "{}\\",
-            drive.to_string_lossy().trim_end_matches(['\\', '/'])
-        )));
-    }
-    if let Ok(path) = env::current_exe() {
-        paths.push(path);
-    } else if let Ok(path) = env::current_dir() {
-        paths.push(path);
-    }
-    paths
-}
-
+#[cfg(test)]
 fn select_mount_index(mount_points: &[&Path], preferred_paths: &[&Path]) -> Option<usize> {
     preferred_paths.iter().find_map(|preferred| {
         mount_points
@@ -1108,7 +1098,7 @@ fn select_mount_index(mount_points: &[&Path], preferred_paths: &[&Path]) -> Opti
 // Multi-disk reporting: dedupe mounts by backing device (bind mounts share the
 // device), skip removable and pseudo devices, and sum the rest so multi-disk
 // machines report real total capacity. Disk entries stay bounded for payload.
-fn consolidate_disk_rows<'a, I>(rows: I) -> (DiskInfo, Vec<DiskEntry>)
+fn consolidate_disk_rows<I>(rows: I) -> (DiskInfo, Vec<DiskEntry>)
 where
     I: IntoIterator<Item = (String, String, u64, u64, bool)>,
 {
@@ -2331,8 +2321,6 @@ mod tests {
         assert_eq!(info.total_gb, 0.0);
         assert!(entries.is_empty());
     }
-
-    use super::*;
 
     #[test]
     fn public_download_guard_rejects_private_and_reserved_addresses() {

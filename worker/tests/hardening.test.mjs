@@ -20,6 +20,7 @@ const staticAssetsSource = await readFile(new URL('../src/static-assets.js', imp
 const themesSource = await readFile(new URL('../src/themes.js', import.meta.url), 'utf8');
 const ratelimitSource = await readFile(new URL('../src/ratelimit.js', import.meta.url), 'utf8');
 const targetsSource = await readFile(new URL('../src/admin/targets.js', import.meta.url), 'utf8');
+const utilsSource = await readFile(new URL('../src/utils.js', import.meta.url), 'utf8');
 assert.match(
   routesSource,
   /\/api\/settings\/geoip[\s\S]{0,300}withAdmin\(request, env\)[\s\S]{0,300}'cache-control': 'no-store'/,
@@ -94,6 +95,7 @@ assert.match(settingsSource, /encryptSecretValue\(String\(secret_key\)/, 'Turnst
 assert.match(settingsSource, /migrateTurnstileEncryption/, 'legacy Turnstile secrets must be migratable');
 assert.match(routesSource, /getTurnstileSecret\(env\)/, 'Turnstile verification must read the decrypted secret');
 assert.match(staticAssetsSource, /ADMIN_PATH_CACHE_SEC/, 'admin path resolution must use a cache to absorb anonymous scans');
+assert.match(utilsSource, /proxy request failed\|cannot connect to the specified address/, 'public probe errors must explain unreachable targets');
 assert.match(themesSource, /new Unzip\(/, 'theme ZIP extraction must stream instead of trusting header sizes');
 assert.match(themesSource, /totalBytes > EXPANDED_MAX_BYTES/, 'streaming theme extraction must cap real decompressed bytes');
 assert.match(ratelimitSource, /keyPrefix \|\| 'global'/, 'global rate limits must be scoped per purpose instead of sharing one bucket');

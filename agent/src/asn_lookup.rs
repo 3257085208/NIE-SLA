@@ -53,15 +53,9 @@ impl AsnResolver {
                 continue;
             }
             let mut buffer = [0u8; 1500];
-            for _ in 0..2 {
-                match socket.recv(&mut buffer) {
-                    Ok(size) => {
-                        if let Some(asn) = parse_txt_asn(&buffer[..size], id) {
-                            return Some(asn);
-                        }
-                        break;
-                    }
-                    Err(_) => break,
+            if let Ok(size) = socket.recv(&mut buffer) {
+                if let Some(asn) = parse_txt_asn(&buffer[..size], id) {
+                    return Some(asn);
                 }
             }
         }

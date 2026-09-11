@@ -189,7 +189,8 @@ run_shell "fixed tasks do not use remote shell strings" "cd '$ROOT' && ! grep -q
 run_shell "IP unlock dependencies stay task-local" "cd '$ROOT' && grep -q 'OPTIONAL_DIG_HELPER' agent/src/tasks.rs && grep -q 'OPTIONAL_NSLOOKUP_HELPER' agent/src/tasks.rs && grep -q 'NIE_SLA_DNS_COMPAT_EXECUTABLE' agent/src/tasks.rs && grep -q 'task_dir.join(\"bin\")' agent/src/tasks.rs && grep -q 'set_private_executable_permissions' agent/src/tasks.rs && ! grep -qE 'Command::new\(\"(apt|apt-get|dnf|yum|pacman|apk)\"\)|\b(apt|apt-get|dnf|yum|pacman|apk) (install|add)\b' agent/src/tasks.rs"
 
 run_shell "updates bypass stale edge cache" "cd '$ROOT' && grep -q 'bin/SHA256SUMS?v=' agent/src/updater.rs && grep -q 'bin/\${binary_name}?v=' cftz"
-run_shell "manager restarts stale telemetry" "cd '$ROOT' && grep -q 'telemetry-progress' agent/src/main.rs && grep -q 'TELEMETRY_PROGRESS_MAX_AGE_SEC' agent/src/manager.rs && grep -q 'stale' agent/src/manager.rs"
+run_shell "manager restarts stale telemetry" "cd '$ROOT' && grep -q 'write_telemetry_progress' agent/src/main.rs && grep -q 'crate::manager::TELEMETRY_PROGRESS' agent/src/main.rs && grep -q 'TELEMETRY_PROGRESS_MAX_AGE_SEC' agent/src/manager.rs && grep -q 'stale' agent/src/manager.rs"
+run_shell "sampling cannot block the report loop" "cd '$ROOT' && grep -q 'spawn_disk_worker' agent/src/main.rs && grep -q 'command_output_with_timeout' agent/src/platform.rs && grep -q 'GPU_PROBE_TIMEOUT' agent/src/platform.rs"
 
 if command -v shellcheck >/dev/null 2>&1; then
   run_shell "shellcheck tracked scripts (errors only)" "cd '$ROOT' && FILES=\$(git ls-files -- '*.sh' cftz 2>/dev/null | grep -v '/vendor/' || true) && if [ -z \"\$FILES\" ]; then exit 0; fi && shellcheck -S error \$FILES"

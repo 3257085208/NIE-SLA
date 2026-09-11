@@ -729,6 +729,7 @@ fn summarize_traceroute_with_asns(
     }
 }
 
+#[cfg(test)]
 fn summarize_traceroute(text: &str, target_label: &str, target_ip: &str) -> RouteSummary {
     summarize_traceroute_with_asns(text, target_label, target_ip, &[])
 }

@@ -462,6 +462,7 @@ export function publicError(error, statusCode = null) {
   if (!error) return null;
   const msg = String(error);
   if (statusCode) return `Unexpected HTTP ${Number(statusCode)}`;
+  if (/proxy request failed|cannot connect to the specified address/i.test(msg)) return '无法连接目标（端口未开放或防火墙拦截）';
   if (/timeout|timed out|abort/i.test(msg)) return '连接超时';
   if (/dns|resolve|nxdomain|name not found/i.test(msg)) return 'DNS error';
   if (/refused|reset|unreachable|network|connect|socket|econn/i.test(msg)) return '连接失败';
