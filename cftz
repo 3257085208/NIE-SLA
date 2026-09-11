@@ -261,7 +261,7 @@ download_binary() {
     local tmpbin sums expected actual sums_actual reported
     tmpbin="$(mktemp)"
     sums="$(mktemp)"
-    download_to "${download_base%/}/bin/SHA256SUMS" "$sums" || { rm -f "$tmpbin" "$sums"; exit 1; }
+    download_to "${download_base%/}/bin/SHA256SUMS?v=${latest_version}" "$sums" || { rm -f "$tmpbin" "$sums"; exit 1; }
     sums_actual="$(sha256_file "$sums")"
     if [[ "${sums_actual,,}" != "$manifest_hash" ]]; then
         rm -f "$tmpbin" "$sums"
@@ -270,7 +270,7 @@ download_binary() {
     fi
     expected="$(awk -v name="$binary_name" '$2 == name || $2 == "bin/" name { print $1; exit }' "$sums")"
     [[ "$expected" =~ ^[0-9A-Fa-f]{64}$ ]] || { rm -f "$tmpbin" "$sums"; err "manifest is missing ${binary_name}"; exit 1; }
-    download_to "${download_base%/}/bin/${binary_name}" "$tmpbin" || { rm -f "$tmpbin" "$sums"; exit 1; }
+    download_to "${download_base%/}/bin/${binary_name}?v=${latest_version}" "$tmpbin" || { rm -f "$tmpbin" "$sums"; exit 1; }
     actual="$(sha256_file "$tmpbin")"
     rm -f "$sums"
     if [[ "${actual,,}" != "${expected,,}" ]]; then

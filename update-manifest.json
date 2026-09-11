@@ -1,14 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.37",
-  "agent_version": "v1.1.37",
-  "source_ref": "app-v1.1.37",
-  "published_at": "2026-09-10T18:30:00Z",
-  "title": "NIE-SLA 1.1.37",
+  "version": "1.1.38",
+  "agent_version": "v1.1.38",
+  "source_ref": "app-v1.1.38",
+  "published_at": "2026-09-10T19:30:00Z",
+  "title": "NIE-SLA 1.1.38",
   "changelog": [
-    "Agent 上报自愈增强：上传线程卡死超过 180 秒自动放弃并恢复下一轮上报（代际计数忽略迟到结果），无服务管理器的节点也能自恢复；上报周期与数据内容完全不变。",
-    "任务结果本地持久化：回传失败重试 3 次后写入 0600 待发文件，下次轮询优先补发；Worker 返回 404/409 时丢弃，避免结果永久丢失或重复执行。",
-    "遵循用户要求：本轮及后续不降低任何上报/探测频率，不让使用者在功能与体验层面感知变化。"
+    "更新下载加入版本 cache-buster：Agent updater 与 cftz 的 SHA256SUMS/二进制 URL 带 ?v=<版本>，规避固定路径边缘缓存旧内容导致的更新校验失败。",
+    "telemetry 每次成功上报写本地进度文件；Manager 发现进度超过 25 分钟未更新且服务仍 active 时自动重启 telemetry（10 分钟节流），覆盖“活着但僵死”的进程。",
+    "待发任务结果临时文件名加入纳秒后缀；404/409 终止判定补充常见错误文案，降低无限重试风险。",
+    "不改变任何上报/探测频率，也不改变用户可见行为。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

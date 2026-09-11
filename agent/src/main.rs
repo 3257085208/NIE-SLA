@@ -490,6 +490,7 @@ fn run() -> Result<()> {
     let (upload_tx, upload_rx) = mpsc::channel::<UploadResult>();
     let sample_period = Duration::from_secs(cfg.sample_sec);
     let mut next_sample = Instant::now();
+    write_telemetry_progress(&cfg);
 
     loop {
         let sample = collector.sample();
@@ -521,6 +522,7 @@ fn run() -> Result<()> {
                     }
                     last_upload_failed = false;
                     last_successful_upload = Instant::now();
+                    write_telemetry_progress(&cfg);
                     #[cfg(target_os = "linux")]
                     {
                         let _ = confirm_pending_update();
@@ -711,6 +713,21 @@ fn telemetry_restart_available() -> bool {
         && (Path::new("/run/systemd/system").is_dir()
             || Path::new("/sbin/rc-service").is_file()
             || Path::new("/usr/sbin/rc-service").is_file())
+}
+
+// The privileged Manager watches this file's mtime to notice a telemetry
+// process that is still "active" from systemd's point of view but has wedged
+// before its next successful upload.
+fn write_telemetry_progress(cfg: &Config) {
+    let path = cfg.queue_file.with_file_name("telemetry-progress");
+    let temp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0);
+    if fs::write(&temp, format!("{now}\n")).is_ok() {
+        let _ = fs::rename(&temp, &path);
+    }
 }
 
 impl Config {

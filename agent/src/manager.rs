@@ -13,6 +13,9 @@ const HEARTBEAT_INTERVAL_SEC: u64 = 15;
 const TASK_POLL_SEC: u64 = crate::tasks::TASK_POLL_SEC;
 const SERVICE_RECONCILE_SEC: u64 = 3600;
 const TELEMETRY_HEALTH_INTERVAL_SEC: u64 = 60;
+const TELEMETRY_PROGRESS: &str = "/var/lib/nie-sla-agent/telemetry-progress";
+const TELEMETRY_PROGRESS_MAX_AGE_SEC: u64 = 1500;
+const TELEMETRY_RESTART_MIN_INTERVAL_SEC: u64 = 600;
 const AGENT_BINARY: &str = "/opt/nie-sla-agent/nie-sla-agent";
 const CFTZ_BINARY: &str = "/usr/local/bin/cftz";
 const ENV_FILE: &str = "/opt/nie-sla-agent/nie-sla-agent.env";
@@ -104,6 +107,8 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
     let mut last_task_poll = Instant::now() - Duration::from_secs(TASK_POLL_SEC);
     let mut last_reconcile = Instant::now();
     let mut last_telemetry_check = Instant::now();
+    let mut last_telemetry_restart =
+        Instant::now() - Duration::from_secs(TELEMETRY_RESTART_MIN_INTERVAL_SEC);
 
     loop {
         while let Ok(check) = updates.try_recv() {
@@ -166,7 +171,7 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
         // look exactly like "Agent offline" while the manager kept updating and
         // running tasks. Check often and restart so the node reports again.
         if last_telemetry_check.elapsed() >= Duration::from_secs(TELEMETRY_HEALTH_INTERVAL_SEC) {
-            if let Err(error) = ensure_telemetry_running() {
+            if let Err(error) = ensure_telemetry_running(&mut last_telemetry_restart) {
                 eprintln!(
                     "{{\"ok\":false,\"manager_telemetry_check_error\":{}}}",
                     serde_json::to_string(&error.to_string())
@@ -623,10 +628,28 @@ fn restart_telemetry_service() -> Result<()> {
     }
 }
 
-fn ensure_telemetry_running() -> Result<()> {
+fn is_progress_stale(age_sec: Option<u64>, max_age_sec: u64) -> bool {
+    matches!(age_sec, Some(age) if age > max_age_sec)
+}
+
+fn telemetry_progress_age_sec() -> Option<u64> {
+    let modified = fs::metadata(TELEMETRY_PROGRESS).ok()?.modified().ok()?;
+    SystemTime::now()
+        .duration_since(modified)
+        .ok()
+        .map(|age| age.as_secs())
+}
+
+fn ensure_telemetry_running(last_restart: &mut Instant) -> Result<()> {
     if !cfg!(target_os = "linux") || !is_root() {
         return Ok(());
     }
+    // An "active" telemetry process can still be wedged before its next
+    // upload. The progress file written on every successful upload lets the
+    // Manager restart a hung-but-active service instead of only a stopped one.
+    let stale = is_progress_stale(telemetry_progress_age_sec(), TELEMETRY_PROGRESS_MAX_AGE_SEC);
+    let may_restart =
+        last_restart.elapsed() >= Duration::from_secs(TELEMETRY_RESTART_MIN_INTERVAL_SEC);
     if Path::new("/run/systemd/system").is_dir() && command_exists("systemctl") {
         let active = Command::new("systemctl")
             .args(["is-active", "--quiet", TELEMETRY_SERVICE])
@@ -637,7 +660,12 @@ fn ensure_telemetry_running() -> Result<()> {
             .unwrap_or(false);
         if !active {
             run_checked(Command::new("systemctl").args(["restart", TELEMETRY_SERVICE]))?;
+            *last_restart = Instant::now();
             println!("{{\"ok\":true,\"manager_telemetry_restart\":\"systemd\"}}");
+        } else if stale && may_restart {
+            run_checked(Command::new("systemctl").args(["restart", TELEMETRY_SERVICE]))?;
+            *last_restart = Instant::now();
+            println!("{{\"ok\":true,\"manager_telemetry_restart\":\"systemd_stale\"}}");
         }
         return Ok(());
     }
@@ -651,7 +679,12 @@ fn ensure_telemetry_running() -> Result<()> {
             .unwrap_or(false);
         if !active {
             run_checked(Command::new("rc-service").args([TELEMETRY_SERVICE, "start"]))?;
+            *last_restart = Instant::now();
             println!("{{\"ok\":true,\"manager_telemetry_restart\":\"openrc\"}}");
+        } else if stale && may_restart {
+            run_checked(Command::new("rc-service").args([TELEMETRY_SERVICE, "restart"]))?;
+            *last_restart = Instant::now();
+            println!("{{\"ok\":true,\"manager_telemetry_restart\":\"openrc_stale\"}}");
         }
     }
     Ok(())
@@ -812,6 +845,14 @@ mod tests {
             once: false,
             task_runner_only: false,
         }
+    }
+
+    #[test]
+    fn telemetry_progress_staleness_rules() {
+        assert!(!is_progress_stale(None, 1500));
+        assert!(!is_progress_stale(Some(1499), 1500));
+        assert!(!is_progress_stale(Some(1500), 1500));
+        assert!(is_progress_stale(Some(1501), 1500));
     }
 
     #[test]

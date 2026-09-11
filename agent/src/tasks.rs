@@ -97,7 +97,11 @@ fn write_pending_task_result(path: &Path, task_id: &str, payload: &Value) -> Res
         .ok_or_else(|| anyhow!("pending task result path has no parent"))?;
     fs::create_dir_all(parent)?;
     let body = serde_json::to_vec(&json!({ "task_id": task_id, "payload": payload }))?;
-    let temp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let unique = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0);
+    let temp = path.with_extension(format!("tmp-{}-{unique}", std::process::id()));
     if temp.exists() || temp.is_symlink() {
         fs::remove_file(&temp).context("remove stale pending result temp")?;
     }
@@ -167,11 +171,17 @@ fn flush_pending_task_result(cfg: &Config, http: &HttpClient) -> Result<bool> {
         }
         Err(error) => {
             let text = format!("{error:#}");
-            if text.contains(" 404")
-                || text.contains("Status(404")
-                || text.contains(" 409")
-                || text.contains("Status(409")
-            {
+            let terminal = [
+                " 404",
+                "StatusCode(404",
+                "status: 404",
+                "status 404",
+                " 409",
+                "StatusCode(409",
+                "status: 409",
+                "status 409",
+            ];
+            if terminal.iter().any(|pattern| text.contains(pattern)) {
                 let _ = fs::remove_file(&path);
                 eprintln!("{{\"ok\":false,\"pending_task_result\":\"discarded\"}}");
                 return Ok(false);

@@ -300,7 +300,14 @@ fn install_linux_update(policy: &UpdatePolicy, http: &HttpClient) -> Result<Path
         return Err(anyhow!("invalid Agent update manifest hash"));
     }
 
-    let manifest_url = format!("{}/bin/SHA256SUMS", policy.download_base);
+    // A fixed asset path can be served from a stale edge cache entry (the
+    // earlier /bin/SHA256SUMS incident). Cache-bust on the version the policy
+    // asks for so the manifest and binary always come from the current deploy.
+    let manifest_url = format!(
+        "{}/bin/SHA256SUMS?v={}",
+        policy.download_base,
+        policy.latest_version.trim()
+    );
     let manifest = http.get_public_bytes(&manifest_url)?;
     let actual_manifest_hash = sha256_hex(&manifest);
     if actual_manifest_hash != policy.manifest_sha256 {
@@ -320,7 +327,12 @@ fn install_linux_update(policy: &UpdatePolicy, http: &HttpClient) -> Result<Path
             checksum_for_binary(&manifest, &legacy_binary_name)?,
         ),
     };
-    let binary_url = format!("{}/bin/{}", policy.download_base, asset_name);
+    let binary_url = format!(
+        "{}/bin/{}?v={}",
+        policy.download_base,
+        asset_name,
+        policy.latest_version.trim()
+    );
     let binary = http.get_public_bytes(&binary_url)?;
     let actual_binary_hash = sha256_hex(&binary);
     if actual_binary_hash != expected_binary_hash {
