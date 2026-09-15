@@ -16,6 +16,7 @@ const adminAuthSource = await readFile(new URL('../src/admin-auth.js', import.me
 const telemetrySource = await readFile(new URL('../src/telemetry-buffer.js', import.meta.url), 'utf8');
 const agentTasksSource = await readFile(new URL('../src/admin/agent-tasks.js', import.meta.url), 'utf8');
 const settingsSource = await readFile(new URL('../src/admin/settings.js', import.meta.url), 'utf8');
+const deadLetterSource = await readFile(new URL('../src/admin/probe-history-dead-letter.js', import.meta.url), 'utf8');
 const staticAssetsSource = await readFile(new URL('../src/static-assets.js', import.meta.url), 'utf8');
 const themesSource = await readFile(new URL('../src/themes.js', import.meta.url), 'utf8');
 const ratelimitSource = await readFile(new URL('../src/ratelimit.js', import.meta.url), 'utf8');
@@ -45,12 +46,14 @@ assert.doesNotMatch(routesSource, /\/api\/(?:extensions|plugins)(?:['/])/, 'plug
 assert.match(statusSource, /getStatusFresh\(env, url\)[\s\S]{0,240}await ensureV6Schema\(env\)/, 'the first public page view must initialize a fresh D1 database');
 assert.match(statusSource, /async function getChecks\(env, url\)\s*\{\s*await ensureV6Schema\(env\)/, 'direct checks reads must initialize a fresh D1 database');
 const dueTargetsSource = probeSource.slice(probeSource.indexOf('export async function runDueTargets'), probeSource.indexOf('export async function runFastStatusTargets'));
-assert.match(dueTargetsSource, /lastPersistedCheckAt\(target, d1Latest\.get\(String\(target\.id\)\)\)/, 'history scheduling must use persisted five-minute checks');
+assert.match(dueTargetsSource, /lastPersistedCheckAt\(target, d1Latest\.get\(String\(target\.id\)\), state\.targets\?\.\[String\(target\.id\)\]\?\.history_checked_at\)/, 'history scheduling must use persisted five-minute checks including the dedicated history marker');
+assert.doesNotMatch(dueTargetsSource, /state\.targets\?\.\[String\(target\.id\)\]\?\.checked_at/, 'the fast-status checked_at must never gate five-minute history checks');
 assert.match(dueTargetsSource, /buildHistoryPreviousStateMap\(allTargets, state, d1Latest\)/, 'missed-history backfill must use persisted five-minute checks');
 assert.doesNotMatch(dueTargetsSource, /previousById\.get\(target\.id\)\?\.checked_at/, 'one-minute R2 status must not postpone five-minute history checks');
 assert.match(indexSource, /scheduled\(controller, env, ctx\)[\s\S]{0,160}dispatchScheduledTasks/, 'cron triggers must delegate work outside the 10ms scheduled CPU budget');
 assert.match(indexSource, /signInternalSchedule[\s\S]{0,500}HMAC[\s\S]{0,100}SHA-256/, 'delegated cron requests must be HMAC authenticated');
-assert.match(indexSource, /historyProbeCount > 0[\s\S]{0,180}history_probe_completed/, 'a full history probe must suppress the duplicate fast probe');
+assert.doesNotMatch(indexSource, /historyProbeCount > 0[\s\S]{0,180}history_probe_completed/, 'a history probe must not suppress the independent fast-status scheduler');
+assert.match(indexSource, /results\.fast_status = await measure\('fast_status', \(\) => runFastStatusTargets/, 'fast status must run on its own cadence even when history probes complete');
 const scheduledTasksSource = indexSource.slice(indexSource.indexOf('export async function runScheduledTasks'), indexSource.indexOf('async function dispatchScheduledTasks'));
 assert.match(scheduledTasksSource, /results\.followups = \{[\s\S]{0,700}claimHourlyMaintenanceSlot/, 'hourly maintenance must still run when no target is due');
 assert.doesNotMatch(probeSource, /FROM latest_status[\s\S]{0,240}\.all\(\)\.catch\(\(\) => \(\{ results: \[\] \}\)\)/, 'latest probe state read failures must not be treated as an empty database');
@@ -70,7 +73,7 @@ assert.match(routesSource, /\/api\/status\/ws/, 'public status WebSocket route m
 assert.match(telemetrySource, /acceptWebSocket\(server/, 'Agent metrics WebSocket must use Durable Object Hibernation API');
 assert.match(indexSource, /export \{ StatusStream \} from '\.\/status-stream\.js'/, 'public status WebSocket Durable Object must be exported');
 assert.match(wranglerSource, /name = "STATUS_STREAM"/, 'public status WebSocket binding must be configured');
-assert.match(telemetrySource, /serializeAttachment\(\{ agent_id: agentId \}\)/, 'Agent WebSocket identity must survive Durable Object hibernation');
+assert.match(telemetrySource, /serializeAttachment\(\{ agent_id: agentId, lifecycle_epoch:/, 'Agent WebSocket identity and lifecycle must survive Durable Object hibernation');
 assert.match(metricsSource, /export async function processAgentMetricsPayload/, 'HTTP and WebSocket metrics must share one validation/persistence path');
 assert.match(wranglerSource, /AGENT_METRICS_STATE_TO_D1 = "false"/, 'production must keep high-frequency Agent current state out of D1');
 assert.match(wranglerSource, /PROBE_LATEST_STATUS_TO_D1 = "false"/, 'production must keep high-frequency probe current state out of D1');
@@ -113,6 +116,13 @@ assert.match(adminAuthSource, /if \(!githubEnabled\(env\)\) return new Response\
 assert.match(adminAuthSource, /throw new ApiError\(404, '未找到'\)/, 'disabled OAuth start and complete endpoints must return 404');
 assert.match(routesSource, /rateLimitByIp\(request, env, 1, 10,[\s\S]{0,180}rateLimitByIp\(request, env, 5, 300/, 'password login must enforce short and cumulative IP windows');
 assert.match(routesSource, /return deny\(10\)[\s\S]{0,180}return deny\(300\)/, 'password login rate limits must include Retry-After values');
+assert.match(routesSource, /if \(path === '\/api\/v1\/latency' && m === 'GET'\) \{[\s\S]{0,220}allowPublicLatencyRequest\(request, env\)/, 'developer latency alias must share the durable public latency limiter');
+assert.match(routesSource, /appearance-script\.js[\s\S]{0,450}getPublicAppearanceScript/, 'custom appearance scripts must use the same-origin JavaScript endpoint');
+assert.doesNotMatch(routesSource, /appearance-script\.js[\s\S]{0,450}json\(/, 'custom appearance script endpoint must not wrap JavaScript in JSON');
+assert.match(deadLetterSource, /listProbeHistoryDeadLetters/, 'dead-letter administration must list durable failures');
+assert.match(deadLetterSource, /replayProbeHistoryDeadLetter/, 'dead-letter administration must replay one durable failure');
+assert.match(deadLetterSource, /drainProbeHistoryDeadLetters/, 'dead-letter administration must provide a bounded drain');
+assert.match(routesSource, /probe-history\/dead-letter\/drain/, 'dead-letter drain route must be explicit');
 assert.match(metricsSource, /latest: sanitizePublicAgentMetrics\(latest, env\)/, 'public metrics must sanitize the latest Agent fingerprint');
 assert.match(wranglerSource, /PUBLIC_STATUS_AGENT_DETAILS = "true"/, 'production status page must expose the requested VPS hardware details');
 assert.match(wranglerSource, /PUBLIC_STATUS_UNLOCK_DETAILS = "false"/, 'production status page must keep unlock details private by default');

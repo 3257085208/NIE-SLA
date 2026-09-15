@@ -18,6 +18,8 @@ targets=(
   armv7-unknown-linux-musleabihf
   arm-unknown-linux-musleabi
   i686-unknown-linux-musl
+  aarch64-apple-darwin
+  x86_64-apple-darwin
 )
 outputs=(
   nie-sla-agent-linux-amd64
@@ -25,6 +27,8 @@ outputs=(
   nie-sla-agent-linux-arm
   nie-sla-agent-linux-armv6
   nie-sla-agent-linux-386
+  nie-sla-agent-macos-arm64
+  nie-sla-agent-macos-amd64
 )
 jq_assets=(
   jq-linux-amd64

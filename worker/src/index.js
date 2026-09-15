@@ -1,6 +1,6 @@
 import { enrichCfContext, probeTarget, saveCheck, runDueTargets, runFastStatusTargets } from './probe.js';
 import { writeStatusSnapshot } from './status.js';
-import { archiveYesterdayOncePerLocalDay, cleanupDebugLogs, cleanupFinishedAgentTasks, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates, refreshCheckBucketDays } from './admin.js';
+import { archiveYesterdayOncePerLocalDay, cleanupDebugLogs, cleanupFinishedAgentTasks, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates, refreshCheckBucketDays, reconcileOpenIncidents } from './admin.js';
 import { cleanupRateLimitsD1 } from './ratelimit.js';
 import { cleanupAgentMetricsR2 } from './metrics.js';
 import { runAlertChecks } from './alerts.js';
@@ -9,6 +9,7 @@ import { constantTimeEqual, internalRequestAuthorized, internalRequestHeaders, i
 import { clamp, parseBoolean, shouldRunScheduledFollowups } from './utils.js';
 import { routeStaticAssets } from './static-assets.js';
 import { publishStatusEvents } from './status-stream.js';
+import { withS3Archive } from './r2s3.js';
 export { TelemetryBuffer } from './telemetry-buffer.js';
 export { ProbeHistoryBuffer } from './probe-history-buffer.js';
 export { StatusStream } from './status-stream.js';
@@ -18,7 +19,7 @@ const INTERNAL_SCHEDULE_PATH = '/api/internal/scheduled';
 
 
 export class ProbeRegion {
-  constructor(state, env) { this.state = state; this.env = env; this.scheduledRun = null; }
+  constructor(state, env) { this.state = state; this.env = withS3Archive(env); this.scheduledRun = null; }
 
   async fetch(request) {
     if (request.method !== 'POST') return json({ ok: false, error: '不支持该请求方法' }, 405);
@@ -108,6 +109,7 @@ function batchFailure(target, reason) {
 export default {
   async fetch(request, env, ctx) {
     try {
+      env = withS3Archive(env);
       const url = new URL(request.url);
       if (url.pathname === INTERNAL_SCHEDULE_PATH) return handleInternalScheduledRequest(request, env);
       if (!url.pathname.startsWith('/api/') && url.pathname !== '/api') {
@@ -124,7 +126,7 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(dispatchScheduledTasks(env, controller.cron));
+    ctx.waitUntil(dispatchScheduledTasks(withS3Archive(env), controller.cron));
   },
 };
 
@@ -144,11 +146,7 @@ export async function runScheduledTasks(env, cron, options = {}) {
     try { await recordProbeResult(env, cron, results.probe, results.probe_error, timings.probe); } catch (_) {}
   }
   const historyProbeCount = Number(results.probe?.count || 0);
-  if (historyProbeCount > 0) {
-    results.fast_status = { ok: true, skipped: true, reason: 'history_probe_completed', count: 0 };
-  } else {
-    try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env, { skipLease: options.serialized === true })); } catch (err) { results.fast_status_error = String(err?.message || err); }
-  }
+  try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env, { skipLease: options.serialized === true })); } catch (err) { results.fast_status_error = String(err?.message || err); }
   const statusEvents = [...(results.probe?.events || []), ...(results.fast_status?.events || [])];
   if (statusEvents.length) {
     try { results.status_stream = await measure('status_stream', () => publishStatusEvents(env, statusEvents)); } catch (err) {
@@ -169,10 +167,12 @@ export async function runScheduledTasks(env, cron, options = {}) {
     try { results.volatile_cleanup = await measure('volatile_cleanup', () => cleanupVolatileHistory(env)); } catch (err) { results.volatile_cleanup_error = String(err?.message || err); }
     try { results.rate_limit_cleanup = await measure('rate_limit_cleanup', () => cleanupRateLimitsD1(env)); } catch (err) { results.rate_limit_cleanup_error = String(err?.message || err); }
     try { results.check_bucket_cleanup = await measure('check_bucket_cleanup', () => cleanupOldCheckBuckets(env, 31)); } catch (err) { results.check_bucket_cleanup_error = String(err?.message || err); }
-    try { results.debug_log_cleanup = await measure('debug_log_cleanup', () => cleanupDebugLogs(env)); } catch (err) { results.debug_log_cleanup_error = String(err?.message || err); }
+    if (parseBoolean(env.DEBUG_LOG_CLEANUP_OFF ?? false, false)) results.debug_log_cleanup = { ok: true, skipped: true, reason: 'disabled' };
+    else try { results.debug_log_cleanup = await measure('debug_log_cleanup', () => cleanupDebugLogs(env)); } catch (err) { results.debug_log_cleanup_error = String(err?.message || err); }
     try { results.check_bucket_days = await measure('check_bucket_days', () => refreshCheckBucketDays(env)); } catch (err) { results.check_bucket_days_error = String(err?.message || err); }
     try { results.agent_metrics_r2_cleanup = await measure('agent_metrics_r2_cleanup', () => cleanupAgentMetricsR2(env)); } catch (err) { results.agent_metrics_r2_cleanup_error = String(err?.message || err); }
     try { results.agent_task_cleanup = await measure('agent_task_cleanup', () => cleanupFinishedAgentTasks(env)); } catch (err) { results.agent_task_cleanup_error = String(err?.message || err); }
+    try { results.incident_reconcile = await measure('incident_reconcile', () => reconcileOpenIncidents(env)); } catch (err) { results.incident_reconcile_error = String(err?.message || err); }
   }
   if (parseBoolean(env.ENABLE_DAILY_ARCHIVE ?? false, false)) {
     try { results.archive = await archiveYesterdayOncePerLocalDay(env); } catch (err) { results.archive_error = String(err?.message || err); }
@@ -297,8 +297,5 @@ async function claimHourlyMaintenanceSlot(env, cron = '') {
     WHERE CAST(app_meta.value AS INTEGER) < ?`)
     .bind(key, String(hour), now, hour)
     .run();
-  // Only the invocation that actually inserted/advanced the hour owns the
-  // maintenance slot. Reading the current value after a failed conditional
-  // UPSERT would make every minute in the same hour return true.
   return Number(result?.meta?.changes || 0) > 0;
 }

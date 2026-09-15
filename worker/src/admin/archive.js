@@ -1,6 +1,6 @@
 
 import { clamp, nowSec, parseBoolean, timezoneOffsetMin, publicError, publicHost, publicUrl, REGION_LABELS } from '../utils.js';
-import { summaryRowsFromChecks } from '../storage.js';
+import { summaryRowsFromChecks, writeR2Json } from '../storage.js';
 import { getMeta, setMeta } from './settings.js';
 import { readCheckBuckets } from './check-buckets.js';
 
@@ -39,7 +39,7 @@ export async function archiveDay(env, day) {
   const dayEnd = dayStart + 86400;
   const incidents = await env.DB.prepare(`SELECT * FROM incident_events WHERE (started_at >= ? AND started_at < ?) OR (recovered_at >= ? AND recovered_at < ?) OR (started_at < ? AND recovered_at IS NULL) ORDER BY COALESCE(recovered_at, started_at) ASC`).bind(dayStart, dayEnd, dayStart, dayEnd, dayEnd).all();
   const key = `daily-summary/${day}.json`;
-  await env.ARCHIVE.put(key, JSON.stringify({ schema: 'nie-sla-daily-summary-v6', day, exported_at: new Date().toISOString(), summaries, incidents: incidents.results || [] }), { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: { day, rows: String(summaries.length) } });
+  await writeR2Json(env, key, { schema: 'nie-sla-daily-summary-v6', day, exported_at: new Date().toISOString(), summaries, incidents: incidents.results || [] }, { day, rows: String(summaries.length) });
   return { ok: true, key, summary_rows: summaries.length, incident_rows: (incidents.results || []).length };
 }
 

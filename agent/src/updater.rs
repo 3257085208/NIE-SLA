@@ -9,8 +9,14 @@ use anyhow::{anyhow, Context, Result};
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "linux")]
 use std::env;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use std::fs;
+#[cfg(any(target_os = "linux", test))]
+use std::fs::OpenOptions;
+#[cfg(any(target_os = "linux", test))]
+use std::io::Write;
+#[cfg(any(target_os = "linux", test))]
+use std::path::Path;
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -194,6 +200,8 @@ const BACKUP_FILE_NAME: &str = "nie-sla-agent.bak";
 #[cfg(any(target_os = "linux", test))]
 #[allow(dead_code)]
 const FAILED_FILE_NAME: &str = "nie-sla-agent.failed";
+#[cfg(target_os = "linux")]
+const UPDATE_LOCK_PATH: &str = "/var/lib/nie-sla-agent-manager/update.lock";
 
 #[cfg(target_os = "linux")]
 fn pending_marker_path() -> Result<PathBuf> {
@@ -218,23 +226,25 @@ pub(super) fn mark_update_pending(version: &str) -> Result<()> {
         "pid": std::process::id(),
         "at": now_unix_sec(),
     });
-    std::fs::write(&path, payload.to_string())
+    write_pending_marker(&path, payload.to_string().as_bytes())
         .with_context(|| format!("write update pending marker {}", path.display()))
 }
 
 #[cfg(target_os = "linux")]
 pub(super) fn confirm_pending_update() -> Result<()> {
     let path = pending_marker_path()?;
-    if !path.is_file() {
+    if !path.exists() {
         return Ok(());
     }
-    std::fs::remove_file(&path)
+    remove_file_durable(&path)
         .with_context(|| format!("remove update pending marker {}", path.display()))?;
     if let Ok(current) = std::env::current_exe() {
         if let Some(dir) = current.parent() {
             let backup = dir.join(BACKUP_FILE_NAME);
             if backup.is_file() && !backup.is_symlink() {
-                let _ = std::fs::remove_file(&backup);
+                remove_file_durable(&backup).with_context(|| {
+                    format!("remove confirmed Agent backup {}", backup.display())
+                })?;
             }
         }
     }
@@ -264,7 +274,7 @@ pub(super) fn rollback_stale_pending_update() -> Result<bool> {
     };
     let backup = dir.join(BACKUP_FILE_NAME);
     if !backup.is_file() || backup.is_symlink() || current.is_symlink() {
-        let _ = std::fs::remove_file(&path);
+        remove_file_durable(&path).context("remove unusable update pending marker")?;
         return Ok(false);
     }
     let failed = dir.join(FAILED_FILE_NAME);
@@ -273,9 +283,10 @@ pub(super) fn rollback_stale_pending_update() -> Result<bool> {
         .with_context(|| format!("retain failed Agent binary {}", failed.display()))?;
     if let Err(error) = std::fs::rename(&backup, &current) {
         let _ = std::fs::rename(&failed, &current);
+        let _ = sync_parent_directory(&current);
         return Err(error).context("restore previous Agent binary");
     }
-    let _ = std::fs::remove_file(&path);
+    remove_file_durable(&path).context("remove rolled-back update marker")?;
     Ok(true)
 }
 
@@ -287,8 +298,68 @@ fn now_unix_sec() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn write_pending_marker(path: &Path, content: &[u8]) -> Result<()> {
+    let temp = path.with_extension(format!("tmp-{}", std::process::id()));
+    if temp.exists() || temp.is_symlink() {
+        fs::remove_file(&temp)
+            .with_context(|| format!("remove stale marker {}", temp.display()))?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&temp)
+        .with_context(|| format!("create marker temporary file {}", temp.display()))?;
+    file.write_all(content)
+        .with_context(|| format!("write marker temporary file {}", temp.display()))?;
+    file.sync_all()
+        .with_context(|| format!("sync marker temporary file {}", temp.display()))?;
+    fs::rename(&temp, path)
+        .with_context(|| format!("install pending marker {}", path.display()))?;
+    sync_parent_directory(path)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn remove_file_durable(path: &Path) -> Result<bool> {
+    if fs::symlink_metadata(path).is_err() {
+        return Ok(false);
+    }
+    fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
+    sync_parent_directory(path)?;
+    Ok(true)
+}
+
+#[cfg(unix)]
+#[cfg(any(target_os = "linux", test))]
+fn sync_parent_directory(path: &Path) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::File::open(parent)
+        .with_context(|| format!("open marker directory {}", parent.display()))?
+        .sync_all()
+        .with_context(|| format!("sync marker directory {}", parent.display()))
+}
+
+#[cfg(not(unix))]
+#[cfg(any(target_os = "linux", test))]
+fn sync_parent_directory(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn install_linux_update(policy: &UpdatePolicy, http: &HttpClient) -> Result<PathBuf> {
+    let Some(_update_lock) =
+        crate::manager::acquire_instance_lock(Path::new(UPDATE_LOCK_PATH), "Agent update")?
+    else {
+        return Err(anyhow!("another Agent update is already in progress"));
+    };
     if !policy.download_base.starts_with("https://") {
         return Err(anyhow!("Agent update download base must use HTTPS"));
     }
@@ -373,8 +444,55 @@ fn install_linux_update(policy: &UpdatePolicy, http: &HttpClient) -> Result<Path
         let _ = fs::rename(&backup, &current);
         return Err(anyhow!("install Agent update: {}", err));
     }
-    mark_update_pending(&policy.latest_version)?;
+    if let Err(marker_error) = mark_update_pending(&policy.latest_version) {
+        let failed = current
+            .parent()
+            .map(|dir| dir.join(FAILED_FILE_NAME))
+            .ok_or_else(|| anyhow!("Agent executable has no parent directory"))?;
+        let rollback = rollback_install_swap(&current, &backup, &failed);
+        return match rollback {
+            Ok(()) => {
+                let marker_cleanup = current
+                    .parent()
+                    .map(|dir| dir.join(UPDATE_PENDING_MARKER))
+                    .ok_or_else(|| anyhow!("Agent executable has no parent directory"))
+                    .and_then(|path| remove_file_durable(&path).map(|_| ()))
+                    .map_err(|error| anyhow!("remove failed update marker: {}", error));
+                match marker_cleanup {
+                    Ok(()) => Err(anyhow!(
+                        "write update pending marker: {}; installed binary was rolled back",
+                        marker_error
+                    )),
+                    Err(cleanup_error) => Err(anyhow!(
+                        "write update pending marker: {}; installed binary was rolled back, but marker cleanup failed: {}",
+                        marker_error, cleanup_error
+                    )),
+                }
+            }
+            Err(rollback_error) => Err(anyhow!(
+                "write update pending marker: {}; rollback failed: {}",
+                marker_error,
+                rollback_error
+            )),
+        };
+    }
     Ok(current)
+}
+
+#[cfg(target_os = "linux")]
+fn rollback_install_swap(current: &Path, backup: &Path, failed: &Path) -> Result<()> {
+    if failed.exists() || failed.is_symlink() {
+        fs::remove_file(failed)
+            .with_context(|| format!("remove previous failed Agent binary {}", failed.display()))?;
+    }
+    fs::rename(current, failed)
+        .with_context(|| format!("retain unconfirmed Agent binary {}", failed.display()))?;
+    if let Err(error) = fs::rename(backup, current) {
+        let _ = fs::rename(failed, current);
+        let _ = sync_parent_directory(current);
+        return Err(error).context("restore previous Agent binary after marker failure");
+    }
+    sync_parent_directory(current)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -501,6 +619,28 @@ mod tests {
         std::fs::remove_file(&marker).unwrap();
         std::fs::remove_file(&current).unwrap();
         std::fs::remove_file(&backup).unwrap();
+        std::fs::remove_dir(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pending_marker_write_replaces_atomically_and_syncs_directory() {
+        let dir = std::env::temp_dir().join(format!(
+            "nie-updater-marker-test-{}-{}",
+            std::process::id(),
+            now_unix_sec()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join(UPDATE_PENDING_MARKER);
+        write_pending_marker(&marker, br#"{"version":"v9.9.9"}"#).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap(),
+            r#"{"version":"v9.9.9"}"#
+        );
+        assert!(!marker
+            .with_extension(format!("tmp-{}", std::process::id()))
+            .exists());
+        remove_file_durable(&marker).unwrap();
         std::fs::remove_dir(&dir).unwrap();
     }
 

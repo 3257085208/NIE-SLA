@@ -39,3 +39,7 @@ Traffic uses a current-period row plus a daily ledger. The page merges the diffe
 ## Legacy Pages + Worker migration
 
 Existing Pages + Worker installs can move to Worker Static Assets without downtime. Reuse the D1, R2, Agent API hostname, and encryption material; the Agent protocol is unchanged and installed Agents keep working.
+
+## Private production versus the public one-click template
+
+The private production Worker also binds `PROBE_HISTORY` and `STATUS_STREAM` for probe-history buffering and the public status WSS; its migration level is `v4`. The public repository's one-click template declares only `REGION_PROXY`, `TELEMETRY_BUFFER`, and the migrations supported by that template, and uses Worker fallbacks for its simplified mode. These are not isomorphic deployments: the public binding count is not evidence of private production capacity or feature parity, and private `wrangler.toml` IDs, routes, or variables must never be copied into the public repository.

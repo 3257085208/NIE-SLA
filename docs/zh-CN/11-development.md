@@ -2,7 +2,7 @@
 
 ## 生产源
 
-Rust Agent 与 Worker 在本仓库，生产前端在同级 `frontend/` 仓库。公开仓库只通过 `scripts/export-public.mjs` 单向脱敏生成，禁止从公开库或归档目录覆盖生产源。
+Rust Agent 与 Worker 在本仓库，生产前端在同级 `frontend/` 仓库。公开仓库只通过 `scripts/export-public.mjs` 单向脱敏生成，禁止从公开库或归档目录覆盖生产源。`test.sh` 默认要求这个同级 Frontend 存在，绝不把本仓库内的 `agent/frontend/` 旧快照当作生产源。
 
 ## 测试
 
@@ -10,7 +10,7 @@ Rust Agent 与 Worker 在本仓库，生产前端在同级 `frontend/` 仓库。
 bash test.sh
 ```
 
-覆盖 Worker 语法与打包、鉴权、任务白名单、GeoIP、备份恢复、前端模块、Rust fmt/check/test、安装器与 shell 语法。
+覆盖 Worker 语法与打包、鉴权、任务白名单、GeoIP、备份恢复、同级生产 Frontend 的 `npm run verify`、Rust fmt/check/test、安装器与 shell 语法。
 
 ## Agent 本地发布
 
@@ -31,11 +31,10 @@ cd agent
 ## Worker 与 Static Assets
 
 ```bash
-cd worker
-./deploy.sh
+NIE_SLA_FRONTEND_REF=<40 位 Frontend commit SHA> ./worker/deploy.sh
 ```
 
-脚本从生产前端生成 `dist-one-click`，然后部署 Worker。公开一键部署仓库由根目录 `npm run build` 生成同源资源。发布前检查产物不含 `AGENTS.md`、测试、Pages Functions、`node_modules` 或废弃的通用扩展运行时；公开主题运行时与示例必须保留。
+脚本先运行 `bash test.sh`，从指定 Frontend commit 的 Git archive 生成 `dist-one-click`，校验 Agent 精确 `vX.Y.Z` tag、update manifest 与 `build-provenance.json`，执行 Wrangler dry-run 后才正式部署。公开一键部署仓库由根目录 `npm run build` 生成同源资源。发布前检查产物不含 `AGENTS.md`、测试、Pages Functions、`node_modules` 或废弃的通用扩展运行时；公开主题运行时与示例必须保留。
 
 ## 公开脱敏
 
@@ -51,4 +50,5 @@ node scripts/export-public.mjs --apply  # 写入公开仓库
 - 应用、Worker 与 Agent 共用 `X.Y.Z`；展示、Tag 与 Agent Release 使用 `vX.Y.Z`。
 - 每次正常迭代增加补丁位 `0.0.1`；破坏性兼容变更才提升次版本或主版本。
 - 应用源码 Tag 使用 `app-vX.Y.Z`，Agent 二进制与 Release 使用 `vX.Y.Z`，两者数字必须一致。
+- 私有 Worker 发布还必须使用精确 Agent `vX.Y.Z` tag 与已审阅的 Frontend commit SHA；feature 分支、dirty worktree 和未通过 dry-run 的资产不得发布。
 - GitHub Actions 额度不可用时，Agent Release 必须在可信本地环境完成多架构构建。

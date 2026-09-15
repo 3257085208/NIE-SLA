@@ -1,7 +1,7 @@
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA, LEGACY_STATUS_SNAPSHOT_SCHEMA } from './utils.js';
 import { json } from './auth.js';
 import { validateAdminSession } from './totp.js';
-import { readR2JsonResult, readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks } from './storage.js';
+import { readR2JsonResult, readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks, verifyR2Json } from './storage.js';
 import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, buildSummaryFallbackOptions, getExchangeRates, convertPriceToCny, getMeta, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
 import { summarizeTrafficWithPending, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 import { compactStatusPayload, refreshLatencySources } from './status-payload.js';
@@ -549,8 +549,16 @@ export async function writeStatusSnapshot(env) {
   payload.schema = STATUS_SNAPSHOT_SCHEMA;
   payload.generated_at = new Date().toISOString();
   payload.storage = { ...(payload.storage || {}), status_snapshot_in_r2: true, status_snapshot_key: key };
-  await env.ARCHIVE.put(key, JSON.stringify(payload), { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: { schema: STATUS_SNAPSHOT_SCHEMA, generated_at: payload.generated_at } });
-  return { ok: true, key, targets: payload.targets?.length || 0, summaries: payload.summaries?.length || 0 };
+  const body = JSON.stringify(payload);
+  const bodyBytes = new TextEncoder().encode(body).byteLength;
+  const result = await env.ARCHIVE.put(key, body, { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: { schema: STATUS_SNAPSHOT_SCHEMA, generated_at: payload.generated_at } });
+  const verify = typeof env.ARCHIVE.head === 'function' ? await env.ARCHIVE.head(key) : null;
+  if (typeof env.ARCHIVE.head === 'function' && !verify) throw new Error(`R2 snapshot write did not persist (${key})`);
+  if (verify && Number.isFinite(Number(verify.size)) && Number(verify.size) !== bodyBytes) throw new Error(`R2 snapshot size mismatch (${key} expected ${bodyBytes}, got ${verify.size})`);
+  await verifyR2Json(env, key, (readback) => readback?.schema === STATUS_SNAPSHOT_SCHEMA && readback?.generated_at === payload.generated_at);
+  const verdict = verify ? verify.size : 'no-head';
+  console.log(`r2-snapshot: key=${key} bodyBytes=${bodyBytes} putSize=${result?.size ?? 'none'} verify=${verdict} readback=ok`);
+  return { ok: true, key, targets: payload.targets?.length || 0, summaries: payload.summaries?.length || 0, verify: verdict, readback: true };
 }
 
 export async function getChecksCached(request, env, url, ctx = null) {

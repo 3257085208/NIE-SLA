@@ -1,6 +1,3 @@
-// Real CF consumption via the account GraphQL API. The user provides a scoped
-// API token + account id in settings; numbers here are metered reality, the
-// embedded model provides the estimate side of the comparison.
 import { ApiError } from '../auth.js';
 import { getMeta, setMeta } from './settings.js';
 
@@ -12,9 +9,6 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 let cache = null;
 
 export async function getUsageActualConfig(env) {
-  // No silent catch here: a storage hiccup must surface as "查询失败，请重试",
-  // not as "未配置" — the latter would send the user re-creating a perfectly
-  // valid token.
   const [token, accountTag] = await Promise.all([
     getMeta(env, CONFIG_TOKEN_KEY),
     getMeta(env, CONFIG_ACCOUNT_KEY),
@@ -46,9 +40,6 @@ async function gql(token, query, variables) {
 }
 
 export async function fetchActualUsage(env, hours = 24) {
-  // Read the secret directly: getUsageActualConfig intentionally never
-  // returns the token (it feeds the settings UI), so destructuring it there
-  // would make every query report "未配置" even after a successful save.
   let token, accountTag;
   try {
     token = await getMeta(env, CONFIG_TOKEN_KEY);
@@ -78,8 +69,6 @@ export async function fetchActualUsage(env, hours = 24) {
   }`).catch((error) => { throw new ApiError(502, `GraphQL 查询失败：${error.message}`); });
 
   const account = data?.viewer?.accounts?.[0] || {};
-  // Adaptive groups return an ARRAY of buckets (even with no dimensions);
-  // reading .sum off the array itself silently yields zeros.
   const sumOf = (group) => (Array.isArray(group) ? group[0]?.sum : group?.sum) || {};
   const d1 = sumOf(account.d1);
   const durable = sumOf(account.durableObjects);

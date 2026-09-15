@@ -1,9 +1,9 @@
-import { escapeAttr, escapeHtml } from './js/shared/html.js';
+import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260911-cache1';
 import {
   billingCycleSuffix,
   isLifetimeBilling,
   normalizeBillingCycle,
-} from './js/shared/billing.js';
+} from './js/shared/billing.js?v=20260911-cache1';
 import {
   cssEscape,
   clampNumber,
@@ -18,11 +18,11 @@ import {
   normalizeCityName,
   pad,
   timeAgoSec,
-} from './js/shared/format.js';
-import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260821-themecfg2';
-import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260904-fix1';
-import { countryByCode } from './js/shared/target-catalogs.js';
+} from './js/shared/format.js?v=20260911-cache1';
+import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260911-cache1';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260911-cache1';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260911-cache1';
+import { countryByCode } from './js/shared/target-catalogs.js?v=20260911-cache1';
 import {
   clampChartRange,
   countChartGaps,
@@ -30,15 +30,15 @@ import {
   filterChecksByRange,
   hexToRgba,
   trimEmptyPointEdges,
-} from './js/shared/chart-data.js';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260821-themecfg2';
-import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js';
-import { unlockState } from './js/shared/unlock.js?v=20260727-dns-unlock1';
-import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260910-backroute3';
-import { targetSlaPercentage } from './js/shared/sla.js';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260908-audit1';
-import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260821-vpsdetail1';
-import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260821-themecfg2';
+} from './js/shared/chart-data.js?v=20260911-cache1';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260911-cache1';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260911-cache1';
+import { unlockState } from './js/shared/unlock.js?v=20260911-cache1';
+import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260911-cache1';
+import { targetSlaPercentage } from './js/shared/sla.js?v=20260911-cache1';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260911-cache1';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260911-cache1';
+import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260911-cache1';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -74,6 +74,8 @@ const state = {
   selectedMetric: 'latency',
   selectedMetricRange: '1h',
   targetMetrics: null,
+  metricsLoading: false,
+  metricsError: '',
   pingData: null,
   pingVisibleTargets: null,
   externalLatencySources: [],
@@ -551,7 +553,11 @@ function applyAppearanceInjections(appearance) {
   if (appearance.custom_script) {
     const script = document.createElement('script');
     script.setAttribute('data-appearance-injected', '');
-    script.textContent = appearance.custom_script;
+    // Keep the page CSP at `script-src 'self'`: the Worker/Pages same-origin
+    // endpoint returns the already-normalized owner script as JavaScript.
+    script.src = new URL('/api/appearance-script.js', window.location.href).toString();
+    script.async = false;
+    script.referrerPolicy = 'no-referrer';
     document.head.appendChild(script);
   }
 }
@@ -1130,6 +1136,8 @@ async function selectService(id, name, el) {
     state.dailyPoints = [];
     state.checksSource = '';
     state.targetMetrics = null;
+    state.metricsLoading = false;
+    state.metricsError = '';
     state.pingData = null;
     state.externalLatencySources = [];
     state.latencyVisibleSources = null;
@@ -1153,6 +1161,8 @@ async function selectService(id, name, el) {
   state.selectedMetric = hasLatency ? 'latency' : 'cpu';
   state.selectedMetricRange = '1h';
   state.targetMetrics = null;
+  state.metricsLoading = false;
+  state.metricsError = '';
   state.pingData = null;
   state.pingVisibleTargets = null;
   state.externalLatencySources = [];
@@ -1236,7 +1246,7 @@ async function loadChecks(id, name, target = null, options = {}) {
   try {
     const intervalSec = Math.max(300, Number(target?.interval_sec || state.selectedTargetIntervalSec || 300));
     state.selectedTargetIntervalSec = intervalSec;
-    const checksHours = Math.max(requestedHours, Number(window.NIE_SLA_CHECKS_MIN_HOURS || window.NSTATUS_CHECKS_MIN_HOURS || 0) || 0);
+    const checksHours = Math.max(requestedHours, Number(window.NIE_SLA_CHECKS_MIN_HOURS || window.NSTATUS_CHECKS_MIN_HOURS || 72));
     const checksLimit = Math.min(20000, Math.max(864, Math.ceil((checksHours * 3600) / intervalSec) + 120));
 
     const [checksRes, latencyRes] = await Promise.all([
@@ -1294,6 +1304,10 @@ function metricRangeHours(range) {
   return { '1h': 1, '6h': 6, '24h': 24 }[range] || 1;
 }
 
+function metricRangeLabel(range) {
+  return { '1h': '最近 1 小时', '6h': '最近 6 小时', '24h': '最近 24 小时' }[range] || '最近一段时间';
+}
+
 function ensureChecksForSelectedRange() {
   if (!state.selectedId || state.selectedMetric !== 'latency') return;
   const needed = rangeHours(state.selectedRange);
@@ -1309,15 +1323,26 @@ async function ensureTargetMetricsLoaded() {
   const requestSeq = ++state.metricsRequestSeq;
   const hours = metricRangeHours(range);
   const includeHistory = metric !== 'latency' && metric !== 'ping';
+  const rendersMetricChart = includeHistory;
   const cacheKey = `${id}|${metric}|${hours}|${includeHistory ? 'history' : 'latest'}`;
   const cached = state.metricsCache.get(cacheKey);
   if (cached && Date.now() - cached.at < 30_000) {
     if (requestSeq === state.metricsRequestSeq && state.selectedId === id && state.selectedMetric === metric && state.selectedMetricRange === range) {
+      if (rendersMetricChart) {
+        state.metricsLoading = false;
+        state.metricsError = '';
+      }
       state.targetMetrics = cached.data;
       if (state.selectedMetric !== 'latency' && state.selectedMetric !== 'ping') updateMetricsChart();
       renderVPSInfo();
     }
     return;
+  }
+  if (rendersMetricChart) {
+    state.metricsLoading = true;
+    state.metricsError = '';
+    state.targetMetrics = null;
+    updateMetricsChart();
   }
   try {
     const params = new URLSearchParams({
@@ -1336,11 +1361,22 @@ async function ensureTargetMetricsLoaded() {
     const data = await res.json().catch(() => null);
     if (requestSeq !== state.metricsRequestSeq || state.selectedId !== id || state.selectedMetric !== metric || state.selectedMetricRange !== range) return;
     state.targetMetrics = res.ok && data?.ok ? normalizeAgentMetricsPayload(data) : null;
+    if (rendersMetricChart) {
+      state.metricsLoading = false;
+      state.metricsError = state.targetMetrics ? '' : '监控数据加载失败，请稍后重试。';
+    }
     if (state.targetMetrics) state.metricsCache.set(cacheKey, { at: Date.now(), data: state.targetMetrics });
     if (state.selectedMetric !== 'latency' && state.selectedMetric !== 'ping') updateMetricsChart();
     renderVPSInfo();
   } catch (_) {
-    if (requestSeq === state.metricsRequestSeq && state.selectedId === id && state.selectedMetric === metric && state.selectedMetricRange === range) state.targetMetrics = null;
+    if (requestSeq === state.metricsRequestSeq && state.selectedId === id && state.selectedMetric === metric && state.selectedMetricRange === range) {
+      state.targetMetrics = null;
+      if (rendersMetricChart) {
+        state.metricsLoading = false;
+        state.metricsError = '监控数据加载失败，请稍后重试。';
+        updateMetricsChart();
+      }
+    }
   }
 }
 
@@ -1588,6 +1624,7 @@ const PING_COLORS = ['#159754','#2ea3ff','#e67e22','#e74c3c','#8e44ad','#1abc9c'
 
 async function updatePingChart() {
   els.chartTitle.textContent = 'TCP Ping';
+  els.chartServiceName.textContent = `${state.selectedName || '服务'} TCP Ping`;
   if (!state.selectedId) return;
 
 
@@ -1598,6 +1635,12 @@ async function updatePingChart() {
   const hours = { '1h': 1, '6h': 6, '24h': 24 }[range] || 24;
   const cacheKey = `${id}|${hours}`;
   const isStale = () => requestSeq !== state.pingsRequestSeq || state.selectedId !== id || state.selectedMetricRange !== range;
+
+  state.pingData = null;
+  els.chartAvg.textContent = '-';
+  els.chartMeta.textContent = `正在加载${metricRangeLabel(range)} TCP Ping 数据…`;
+  renderPingLossStats([]);
+  clearMetricChart();
 
   try {
     const cached = state.pingsCache.get(cacheKey);
@@ -1980,7 +2023,7 @@ function initChart() {
             autoSkip: true,
 
             callback(value) {
-              return formatAxisChartTime(Number(value), state.selectedRange);
+              return formatAxisChartTime(Number(value), chartAxisRange());
             },
 
             font: {
@@ -2020,6 +2063,11 @@ function initChart() {
     },
     plugins: [chartHoverLinePlugin()],
   });
+}
+
+function chartAxisRange() {
+  if (state.selectedMetric === 'latency') return state.selectedRange;
+  return state.selectedMetricRange === '24h' ? 'week' : 'day';
 }
 
 function isMobileChartViewport() {
@@ -2093,6 +2141,20 @@ function updateMetricsChart() {
   const metricLabel = labels[metric] || metric;
   els.chartTitle.textContent = metricLabel;
   els.chartServiceName.textContent = `${state.selectedName || '服务'} ${metricLabel}`;
+
+  if (state.metricsLoading) {
+    els.chartMeta.textContent = `正在加载${metricRangeLabel(range)}的${metricLabel}数据…`;
+    els.chartAvg.textContent = '-';
+    clearMetricChart();
+    return;
+  }
+
+  if (state.metricsError) {
+    els.chartMeta.textContent = state.metricsError;
+    els.chartAvg.textContent = '-';
+    clearMetricChart();
+    return;
+  }
 
   if (state.chart) {
     delete state.chart.options.scales.y.title;
@@ -2176,10 +2238,9 @@ function updateMetricsChart() {
     els.chartAvg.textContent = lastLoad != null ? `平均值：${lastLoad.toFixed(2)}` : '-';
     if (!state.chart) return;
     state.chart.data.datasets = datasets.map(({ definition, points }) => netDataset(`${definition.label} 负载`, points, definition.color));
-    return;
   }
 
-  if (metric === 'proc') {
+  else if (metric === 'proc') {
     const points = history.map(point => ({ x: Number(point.ts), y: Number(point.process_count) || 0 }));
     const values = points.map(point => point.y).filter(Number.isFinite);
     const avg = values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
@@ -2187,10 +2248,9 @@ function updateMetricsChart() {
     els.chartAvg.textContent = `平均值：${avg.toFixed(0)}`;
     if (!state.chart) return;
     state.chart.data.datasets = [netDataset('进程数', points, '#159754')];
-    return;
   }
 
-  if (metric === 'temp') {
+  else if (metric === 'temp') {
     if (!canShowTemperature(latest.vps_info || {})) {
       els.chartMeta.textContent = '虚拟化环境不显示硬件温度。';
       els.chartAvg.textContent = '-';

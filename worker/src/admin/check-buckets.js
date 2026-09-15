@@ -499,11 +499,9 @@ export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrite
       console.error('append buffered probe history failed, falling back to D1:', String(error?.message || error));
     }
   }
-  if (!bufferSucceeded) {
-    for (const item of bucketWrites || []) {
-      if (!item?.point || !item.day) continue;
-      stmts.push(checkBucketStatement(env, targetId, item.day, item.point));
-    }
+  for (const item of bucketWrites || []) {
+    if (!item?.point || !item.day) continue;
+    stmts.push(checkBucketStatement(env, targetId, item.day, item.point));
   }
   if (latestStatus && latestStatusToD1Enabled(env)) stmts.push(latestStatusStatement(env, latestStatus));
   if (incidentWrite) {
@@ -514,7 +512,12 @@ export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrite
   const scheduleStmt = scheduleFlush === false ? null : targetProbeScheduleStatement(env, targetId, checkedAt, nextProbeAt);
   if (scheduleStmt) stmts.push(scheduleStmt);
   if (!stmts.length) return { ok: true, writes: 0, bucket_storage: bucketStorage };
-  await env.DB.batch(stmts);
+  try {
+    await env.DB.batch(stmts);
+  } catch (error) {
+    console.error('probe D1 batch failed:', String(error?.message || error));
+    return { ok: false, error: String(error?.message || error), bucket_storage: bucketStorage };
+  }
   return { ok: true, writes: stmts.length, bucket_storage: bucketStorage };
 }
 
@@ -602,4 +605,28 @@ export async function cleanupVolatileHistory(env, options = {}) {
   }
   results.ok = results.errors.length === 0;
   return results;
+}
+
+export async function reconcileOpenIncidents(env) {
+  if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
+  try {
+    const result = await env.DB.prepare(
+      `UPDATE incident_events SET recovered_at = (
+         SELECT MAX(cb.bucket_at) FROM check_buckets cb
+         WHERE cb.target_id = incident_events.target_id AND cb.ok_count > 0
+       )
+       WHERE recovered_at IS NULL
+         AND EXISTS (
+           SELECT 1 FROM check_buckets cb2
+           WHERE cb2.target_id = incident_events.target_id AND cb2.ok_count > 0
+             AND cb2.bucket_at > strftime('%s','now') - 1800
+         )`
+    ).run();
+    const changes = Number(result?.meta?.changes || 0);
+    if (changes) console.log(`reconciled ${changes} open incidents against fresh successful buckets`);
+    return { ok: true, changes };
+  } catch (error) {
+    console.error('reconcile open incidents failed:', String(error?.message || error));
+    return { ok: false, error: String(error?.message || error) };
+  }
 }

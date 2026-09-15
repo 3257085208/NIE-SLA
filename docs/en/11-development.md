@@ -2,7 +2,7 @@
 
 ## Production sources
 
-The Rust Agent and Worker live in this repository; the production frontend lives in the sibling `frontend/` repository. The public repository is generated one-way by `scripts/export-public.mjs`; never overwrite production sources from the public copy or archives.
+The Rust Agent and Worker live in this repository; the production frontend lives in the sibling `frontend/` repository. The public repository is generated one-way by `scripts/export-public.mjs`; never overwrite production sources from the public copy or archives. `test.sh` requires that sibling Frontend by default and never treats the stale `agent/frontend/` snapshot as the production source.
 
 ## Testing
 
@@ -10,7 +10,7 @@ The Rust Agent and Worker live in this repository; the production frontend lives
 bash test.sh
 ```
 
-Covers Worker syntax and packaging, auth, task whitelist, GeoIP, backup/restore, frontend modules, Rust fmt/check/test, installers, and shell syntax.
+Covers Worker syntax and packaging, auth, task whitelist, GeoIP, backup/restore, the sibling production Frontend's `npm run verify`, Rust fmt/check/test, installers, and shell syntax.
 
 ## Local Agent release
 
@@ -31,11 +31,10 @@ Builds five targets and writes a matching `VERSION` and `SHA256SUMS`. Then:
 ## Worker and Static Assets
 
 ```bash
-cd worker
-./deploy.sh
+NIE_SLA_FRONTEND_REF=<40-character Frontend commit SHA> ./worker/deploy.sh
 ```
 
-Generates `dist-one-click` from the production frontend and deploys the Worker. The public one-click repository is built by `npm run build` at its root. Before release, check the artifacts contain no `AGENTS.md`, tests, Pages Functions, `node_modules`, or the removed generic extension runtime; public theme runtimes and examples must stay.
+Runs `bash test.sh`, generates `dist-one-click` from the selected Frontend Git archive, verifies the exact Agent `vX.Y.Z` tag, update manifest, and `build-provenance.json`, runs a Wrangler dry-run, and only then deploys the Worker. The public one-click repository is built by `npm run build` at its root. Before release, check the artifacts contain no `AGENTS.md`, tests, Pages Functions, `node_modules`, or the removed generic extension runtime; public theme runtimes and examples must stay.
 
 ## Public export
 
@@ -51,4 +50,5 @@ The exporter scans for production domains, tokens, private keys, and local paths
 - Application, Worker, and Agent share `X.Y.Z`; display, tags, and Agent releases use `vX.Y.Z`.
 - Normal iterations bump the patch digit by `0.0.1`; breaking changes raise minor or major.
 - App source tags use `app-vX.Y.Z`; Agent binaries and releases use `vX.Y.Z`. Both numbers must match.
+- Private Worker releases also require the exact Agent `vX.Y.Z` tag and an audited immutable Frontend commit SHA; feature branches, dirty worktrees, and failed dry-runs are not release sources.
 - When GitHub Actions capacity is unavailable, Agent releases must be built locally on a trusted machine.

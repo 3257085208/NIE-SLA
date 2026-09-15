@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,7 +14,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, System};
 use tungstenite::client::IntoClientRequest;
-use tungstenite::{connect, Message};
+use tungstenite::Message;
 use ureq::{config::IpFamily, http::Uri, ResponseExt};
 
 mod asn_lookup;
@@ -50,6 +50,7 @@ const MAX_PING_CONCURRENCY: usize = 32;
 const TCP_PING_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_PING_RESOLVED_ADDRESSES: usize = 8;
 const WS_READ_TIMEOUT: Duration = Duration::from_secs(45);
+const WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const WS_RETRY_MIN_DELAY: Duration = Duration::from_secs(60);
 const WS_RETRY_MAX_DELAY: Duration = Duration::from_secs(300);
 
@@ -419,7 +420,12 @@ fn run() -> Result<()> {
     // Earliest liveness marker: the privileged Manager restarts the telemetry
     // service when this file goes stale, so it must exist before any of the
     // initialization steps below can wedge.
-    write_telemetry_progress(&cfg);
+    if let Err(error) = write_telemetry_progress(&cfg) {
+        eprintln!(
+            "{{\"ok\":false,\"telemetry_progress_write_error\":{}}}",
+            serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"write failed\"".into())
+        );
+    }
 
     let http = HttpClient::new();
     let telemetry_lock = if cfg.task_runner_only {
@@ -529,10 +535,22 @@ fn run() -> Result<()> {
                     }
                     last_upload_failed = false;
                     last_successful_upload = Instant::now();
-                    write_telemetry_progress(&cfg);
+                    if let Err(error) = write_telemetry_progress(&cfg) {
+                        eprintln!(
+                            "{{\"ok\":false,\"telemetry_progress_write_error\":{}}}",
+                            serde_json::to_string(&error.to_string())
+                                .unwrap_or_else(|_| "\"write failed\"".into())
+                        );
+                    }
                     #[cfg(target_os = "linux")]
                     {
-                        let _ = confirm_pending_update();
+                        if let Err(error) = confirm_pending_update() {
+                            eprintln!(
+                                "{{\"ok\":false,\"update_confirmation_error\":{}}}",
+                                serde_json::to_string(&error.to_string())
+                                    .unwrap_or_else(|_| "\"update confirmation failed\"".into())
+                            );
+                        }
                     }
                     // Count-based drops stay correct across clock steps: a
                     // timestamp comparison would delete freshly sampled points
@@ -754,16 +772,32 @@ fn spawn_disk_worker(disk_rows: DiskRowsCache) {
     });
 }
 
-fn write_telemetry_progress(_cfg: &Config) {
+fn write_telemetry_progress(_cfg: &Config) -> Result<()> {
     let path = Path::new(crate::manager::TELEMETRY_PROGRESS);
     let temp = path.with_extension(format!("tmp-{}", std::process::id()));
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs())
         .unwrap_or(0);
-    if fs::write(&temp, format!("{now}\n")).is_ok() {
-        let _ = fs::rename(&temp, path);
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&temp)
+        .with_context(|| format!("create {}", temp.display()))?;
+    file.write_all(format!("{now}\n").as_bytes())
+        .with_context(|| format!("write {}", temp.display()))?;
+    file.sync_all()
+        .with_context(|| format!("sync {}", temp.display()))?;
+    drop(file);
+    fs::rename(&temp, path).with_context(|| format!("install {}", path.display()))?;
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        if let Ok(directory) = fs::File::open(parent) {
+            let _ = directory.sync_all();
+        }
     }
+    Ok(())
 }
 
 impl Config {
@@ -1230,8 +1264,9 @@ fn submit_ws_payload(
             tungstenite::http::HeaderValue::from_str(&auth_header(&cfg.token))
                 .context("build metrics WebSocket authorization")?,
         );
-        let (mut connected, _) = connect(request).context("connect metrics WebSocket")?;
-        set_ws_read_timeout(&mut connected)?;
+        let (mut connected, _) =
+            connect_ws_with_timeout(request).context("connect metrics WebSocket")?;
+        set_ws_io_timeout(&mut connected)?;
         *socket = Some(connected);
     }
     let ws = socket.as_mut().expect("metrics WebSocket initialized");
@@ -1265,21 +1300,84 @@ fn submit_ws_payload(
     }
 }
 
-fn set_ws_read_timeout(
+fn connect_ws_with_timeout<Req: IntoClientRequest>(
+    request: Req,
+) -> Result<(
+    tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
+    tungstenite::handshake::client::Response,
+)> {
+    let request = request
+        .into_client_request()
+        .context("build metrics WebSocket request")?;
+    let host = request
+        .uri()
+        .host()
+        .ok_or_else(|| anyhow!("metrics WebSocket URL has no host"))?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string();
+    let scheme = request
+        .uri()
+        .scheme_str()
+        .ok_or_else(|| anyhow!("metrics WebSocket URL has no scheme"))?;
+    let port = request
+        .uri()
+        .port_u16()
+        .unwrap_or(if scheme.eq_ignore_ascii_case("wss") {
+            443
+        } else {
+            80
+        });
+    let addresses = (host.as_str(), port)
+        .to_socket_addrs()
+        .with_context(|| format!("resolve metrics WebSocket host {host}"))?;
+    let mut last_error = None;
+    for address in addresses {
+        match TcpStream::connect_timeout(&address, WS_CONNECT_TIMEOUT) {
+            Ok(stream) => {
+                stream
+                    .set_read_timeout(Some(WS_CONNECT_TIMEOUT))
+                    .context("set WebSocket handshake read timeout")?;
+                stream
+                    .set_write_timeout(Some(WS_CONNECT_TIMEOUT))
+                    .context("set WebSocket handshake write timeout")?;
+                return tungstenite::client_tls(request, stream)
+                    .map_err(|error| anyhow!("WebSocket handshake failed: {error}"));
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(anyhow!(
+        "could not connect to metrics WebSocket {host}:{port}: {}",
+        last_error
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "no addresses resolved".into())
+    ))
+}
+
+fn set_ws_io_timeout(
     ws: &mut tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
 ) -> Result<()> {
-    let timeout = Some(WS_READ_TIMEOUT);
+    let read_timeout = Some(WS_READ_TIMEOUT);
+    let write_timeout = Some(WS_READ_TIMEOUT);
     match ws.get_mut() {
         tungstenite::stream::MaybeTlsStream::Plain(stream) => {
             stream
-                .set_read_timeout(timeout)
+                .set_read_timeout(read_timeout)
                 .context("set metrics WebSocket read timeout")?;
+            stream
+                .set_write_timeout(write_timeout)
+                .context("set metrics WebSocket write timeout")?;
         }
         tungstenite::stream::MaybeTlsStream::Rustls(stream) => {
             stream
                 .sock
-                .set_read_timeout(timeout)
+                .set_read_timeout(read_timeout)
                 .context("set metrics WebSocket TLS read timeout")?;
+            stream
+                .sock
+                .set_write_timeout(write_timeout)
+                .context("set metrics WebSocket TLS write timeout")?;
         }
         _ => {}
     }
@@ -1448,10 +1546,11 @@ fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
     let text = http.get(&url, &cfg.token)?;
     let value: serde_json::Value = serde_json::from_str(&text)?;
     if !value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
-        return Ok(PingPlan {
-            targets: Vec::new(),
-            interval_sec: cfg.ping_sec,
-        });
+        let error = value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Worker rejected ping target configuration");
+        return Err(anyhow!("ping target API rejected request: {}", error));
     }
     let targets: Vec<PingTarget> = value
         .get("targets")
@@ -1995,11 +2094,22 @@ fn spawn_ping_worker(
                 last_refresh = Instant::now();
             }
             if last_refresh.elapsed() >= refresh_period {
-                if let Ok(plan) = fetch_ping_targets(&cfg, &http) {
-                    apply_ping_interval(&ping_interval_sec, plan.interval_sec);
-                    targets = plan.targets;
+                match fetch_ping_targets(&cfg, &http) {
+                    Ok(plan) => {
+                        apply_ping_interval(&ping_interval_sec, plan.interval_sec);
+                        targets = plan.targets;
+                        last_refresh = Instant::now();
+                    }
+                    Err(error) => {
+                        let retry_after = ping_target_refresh_retry_after(refresh_period);
+                        eprintln!(
+                            "ping target refresh failed; retrying in {}s: {}",
+                            retry_after.as_secs(),
+                            error
+                        );
+                        last_refresh = Instant::now() - refresh_period.saturating_sub(retry_after);
+                    }
                 }
-                last_refresh = Instant::now();
             }
             let interval = current_ping_interval(&ping_interval_sec);
             if last_ping.elapsed() >= Duration::from_secs(interval) {
@@ -2049,6 +2159,12 @@ fn next_ping_worker_sleep(
         .saturating_sub(refresh_elapsed)
         .min(ping_period.saturating_sub(ping_elapsed))
         .max(Duration::from_millis(50))
+}
+
+fn ping_target_refresh_retry_after(refresh_period: Duration) -> Duration {
+    refresh_period
+        .min(Duration::from_secs(60))
+        .max(Duration::from_secs(1))
 }
 
 fn run_pings(targets: &[PingTarget], selector: &str, http: &HttpClient) -> Vec<PingResult> {

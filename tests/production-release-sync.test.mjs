@@ -4,7 +4,9 @@ import path from 'node:path';
 
 const privateRoot = path.resolve(import.meta.dirname, '..');
 const sourceRoot = path.join(privateRoot, 'agent');
-const frontendRoot = path.resolve(privateRoot, '..', 'frontend');
+const frontendRoot = process.env.NIE_SLA_FRONTEND_ROOT
+  ? path.resolve(process.env.NIE_SLA_FRONTEND_ROOT)
+  : path.resolve(privateRoot, '..', 'frontend');
 
 // The sanitized public snapshot intentionally contains no release binaries;
 // the byte-for-byte sync contract only applies to the private workspace.
@@ -38,6 +40,8 @@ const releaseFiles = [
   'bin/nie-sla-agent-linux-arm',
   'bin/nie-sla-agent-linux-arm64',
   'bin/nie-sla-agent-linux-armv6',
+  'bin/nie-sla-agent-macos-arm64',
+  'bin/nie-sla-agent-macos-amd64',
   'bin/nstatus-metrics-linux-386',
   'bin/nstatus-metrics-linux-amd64',
   'bin/nstatus-metrics-linux-arm',

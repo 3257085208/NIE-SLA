@@ -129,6 +129,42 @@ assert.deepEqual(
   'daily history must remain available for later period recalculation',
 );
 
+// Two writers intentionally read the same pre-rollover row before their
+// batches run. The conditional finalize must let only the CAS winner add the
+// previous day's total.
+const concurrentDatabase = new DatabaseSync(':memory:');
+concurrentDatabase.exec(`
+  CREATE TABLE targets (
+    id TEXT PRIMARY KEY, traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0,
+    traffic_mode TEXT DEFAULT 'total', traffic_reset_day INTEGER NOT NULL DEFAULT 1, expires_at INTEGER
+  );
+  CREATE TABLE agent_traffic_monthly (
+    agent_id TEXT NOT NULL, month TEXT NOT NULL, rx_bytes INTEGER NOT NULL DEFAULT 0,
+    tx_bytes INTEGER NOT NULL DEFAULT 0, last_rx_bytes INTEGER, last_tx_bytes INTEGER,
+    active_day TEXT, day_rx_bytes INTEGER NOT NULL DEFAULT 0, day_tx_bytes INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL, PRIMARY KEY (agent_id, month)
+  );
+  CREATE TABLE agent_traffic_daily (
+    agent_id TEXT NOT NULL, day TEXT NOT NULL, rx_bytes INTEGER NOT NULL DEFAULT 0,
+    tx_bytes INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL, PRIMARY KEY (agent_id, day)
+  );
+`);
+concurrentDatabase.prepare(`INSERT INTO targets (id, traffic_enabled, traffic_reset_day) VALUES ('concurrent-vps', 1, 1)`).run();
+concurrentDatabase.prepare(`INSERT INTO agent_traffic_monthly
+  (agent_id, month, rx_bytes, tx_bytes, last_rx_bytes, last_tx_bytes, active_day, day_rx_bytes, day_tx_bytes, updated_at)
+  VALUES ('concurrent-vps', '2026-07-01', 100, 200, 1000, 2000, '2026-07-19', 100, 200, 1)`).run();
+const concurrentEnv = { DB: yieldingD1(concurrentDatabase), TIMEZONE_OFFSET_MINUTES: '0' };
+const concurrentTs = Date.parse('2026-07-20T00:00:00Z') / 1000;
+await Promise.all([
+  persistAgentTraffic(concurrentEnv, 'concurrent-vps', { net: { rx_bytes: 1100, tx_bytes: 2200 } }, concurrentTs),
+  persistAgentTraffic(concurrentEnv, 'concurrent-vps', { net: { rx_bytes: 1100, tx_bytes: 2200 } }, concurrentTs),
+]);
+assert.deepEqual(
+  { ...concurrentDatabase.prepare(`SELECT rx_bytes, tx_bytes FROM agent_traffic_daily WHERE agent_id = 'concurrent-vps' AND day = '2026-07-19'`).get() },
+  { rx_bytes: 100, tx_bytes: 200 },
+  'concurrent rollover writers must finalize the previous day exactly once',
+);
+
 Date.now = originalDateNow;
 console.log('independent traffic reset day tests passed');
 
@@ -144,5 +180,25 @@ function d1(db) {
       };
     },
     async batch(statements) { return Promise.all(statements.map(statement => statement.run())); },
+  };
+}
+
+function yieldingD1(db) {
+  return {
+    prepare(sql) {
+      let values = [];
+      return {
+        bind(...params) { values = params; return this; },
+        async run() { return db.prepare(sql).run(...values); },
+        async all() { const result = db.prepare(sql).all(...values); await new Promise(resolve => setTimeout(resolve, 0)); return { results: result }; },
+        async first() { const result = db.prepare(sql).get(...values) || null; await new Promise(resolve => setTimeout(resolve, 0)); return result; },
+      };
+    },
+    async batch(statements) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const results = [];
+      for (const statement of statements) results.push(await statement.run());
+      return results;
+    },
   };
 }

@@ -82,6 +82,15 @@ const env = {
   ARCHIVE: {
     objects: new Map(),
     async put(key, value) { this.objects.set(key, value); },
+    async get(key) {
+      const value = this.objects.get(key);
+      if (value == null) return null;
+      return { json: async () => JSON.parse(value), size: new TextEncoder().encode(value).byteLength };
+    },
+    async head(key) {
+      const value = this.objects.get(key);
+      return value == null ? null : { size: new TextEncoder().encode(value).byteLength };
+    },
     async list({ prefix = '', cursor, limit = 1000 } = {}) {
       const keys = [...this.objects.keys()].filter(key => key.startsWith(prefix));
       const offset = cursor ? Number(cursor) || 0 : 0;

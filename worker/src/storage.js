@@ -28,9 +28,32 @@ export async function readR2JsonStrict(env, key) {
   return result.found ? result.value : null;
 }
 
+export async function verifyR2Json(env, key, validator = null) {
+  const result = await readR2JsonResult(env, key);
+  if (!result.ok) throw new Error(`R2 readback failed (${result.key || key}): ${result.error}`);
+  if (!result.found) throw new Error(`R2 readback missing (${key})`);
+  if (typeof validator === 'function' && !validator(result.value)) throw new Error(`R2 readback validation failed (${key})`);
+  return result.value;
+}
+
 export async function writeR2Json(env, key, value, metadata = {}) {
   if (!env.ARCHIVE) throw new Error('缺少 R2 的 ARCHIVE 绑定');
-  await env.ARCHIVE.put(key, JSON.stringify(value), { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: metadata });
+  const body = JSON.stringify(value);
+  const bodyBytes = new TextEncoder().encode(body).byteLength;
+  try {
+    const result = await env.ARCHIVE.put(key, body, { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: metadata });
+    const verify = typeof env.ARCHIVE.head === 'function' ? await env.ARCHIVE.head(key) : null;
+    if (typeof env.ARCHIVE.head === 'function' && !verify) throw new Error(`R2 write did not persist (${key})`);
+    if (verify && Number.isFinite(Number(verify.size)) && Number(verify.size) !== bodyBytes) {
+      throw new Error(`R2 write size mismatch (${key} expected ${bodyBytes}, got ${verify.size})`);
+    }
+    await verifyR2Json(env, key);
+    const verdict = verify ? verify.size : 'no-head';
+    console.log(`r2-put: key=${key} bodyBytes=${bodyBytes} putSize=${result?.size ?? 'none'} verify=${verdict} readback=ok`);
+  } catch (error) {
+    console.error(`r2-put-failed: key=${key} bodyBytes=${bodyBytes}:`, String(error?.message || error));
+    throw error;
+  }
 }
 
 
@@ -138,6 +161,9 @@ export async function mergeR2StateUpdates(env, updates) {
       if (!update?.target_id) continue;
       const previous = state.targets[update.target_id];
       if (!previous || Number(update.checked_at || 0) >= Number(previous.checked_at || 0)) state.targets[update.target_id] = update;
+      const current = state.targets[update.target_id];
+      const historyCheckedAt = Math.max(Number(update.history_checked_at || 0), Number(previous?.history_checked_at || 0));
+      if (historyCheckedAt > 0) current.history_checked_at = historyCheckedAt;
     }
     await writeR2State(env, state);
     return { ok: true, count: updates.length };

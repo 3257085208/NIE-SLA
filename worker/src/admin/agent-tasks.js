@@ -218,9 +218,6 @@ export async function claimAgentTask(env, agentIdValue, allowedActionsValue = ''
   };
 }
 
-// Manager liveness probe: the privileged poller is the only Agent component
-// that survives a broken telemetry process. A conditional UPSERT keeps the
-// write rate at one row per Agent per ten minutes without an extra SELECT.
 export async function touchAgentManagerContact(env, agentIdValue) {
   const agentId = sanitizeAgentId(agentIdValue);
   if (!agentId || !env?.DB) return;
@@ -258,9 +255,6 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
   const cancelRequestedAt = Number(row.cancel_requested_at || 0);
   const cancelRequested = cancelRequestedAt > 0;
   let succeeded = !cancelRequested && reportedSucceeded;
-  // Result validation and report parsing must degrade the task to `failed`
-  // instead of throwing: an escape here would leave the task running forever,
-  // silently blocking every future task for this Agent until it expires.
   let result = null;
   let parseError = null;
   if (succeeded) {
@@ -275,8 +269,6 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
   const excerpt = String(body?.output_excerpt || '').slice(0, MAX_EXCERPT_CHARS) || null;
   const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
   const finishedAt = nowSec();
-  // Only a present-but-unparseable report body degrades the task to failed
-  // (a missing report body is a legal success with just the report URL).
   let normalizedNq = null;
   if (succeeded && row.action === 'nodequality' && result?.report) {
     try {
@@ -319,9 +311,6 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
   if (Number(update?.meta?.changes || 0) < 1) {
     const current = await env.DB.prepare(`SELECT * FROM agent_tasks WHERE id = ?`).bind(taskId).first();
     if (!current || sanitizeAgentId(current.agent_id) !== agentId) throw new ApiError(404, '任务不存在');
-    // An administrator may have requested cancellation after the initial
-    // SELECT.  Returning the current row avoids applying a stale result to
-    // the target (NQ/backroute/unlock) after that cancellation wins the CAS.
     return { ok: true, task: taskForAdmin(current) };
   }
 
@@ -336,8 +325,6 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
     }
   }
   if (succeeded && row.action === 'backroute') {
-    // Keep only the compact per-direction records in targets. The complete
-    // report remains in the task result for the detail view.
     const summary = (result.routes || [])
       .filter((entry) => entry && entry.carrier && entry.target && entry.line)
       .map((entry) => ({

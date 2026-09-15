@@ -3,12 +3,16 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-ROOT_WIN="$(cygpath -w "$ROOT" 2>/dev/null || printf "%s" "$ROOT")"
-export ROOT_WIN
+FRONTEND_ROOT="${NIE_SLA_FRONTEND_ROOT:-$ROOT/../frontend}"
+if [[ ! -d "$FRONTEND_ROOT" ]]; then
+  echo "生产 Frontend 不存在：$FRONTEND_ROOT；拒绝使用 agent/frontend 旧快照替代" >&2
+  exit 1
+fi
+FRONTEND_ROOT="$(cd "$FRONTEND_ROOT" && pwd -P)"
+export NIE_SLA_FRONTEND_ROOT="$FRONTEND_ROOT"
 PASS=0
 FAIL=0
 CARGO_BIN="${CARGO_BIN:-cargo}"
-PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || command -v python || true)}"
 if command -v npx >/dev/null 2>&1 && npx --version >/dev/null 2>&1; then
   PACKAGE_EXEC="npx --yes"
 elif command -v pnpm >/dev/null 2>&1 && pnpm --version >/dev/null 2>&1; then
@@ -77,14 +81,18 @@ run_check "NQ public image broker route tests" node --experimental-loader "$ROOT
 run_check "login route hardening tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/login-route.test.mjs"
 run_check "fast-status probe cadence tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/probe-faststatus.test.mjs"
 run_check "durable telemetry buffer tests" node "$ROOT/worker/tests/telemetry-buffer.test.mjs"
+run_check "R2 S3 facade tests" node "$ROOT/worker/tests/r2s3.test.mjs"
+run_check "R2 JSON write verification tests" node "$ROOT/worker/tests/r2-write-verify.test.mjs"
 run_check "Agent telemetry Protobuf tests" node "$ROOT/worker/tests/telemetry-protobuf.test.mjs"
 run_check "durable probe history buffer tests" node "$ROOT/worker/tests/probe-history-buffer.test.mjs"
+run_check "probe history dead-letter maintenance tests" node "$ROOT/worker/tests/probe-history-dead-letter.test.mjs"
 run_check "public status stream tests" node "$ROOT/worker/tests/status-stream.test.mjs"
 run_check "Cloudflare free-tier budget tests" node "$ROOT/worker/tests/free-tier-budget.test.mjs"
 run_check "bulk VPS target update tests" node "$ROOT/worker/tests/target-bulk.test.mjs"
 run_check "VPS target creation defaults" node "$ROOT/worker/tests/target-create.test.mjs"
 run_check "email alert tests" node "$ROOT/worker/tests/alerts.test.mjs"
 run_check "admin reset tool" node --check "$ROOT/worker/scripts/reset-admin.mjs"
+run_check "asset preparation provenance contract" node "$ROOT/worker/tests/prepare-assets-contract.test.mjs"
 run_check "external Latency agent tests" node "$ROOT/worker/tests/latency-agents.test.mjs"
 run_check "Ping target color tests" node "$ROOT/worker/tests/ping-target-colors.test.mjs"
 run_check "Ping configuration tests" node "$ROOT/worker/tests/ping-config.test.mjs"
@@ -103,34 +111,11 @@ fi
 run_check "site-only usage model syntax" node --check "$ROOT/scripts/usage-model.mjs"
 run_check "site-only usage model tests" node "$ROOT/tests/usage-model.test.mjs"
 run_shell "worker module bundle" "cd '$ROOT' && node --experimental-loader '$ROOT/worker/tests/cloudflare-sockets-loader.mjs' --input-type=module -e \"import('file://$ROOT/worker/src/index.js').then((m) => { const worker = m.default; if (!worker || typeof worker.fetch !== 'function' || typeof worker.scheduled !== 'function') { console.error('worker entry missing fetch/scheduled'); process.exit(1); } }).catch((error) => { console.error(error); process.exit(1); })\""
-run_shell "js undefined references" "cd '$ROOT' && set -f && FILES=\$(git ls-files -- worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests 2>/dev/null) && if [ -z \"\$FILES\" ]; then FILES=\"worker/src worker/tests frontend/app.js frontend/config.js frontend/functions frontend/js tests\"; fi && $PACKAGE_EXEC eslint@10.6.0 -c tests/eslint.config.mjs --no-error-on-unmatched-pattern \$FILES"
+run_shell "js undefined references" "cd '$ROOT' && set -f && FILES=\$(git ls-files -- worker/src worker/tests tests 2>/dev/null) && if [ -z \"\$FILES\" ]; then FILES=\"worker/src worker/tests tests\"; fi && $PACKAGE_EXEC eslint@10.6.0 -c tests/eslint.config.mjs --no-error-on-unmatched-pattern \$FILES"
 
 echo ""
-echo "=== Frontend JS Syntax ==="
-run_check "app.js" node --check "$ROOT/frontend/app.js"
-run_check "config.js" node --check "$ROOT/frontend/config.js"
-run_shell "frontend modules" "'$PYTHON_BIN' - <<'PY'
-from pathlib import Path
-import os, subprocess
-root = Path(os.environ['ROOT_WIN'])
-html = (root / 'frontend' / 'admin.html').read_text(encoding='utf-8')
-assert 'type=\"module\"' in html, 'admin.html should load module script'
-for rel in [
-    'frontend/js/admin.js',
-    'frontend/js/admin/api.js',
-    'frontend/js/install-command.js',
-    'frontend/js/shared/billing.js',
-    'frontend/js/shared/chart-data.js',
-    'frontend/js/shared/format.js',
-    'frontend/js/shared/html.js',
-    'frontend/js/shared/traffic.js',
-    'frontend/functions/api/[[path]].js',
-]:
-    subprocess.check_call(['node', '--check', str(root / rel)])
-PY"
-run_check "frontend shared imports" node --input-type=module -e "await import('./frontend/js/shared/html.js'); await import('./frontend/js/shared/format.js'); await import('./frontend/js/shared/billing.js'); await import('./frontend/js/shared/chart-data.js'); await import('./frontend/js/shared/traffic.js')"
-run_check "frontend app import smoke" node "$ROOT/tests/frontend-app-import-smoke.mjs"
-run_check "frontend module tests" node "$ROOT/tests/frontend-modules.test.mjs"
+echo "=== Production Frontend ==="
+run_shell "production frontend verify" "cd '$FRONTEND_ROOT' && npm run verify"
 run_check "installer manifest tests" node "$ROOT/tests/installer-manifest.test.mjs"
 run_check "reviewed task source contract" node "$ROOT/tests/task-vendor-contract.test.mjs"
 run_check "production frontend release asset sync" node "$ROOT/tests/production-release-sync.test.mjs"
@@ -184,6 +169,8 @@ run_shell "privileged task entrypoints are mirrored and checksum pinned" "cd '$R
 run_shell "current Agent update repairs missing task service" "cd '$ROOT' && grep -A4 '__ALREADY_CURRENT__' agent/cftz | grep -q 'reconcile_service_layout' && grep -q 'systemctl is-active --quiet \"\$TASK_SERVICE_NAME\"' agent/cftz"
 run_shell "permanent Manager owns fixed actions and updates" "cd '$ROOT' && grep -q 'spawn_manager_update_worker' agent/src/manager.rs && grep -q 'poll_once_manager' agent/src/manager.rs && grep -q 'bootstrap_if_root' agent/src/main.rs && grep -q 'systemd_recovery_update_service' agent/src/manager.rs && grep -q 'manager::is_active' agent/src/updater.rs"
 run_shell "Manager state and update rollback stay root controlled" "cd '$ROOT' && grep -q '/var/lib/nie-sla-agent-manager/manager-heartbeat' agent/src/manager.rs && grep -q 'ensure_manager_state_dir' agent/src/manager.rs && grep -q 'spawn_update_watchdog' agent/src/manager.rs && grep -q 'systemd-run' agent/src/manager.rs && grep -q 'rollback_failed_update' agent/src/manager.rs"
+run_shell "Agent update swaps are locked and durable" "cd '$ROOT' && grep -q 'UPDATE_LOCK_PATH' agent/src/updater.rs && grep -q 'write_pending_marker' agent/src/updater.rs && grep -q 'sync_parent_directory' agent/src/updater.rs && grep -q 'rollback_install_swap' agent/src/updater.rs"
+run_shell "backroute probes remain bounded and endpoint matching is case safe" "cd '$ROOT' && grep -q 'run_probe_bounded' agent/scripts/backroute.sh && grep -q 'timeout 25s' agent/scripts/backroute.sh && grep -q 'grep -Fi' agent/scripts/backroute.sh"
 run_shell "Manager capabilities are allow-listed end to end" "cd '$ROOT' && grep -q '\"capabilities\": manager::reported_capabilities' agent/src/main.rs && grep -q 'normalizeAgentCapabilities' worker/src/metrics.js && grep -q 'agent_runtime' worker/src/admin/targets.js && grep -q 'capabilities?.actions' worker/src/admin/agent-tasks.js"
 run_shell "fixed tasks do not use remote shell strings" "cd '$ROOT' && ! grep -q 'bash <(curl' agent/src/tasks.rs && ! grep -q '\.arg(\"-lc\")' agent/src/tasks.rs && grep -q '\.env_clear()' agent/src/tasks.rs"
 run_shell "IP unlock dependencies stay task-local" "cd '$ROOT' && grep -q 'OPTIONAL_DIG_HELPER' agent/src/tasks.rs && grep -q 'OPTIONAL_NSLOOKUP_HELPER' agent/src/tasks.rs && grep -q 'NIE_SLA_DNS_COMPAT_EXECUTABLE' agent/src/tasks.rs && grep -q 'task_dir.join(\"bin\")' agent/src/tasks.rs && grep -q 'set_private_executable_permissions' agent/src/tasks.rs && ! grep -qE 'Command::new\(\"(apt|apt-get|dnf|yum|pacman|apk)\"\)|\b(apt|apt-get|dnf|yum|pacman|apk) (install|add)\b' agent/src/tasks.rs"

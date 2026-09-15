@@ -41,6 +41,9 @@ const env = {
       if (pathname === '/admin.html') {
         return new Response(null, { status: 307, headers: { location: '/admin' } });
       }
+      if (pathname === '/console-7f3a' || pathname === '/console-7f3a/') {
+        return new Response('Not Found', { status: 404 });
+      }
       return new Response(pathname, {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
@@ -70,5 +73,15 @@ for (const legacy of ['/admin', '/admin/', '/admin.html']) {
 
 const stylesheet = await routeStaticAssets(new Request('https://status.example/style.css'), env);
 assert.equal(await stylesheet.text(), '/style.css');
+
+let unexpectedDatabaseReads = 0;
+const assetFirstEnv = {
+  DB: { prepare() { unexpectedDatabaseReads += 1; throw new Error('D1 should not be needed for a real static asset'); } },
+  ASSETS: { async fetch() { return new Response('real static asset', { status: 200 }); } },
+};
+const genericAsset = await routeStaticAssets(new Request('https://status.example/favicon'), assetFirstEnv);
+assert.equal(genericAsset.status, 200);
+assert.equal(await genericAsset.text(), 'real static asset');
+assert.equal(unexpectedDatabaseReads, 0, 'existing single-segment assets must bypass custom-admin D1 lookup');
 
 console.log('admin path tests passed');

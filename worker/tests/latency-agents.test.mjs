@@ -120,6 +120,18 @@ const fallbackSubmission = await submitLatencyAgentResults(jsonRequest({}), { ..
 assert.equal(fallbackSubmission.storage, 'd1_fallback', 'corrupt latency archive must fall back without overwriting it');
 assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM latency_results WHERE node_id = ? AND target_id = 'public-vps'`).get(created.id).count, 1);
 
+database.prepare(`INSERT INTO targets (id, name, group_name, type, target_host, target_port, timeout_ms, interval_sec, probe_region, enabled, no_public_ip, created_at, updated_at) VALUES (?, ?, 'VPS', 'tcp', ?, ?, 5000, 300, 'auto', 1, 0, ?, ?)`)
+  .run('second-public-vps', 'Second public VPS', '198.51.100.20', 443, now, now);
+const sameBucketSubmission = await submitLatencyAgentResults(jsonRequest({}), { ...env, ARCHIVE: corruptLatencyArchive }, {
+  node_id: created.id,
+  results: [
+    { target_id: 'public-vps', checked_at: checkedAt + 60, latency_ms: 52, ok: true },
+    { target_id: 'second-public-vps', checked_at: checkedAt + 60, latency_ms: 61, ok: true },
+  ],
+});
+assert.equal(sameBucketSubmission.storage, 'd1_fallback');
+assert.equal(database.prepare(`SELECT COUNT(*) AS count FROM latency_results WHERE node_id = ? AND target_id = 'second-public-vps'`).get(created.id).count, 1, 'one existing target in a fallback bucket must not suppress another target');
+
 console.log('external Latency agent tests passed');
 
 function jsonRequest(body) {

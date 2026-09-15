@@ -1,6 +1,3 @@
-// Embedded CF usage estimator — a compact port of scripts/usage-model.mjs
-// (usage-model-v1.3.3 calibration). Numbers are model estimates for the
-// admin dashboard, not Cloudflare metering; the console stays the truth.
 export const MODEL_VERSION = 'usage-model-embedded-v1.3.3';
 
 const CAL = Object.freeze({
@@ -39,7 +36,6 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
   const messages = Math.max(wss + legacy, 1) * h * (3600 / reportSec);
   const drains = messages; // one telemetry append per reported message batch
 
-  // --- event counts (per window) ---
   const ev = {
     wss_messages: wss * h * (3600 / reportSec),
     http_metrics: legacy * h * (3600 / reportSec),
@@ -51,7 +47,6 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
     public_dynamic: CAL.publicRps * 3600 * h,
   };
 
-  // --- D1 (query paths mirrored from usage-model.mjs D1_PROFILES) ---
   const d1QueryBase =
     ev.task_polls * 8 + ev.update_checks * 12 + ev.latency_calls * 13 +
     ev.http_metrics * 6 + ev.ping_refresh * 6 + ev.cron * 8 + ev.public_dynamic * 0;
@@ -60,15 +55,10 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
   const d1WriteQueries =
     ev.task_polls * 1 + ev.update_checks * 1 + ev.latency_calls * 3 +
     ev.http_metrics * 1 + ev.ping_refresh * 1 + ev.cron * 3;
-  // Latest-state throttle (300s per agent) and no-public-ip availability.
   const stateUpserts = agents * h * (3600 / 300);
   const d1RowsWritten = (d1WriteQueries + stateUpserts * 1.5) * CAL.d1RowsWritten;
   const d1RowsRead = d1ReadQueries * CAL.d1RowsRead + d1Queries * 4.7;
 
-  // --- Durable Objects ---
-  // Probe history appends are per-target on the 5-minute healthy cadence;
-  // the multiplier folds in region-batch DOs, fast status and visitor streams
-  // calibrated against the 2026-09-06 metered day (76,129 DO requests).
   const probeEvents = targets * h * (3600 / 300) * CAL.probeEvent;
   const doRequests =
     (ev.wss_messages +
@@ -76,21 +66,16 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
       probeEvents +
       minutes * 2) * 2.25;
 
-  // SQLite rows written: telemetry chunks, latest-state mirror, probe day
-  // buckets, hourly flush bookkeeping. Approximation of the post-201-incident
-  // memory-first layout.
   const doRowsWritten =
     drains * 1.2 +
     stateUpserts * 1.2 +
     targets * 48 * 1.5 +
     agents * 24 * 3;
 
-  // --- Workers ---
   const workersCalls =
     ev.task_polls + ev.update_checks + ev.latency_calls * 2 + ev.ping_refresh +
     ev.http_metrics + ev.cron + ev.public_dynamic + latencyNodes * 8;
 
-  // --- R2 ---
   const r2ClassA = (agents * h * (2 + 24 / h) + latencyNodes * h * 30) * CAL.r2ClassA;
   const r2ClassB = (agents * h * 8 + ev.public_dynamic * CAL.r2PublicReadRate) * CAL.r2ClassA;
 

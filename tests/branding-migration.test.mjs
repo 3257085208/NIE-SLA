@@ -4,8 +4,12 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
+const configuredFrontend = process.env.NIE_SLA_FRONTEND_ROOT
+  ? path.resolve(process.env.NIE_SLA_FRONTEND_ROOT)
+  : null;
 const siblingFrontend = path.resolve(root, '..', 'frontend');
-const frontendRoot = existsSync(path.join(siblingFrontend, 'AGENTS.md')) ? siblingFrontend : path.join(root, 'frontend');
+const frontendRoot = configuredFrontend
+  || (existsSync(path.join(siblingFrontend, 'AGENTS.md')) ? siblingFrontend : path.join(root, 'frontend'));
 
 const visibleFiles = [
   'index.html',

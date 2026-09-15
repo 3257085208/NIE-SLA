@@ -1,15 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.39",
-  "agent_version": "v1.1.39",
-  "source_ref": "app-v1.1.39",
-  "published_at": "2026-09-11T14:00:00Z",
-  "title": "NIE-SLA 1.1.39",
+  "version": "1.1.42",
+  "agent_version": "v1.1.42",
+  "source_ref": "app-v1.1.42",
+  "published_at": "2026-09-15T03:27:54Z",
+  "title": "NIE-SLA 1.1.42",
   "changelog": [
-    "telemetry 进度文件改为固定路径 /var/lib/nie-sla-agent/telemetry-progress，并在进程启动最早期写入；Manager 的“陈旧即重启”不再受旧安装队列路径影响。",
-    "磁盘枚举与刷新移入后台线程（每 60 秒快照），采样/上报循环不再因挂死的挂载点或故障磁盘阻塞；nvidia-smi 探测增加 10 秒超时，驱动故障不再卡死整个 Agent。",
-    "CF 探测错误细化：无法连接目标时显示“无法连接目标（端口未开放或防火墙拦截）”，区分连接超时/DNS/TLS/拒绝。",
-    "不改变任何上报/探测频率，也不改变用户可见行为。"
+    "修正 Load/Proc 指标图表在数据成功返回后未触发坐标范围计算与重绘的问题。",
+    "修正 Agent 指标页的 Proc 标签与异步切换状态；加载期间不再短暂显示旧时间范围或旧指标，TCP Ping 卡片标题也会同步更新。",
+    "Worker 为 proc 请求只返回 process_count 字段，减少无关遥测数据和切换等待时间。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -623,6 +623,7 @@ const compactMetrics = compactMetricPoints(metricPoints, 100);
 assert.ok(compactMetrics.length <= 100);
 assert.equal(compactMetrics[0].ts, metricPoints[0].ts);
 assert.equal(compactMetrics.at(-1).ts, metricPoints.at(-1).ts);
+assert.deepEqual(metricFieldsForRequest('proc'), ['process_count']);
 assert.deepEqual(metricFieldsForRequest('net'), ['net_rx', 'net_tx']);
 const metricColumns = metricPointsToColumns(metricPoints.slice(0, 3), ['cpu']);
 assert.deepEqual(metricColumns.fields, ['cpu']);

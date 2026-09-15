@@ -28,7 +28,12 @@ await buffer.append({
 });
 await buffer.alarm();
 assert.equal(archive.puts, 1, 'completed days must use one R2 object');
-assert.equal((await storage.list({ prefix: 'day:' })).size, 1, 'only the current day remains hot');
+const pendingDay = await storage.get(`day:${previousDay}`);
+assert.ok(pendingDay?.archived_at, 'archived days must await survival confirmation before release');
+await storage.put(`day:${previousDay}`, { ...pendingDay, archived_at: nowSec() - 3600 });
+await buffer.alarm();
+assert.ok(await storage.get(`day:${previousDay}`), 'days inside the read window must stay hot for the public history');
+assert.equal((await storage.list({ prefix: 'day:' })).size, 2, 'the current day plus the read-window day remain hot');
 
 const history = await buffer.read({ fromDay: previousDay, toDay: currentDay, since: now - 2 * 86400, until: now });
 assert.deepEqual(history.points.map(point => point.checked_at), [now - 86400 + 60, now - 20]);
@@ -47,16 +52,19 @@ await corruptBuffer.append({
 });
 // A corrupt archive object must not break the alarm chain: the alarm resolves
 // without throwing, the corrupt history is never overwritten, and the failing
-// day is retried a bounded number of times before being dropped.
+// day is moved to durable dead-letter storage instead of being dropped.
 await corruptBuffer.alarm();
 assert.equal(corruptArchive.puts, 0, 'corrupt history must not be overwritten');
 await corruptBuffer.alarm();
 await corruptBuffer.alarm();
 assert.equal(corruptArchive.puts, 0, 'corrupt history must never be overwritten by retries');
 await corruptBuffer.alarm();
-assert.equal(corruptBuffer.memDays.size, 0, 'a permanently failing day must be dropped after the retry limit');
+assert.equal(corruptBuffer.memDays.size, 0, 'a permanently failing day must leave memory after durable dead-letter handoff');
+const deadLetter = await corruptStorage.get(`dead-letter:day:${previousDay}`);
+assert.equal(deadLetter?.dead_letter, true, 'a permanently failing day must be retained durably');
+assert.equal(deadLetter?.points?.length, 1, 'dead-letter storage must retain the failed point');
 const recovered = await corruptBuffer.read({ fromDay: previousDay, toDay: previousDay, since: now - 2 * 86400, until: now });
-assert.equal(recovered.points.length, 0, 'the dropped day must not surface corrupt points');
+assert.equal(recovered.points.length, 1, 'dead-letter points must remain readable while the archive is corrupt');
 
 console.log('probe history buffer tests passed');
 

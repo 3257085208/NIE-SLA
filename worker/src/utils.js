@@ -44,10 +44,11 @@ export function shouldRunScheduledFollowups(probe) {
   return Number(probe?.count || 0) > 0;
 }
 
-export function lastPersistedCheckAt(target, latestStatus) {
+export function lastPersistedCheckAt(target, latestStatus, r2HistoryCheckedAt = 0) {
   return Math.floor(Math.max(
     Number(target?.last_checked_at || 0),
     Number(latestStatus?.checked_at || 0),
+    Number(r2HistoryCheckedAt || 0),
   ) / BUCKET_SEC) * BUCKET_SEC;
 }
 

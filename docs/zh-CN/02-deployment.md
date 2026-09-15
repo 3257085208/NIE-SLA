@@ -44,6 +44,16 @@ Agent Token 由后台按节点自动生成，不需要配置全局 `AGENT_TOKEN`
 
 后台“系统更新”显示当前版本、最新版本与站内更新日志。部署仓库的 `NIE-SLA Online Update` 工作流可以手动或按计划检查更新，保留部署仓库自己的 `wrangler.jsonc`；如果用户改动了其他源代码，工作流会停止，避免静默覆盖。
 
+## 私有生产 Worker 发布
+
+私有生产 Worker 不应从 feature 分支或未提交工作树直接发布。发布前先在 Agent/Worker 仓库完成 `bash test.sh`，为 Agent HEAD 创建与 `agent_version` 一致的 `vX.Y.Z` tag，并固定一个已经审阅的 Frontend commit SHA。然后从 Agent 仓库执行：
+
+```bash
+NIE_SLA_FRONTEND_REF=<40 位 Frontend commit SHA> ./worker/deploy.sh
+```
+
+脚本会依次执行本地门禁、确认 Frontend SHA 就是当前被测试的 Frontend HEAD、从该 commit 的 Git archive 生成静态资产、校验 Agent tag 与 update manifest、写入 `build-provenance.json`、执行 Wrangler dry-run，最后才允许正式部署。当前工作树脏、缺少精确 Agent tag、未提供/不匹配 Frontend SHA 或 dry-run 失败都会终止发布。
+
 ## 部署后检查
 
 ```bash

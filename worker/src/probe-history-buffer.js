@@ -1,16 +1,18 @@
 import { clamp, dayFromSec, dayStartSec, isMissedMonitorPoint, nowSec, parseBoolean, sanitizeId } from './utils.js';
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
-import { readR2JsonResult } from './storage.js';
+import { readR2JsonResult, verifyR2Json } from './storage.js';
+import { withS3Archive } from './r2s3.js';
 
 const DAY_PREFIX = 'day:';
 const SCHEMA = 'nie-sla-probe-history-day-v1';
 const DEFAULT_MAX_POINTS = 2_000;
 const DAY_RANGE_LIMIT = 90;
-// A permanently failing day (e.g. corrupt archive object) is dropped after
-// this many alarm attempts instead of being retried forever.
 const MAX_MEM_DAY_ATTEMPTS = 3;
-// Same bounded-retry budget for the completed-day rotation path.
 const MAX_ARCHIVE_DAY_ATTEMPTS = 3;
+const DEAD_LETTER_PREFIX = 'dead-letter:day:';
+const ARCHIVE_CONFIRM_WINDOW_SEC = 1_800;
+const MAX_ARCHIVE_CONFIRM_FAILS = 8;
+const ARCHIVE_READ_RETENTION_SEC = 4 * 86_400;
 
 /**
  * Probe history is intentionally a per-target Durable Object.  The object
@@ -21,9 +23,7 @@ const MAX_ARCHIVE_DAY_ATTEMPTS = 3;
 export class ProbeHistoryBuffer {
   constructor(state, env) {
     this.state = state;
-    this.env = env;
-    // Quota mode: incoming probe points are batched in memory and flushed to
-    // SQLite storage / R2 by the alarm, instead of one storage write per probe.
+    this.env = withS3Archive(env);
     this.memDays = new Map();
     this.memDayAttempts = new Map();
     this.archiveAttempts = new Map();
@@ -50,6 +50,24 @@ export class ProbeHistoryBuffer {
         Number(url.searchParams.get('before') || Number.MAX_SAFE_INTEGER),
       ));
     }
+    if (request.method === 'GET' && url.pathname === '/dead-letter') {
+      return json(await this.listDeadLetters(url.searchParams.get('limit')));
+    }
+    if (request.method === 'POST' && url.pathname === '/dead-letter/replay') {
+      const body = await request.json().catch(() => ({}));
+      const day = String(body?.day || '');
+      if (!isDay(day)) return json({ ok: false, error: '无效的 dead-letter 日期' }, 400);
+      try {
+        return json(await this.replayDeadLetter(day));
+      } catch (error) {
+        console.error(`replay probe day ${day} dead-letter failed:`, String(error?.message || error));
+        return json({ ok: false, error: 'dead-letter 重放失败，原记录仍保留' }, 503);
+      }
+    }
+    if (request.method === 'POST' && url.pathname === '/dead-letter/drain') {
+      const body = await request.json().catch(() => ({}));
+      return json(await this.drainDeadLetters(body?.limit));
+    }
     if (request.method === 'POST' && url.pathname === '/delete') {
       await this.state.storage.deleteAll();
       return json({ ok: true });
@@ -74,7 +92,6 @@ export class ProbeHistoryBuffer {
     }
     if (!incoming.size) return { ok: true, skipped: true };
 
-    // Memory-first: batch incoming points and let the alarm persist them.
     for (const [day, points] of incoming) {
       this.memDays.set(day, (this.memDays.get(day) || []).concat(points));
     }
@@ -92,8 +109,6 @@ export class ProbeHistoryBuffer {
 
     const points = [];
     for (const day of days) {
-      // One corrupt or unreadable archive day must not take down the whole
-      // read: skip its archived points and still serve live/memory data.
       let archived = null;
       try {
         archived = await this.readArchiveDay(day, stateByDay.get(day)?.target_id || null);
@@ -102,9 +117,11 @@ export class ProbeHistoryBuffer {
       }
       const live = stateByDay.get(day);
       const memPoints = this.memDays.get(day) || [];
+      const deadLetter = await this.state.storage.get(`${DEAD_LETTER_PREFIX}${day}`).catch(() => null);
       const merged = mergeDay(archived, live?.target_id || '', day, [
         ...(Array.isArray(live?.points) ? live.points : []),
         ...memPoints,
+        ...(Array.isArray(deadLetter?.points) ? deadLetter.points : []),
       ], this.env);
       for (const point of merged.points || []) {
         if (Number(point.checked_at) >= start && Number(point.checked_at) <= end) points.push(toPublicPoint(point));
@@ -125,56 +142,161 @@ export class ProbeHistoryBuffer {
     return { ok: true, day, ...summarizePoints(result.points) };
   }
 
+  async listDeadLetters(limit = 50) {
+    const boundedLimit = clamp(Number(limit || 50), 1, 100);
+    const meta = await this.state.storage.get('meta');
+    const rows = await this.state.storage.list({ prefix: DEAD_LETTER_PREFIX, limit: boundedLimit });
+    const deadLetters = [...rows].map(([key, value]) => ({
+      day: String(key).slice(DEAD_LETTER_PREFIX.length),
+      target_id: String(value?.target_id || meta?.target_id || ''),
+      points: Array.isArray(value?.points) ? value.points.length : 0,
+      saved_at: value?.saved_at || null,
+    })).filter((item) => isDay(item.day));
+    return { ok: true, target_id: String(meta?.target_id || ''), dead_letters: deadLetters };
+  }
+
+  async replayDeadLetter(day) {
+    const key = `${DEAD_LETTER_PREFIX}${day}`;
+    const entry = await this.state.storage.get(key);
+    if (!entry) return { ok: true, day, replayed: false, reason: 'not_found' };
+    const points = Array.isArray(entry.points) ? entry.points : [];
+    await this.mergeArchiveDay(entry.target_id || '', day, points);
+    await this.state.storage.delete(key);
+    return { ok: true, day, replayed: true, points: points.length };
+  }
+
+  async drainDeadLetters(limit = 25) {
+    const boundedLimit = clamp(Number(limit || 25), 1, 25);
+    const rows = await this.state.storage.list({ prefix: DEAD_LETTER_PREFIX, limit: boundedLimit });
+    const drained = [];
+    const failed = [];
+    for (const [key] of rows) {
+      const day = String(key).slice(DEAD_LETTER_PREFIX.length);
+      if (!isDay(day)) continue;
+      try {
+        const result = await this.replayDeadLetter(day);
+        if (result.replayed) drained.push(result);
+      } catch (error) {
+        failed.push({ day, error: '重放失败，原记录仍保留' });
+        console.error(`drain probe day ${day} dead-letter failed:`, String(error?.message || error));
+      }
+    }
+    return { ok: true, drained, failed, processed: drained.length + failed.length };
+  }
+
   async flushCompletedDays(currentDay = dayFromSec(nowSec(), this.env)) {
     if (!this.env.ARCHIVE) return { ok: true, skipped: true, reason: 'missing_archive' };
     const rows = await this.state.storage.list({ prefix: DAY_PREFIX });
     let flushed = 0;
+    let confirmPending = false;
     for (const [key, value] of rows) {
       const day = String(key).slice(DAY_PREFIX.length);
       if (!isDay(day) || day >= currentDay) continue;
-      // Per-day isolation: one unreadable or failing day must not block the
-      // rotation of every later day (storage.list returns keys in lex order).
+      const points = Array.isArray(value?.points) ? value.points : [];
+      const archivedAt = Number(value?.archived_at || 0);
+      if (archivedAt && nowSec() - archivedAt < ARCHIVE_CONFIRM_WINDOW_SEC) {
+        confirmPending = true;
+        continue;
+      }
       try {
-        await this.mergeArchiveDay(value?.target_id || '', day, Array.isArray(value?.points) ? value.points : []);
+        if (archivedAt) {
+          if (await this.archiveDayPersisted(value?.target_id || '', day)) {
+            if (nowSec() - dayStartSec(day, this.env) >= ARCHIVE_READ_RETENTION_SEC) {
+              this.archiveAttempts.delete(day);
+              await this.state.storage.delete(key);
+              flushed += 1;
+            } else {
+              confirmPending = true;
+            }
+            continue;
+          }
+          const confirmFails = Number(value?.confirm_fails || 0) + 1;
+          if (confirmFails >= MAX_ARCHIVE_CONFIRM_FAILS) {
+            const saved = await this.writeDeadLetterDay(value?.target_id || '', day, points);
+            if (saved) {
+              console.error(`probe day ${day} archive never persisted; moved to dead-letter after ${confirmFails} confirm failures`);
+              this.archiveAttempts.delete(day);
+              await this.state.storage.delete(key);
+            } else {
+              this.archiveAttempts.set(day, MAX_ARCHIVE_DAY_ATTEMPTS);
+            }
+            continue;
+          }
+          await this.mergeArchiveDay(value?.target_id || '', day, points);
+          await this.state.storage.put(key, { ...value, archived_at: nowSec(), confirm_fails: confirmFails });
+          confirmPending = true;
+          continue;
+        }
+        await this.mergeArchiveDay(value?.target_id || '', day, points);
+        await this.state.storage.put(key, { ...value, archived_at: nowSec(), confirm_fails: 0 });
+        confirmPending = true;
       } catch (error) {
         const attempts = Number(this.archiveAttempts.get(day) || 0) + 1;
         if (attempts >= MAX_ARCHIVE_DAY_ATTEMPTS) {
-          console.error(`giving up archiving probe day ${day} after ${attempts} attempts:`, String(error?.message || error));
-          this.archiveAttempts.delete(day);
-          await this.state.storage.delete(key).catch(() => {});
+          const saved = await this.writeDeadLetterDay(value?.target_id || '', day, points);
+          if (saved) {
+            console.error(`probe day ${day} moved to durable dead-letter storage after ${attempts} archive attempts`);
+            this.archiveAttempts.delete(day);
+            await this.state.storage.delete(key);
+          } else {
+            console.error(`probe day ${day} remains queued after ${attempts} archive attempts:`, String(error?.message || error));
+            this.archiveAttempts.set(day, attempts);
+          }
         } else {
           this.archiveAttempts.set(day, attempts);
+          confirmPending = true;
         }
-        continue;
       }
-      this.archiveAttempts.delete(day);
-      await this.state.storage.delete(key);
-      flushed += 1;
     }
-    return { ok: true, flushed };
+    let replayed = 0;
+    let deadLettersPending = false;
+    try {
+      const replay = await this.drainDeadLetters(3);
+      replayed = Array.isArray(replay?.drained) ? replay.drained.length : 0;
+      const remaining = await this.state.storage.list({ prefix: DEAD_LETTER_PREFIX, limit: 1 });
+      deadLettersPending = remaining.size > 0;
+    } catch (error) {
+      console.error('probe dead-letter auto drain failed:', String(error?.message || error));
+      deadLettersPending = true;
+    }
+    return { ok: true, flushed, replayed, dead_letters_pending: deadLettersPending, confirm_pending: confirmPending };
+  }
+
+  async archiveDayPersisted(targetId, day) {
+    const meta = await this.state.storage.get('meta');
+    const resolvedTargetId = sanitizeId(targetId || meta?.target_id);
+    try {
+      const key = probeHistoryKey(this.env, resolvedTargetId, day);
+      if (typeof this.env.ARCHIVE.head === 'function' && !(await this.env.ARCHIVE.head(key))) return false;
+      const payload = await verifyR2Json(this.env, key, (value) => value && typeof value === 'object' && !Array.isArray(value)
+        && String(value.target_id || '') === resolvedTargetId && String(value.day || '') === day && Array.isArray(value.points));
+      return Boolean(payload);
+    } catch (_) {
+      return false;
+    }
   }
 
   async alarm() {
-    // Stages are independent and the alarm must always reschedule itself:
-    // an exception escaping here would drop the alarm chain and silently
-    // stop persisting probe history until the next append.
+    let pending = this.memDays.size > 0;
     try {
       await this.flushMemDays();
     } catch (error) {
       console.error('flush mem probe days failed:', String(error?.message || error));
+      pending = true;
     }
+    let deadLettersPending = false;
+    let confirmPending = false;
     try {
-      await this.flushCompletedDays(dayFromSec(nowSec(), this.env));
+      const result = await this.flushCompletedDays(dayFromSec(nowSec(), this.env));
+      deadLettersPending = Boolean(result?.dead_letters_pending);
+      confirmPending = Boolean(result?.confirm_pending);
     } catch (error) {
       console.error('flush completed probe days failed:', String(error?.message || error));
+      deadLettersPending = true;
     }
-    await this.scheduleFlush(dayFromSec(nowSec(), this.env), this.memDays.size > 0);
+    await this.scheduleFlush(dayFromSec(nowSec(), this.env), pending || deadLettersPending || confirmPending);
   }
 
-  // Persist memory-batched points: past days go straight to the R2 archive,
-  // the current day merges into its SQLite day chunk. One put per day bucket.
-  // A failed day keeps its points for the next alarm instead of losing the
-  // whole batch.
   async flushMemDays() {
     if (!this.memDays.size) return;
     const currentDay = dayFromSec(nowSec(), this.env);
@@ -182,7 +304,11 @@ export class ProbeHistoryBuffer {
     for (const [day, points] of this.memDays) {
       try {
         if (day < currentDay && this.env.ARCHIVE) {
-          await this.mergeArchiveDay(await this.memTargetId(), day, points);
+          const targetId = await this.memTargetId();
+          await this.mergeArchiveDay(targetId, day, points);
+          const key = `${DAY_PREFIX}${day}`;
+          const existing = await this.state.storage.get(key);
+          await this.state.storage.put(key, { ...(existing || {}), target_id: targetId, day, points, archived_at: nowSec(), confirm_fails: 0 });
           this.memDayAttempts.delete(day);
           continue;
         }
@@ -194,9 +320,13 @@ export class ProbeHistoryBuffer {
       } catch (error) {
         const attempts = Number(this.memDayAttempts.get(day) || 0) + 1;
         if (attempts >= MAX_MEM_DAY_ATTEMPTS) {
-          console.error(`giving up on probe day ${day} after ${attempts} attempts:`, String(error?.message || error));
-          this.memDayAttempts.delete(day);
-          continue;
+          const saved = await this.writeDeadLetterDay(await this.memTargetId(), day, points);
+          if (saved) {
+            console.error(`probe day ${day} moved to durable dead-letter storage after ${attempts} flush attempts`);
+            this.memDayAttempts.delete(day);
+            continue;
+          }
+          console.error(`probe day ${day} remains queued after ${attempts} flush attempts:`, String(error?.message || error));
         }
         this.memDayAttempts.set(day, attempts);
         failed.set(day, points);
@@ -208,6 +338,26 @@ export class ProbeHistoryBuffer {
   async memTargetId() {
     const meta = await this.state.storage.get('meta');
     return sanitizeId(meta?.target_id);
+  }
+
+  async writeDeadLetterDay(targetId, day, points) {
+    try {
+      const key = `${DEAD_LETTER_PREFIX}${day}`;
+      const existing = await this.state.storage.get(key);
+      const merged = mergeDay(existing, targetId, day, [
+        ...(Array.isArray(existing?.points) ? existing.points : []),
+        ...(Array.isArray(points) ? points : []),
+      ], this.env);
+      await this.state.storage.put(key, {
+        ...merged,
+        dead_letter: true,
+        saved_at: new Date().toISOString(),
+      });
+      return true;
+    } catch (error) {
+      console.error(`persist probe day ${day} dead-letter failed:`, String(error?.message || error));
+      return false;
+    }
   }
 
   async scheduleFlush(currentDay, memPending = false) {
@@ -231,16 +381,27 @@ export class ProbeHistoryBuffer {
     const key = probeHistoryKey(this.env, resolvedTargetId, day);
     const existing = await this.readArchiveDay(day, resolvedTargetId);
     const merged = mergeDay(existing, resolvedTargetId, day, points, this.env);
-    await this.env.ARCHIVE.put(key, JSON.stringify({
+    const body = JSON.stringify({
       schema: SCHEMA,
       target_id: merged.target_id,
       day,
       updated_at: new Date().toISOString(),
       points: merged.points,
-    }), {
+    });
+    const bodyBytes = new TextEncoder().encode(body).byteLength;
+    await this.env.ARCHIVE.put(key, body, {
       httpMetadata: { contentType: 'application/json; charset=utf-8' },
       customMetadata: { schema: SCHEMA, target_id: merged.target_id, day },
     });
+    if (typeof this.env.ARCHIVE.head === 'function') {
+      const verify = await this.env.ARCHIVE.head(key);
+      if (!verify) throw new Error(`R2 probe history write did not persist (${resolvedTargetId} ${day})`);
+      if (Number.isFinite(Number(verify.size)) && Number(verify.size) !== bodyBytes) throw new Error(`R2 probe history size mismatch (${resolvedTargetId} ${day} expected ${bodyBytes}, got ${verify.size})`);
+    }
+    await verifyR2Json(this.env, key, (value) => value?.schema === SCHEMA
+      && String(value.target_id || '') === resolvedTargetId
+      && String(value.day || '') === day
+      && Array.isArray(value.points));
   }
 
   async readArchiveDay(day, targetId = null) {
@@ -269,7 +430,9 @@ export async function appendBufferedProbeHistory(env, targetId, bucketWrites) {
     body: JSON.stringify({ target_id: targetId, writes: bucketWrites }),
   });
   if (!response.ok) throw new Error(`SLA 历史缓冲写入失败：HTTP ${response.status}`);
-  return response.json();
+  const result = await response.json();
+  console.log(JSON.stringify({ diag: 'ph-append', target: targetId, days: result?.days, points: result?.points, skipped: result?.skipped || false }));
+  return result;
 }
 
 export async function readBufferedProbeHistory(env, targetId, since, until, fromDay = null, toDay = null) {
@@ -283,6 +446,7 @@ export async function readBufferedProbeHistory(env, targetId, since, until, from
   const response = await env.PROBE_HISTORY.get(id).fetch(url.toString(), { headers: internalRequestHeaders(env) });
   if (!response.ok) throw new Error(`SLA 历史缓冲读取失败：HTTP ${response.status}`);
   const body = await response.json().catch(() => ({}));
+  console.log(JSON.stringify({ diag: 'ph-read', target: targetId, points: Array.isArray(body?.points) ? body.points.length : -1 }));
   return Array.isArray(body?.points) ? body.points : [];
 }
 

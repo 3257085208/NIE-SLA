@@ -56,8 +56,12 @@ globalThis.fetch = async () => ({
 globalThis.CSS = { escape: (value) => String(value) };
 
 const root = path.resolve(import.meta.dirname, '..');
+const configuredFrontend = process.env.NIE_SLA_FRONTEND_ROOT
+  ? path.resolve(process.env.NIE_SLA_FRONTEND_ROOT)
+  : null;
 const siblingFrontend = path.resolve(root, '..', 'frontend');
-const frontendRoot = existsSync(path.join(siblingFrontend, 'AGENTS.md')) ? siblingFrontend : path.join(root, 'frontend');
+const frontendRoot = configuredFrontend
+  || (existsSync(path.join(siblingFrontend, 'AGENTS.md')) ? siblingFrontend : path.join(root, 'frontend'));
 
 await import(pathToFileURL(path.join(frontendRoot, 'app.js')).href);
 await new Promise((resolve) => setTimeout(resolve, 0));

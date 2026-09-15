@@ -45,7 +45,12 @@ await assert.rejects(updatePingConfig(jsonRequest({ ping_interval_sec: 5.5 }), e
 
 await updatePingConfig(jsonRequest({ ping_interval_sec: 20 }), env);
 await updatePingTarget('target-5', jsonRequest({ enabled: false }), env);
+assert.equal(database.prepare(`SELECT enabled FROM ping_targets WHERE id = 'target-5'`).get().enabled, 0);
+await updatePingTarget('target-5', jsonRequest({ enabled: 'false' }), env);
+assert.equal(database.prepare(`SELECT enabled FROM ping_targets WHERE id = 'target-5'`).get().enabled, 0, 'string false must not become truthy');
+await assert.rejects(updatePingTarget('target-5', jsonRequest({ enabled: 'not-a-boolean' }), env), /enabled 必须是布尔值/);
 await updatePingTarget('target-5', jsonRequest({ enabled: true }), env);
+assert.equal(database.prepare(`SELECT enabled FROM ping_targets WHERE id = 'target-5'`).get().enabled, 1);
 
 console.log('Ping configuration tests passed');
 

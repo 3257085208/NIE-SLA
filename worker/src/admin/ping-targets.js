@@ -15,6 +15,13 @@ function normalizeOkInt(value) {
   return ['1', 'true', 'yes', 'ok', 'up'].includes(text) ? 1 : 0;
 }
 
+function normalizeEnabled(value, fallback) {
+  if (value === undefined) return Number(fallback) ? 1 : 0;
+  if (value === true || value === 1 || value === '1' || (typeof value === 'string' && value.trim().toLowerCase() === 'true')) return 1;
+  if (value === false || value === 0 || value === '0' || (typeof value === 'string' && value.trim().toLowerCase() === 'false')) return 0;
+  throw new ApiError(400, 'enabled 必须是布尔值或 true/false');
+}
+
 const MAX_PING_HOURS_PER_BATCH = 25;
 const MAX_PING_AGE_SEC = 7 * 86400;
 const MAX_PING_FUTURE_SEC = 300;
@@ -57,7 +64,7 @@ export async function updatePingTarget(id, request, env) {
   const { target } = normalizePingTarget(rawTarget);
   const color = body?.color !== undefined ? normalizeChartColor(body.color, '') : normalizeChartColor(existing.color, '#159754');
   if (!color) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
-  const enabled = body?.enabled !== undefined ? (body.enabled ? 1 : 0) : existing.enabled;
+  const enabled = normalizeEnabled(body?.enabled, existing.enabled);
   await env.DB.prepare(`UPDATE ping_targets SET name = ?, target = ?, color = ?, enabled = ?, updated_at = ? WHERE id = ?`).bind(name, target, color, enabled, nowSec(), id).run();
   return { ok: true, id };
 }

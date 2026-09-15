@@ -157,6 +157,38 @@ assert.equal(stateASecond.cpu_percent, 12);
 assert.deepEqual(stateASecond.pings.map(ping => ping.target_id), ['target-a'], 'follow-up reports merge against the Agent\'s own previous state');
 assert.deepEqual((await readLatest(wssBuffer, 'vps-b')).pings.map(ping => ping.target_id), ['target-b'], 'an Agent\'s follow-up report must not touch other Agents');
 
+// Deleting a target must invalidate reports already queued in the shared WSS
+// instance, and an old socket must not write again after the target is
+// recreated. This reproduces the former memLatest=false/pendingReports=1 race.
+const deleteRaceStorage = memoryStorage();
+const deleteRaceBuffer = new TelemetryBuffer(
+  { storage: deleteRaceStorage, acceptWebSocket() {}, getWebSockets() { return []; } },
+  testEnv({ DB: mockD1() }),
+);
+const oldDeleteRaceSocket = await openAgentSocket(deleteRaceBuffer, 'vps-delete-race');
+await sendAgentMetrics(deleteRaceBuffer, oldDeleteRaceSocket, {
+  agent_id: 'vps-delete-race',
+  metrics: { cpu_percent: 7, memory: { used_mb: 1, total_mb: 2 }, disk: { used_gb: 1, total_gb: 2 }, net: { rx_bytes: 1, tx_bytes: 1 } },
+});
+assert.equal(deleteRaceBuffer.memReports.length, 1);
+const deleteRaceResponse = await deleteRaceBuffer.fetch(new Request('https://nie-sla.internal/latest?agent_id=vps-delete-race', {
+  method: 'DELETE',
+  headers: { 'x-nie-sla-internal-secret': 'telemetry-test-secret' },
+}));
+assert.equal(deleteRaceResponse.ok, true);
+assert.equal(deleteRaceBuffer.memReports.length, 0, 'deleting an Agent must remove its pending shared-WSS reports');
+await sendAgentMetrics(deleteRaceBuffer, oldDeleteRaceSocket, {
+  agent_id: 'vps-delete-race',
+  metrics: { cpu_percent: 8, memory: { used_mb: 1, total_mb: 2 }, disk: { used_gb: 1, total_gb: 2 }, net: { rx_bytes: 2, tx_bytes: 2 } },
+});
+assert.equal(deleteRaceBuffer.memReports.length, 0, 'an old socket must not enqueue after deletion');
+const newDeleteRaceSocket = await openAgentSocket(deleteRaceBuffer, 'vps-delete-race');
+await sendAgentMetrics(deleteRaceBuffer, newDeleteRaceSocket, {
+  agent_id: 'vps-delete-race',
+  metrics: { cpu_percent: 9, memory: { used_mb: 1, total_mb: 2 }, disk: { used_gb: 1, total_gb: 2 }, net: { rx_bytes: 3, tx_bytes: 3 } },
+});
+assert.equal(deleteRaceBuffer.memReports.length, 1, 'a new lifecycle may report normally after recreation');
+
 const retryStorage = memoryStorage();
 let availabilityBatchAttempts = 0;
 const retryBuffer = new TelemetryBuffer({ storage: retryStorage }, testEnv({
@@ -275,6 +307,19 @@ corruptArchive.objects.set(corruptKey, '{not-json');
 await corruptBuffer.flushCompletedHours(currentHour + 4600);
 assert.equal(corruptArchive.puts, 0, 'corrupt R2 telemetry must not be overwritten');
 assert.equal((await corruptStorage.list({ prefix: 'chunk:' })).size, 1, 'failed corrupt-object flush must retain buffered chunks for retry');
+
+const splitStorage = memoryStorage();
+const splitArchive = memoryR2();
+const splitBuffer = new TelemetryBuffer({ storage: splitStorage }, testEnv({ ARCHIVE: splitArchive }));
+splitArchive.readable = false;
+await append(splitBuffer, { agent_id: 'vps-split', points: [{ ts: completedHour + 10, cpu: 77 }], pings: [] });
+assert.equal((await splitStorage.list({ prefix: 'chunk:' })).size, 1, 'split test must start with one buffered chunk');
+assert.equal(splitArchive.puts, 1, 'a HEAD/GET split still attempts the archive write');
+assert.equal((await splitStorage.list({ prefix: 'chunk:' })).size, 1, 'a HEAD/GET split must retain the source chunk');
+splitArchive.readable = true;
+await splitBuffer.flushCompletedHours(currentHour + 4600);
+assert.equal(splitArchive.puts, 2, 'the retained chunk must retry after archive reads recover');
+assert.equal((await splitStorage.list({ prefix: 'chunk:' })).size, 0, 'the source chunk releases only after GET readback succeeds');
 
 const exportStorage = memoryStorage();
 const exportArchive = memoryR2();
@@ -431,7 +476,9 @@ function memoryR2() {
   return {
     objects: new Map(),
     puts: 0,
+    readable: true,
     async get(key) {
+      if (!this.readable) return null;
       const body = this.objects.get(key);
       return body == null ? null : { async json() { return JSON.parse(body); } };
     },

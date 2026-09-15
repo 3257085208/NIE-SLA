@@ -629,7 +629,7 @@ fn restart_telemetry_service() -> Result<()> {
 }
 
 fn is_progress_stale(age_sec: Option<u64>, max_age_sec: u64) -> bool {
-    matches!(age_sec, Some(age) if age > max_age_sec)
+    !matches!(age_sec, Some(age) if age <= max_age_sec)
 }
 
 fn telemetry_progress_age_sec() -> Option<u64> {
@@ -849,7 +849,7 @@ mod tests {
 
     #[test]
     fn telemetry_progress_staleness_rules() {
-        assert!(!is_progress_stale(None, 1500));
+        assert!(is_progress_stale(None, 1500));
         assert!(!is_progress_stale(Some(1499), 1500));
         assert!(!is_progress_stale(Some(1500), 1500));
         assert!(is_progress_stale(Some(1501), 1500));

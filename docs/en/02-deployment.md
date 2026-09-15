@@ -44,6 +44,16 @@ With the original D1, existing Agent IDs and tokens stay valid. Backup restore i
 
 The admin "System Update" page shows the current version, latest version, and in-app changelog. The deployment repository's `NIE-SLA Online Update` workflow checks and applies official versions, keeps the deployment's own `wrangler.jsonc`, and stops if other source files were modified.
 
+## Private production Worker releases
+
+Do not publish the private Worker from a feature branch or a dirty checkout. Before a release, run `bash test.sh` in the Agent/Worker repository, tag the Agent HEAD with the exact `vX.Y.Z` matching `agent_version`, and select an audited immutable Frontend commit SHA. Then run from the Agent repository:
+
+```bash
+NIE_SLA_FRONTEND_REF=<40-character Frontend commit SHA> ./worker/deploy.sh
+```
+
+The script runs the local gate, confirms that the Frontend SHA is the HEAD being tested, builds Static Assets from that commit's Git archive, verifies the Agent tag and update manifest, writes `build-provenance.json`, runs a Wrangler dry-run, and only then permits the real deployment. A dirty checkout, missing or mismatched Frontend SHA, missing exact Agent tag, or failed dry-run aborts the release.
+
 ## Post-deploy checks
 
 ```bash

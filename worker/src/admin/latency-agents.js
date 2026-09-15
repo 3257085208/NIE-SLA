@@ -1,7 +1,7 @@
 import { ApiError, safeJson } from '../auth.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, sha256Hex } from '../utils.js';
-import { readR2JsonResult } from '../storage.js';
+import { readR2JsonResult, writeR2Json } from '../storage.js';
 import { agentApiBase, agentInstallBase, shellQuote } from './install-command.js';
 import { getMeta, getPublicSettings, setMeta } from './settings.js';
 
@@ -362,7 +362,7 @@ async function appendLatencyArchive(env, nodeId, points) {
       updated_at: nowSec(),
       points: [...byPoint.values()].sort((a, b) => Number(a.checked_at) - Number(b.checked_at) || String(a.target_id).localeCompare(String(b.target_id))),
     };
-    await env.ARCHIVE.put(key, JSON.stringify(payload), { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: { schema: ARCHIVE_SCHEMA } });
+    await writeR2Json(env, key, payload, { schema: ARCHIVE_SCHEMA });
   }
 }
 
@@ -406,17 +406,28 @@ async function readArchiveObjectStrict(bucket, key) {
 
 async function writeLatencyD1Fallback(env, nodeId, points) {
   if (!points.length) return;
-  // This path only runs while R2 is failing; skip when the newest bucket was
-  // already written so every per-minute retry doesn't multiply D1 rows_written
-  // by the retry count.
-  const newestBucket = Math.max(...points.map((point) => Math.floor(Number(point.checked_at) / D1_FALLBACK_BUCKET_SEC) * D1_FALLBACK_BUCKET_SEC));
-  const alreadyStored = await env.DB.prepare(`SELECT 1 FROM latency_results WHERE node_id = ? AND checked_at >= ? LIMIT 1`)
-    .bind(nodeId, newestBucket).first().catch(() => null);
-  if (alreadyStored) return;
-  const statements = [];
+  const candidates = new Map();
   for (const point of points) {
     const checkedAt = Math.floor(Number(point.checked_at) / D1_FALLBACK_BUCKET_SEC) * D1_FALLBACK_BUCKET_SEC;
-    statements.push(env.DB.prepare(`INSERT OR REPLACE INTO latency_results (node_id, target_id, checked_at, latency_ms, ok, error) VALUES (?, ?, ?, ?, ?, ?)`).bind(nodeId, point.target_id, checkedAt, point.latency_ms, point.ok, point.error));
+    candidates.set(`${point.target_id}:${checkedAt}`, { ...point, checked_at: checkedAt });
+  }
+  const candidateRows = [...candidates.values()];
+  const targetIds = [...new Set(candidateRows.map(point => String(point.target_id)))];
+  const minBucket = Math.min(...candidateRows.map(point => point.checked_at));
+  const maxBucket = Math.max(...candidateRows.map(point => point.checked_at));
+  const existing = new Set();
+  for (let offset = 0; offset < targetIds.length; offset += 80) {
+    const chunk = targetIds.slice(offset, offset + 80);
+    const marks = chunk.map(() => '?').join(',');
+    const rows = await env.DB.prepare(`SELECT target_id, checked_at FROM latency_results
+      WHERE node_id = ? AND target_id IN (${marks}) AND checked_at BETWEEN ? AND ?`)
+      .bind(nodeId, ...chunk, minBucket, maxBucket).all().catch(() => ({ results: [] }));
+    for (const row of rows.results || []) existing.add(`${row.target_id}:${row.checked_at}`);
+  }
+  const statements = [];
+  for (const point of candidateRows) {
+    if (existing.has(`${point.target_id}:${point.checked_at}`)) continue;
+    statements.push(env.DB.prepare(`INSERT OR REPLACE INTO latency_results (node_id, target_id, checked_at, latency_ms, ok, error) VALUES (?, ?, ?, ?, ?, ?)`).bind(nodeId, point.target_id, point.checked_at, point.latency_ms, point.ok, point.error));
   }
   for (let offset = 0; offset < statements.length; offset += 80) await env.DB.batch(statements.slice(offset, offset + 80));
 }

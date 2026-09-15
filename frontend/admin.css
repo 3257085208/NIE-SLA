@@ -283,6 +283,12 @@ h3 {
   margin-bottom: 0;
 }
 .settings-panel-grid > .debug-logs-card { grid-column: 1 / -1; }
+.dead-letter-toolbar { display: flex; justify-content: flex-end; gap: 8px; margin: 10px 0; }
+.dead-letter-list { display: grid; gap: 6px; }
+.dead-letter-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); }
+.dead-letter-row > div { min-width: 0; }
+.dead-letter-row strong, .dead-letter-row small { display: block; overflow-wrap: anywhere; }
+.dead-letter-row small { margin-top: 3px; color: var(--muted); font: 500 11px/1.4 var(--mono); }
 .debug-log-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .debug-log-details { border: 1px solid var(--line); border-radius: 5px; background: var(--paper); }
 .debug-log-details > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; cursor: pointer; list-style: none; font-weight: 800; }

@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260908-backroute1";
-import { createAdminClient } from "./admin/api.js?v=20260821-themecfg2";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260821-themecfg2";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260821-themecfg2";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260821-themecfg2";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260911-cache1";
+import { createAdminClient } from "./admin/api.js?v=20260911-cache1";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260911-cache1";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260911-cache1";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260911-cache1";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260911-cache1";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js";
+} from "./shared/target-catalogs.js?v=20260911-cache1";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260821-themecfg2";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260821-themecfg2";
-import { escapeAttr, escapeHtml } from "./shared/html.js";
-import { fmtBytes } from "./shared/format.js";
+} from "./shared/grouping.js?v=20260911-cache1";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260911-cache1";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260911-cache1";
+import { fmtBytes } from "./shared/format.js?v=20260911-cache1";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -2429,6 +2429,7 @@ async function loadSettings() {
   loadAlerts();
   loadAppearance();
   loadDebugLogs();
+  loadProbeHistoryDeadLetters();
 }
 
 async function loadEncryption() {
@@ -3252,6 +3253,65 @@ async function loadDebugLogs() {
     errBox("sDebugLogs", e);
   }
 }
+
+async function loadProbeHistoryDeadLetters() {
+  const box = byId("sProbeHistoryDeadLetters");
+  if (!box) return;
+  box.innerHTML = '<div class="loading compact">正在检查历史死信...</div>';
+  try {
+    const data = await apiAdmin("/api/probe-history/dead-letter?limit=50", {}, 30_000);
+    const rows = Array.isArray(data.dead_letters) ? data.dead_letters : [];
+    const errors = Array.isArray(data.errors) ? data.errors : [];
+    box.innerHTML = `<p class="hint">归档失败超过重试上限的历史日会保存在 Durable Object 中。重放成功后才会删除死信，失败时原记录保留。</p>
+      <div class="dead-letter-toolbar"><button type="button" class="btn btn-sm" id="probeDeadLettersRefresh">刷新</button><button type="button" class="btn btn-primary btn-sm" id="probeDeadLettersDrain" ${rows.length ? "" : "disabled"}>重放当前列表</button></div>
+      ${rows.length ? `<div class="dead-letter-list">${rows.map(renderProbeHistoryDeadLetter).join("")}</div>` : '<p class="hint">暂无待处理历史死信。</p>'}
+      ${errors.length ? `<p class="hint">有 ${errors.length} 个探针读取失败，刷新后可重试。</p>` : ""}`;
+    byId("probeDeadLettersRefresh")?.addEventListener("click", loadProbeHistoryDeadLetters);
+    byId("probeDeadLettersDrain")?.addEventListener("click", drainProbeHistoryDeadLetters);
+    box.querySelectorAll("button[data-dead-letter-replay]").forEach((button) => {
+      button.addEventListener("click", () => replayProbeHistoryDeadLetter(button));
+    });
+  } catch (error) {
+    errBox("sProbeHistoryDeadLetters", error);
+  }
+}
+
+function renderProbeHistoryDeadLetter(item) {
+  const targetId = String(item.target_id || "");
+  const day = String(item.day || "");
+  return `<div class="dead-letter-row"><div><strong>${escapeHtml(item.target_name || targetId)}</strong><small>${escapeHtml(targetId)} · ${escapeHtml(day)} · ${escapeHtml(String(item.points || 0))} 个桶</small></div><button type="button" class="btn btn-sm" data-dead-letter-replay data-target-id="${escapeAttr(targetId)}" data-day="${escapeAttr(day)}">重放</button></div>`;
+}
+
+async function replayProbeHistoryDeadLetter(button) {
+  const targetId = button?.dataset?.targetId || "";
+  const day = button?.dataset?.day || "";
+  if (!targetId || !day || !confirm(`确认重放 ${targetId} 的 ${day} 历史？`)) return;
+  button.disabled = true;
+  try {
+    const data = await apiAdmin("/api/probe-history/dead-letter/replay", { method: "POST", body: JSON.stringify({ target_id: targetId, day }) }, 30_000);
+    toast(data.replayed ? `已重放 ${targetId} / ${day}` : "该死信已不存在", "ok");
+    await loadProbeHistoryDeadLetters();
+  } catch (error) {
+    button.disabled = false;
+    toast(error?.message || "重放失败，原记录仍保留", "err");
+  }
+}
+
+async function drainProbeHistoryDeadLetters() {
+  const button = byId("probeDeadLettersDrain");
+  if (!button || !confirm("确认重放当前列表中的历史死信？失败记录不会删除。")) return;
+  button.disabled = true;
+  try {
+    const data = await apiAdmin("/api/probe-history/dead-letter/drain", { method: "POST", body: JSON.stringify({ limit: 25 }) }, 60_000);
+    const failed = Array.isArray(data.failed) ? data.failed.length : 0;
+    toast(`已重放 ${data.drained?.length || 0} 条${failed ? `，${failed} 条失败并保留` : ""}`, failed ? "info" : "ok");
+    await loadProbeHistoryDeadLetters();
+  } catch (error) {
+    button.disabled = false;
+    toast(error?.message || "批量重放失败，原记录仍保留", "err");
+  }
+}
+
 function renderDebugLogRow(log) {
   const status = Number(log.status || 0);
   return `<div class="debug-log-row">

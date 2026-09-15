@@ -1,6 +1,7 @@
 import { ApiError, safeJson } from '../auth.js';
 import { bytesToBase64, base64ToBytes } from '../utils.js';
 import { exportAgentTokens, restoreAgentTokens } from '../agent-credentials.js';
+import { writeR2Json } from '../storage.js';
 
 const BACKUP_SCHEMA = 'nie-sla-backup-v1';
 const D1_BATCH_SIZE = 50;
@@ -154,10 +155,7 @@ export async function createRestoreSnapshot(env, captured = null) {
   const portable = captured || await captureRestoreState(env);
   const key = `backups/pre-restore-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
   const encrypted = await encryptJson(portable, material);
-  await env.ARCHIVE.put(key, JSON.stringify({ schema: 'nie-sla-internal-snapshot-v2', created_at: new Date().toISOString(), encrypted }), {
-    httpMetadata: { contentType: 'application/json; charset=utf-8' },
-    customMetadata: { schema: 'nie-sla-internal-snapshot-v2', encrypted: 'true' },
-  });
+  await writeR2Json(env, key, { schema: 'nie-sla-internal-snapshot-v2', created_at: new Date().toISOString(), encrypted }, { schema: 'nie-sla-internal-snapshot-v2', encrypted: 'true' });
   return { stored: true, key };
 }
 

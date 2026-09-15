@@ -1,15 +1,9 @@
 #!/bin/sh
 
-# This script is embedded in the Agent binary and is intentionally not a
-# general command runner. The caller can only select one of the three fixed
-# carrier probe destinations below.
 set -u
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 
-# The privileged Agent passes the target through the environment and also
-# keeps a positional fallback. `sh -s <name> <arg>` puts <name> at $1, so the
-# environment variable is the only safe channel for fixed-task arguments.
 target_ip="${NIE_SLA_BACKROUTE_TARGET:-${1:-}}"
 case "$target_ip" in
   219.141.136.12|202.106.50.1|221.130.33.52|202.96.209.133|210.22.97.1|221.5.88.88|211.136.192.6) ;;
@@ -23,37 +17,46 @@ echo "target=$target_ip"
 
 probe_log=""
 
+run_probe_bounded() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 25s "$@"
+  elif command -v busybox >/dev/null 2>&1; then
+    busybox timeout 25 "$@"
+  else
+    "$@" &
+    probe_pid=$!
+    elapsed=0
+    while kill -0 "$probe_pid" >/dev/null 2>&1; do
+      if [ "$elapsed" -ge 25 ]; then
+        kill -TERM "$probe_pid" >/dev/null 2>&1 || true
+        sleep 1
+        kill -KILL "$probe_pid" >/dev/null 2>&1 || true
+        wait "$probe_pid" >/dev/null 2>&1 || true
+        return 124
+      fi
+      sleep 1
+      elapsed=$((elapsed + 1))
+    done
+    wait "$probe_pid"
+  fi
+}
+
 run_probe() {
   label="$1"
   shift
   printf '\n=== %s ===\n' "$label"
-  if command -v timeout >/dev/null 2>&1; then
-    probe_output="$(timeout 25s "$@" 2>&1)"
-    rc=$?
-  elif command -v busybox >/dev/null 2>&1; then
-    probe_output="$(busybox timeout 25 "$@" 2>&1)"
-    rc=$?
-  else
-    probe_output="$("$@" 2>&1)"
-    rc=$?
-  fi
+  probe_output="$(run_probe_bounded "$@" 2>&1)"
+  rc=$?
   printf '%s\n' "$probe_output"
   printf 'probe_exit=%s\n' "$rc"
   probe_log="$probe_log
 $probe_output"
 }
 
-# True when any previous probe already produced a numbered hop line carrying
-# an IPv4 address (traceroute formats differ, so only this loose shape is
-# trusted across implementations).
 has_hop_evidence() {
   printf '%s\n' "$probe_log" | grep -Eq '^[[:space:]]*[0-9]+[[:space:]]+.*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
 }
 
-# Last-resort path probe built on `ping -t TTL`, which exists on almost every
-# minimal Linux image where traceroute/tracepath were never installed. The
-# numbered hop lines below are parsed by the Agent exactly like traceroute
-# output, and the hop IP ranges are what the line classifier needs.
 run_ping_traceroute() {
   command -v ping >/dev/null 2>&1 || return 0
   printf '\n=== ping-ttl ===\n'
@@ -74,7 +77,7 @@ run_ping_traceroute() {
     printf '%s\n' "$hop_line"
     ping_out="$ping_out
 $hop_line"
-    if printf '%s\n' "$raw" | grep -F "from $target_ip" >/dev/null 2>&1; then
+    if printf '%s\n' "$raw" | grep -Fi "from $target_ip" >/dev/null 2>&1; then
       break
     fi
     ttl=$((ttl + 1))

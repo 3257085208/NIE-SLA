@@ -264,7 +264,6 @@ export async function getTurnstileSecret(env) {
       return null;
     }
   }
-  // Legacy plaintext value written before encryption was introduced.
   return stored;
 }
 
@@ -317,6 +316,14 @@ export async function getPublicSettings(env, { includeAdmin = false } = {}) {
     settings.agent_public_base = await getAgentPublicBase(env);
   }
   return settings;
+}
+
+export async function getPublicAppearanceScript(env) {
+  let saved = null;
+  try { saved = await getMeta(env, 'frontend_appearance'); } catch (_) { return ''; }
+  let parsed = {};
+  try { parsed = saved ? JSON.parse(saved) : {}; } catch (_) {}
+  return normalizeFrontendAppearance(parsed, env).custom_script || '';
 }
 
 export async function updatePublicSettings(request, env) {

@@ -2,6 +2,7 @@ import { nowSec, sanitizeAgentId } from './utils.js';
 import { recordAgentAvailability } from './agent-availability.js';
 import { agentStateTimestamp } from './agent-state.js';
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
+import { withS3Archive } from './r2s3.js';
 import { persistAgentMetricsStateFallback, persistAgentTraffic, processAgentMetricsPayload } from './metrics.js';
 import { readR2JsonResult } from './storage.js';
 import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
@@ -18,39 +19,29 @@ const MAX_FLUSH_SEC = 86400;
 const CHUNK_PREFIX = 'chunk:';
 const LEGACY_BUFFER_PREFIX = 'hour:';
 const EXPORT_PREFIX = 'export:';
-// Every Agent WebSocket is routed to the same shared Durable Object instance
-// (see routes.js), so per-Agent latest states must live under per-Agent keys
-// inside that one instance instead of a single shared key.
 export const AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream';
 const LATEST_STATE_PREFIX = 'latest:state:';
-// Durable Object storage.list() silently truncates large key spaces (default
-// page caps around 1000 keys), so every unbounded listing must page through
-// the full range (startAfter acts as the continuation cursor).
 const STORAGE_LIST_PAGE_LIMIT = 500;
 const FLUSH_GRACE_SEC = 600;
-// Retained failed drain groups (bounded so a persistent downstream failure
-// cannot grow memory without limit) and the minimum interval between
-// per-Agent crash-fallback writes of the latest state.
 const MAX_MEM_REPORTS = 5_000;
 const LATEST_PERSIST_THROTTLE_SEC = 300;
+const AGENT_LIFECYCLE_PREFIX = 'agent:lifecycle:';
 
 function latestStateKey(agentId) {
   return `${LATEST_STATE_PREFIX}${sanitizeAgentId(agentId)}`;
 }
 
+function agentLifecycleKey(agentId) {
+  return `${AGENT_LIFECYCLE_PREFIX}${sanitizeAgentId(agentId)}`;
+}
+
 export class TelemetryBuffer {
   constructor(state, env) {
+    env = withS3Archive(env);
     this.state = state;
     this.env = env;
-    // Emergency quota mode: per-message work is memory-only (SQLite storage
-    // writes drained by the alarm), so wall time collapses and the
-    // rows_written quota stops absorbing telemetry traffic.
     this.memLatest = new Map();
     this.memReports = [];
-    // Per-Agent throttle for the alarm-drain persistence of latest states
-    // (both the DO storage mirror and the D1 fallback). The message handler
-    // must stay free of D1 work: a slow or rate-limited D1 write here once
-    // stalled this shared DO and blocked telemetry for every Agent.
     this.latestPersistAt = new Map();
   }
 
@@ -63,6 +54,9 @@ export class TelemetryBuffer {
     if (request.method === 'GET' && url.pathname === '/latest') {
       const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
       if (!agentId) return Response.json({ ok: false, error: 'Agent ID 无效' }, { status: 400 });
+      if ((await this.state.storage.get(agentLifecycleKey(agentId)))?.deleted_at) {
+        return Response.json({ ok: true, state: null });
+      }
       const memo = this.memLatest.get(agentId);
       if (memo) return Response.json({ ok: true, state: memo });
       return Response.json({ ok: true, state: await this.state.storage.get(latestStateKey(agentId)) || null });
@@ -70,13 +64,13 @@ export class TelemetryBuffer {
     if (request.method === 'DELETE' && url.pathname === '/latest') {
       const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
       if (!agentId) return Response.json({ ok: false, error: 'Agent ID 无效' }, { status: 400 });
-      // Dropping the in-memory layer (and hanging up the Agent's sockets) is
-      // required: otherwise the next message would silently re-create the
-      // deleted target's latest state, D1 row, and telemetry chunks.
+      await this.markAgentDeleted(agentId);
       this.memLatest.delete(agentId);
+      this.latestPersistAt.delete(agentId);
+      this.memReports = this.memReports.filter((report) => sanitizeAgentId(String(report?.agent_id || '')) !== agentId);
       await this.state.storage.delete(latestStateKey(agentId));
-      for (const socket of this.state.getWebSockets(`agent:${agentId}`)) {
-        try { socket.close(1000, 'agent deleted'); } catch (_) {}
+      for (const socket of this.state.getWebSockets?.(`agent:${agentId}`) || []) {
+        try { socket.close?.(1000, 'agent deleted'); } catch (_) {}
       }
       return Response.json({ ok: true, agent_id: agentId });
     }
@@ -100,14 +94,15 @@ export class TelemetryBuffer {
     return new Response(null, { status: 404 });
   }
 
-  openAgentMetricsSocket(request) {
+  async openAgentMetricsSocket(request) {
     const agentId = sanitizeAgentId(request.headers.get('x-nie-sla-agent-id') || '');
     if (!agentId) return new Response(JSON.stringify({ ok: false, error: '缺少 Agent ID' }), { status: 400, headers: { 'content-type': 'application/json' } });
     const WebSocketPairCtor = globalThis.WebSocketPair;
     if (typeof WebSocketPairCtor !== 'function') return new Response(JSON.stringify({ ok: false, error: 'WebSocket runtime unavailable' }), { status: 503, headers: { 'content-type': 'application/json' } });
+    const lifecycle = await this.openAgentLifecycle(agentId);
     const pair = new WebSocketPairCtor();
     const [client, server] = Object.values(pair);
-    server.serializeAttachment({ agent_id: agentId });
+    server.serializeAttachment({ agent_id: agentId, lifecycle_epoch: lifecycle.epoch });
     this.state.acceptWebSocket(server, [`agent:${agentId}`]);
     server.send(JSON.stringify({ ok: true, type: 'ready', agent_id: agentId }));
     return new Response(null, { status: 101, webSocket: client });
@@ -125,10 +120,11 @@ export class TelemetryBuffer {
       const attachment = socket.deserializeAttachment() || {};
       const payload = body?.type === 'metrics' ? body.payload : body;
       const agentId = sanitizeAgentId(attachment.agent_id || '');
-      // Fast path: keep the message handler free of D1/R2/subrequest work so
-      // this shared DO can hibernate between messages (DO duration is billed
-      // per wall second while awake). Validation and normalization happen
-      // here; persistence is buffered locally and drained by the alarm.
+      const lifecycleEpoch = await this.currentAgentLifecycleEpoch(agentId, attachment.lifecycle_epoch);
+      if (lifecycleEpoch == null) {
+        socket.close?.(1000, 'agent deleted or superseded');
+        return;
+      }
       let previousState = null;
       if (agentId) {
         const memo = this.memLatest.get(agentId) || null;
@@ -141,23 +137,25 @@ export class TelemetryBuffer {
         returnLatestState: true,
         wss: true,
       });
+      if (await this.currentAgentLifecycleEpoch(agentId, lifecycleEpoch) !== lifecycleEpoch) {
+        socket.close?.(1000, 'agent deleted or superseded');
+        return;
+      }
       const latestState = result?.latest_state;
       let acceptedState = null;
       if (latestState) {
-        // A late message from a stale socket (reconnect race) must not
-        // overwrite a newer state already stored for this Agent.
-        if (agentStateTimestamp(previousState?.updated_at) <= agentStateTimestamp(latestState.updated_at)) {
+        const prevTs = agentStateTimestamp(previousState?.updated_at);
+        if (agentStateTimestamp(latestState.updated_at) >= prevTs || nowSec() - prevTs > 900) {
           this.memLatest.set(latestState.agent_id || agentId, latestState);
           acceptedState = latestState;
         } else if (previousState) {
-          // Rejected: a newer state already exists — re-sync the memory layer
-          // with it so subsequent reads stay consistent.
           this.memLatest.set(latestState.agent_id || agentId, previousState);
         }
       }
       const reportTs = nowSec();
       this.memReports.push({
         agent_id: agentId,
+        lifecycle_epoch: lifecycleEpoch,
         ts: reportTs,
         prev_report_at: previousState?.updated_at || null,
         updated_at: acceptedState?.updated_at || null,
@@ -181,7 +179,7 @@ export class TelemetryBuffer {
 
   async scheduleReportDrain() {
     const existing = await this.state.storage.getAlarm();
-    if (existing != null) return;
+    if (existing != null && existing <= Date.now() + 30_000) return;
     await this.state.storage.setAlarm(Date.now() + 30_000);
   }
 
@@ -192,9 +190,6 @@ export class TelemetryBuffer {
   }
 
   async alarm() {
-    // Each stage is independent and must always reschedule: a failure in one
-    // stage (or an exception escaping the alarm) would otherwise leave this DO
-    // with no alarm at all and silently stop all draining.
     try {
       await this.drainPendingReports();
     } catch (error) {
@@ -229,11 +224,28 @@ export class TelemetryBuffer {
     const failures = [];
     let drained = 0;
     for (const [agentId, group] of groups) {
+      const lifecycleEpoch = Number(group[0]?.lifecycle_epoch || 0) || null;
+      if (await this.currentAgentLifecycleEpoch(agentId, lifecycleEpoch) == null) {
+        drained += group.length;
+        continue;
+      }
       const drainState = (item) => {
         if (!item.__drainState) item.__drainState = {};
         return item.__drainState;
       };
       let groupFailed = false;
+      const newestReport = group.reduce((latest, item) => (
+        item.state && (!latest || agentStateTimestamp(item.state.updated_at) > agentStateTimestamp(latest.state?.updated_at)) ? item : latest
+      ), null);
+      if (newestReport?.state && !drainState(newestReport).latestStatePersisted) {
+        try {
+          await this.persistLatestState(agentId, newestReport.state);
+          drainState(newestReport).latestStatePersisted = true;
+        } catch (error) {
+          groupFailed = true;
+          console.error('persist latest agent state failed:', String(error?.message || error));
+        }
+      }
       try {
         const points = group.flatMap(item => item.points || []);
         const pings = group.flatMap(item => item.pings || []);
@@ -246,9 +258,6 @@ export class TelemetryBuffer {
         failures.push(...group);
         continue;
       }
-      // Availability counters are additive (UPSERT accumulates seconds).  Mark
-      // the aggregate only after it succeeds so a transient D1 failure keeps
-      // the reports queued without duplicating a later successful append.
       if ((noPublicIpAgents.get(agentId) || 0) === 1 && group[0].prev_report_at && !drainState(group[0]).availabilityPersisted) {
         const lastAt = group[group.length - 1].ts;
         try {
@@ -290,8 +299,6 @@ export class TelemetryBuffer {
     }
     if (failures.length) {
       this.memReports = [...failures, ...this.memReports];
-      // Cap from the head (oldest) side so the newest reports survive an
-      // outage backlog; stale points age out server-side anyway.
       if (this.memReports.length > MAX_MEM_REPORTS) {
         this.memReports = this.memReports.slice(this.memReports.length - MAX_MEM_REPORTS);
       }
@@ -299,26 +306,55 @@ export class TelemetryBuffer {
       const retryAt = Date.now() + 60_000;
       if (existing == null || existing > retryAt) await this.state.storage.setAlarm(retryAt);
     }
+    if (drained > 0) console.log(JSON.stringify({ diag: 'drain', drained, failCount: failures.length, agents: groups.size }));
     return drained;
   }
 
-  // Latest states live in memory while the DO is up; the D1 row and the
-  // storage mirror below are only crash fallbacks, so per-Agent throttling is
-  // enough (the message path itself never touches D1).
   async persistLatestState(agentId, state) {
     const now = nowSec();
     if (now - Number(this.latestPersistAt.get(agentId) || 0) < LATEST_PERSIST_THROTTLE_SEC) return;
     this.latestPersistAt.set(agentId, now);
     await this.state.storage.put(latestStateKey(agentId), state);
-    await persistAgentMetricsStateFallback(this.env, state);
+    await persistAgentMetricsStateFallback(this.env, { ...state, updated_at: new Date(now * 1000).toISOString() });
+  }
+
+  async openAgentLifecycle(agentId) {
+    const key = agentLifecycleKey(agentId);
+    const current = await this.state.storage.get(key);
+    if (current?.deleted_at) {
+      const lifecycle = { epoch: (Number(current.epoch) || 0) + 1, deleted_at: null, opened_at: nowSec() };
+      await this.state.storage.put(key, lifecycle);
+      return lifecycle;
+    }
+    if (current && Number(current.epoch) > 0) return current;
+    const lifecycle = { epoch: 1, deleted_at: null, opened_at: nowSec() };
+    await this.state.storage.put(key, lifecycle);
+    return lifecycle;
+  }
+
+  async markAgentDeleted(agentId) {
+    const key = agentLifecycleKey(agentId);
+    const current = await this.state.storage.get(key);
+    await this.state.storage.put(key, {
+      epoch: (Number(current?.epoch) || 0) + 1,
+      deleted_at: nowSec(),
+    });
+  }
+
+  async currentAgentLifecycleEpoch(agentId, expectedEpoch = null) {
+    if (!agentId) return null;
+    const current = await this.state.storage.get(agentLifecycleKey(agentId));
+    if (current?.deleted_at) return null;
+    if (!current) return Number(expectedEpoch || 0) || 0;
+    const epoch = Number(current?.epoch || expectedEpoch || 0) || 0;
+    if (!epoch) return null;
+    if (expectedEpoch != null && Number(expectedEpoch) > 0 && epoch !== Number(expectedEpoch)) return null;
+    return epoch;
   }
 
   async loadNoPublicIpAgents(agentIds) {
     const map = new Map();
     if (!this.env.DB || !agentIds.length) return map;
-    // D1 caps bound parameters at 100; chunk so a large fleet degrades to
-    // multiple queries instead of one failing query that skips availability
-    // for every Agent.
     for (let offset = 0; offset < agentIds.length; offset += 90) {
       const chunk = agentIds.slice(offset, offset + 90);
       try {
@@ -488,8 +524,6 @@ export class TelemetryBuffer {
     if (retry) await this.scheduleAlarmIfSooner(5 * 60 * 1000);
   }
 
-  // Retry scheduling must never postpone an earlier pending alarm (a failing
-  // drain's 60s retry loses to a later flush retry otherwise).
   async scheduleAlarmIfSooner(delayMs) {
     const at = Date.now() + delayMs;
     const existing = await this.state.storage.getAlarm();
@@ -503,9 +537,6 @@ export class TelemetryBuffer {
     if (current == null || current > alarmAt) await this.state.storage.setAlarm(alarmAt);
   }
 
-  // storage.list() truncates around 1000 keys per call, so unbounded listings
-  // page with an explicit per-page limit and startAfter as the continuation
-  // cursor until the key range is exhausted.
   async listStorageEntries(prefix, pageLimit = STORAGE_LIST_PAGE_LIMIT) {
     const entries = new Map();
     let startAfter;
@@ -524,8 +555,6 @@ export class TelemetryBuffer {
   }
 
   async bufferRows(limit = null) {
-    // With a limit these are bounded existence/count probes; without one the
-    // flush path must see every row, so it pages through the full key space.
     const chunks = limit == null
       ? await this.listStorageEntries(CHUNK_PREFIX)
       : await this.state.storage.list({ prefix: CHUNK_PREFIX, limit });
@@ -550,7 +579,6 @@ function parseBinaryMessage(message) {
       : null;
   if (!bytes) return decodeAgentMetricsProtobuf(message);
   if (bytes.byteLength > 220_000) throw new Error('metrics 数据过大');
-  // Keep accepting the legacy binary-UTF-8 JSON form used by older clients.
   if (bytes[0] === 0x7b || bytes[0] === 0x5b) return parseJsonMessage(new TextDecoder().decode(bytes));
   return decodeAgentMetricsProtobuf(bytes);
 }
@@ -588,8 +616,6 @@ export async function readBufferedAgentLatestState(env, agentId) {
   if (!env.TELEMETRY_BUFFER) return null;
   const id = sanitizeAgentId(agentId);
   if (!id) return null;
-  // Latest states live in the same shared instance that owns the Agent
-  // WebSockets, keyed per Agent (latest:state:<agent_id>).
   const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
   const url = new URL('https://nie-sla.internal/latest');
   url.searchParams.set('agent_id', id);
@@ -624,12 +650,11 @@ export async function deleteBufferedAgentTelemetry(env, agentId) {
   if (!env.TELEMETRY_BUFFER) return { ok: true, skipped: true };
   const id = sanitizeAgentId(agentId);
   if (!id) return { ok: true, skipped: true };
+  await deleteBufferedAgentLatestState(env, id);
   const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(`agent:${id}`));
   const response = await stub.fetch('https://nie-sla.internal/delete', { method: 'POST', headers: internalRequestHeaders(env) });
   if (!response.ok) throw new Error(`遥测缓冲删除失败：HTTP ${response.status}`);
-  const result = await response.json();
-  await deleteBufferedAgentLatestState(env, id);
-  return result;
+  return response.json();
 }
 
 function groupByChunk(points, pings) {
@@ -684,7 +709,7 @@ async function flushHour(env, buffered) {
     pings: pingsFromPayload(existing?.pings),
   }, buffered, agentId, hour, HOUR_SEC);
   const dayHour = utcDayHour(hour);
-  await env.ARCHIVE.put(key, JSON.stringify({
+  const body = JSON.stringify({
     schema: 'nie-sla-agent-telemetry-hour-v1',
     agent_id: agentId,
     day: dayHour.day,
@@ -692,10 +717,25 @@ async function flushHour(env, buffered) {
     updated_at: new Date().toISOString(),
     metrics: { schema: 'nie-sla-agent-metrics-hour-v2', series: metricPointsToColumns(merged.points) },
     pings: { schema: 'nie-sla-agent-pings-hour-v2', series: pingPointsToSeries(merged.pings) },
-  }), {
+  });
+  const bodyBytes = new TextEncoder().encode(body).byteLength;
+  await env.ARCHIVE.put(key, body, {
     httpMetadata: { contentType: 'application/json; charset=utf-8' },
     customMetadata: { schema: 'nie-sla-agent-telemetry-hour-v1', agent_id: agentId, day: dayHour.day, hour: dayHour.hour },
   });
+  if (typeof env.ARCHIVE.head === 'function') {
+    const verify = await env.ARCHIVE.head(key);
+    if (!verify) throw new Error(`R2 telemetry hour write did not persist (${agentId} ${dayHour.day}/${dayHour.hour})`);
+    if (Number.isFinite(Number(verify.size)) && Number(verify.size) !== bodyBytes) throw new Error(`R2 telemetry hour size mismatch (${agentId} ${dayHour.day}/${dayHour.hour} expected ${bodyBytes}, got ${verify.size})`);
+  }
+  const persisted = await readR2Object(env.ARCHIVE, key);
+  if (persisted?.schema !== 'nie-sla-agent-telemetry-hour-v1'
+    || String(persisted.agent_id || '') !== agentId
+    || String(persisted.day || '') !== dayHour.day
+    || String(persisted.hour || '') !== dayHour.hour
+    || !persisted.metrics || !persisted.pings) {
+    throw new Error(`R2 telemetry hour readback validation failed (${agentId} ${dayHour.day}/${dayHour.hour})`);
+  }
 }
 
 async function readR2Object(bucket, key) {

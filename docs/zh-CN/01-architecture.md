@@ -41,3 +41,7 @@ Rust Agent
 ## 旧架构兼容
 
 旧 Pages + Worker 部署可以无停机迁移到 Worker Static Assets。复用 D1、R2、Agent API 域名与加密材料，Agent 协议不变，已安装的 Agent 无需重装。
+
+## 私有生产与公开一键部署的边界
+
+私有生产 Worker 还绑定 `PROBE_HISTORY` 与 `STATUS_STREAM`，分别承载探测历史缓冲和公开状态 WSS；其迁移版本为 `v4`。公开仓库的一键部署模板只声明 `REGION_PROXY`、`TELEMETRY_BUFFER` 与公开模板支持的 migration，并依靠 Worker fallback 运行简化模式。两者不是同构配置：不能把公开模板的 binding 数量当作私有生产容量/能力证明，也不能把私有 `wrangler.toml` 的数据库 ID、路由或变量复制到公开仓库。

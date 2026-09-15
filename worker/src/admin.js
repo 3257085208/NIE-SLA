@@ -6,7 +6,7 @@
 export { ensureV6Schema, shouldEnsureSchemaForRequest } from './admin/schema.js';
 
 
-export { getMeta, setMeta, getPublicSettings, updatePublicSettings, getAgentUpdatePolicy, fetchExchangeRates, getExchangeRates, normalizeCurrency, convertPriceToCny, SUPPORTED_CURRENCIES, hasOwn } from './admin/settings.js';
+export { getMeta, setMeta, getPublicSettings, getPublicAppearanceScript, updatePublicSettings, getAgentUpdatePolicy, fetchExchangeRates, getExchangeRates, normalizeCurrency, convertPriceToCny, SUPPORTED_CURRENCIES, hasOwn } from './admin/settings.js';
 export { financeSummary, cycleMonths } from './admin/finance.js';
 export { getFinanceSummary } from './admin/finance-summary.js';
 
@@ -28,7 +28,7 @@ export { syncEnvTargets, syncEnvTargetsMaybe } from './admin/sync.js';
 export { archiveDay, archiveYesterdayOncePerLocalDay, getRecentIncidents, getStats } from './admin/archive.js';
 
 
-export { upsertLatestStatus, latestStatusToD1Enabled, writeIncidentEvent, touchActiveIncident, upsertTargetLastCheckedAt, upsertCheckBucket, readCheckBuckets, readCheckBucketDaySummary, getCheckBucketSummaries, checkBucketSummaryQueryPlan, buildSummaryFallbackOptions, applyProbeWriteBatch, cleanupOldCheckBuckets, cleanupVolatileHistory } from './admin/check-buckets.js';
+export { upsertLatestStatus, latestStatusToD1Enabled, writeIncidentEvent, touchActiveIncident, upsertTargetLastCheckedAt, upsertCheckBucket, readCheckBuckets, readCheckBucketDaySummary, getCheckBucketSummaries, checkBucketSummaryQueryPlan, buildSummaryFallbackOptions, applyProbeWriteBatch, cleanupOldCheckBuckets, cleanupVolatileHistory, reconcileOpenIncidents } from './admin/check-buckets.js';
 
 
 export { cleanupDebugLogs, debugClientIp, debugSummary, getDebugLogSummary, listDebugLogs, recordDebugLog, sanitizeDebugLogEntry, shouldLogDebugOperation } from './admin/debug-logs.js';
@@ -53,3 +53,4 @@ export { getFleetVersions } from './admin/fleet-versions.js';
 export { listTrafficCorrections, saveTrafficCorrection, getTrafficCorrectionsMap, getTrafficCorrection } from './admin/traffic-corrections.js';
 export { getTurnstileConfig, getTurnstileSecret, saveTurnstileConfig, migrateTurnstileEncryption } from './admin/settings.js';
 export { getAgentReportInterval, setAgentReportInterval } from './admin/settings.js';
+export { listProbeHistoryDeadLetters, replayProbeHistoryDeadLetter, drainProbeHistoryDeadLetters } from './admin/probe-history-dead-letter.js';

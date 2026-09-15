@@ -21,12 +21,10 @@
 从私有 Agent/Worker 仓库执行：
 
 ```bash
-cd ../agent/worker
-node scripts/prepare-assets.mjs
-npx wrangler deploy
+NIE_SLA_FRONTEND_REF=<40 位 Frontend commit SHA> ../agent/worker/deploy.sh
 ```
 
-生产发布用 `deploy.sh` 完成同样步骤。生成的 `dist-one-click` 不得包含 `AGENTS.md`、tests、`functions/`、`node_modules`、开发锁文件或已删除的主题文件。
+生产发布入口会先运行 Agent/Worker 全量门禁，并要求传入的 SHA 就是当前被测试的 Frontend HEAD；随后从该 commit 的 Git archive 生成 `dist-one-click`，校验 Agent 精确 release tag、manifest 与 `build-provenance.json`，执行 Wrangler dry-run 后才允许正式部署。生成的 `dist-one-click` 不得包含 `AGENTS.md`、tests、`functions/`、`node_modules`、开发锁文件或已删除的主题文件；不要从 Frontend feature 工作树直接部署。
 
 ## Agent 产物
 

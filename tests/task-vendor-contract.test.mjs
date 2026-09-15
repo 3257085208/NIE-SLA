@@ -5,9 +5,10 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const frontendCandidates = [
+  process.env.NIE_SLA_FRONTEND_ROOT ? path.resolve(process.env.NIE_SLA_FRONTEND_ROOT) : null,
   path.resolve(root, '..', 'frontend'),
   path.join(root, 'frontend'),
-];
+].filter(Boolean);
 const frontend = frontendCandidates.find((candidate) =>
   fs.existsSync(path.join(candidate, 'vendor', 'tasks', 'manifest.json')),
 );

@@ -321,9 +321,6 @@ export function pingSeriesToPoints(seriesList) {
       if (!Number.isInteger(delta) || delta < 0 || ![0, 1, false, true].includes(okValue)) {
         return { pings: [], error: 'ping_series contains an invalid sample' };
       }
-      // Clamp out-of-range latencies (non-finite, negative, or above the 1000ms
-      // ceiling) to a loss sample, matching the legacy normalizePingPoint
-      // behavior, instead of rejecting the whole report.
       let latencyMs = latency[index] == null ? null : Number(latency[index]);
       if (latencyMs != null && (!Number.isFinite(latencyMs) || latencyMs < 0 || latencyMs > 1000)) latencyMs = null;
       pings.push({ target_id: targetId, ts: t0 + delta, latency_ms: latencyMs, ok: latencyMs == null ? 0 : okValue });
@@ -461,9 +458,6 @@ export function defaultMetricsMaxPointsForHours(hours, env = {}) {
   return clamp(Number(env.AGENT_METRICS_MAX_POINTS || 900), 60, 10000);
 }
 
-// Out-of-window points are dropped instead of rejecting the whole batch:
-// fresh installs on boxes with stale clocks or migrated offline queues used
-// to poison every report with one old timestamp (permanent HTTP 400 loop).
 function filterTelemetryBatch(samples, pings, now) {
   if (pings.length > MAX_AGENT_PINGS_PER_REPORT) return { error: `too many pings; max ${MAX_AGENT_PINGS_PER_REPORT}` };
   const candidates = [];
@@ -479,10 +473,6 @@ function filterTelemetryBatch(samples, pings, now) {
   };
   for (const point of samples) keep(point, keptSamples);
   for (const point of pings) keep(point, keptPings);
-  // When a backlog replay spans more hourly buckets than a report may cover,
-  // keep only the newest buckets instead of rejecting the batch: a 400 here
-  // would make the Agent retry the same payload forever and its queue would
-  // never drain.
   let allowedBuckets = null;
   const bucketOf = (ts) => hourStartSec(ts);
   const allBuckets = new Set(candidates.map(candidate => bucketOf(candidate.ts)));
@@ -496,7 +486,6 @@ function filterTelemetryBatch(samples, pings, now) {
   return { samples: keptSamples, pings: keptPings, dropped };
 }
 
-// 1 PB sanity cap for cumulative interface counters reported by Agents.
 const MAX_TRAFFIC_COUNTER_BYTES = 1e15;
 
 async function agentTrafficSettings(env, agentId, ts = nowSec()) {
@@ -568,12 +557,14 @@ function finalizeTrafficDayStatement(env, agentId, row, ts) {
   const tx = Math.max(0, Number(row.day_tx_bytes || 0) || 0);
   if (rx === 0 && tx === 0) return null;
   return env.DB.prepare(`INSERT INTO agent_traffic_daily (agent_id, day, rx_bytes, tx_bytes, updated_at)
-    VALUES (?, ?, ?, ?, ?)
+    SELECT agent_id, active_day, ?, ?, ?
+    FROM agent_traffic_monthly
+    WHERE agent_id = ? AND month = ? AND active_day IS ? AND last_rx_bytes IS ? AND last_tx_bytes IS ?
     ON CONFLICT(agent_id, day) DO UPDATE SET
       rx_bytes = agent_traffic_daily.rx_bytes + excluded.rx_bytes,
       tx_bytes = agent_traffic_daily.tx_bytes + excluded.tx_bytes,
       updated_at = excluded.updated_at`)
-    .bind(agentId, row.active_day, rx, tx, ts);
+    .bind(rx, tx, ts, agentId, row.month, row.active_day, row.last_rx_bytes ?? null, row.last_tx_bytes ?? null);
 }
 
 export async function rebuildAgentTrafficPeriod(env, agentId, target = null, ts = nowSec()) {
@@ -635,8 +626,6 @@ export async function persistAgentTraffic(env, agentId, metrics, ts) {
   if (!settings.enabled || !env.DB || !agentId) return;
   const rxRaw = Number(metrics?.net?.rx_bytes);
   const txRaw = Number(metrics?.net?.tx_bytes);
-  // Untrusted cumulative counters: an absurd value must never enter the
-  // traffic ledger and poison quota percentages and alerts.
   if (!Number.isFinite(rxRaw) || !Number.isFinite(txRaw) || rxRaw < 0 || txRaw < 0) return;
   if (rxRaw > MAX_TRAFFIC_COUNTER_BYTES || txRaw > MAX_TRAFFIC_COUNTER_BYTES) return;
   const month = settings.month;
@@ -662,21 +651,17 @@ export async function persistAgentTraffic(env, agentId, metrics, ts) {
     statements.push(env.DB.prepare(`UPDATE agent_traffic_monthly SET
       rx_bytes = rx_bytes + ?, tx_bytes = tx_bytes + ?, last_rx_bytes = ?, last_tx_bytes = ?,
       active_day = ?, day_rx_bytes = ?, day_tx_bytes = ?, updated_at = ?
-      WHERE agent_id = ? AND month = ? AND last_rx_bytes IS ? AND last_tx_bytes IS ?`)
+      WHERE agent_id = ? AND month = ? AND active_day IS ? AND last_rx_bytes IS ? AND last_tx_bytes IS ?`)
       .bind(
         deltaRx, deltaTx, Math.floor(rxRaw), Math.floor(txRaw), today,
         crossedDay || !row.active_day ? deltaRx : Math.max(0, Number(row.day_rx_bytes || 0) || 0) + deltaRx,
         crossedDay || !row.active_day ? deltaTx : Math.max(0, Number(row.day_tx_bytes || 0) || 0) + deltaTx,
         ts, agentId, month,
-        row.last_rx_bytes ?? null, row.last_tx_bytes ?? null,
+        row.active_day ?? null, row.last_rx_bytes ?? null, row.last_tx_bytes ?? null,
       ));
     const results = await env.DB.batch(statements);
     const updateResult = results[results.length - 1];
     if (Number(updateResult?.meta?.changes || 0) < 1) {
-      // A concurrent report (HTTP retry / second isolate) stored its counters
-      // first. Skipping is safe because the counters are cumulative: the next
-      // report's delta already includes this interval, and CAS prevents the
-      // same delta from being added twice.
       return;
     }
   } else {
@@ -702,8 +687,6 @@ export async function persistAgentTraffic(env, agentId, metrics, ts) {
     try {
       await env.DB.batch(statements);
     } catch (error) {
-      // A concurrent first report won the INSERT race. The other writer owns
-      // the row now and cumulative counters make skipping lossless.
       if (/unique|constraint/i.test(String(error?.message || error))) return;
       throw error;
     }
@@ -1005,6 +988,7 @@ const METRIC_FIELD_GROUPS = {
   mem: ['mem'],
   disk: ['disk'],
   load: ['load1', 'load5', 'load15'],
+  proc: ['process_count'],
   net: ['net_rx', 'net_tx'],
   conns: ['tcp_conns', 'udp_conns'],
   diskio: ['disk_read', 'disk_write'],
@@ -1446,8 +1430,6 @@ function normalizeOkInt(value) {
 async function persistAgentMetrics(env, data, options = {}) {
   const { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts } = data;
   const rawPings = mapPings(pings, ts);
-  // WSS messages run inside the shared telemetry DO: keep the message path
-  // free of D1 reads and R2 writes (buffered via the alarm drain instead).
   const wssFast = options.wss === true;
   const d1PreviousState = wssFast
     ? null

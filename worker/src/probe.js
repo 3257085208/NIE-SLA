@@ -256,7 +256,7 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
   const stats7 = statsFromDailySummaries(daily, day, 7);
   const statusChangedAt = previous && Number(previous.ok) === okInt ? (previous.status_changed_at || checkedAt) : checkedAt;
   const outage = buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous);
-  const stateUpdate = { target_id: target.id, checked_at: checkedAt, ok: okInt, latency_ms: latency, status_code: statusCode, error, probe_region: probeRegion, cf_colo: cfColo, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, avg_latency_24h: stats24.avgLatency, last_fail_at: okInt ? (previous?.last_fail_at || null) : checkedAt, current_outage_started_at: outage.currentOutageStartedAt, last_recover_at: outage.lastRecoverAt, status_changed_at: statusChangedAt, daily };
+  const stateUpdate = { target_id: target.id, checked_at: checkedAt, history_checked_at: checkedAt, ok: okInt, latency_ms: latency, status_code: statusCode, error, probe_region: probeRegion, cf_colo: cfColo, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, avg_latency_24h: stats24.avgLatency, last_fail_at: okInt ? (previous?.last_fail_at || null) : checkedAt, current_outage_started_at: outage.currentOutageStartedAt, last_recover_at: outage.lastRecoverAt, status_changed_at: statusChangedAt, daily };
   const writeResult = await applyProbeWriteBatch(env, target.id, checkedAt, bucketWrites, stateUpdate, outage.write, checkedAt + historyDueIntervalSec(target, env, { ...previous, ok: okInt }), scheduleFlush);
   return { history_points: Number(daily[day]?.total || 0), missed_points: missedPoints.length, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, incident: outage.action, storage: writeResult.bucket_storage || 'd1', state_update: stateUpdate };
 }
@@ -286,9 +286,9 @@ function buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous) 
 export async function runDueTargets(env, options = {}) {
   const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 20), 1, 200);
   const now = nowSec();
-  // Schedule bookkeeping lives in the R2 status state (lastCheckedAt gate
-  // below); next_probe_at in D1 is only a coarse crash-recovery mirror, so the
-  // selection intentionally does not filter on it.
+  // Schedule bookkeeping lives in the R2 status state's history_checked_at
+  // marker (lastCheckedAt gate below); fast-status writes never touch that
+  // marker, and next_probe_at in D1 is only a coarse crash-recovery mirror.
   const rows = await env.DB.prepare(
      `SELECT t.*, t.last_checked_at AS last_checked_at
       FROM targets t
@@ -305,7 +305,7 @@ export async function runDueTargets(env, options = {}) {
     const d1Latest = await readLatestStatusMap(env, allTargets.map(target => target.id));
     const previousById = buildHistoryPreviousStateMap(allTargets, state, d1Latest);
     const targets = allTargets
-      .map(target => ({ target, lastCheckedAt: lastPersistedCheckAt(target, d1Latest.get(String(target.id))) }))
+      .map(target => ({ target, lastCheckedAt: lastPersistedCheckAt(target, d1Latest.get(String(target.id)), state.targets?.[String(target.id)]?.history_checked_at) }))
       .filter(item => item.lastCheckedAt <= now - historyDueIntervalSec(item.target, env, previousById.get(item.target.id)))
       .sort((a, b) => a.lastCheckedAt - b.lastCheckedAt).slice(0, maxTargets).map(item => item.target);
     if (!targets.length) return { ok: true, count: 0, results: [] };
@@ -595,7 +595,7 @@ function buildHistoryPreviousStateMap(targets, r2State, d1Latest) {
     if (!previous) continue;
     map.set(target.id, {
       ...previous,
-      checked_at: lastPersistedCheckAt(target, d1Latest?.get(String(target.id))),
+      checked_at: lastPersistedCheckAt(target, d1Latest?.get(String(target.id)), previous?.history_checked_at),
     });
   }
   return map;

@@ -1,15 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.39",
-  "agent_version": "v1.1.39",
-  "source_ref": "app-v1.1.39",
-  "published_at": "2026-09-11T14:00:00Z",
-  "title": "NIE-SLA 1.1.39",
+  "version": "1.1.40",
+  "agent_version": "v1.1.40",
+  "source_ref": "app-v1.1.40",
+  "published_at": "2026-09-15T01:53:22Z",
+  "title": "NIE-SLA 1.1.40",
   "changelog": [
     "telemetry 进度文件改为固定路径 /var/lib/nie-sla-agent/telemetry-progress，并在进程启动最早期写入；Manager 的“陈旧即重启”不再受旧安装队列路径影响。",
     "磁盘枚举与刷新移入后台线程（每 60 秒快照），采样/上报循环不再因挂死的挂载点或故障磁盘阻塞；nvidia-smi 探测增加 10 秒超时，驱动故障不再卡死整个 Agent。",
     "CF 探测错误细化：无法连接目标时显示“无法连接目标（端口未开放或防火墙拦截）”，区分连接超时/DNS/TLS/拒绝。",
-    "不改变任何上报/探测频率，也不改变用户可见行为。"
+    "R2 与 S3 归档写入增加 UTF-8 字节数、HEAD 与 GET 三重回读校验；回读失败时保留源数据并重试，不再把假成功当作持久化成功。",
+    "S3 facade 修正 AWS 签名的路径/查询编码、Content-Type 与自定义元数据签名，并增加超时和错误响应诊断；不改变上报/探测频率或页面功能。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
