@@ -27,11 +27,11 @@ for (const file of filesIn(path.join(root, 'worker', 'src'), '.js')) run(['--che
 for (const file of filesIn(path.join(root, 'frontend'), '.js')) run(['--check', file]);
 for (const file of filesIn(path.join(root, 'worker', 'tests'), '.mjs')) {
   if (file === socketsLoader) continue;
-  const loaderTests = ['nq-image-broker-route.test.mjs', 'login-route.test.mjs', 'probe-faststatus.test.mjs'];
-  const args = loaderTests.some((name) => file.endsWith(`${path.sep}${name}`))
-    ? ['--experimental-loader', socketsLoader, file]
-    : [file];
-  run(args);
+  // Worker modules may import probe.js indirectly through admin helpers, so
+  // selecting a short hand-maintained test allowlist is easy to get wrong.
+  // The loader only intercepts cloudflare:sockets and passes all other
+  // imports through, therefore it is safe and deterministic for every test.
+  run(['--experimental-loader', socketsLoader, file]);
 }
 for (const file of filesIn(path.join(root, 'frontend', 'tests'), '.mjs')) run([file]);
 run([path.join(root, 'tests', 'frontend-app-import-smoke.mjs')]);
