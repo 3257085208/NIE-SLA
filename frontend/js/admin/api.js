@@ -1,4 +1,4 @@
-import { readMigratedStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260915-proxy2";
+import { readMigratedStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260915-proxy3";
 
 const SESSION_KEY = "nie_sla_admin_session";
 const SESSION_EXP_KEY = "nie_sla_admin_session_exp";

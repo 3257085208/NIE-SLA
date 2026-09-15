@@ -2,6 +2,7 @@ let activeTheme = null;
 let latestStatus = null;
 let canvasRecord = null;
 const THEME_API_RESOURCES = new Set(['status', 'checks', 'metrics', 'pings', 'latency']);
+const THEME_CANVAS_LOAD_TIMEOUT_MS = 12_000;
 
 export async function initializeFrontendTheme() {
   try {
@@ -45,13 +46,13 @@ async function mountTheme(theme) {
     frame.referrerPolicy = 'no-referrer';
     frame.height = String(clampCanvasHeight(theme.height));
     frame.src = themeFileUrl(theme, theme.entry);
-    const loaded = waitForElementLoad(frame, 4000);
+    const loaded = waitForElementLoad(frame, THEME_CANVAS_LOAD_TIMEOUT_MS);
     frame.addEventListener('load', sendThemeStatus);
     canvas.appendChild(frame);
-    canvas.hidden = false;
-    document.body.dataset.extensionThemeMode = 'canvas';
     canvasRecord = { frame, theme, window: frame.contentWindow, fitViewport: false };
     await loaded;
+    canvas.hidden = false;
+    document.body.dataset.extensionThemeMode = 'canvas';
     return;
   }
   await Promise.all((theme.styles || []).map(path => {
