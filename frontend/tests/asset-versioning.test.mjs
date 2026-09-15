@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
 const assetVersion = '20260915-proxy2';
+const isDuplicateCopy = (name) => /\s\d+(?:\.\d+)*\.js$/i.test(name);
 
 async function javascriptFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -11,7 +12,7 @@ async function javascriptFiles(directory) {
   for (const entry of entries) {
     const file = path.join(directory, entry.name);
     if (entry.isDirectory()) files.push(...await javascriptFiles(file));
-    else if (entry.isFile() && entry.name.endsWith('.js')) files.push(file);
+    else if (entry.isFile() && entry.name.endsWith('.js') && !isDuplicateCopy(entry.name)) files.push(file);
   }
   return files;
 }
