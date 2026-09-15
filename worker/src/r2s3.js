@@ -45,7 +45,14 @@ export function withS3Archive(env) {
   if (!accessKey || !secretKey || !accountId) return env;
   const memo = cache.get(env);
   if (memo) return memo;
-  const wrapped = { ...env, ARCHIVE: createS3ArchiveFacade({ ...env, R2_S3_ACCESS_KEY_ID: accessKey, R2_S3_SECRET_ACCESS_KEY: secretKey, R2_S3_ACCOUNT_ID: accountId }) };
+  // Keep the native binding available for read-heavy public history paths.
+  // The S3 facade remains the write/compatibility plane, while native R2 reads
+  // avoid turning a long multi-segment history request into dozens of fetches.
+  const wrapped = {
+    ...env,
+    ARCHIVE_NATIVE: env.ARCHIVE,
+    ARCHIVE: createS3ArchiveFacade({ ...env, R2_S3_ACCESS_KEY_ID: accessKey, R2_S3_SECRET_ACCESS_KEY: secretKey, R2_S3_ACCOUNT_ID: accountId }),
+  };
   cache.set(env, wrapped);
   return wrapped;
 }

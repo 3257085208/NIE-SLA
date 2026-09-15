@@ -252,6 +252,14 @@ button { border: 0; cursor: pointer; }
   background: #e8f0fe;
   color: #1a73e8;
 }
+.meta-proxy {
+  border: 1px solid currentColor;
+  background: #f7fbf8;
+}
+.meta-proxy-ok { color: #168653; }
+.meta-proxy-warn { color: #aa7310; background: #fff9e8; }
+.meta-proxy-down { color: #c2413a; background: #fff1f1; }
+.meta-proxy-stale { color: #77869d; background: #f1f4f7; }
 
 .region-flag {
   width: 18px;

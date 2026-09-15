@@ -60,6 +60,7 @@ function decodeMetrics(reader) {
   };
   const samples = [];
   const pingSeries = [];
+  const proxyChecks = [];
   while (!reader.done()) {
     const [field, wire] = reader.key();
     switch (field) {
@@ -77,11 +78,13 @@ function decodeMetrics(reader) {
       case 12: samples.push(decodeSample(reader.message())); break;
       case 13: value.vps_info = decodeVpsInfo(reader.message()); break;
       case 14: pingSeries.push(decodePingSeries(reader.message())); break;
+      case 15: proxyChecks.push(decodeProxyCheck(reader.message())); break;
       default: reader.skip(wire);
     }
   }
   if (samples.length) value.samples = samples;
   if (pingSeries.length) value.ping_series = pingSeries;
+  if (proxyChecks.length) value.proxy_checks = proxyChecks;
   return value;
 }
 
@@ -289,6 +292,23 @@ function decodePingPoint(reader) {
     if (field === 1) value.dt = reader.varint();
     else if (field === 2) value.latency_ms = reader.fixed64();
     else if (field === 3) value.ok = reader.varint() === 1 ? 1 : 0;
+    else reader.skip(wire);
+  }
+  return value;
+}
+
+function decodeProxyCheck(reader) {
+  const value = { target_id: '', name: '', protocol: '', ts: 0, latency_ms: null, ok: 0, stage: '', error: null };
+  while (!reader.done()) {
+    const [field, wire] = reader.key();
+    if (field === 1) value.target_id = reader.string();
+    else if (field === 2) value.name = reader.string();
+    else if (field === 3) value.protocol = reader.string();
+    else if (field === 4) value.ts = reader.varint();
+    else if (field === 5) value.latency_ms = reader.fixed64();
+    else if (field === 6) value.ok = reader.varint() === 1 ? 1 : 0;
+    else if (field === 7) value.stage = reader.string();
+    else if (field === 8) value.error = reader.string();
     else reader.skip(wire);
   }
   return value;

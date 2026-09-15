@@ -463,6 +463,22 @@ th {
 .pings-table {
   min-width: 860px;
 }
+.proxy-admin-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+.proxy-admin-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+.proxy-admin-heading h3 { margin: 0 0 4px; }
+.proxy-admin-heading .hint { max-width: 690px; margin: 0; }
+.proxy-table { min-width: 1060px; }
+.proxy-table .table-note { overflow-wrap: anywhere; }
 .latency-nodes-table th:nth-child(1) { width: 18%; }
 .latency-nodes-table th:nth-child(2) { width: 20%; }
 .latency-nodes-table th:nth-child(3) { width: 14%; }

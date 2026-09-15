@@ -9,6 +9,7 @@ import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeser
 import { getPingIntervalSec } from './ping-config.js';
 import { getAgentReportInterval } from './admin/settings.js';
 import { pingTargetProtocol } from './ping-target-protocol.js';
+import { getCachedProxyControl, getProxyControlRows } from './admin/proxy-targets.js';
 import { decodeAgentMetricsProtobuf } from './telemetry-protobuf.js';
 
 const HOUR_SEC = 3600;
@@ -166,7 +167,7 @@ export class TelemetryBuffer {
       });
       await this.scheduleReportDrain();
       const { latest_state: _latestState, mapped_points: _p, mapped_pings: _q, net: _n, ...ack } = result || {};
-      const control = await this.readControlSnapshot();
+      const control = await this.readControlSnapshot(agentId);
       const scopedControl = control
         ? { ...control, traffic_correction: control.traffic_corrections?.[agentId] || null, traffic_corrections: undefined }
         : null;
@@ -397,11 +398,29 @@ export class TelemetryBuffer {
     return { ok: true, states };
   }
 
-  async readControlSnapshot() {
+  async readControlSnapshot(agentId = '') {
+    const scopedAgentId = sanitizeAgentId(agentId);
     const now = nowSec();
-    const cached = await this.state.storage.get('control:ping');
+    const cacheKey = scopedAgentId ? `control:ping:${scopedAgentId}` : 'control:ping';
+    const cached = await this.state.storage.get(cacheKey);
     const ttl = Math.max(60, Math.min(3600, Number(this.env.PROBE_CONTROL_CACHE_SEC || 300)));
-    if (cached?.control && Number(cached.fetched_at || 0) + ttl > now) return cached.control;
+    const materialize = async (internal) => {
+      if (!internal) return null;
+      const { proxy_targets_internal: _proxyRows, ...control } = internal;
+      let proxyTargets = [];
+      try {
+        proxyTargets = await getCachedProxyControl(this.env, _proxyRows || [], scopedAgentId);
+      } catch (error) {
+        console.error('read WSS proxy control failed:', String(error?.message || error));
+      }
+      return {
+        ...control,
+        proxy_targets: proxyTargets,
+        proxy_canary_host: String(this.env.PROXY_CANARY_HOST || 'example.com').trim() || 'example.com',
+        proxy_canary_port: Math.max(1, Math.min(65535, Number(this.env.PROXY_CANARY_PORT || 80) || 80)),
+      };
+    };
+    if (cached?.control && Number(cached.fetched_at || 0) + ttl > now) return materialize(cached.control);
     try {
       const rows = await this.env.DB?.prepare(`SELECT id, target, enabled FROM ping_targets WHERE enabled = 1 ORDER BY name LIMIT 500`).all();
       const targets = (rows?.results || []).map(row => ({
@@ -419,13 +438,20 @@ export class TelemetryBuffer {
           } catch (_) {}
         }
       } catch (_) {}
+      let proxyTargetsInternal = [];
+      try {
+        proxyTargetsInternal = await getProxyControlRows(this.env, scopedAgentId);
+      } catch (_) {
+        // The proxy tables are additive; keep existing Agent control working
+        // while an older database is being upgraded or has no proxy targets.
+      }
       const reportInterval = await getAgentReportInterval(this.env);
-      const control = { ping_interval_sec: await getPingIntervalSec(this.env), ping_targets: targets, traffic_corrections: trafficCorrections, report_interval_sec: reportInterval };
-      await this.state.storage.put('control:ping', { fetched_at: now, control });
-      return control;
+      const control = { ping_interval_sec: await getPingIntervalSec(this.env), ping_targets: targets, proxy_targets_internal: proxyTargetsInternal, traffic_corrections: trafficCorrections, report_interval_sec: reportInterval };
+      await this.state.storage.put(cacheKey, { fetched_at: now, control });
+      return materialize(control);
     } catch (error) {
       console.error('read WSS control snapshot failed:', String(error?.message || error));
-      return cached?.control || null;
+      return materialize(cached?.control || null);
     }
   }
 

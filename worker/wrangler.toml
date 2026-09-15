@@ -17,9 +17,8 @@ run_worker_first = [
   "!/js/*",
   "!/index.html",
   "!/404.html",
-  "!/*.css",
-  "!/*.js",
-  "!/*.json",
+  # Do not exclude by file extension here: these globs also match dynamic
+  # /api/themes/file/... URLs and would send R2 theme CSS/JS/JSON to Assets.
   "!/*.sh",
   "!/cftz",
   "!/VERSION",

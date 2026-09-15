@@ -84,6 +84,8 @@ run_check "durable telemetry buffer tests" node "$ROOT/worker/tests/telemetry-bu
 run_check "R2 S3 facade tests" node "$ROOT/worker/tests/r2s3.test.mjs"
 run_check "R2 JSON write verification tests" node "$ROOT/worker/tests/r2-write-verify.test.mjs"
 run_check "Agent telemetry Protobuf tests" node "$ROOT/worker/tests/telemetry-protobuf.test.mjs"
+run_check "proxy target storage and credential boundary tests" node "$ROOT/worker/tests/proxy-targets.test.mjs"
+run_check "proxy link parser and credential redaction tests" node "$ROOT/worker/tests/proxy-links.test.mjs"
 run_check "durable probe history buffer tests" node "$ROOT/worker/tests/probe-history-buffer.test.mjs"
 run_check "probe history dead-letter maintenance tests" node "$ROOT/worker/tests/probe-history-dead-letter.test.mjs"
 run_check "public status stream tests" node "$ROOT/worker/tests/status-stream.test.mjs"

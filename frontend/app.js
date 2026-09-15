@@ -1,9 +1,9 @@
-import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260911-cache1';
+import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260915-proxy2';
 import {
   billingCycleSuffix,
   isLifetimeBilling,
   normalizeBillingCycle,
-} from './js/shared/billing.js?v=20260911-cache1';
+} from './js/shared/billing.js?v=20260915-proxy2';
 import {
   cssEscape,
   clampNumber,
@@ -18,11 +18,11 @@ import {
   normalizeCityName,
   pad,
   timeAgoSec,
-} from './js/shared/format.js?v=20260911-cache1';
-import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260911-cache1';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260911-cache1';
-import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260911-cache1';
-import { countryByCode } from './js/shared/target-catalogs.js?v=20260911-cache1';
+} from './js/shared/format.js?v=20260915-proxy2';
+import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260915-proxy2';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260915-proxy2';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260915-proxy2';
+import { countryByCode } from './js/shared/target-catalogs.js?v=20260915-proxy2';
 import {
   clampChartRange,
   countChartGaps,
@@ -30,15 +30,15 @@ import {
   filterChecksByRange,
   hexToRgba,
   trimEmptyPointEdges,
-} from './js/shared/chart-data.js?v=20260911-cache1';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260911-cache1';
-import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260911-cache1';
-import { unlockState } from './js/shared/unlock.js?v=20260911-cache1';
-import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260911-cache1';
-import { targetSlaPercentage } from './js/shared/sla.js?v=20260911-cache1';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260911-cache1';
-import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260911-cache1';
-import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260911-cache1';
+} from './js/shared/chart-data.js?v=20260915-proxy2';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260915-proxy2';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260915-proxy2';
+import { unlockState } from './js/shared/unlock.js?v=20260915-proxy2';
+import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260915-proxy2';
+import { targetSlaPercentage } from './js/shared/sla.js?v=20260915-proxy2';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260915-proxy2';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260915-proxy2';
+import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260915-proxy2';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -939,6 +939,8 @@ function renderService(t, days, summaries) {
 
   let metaBadges = '';
   if (t.line_type) metaBadges += `<span class="meta-badge meta-line">${escapeHtml(t.line_type)}</span>`;
+  const proxyBadge = proxyStatusBadgeHtml(t);
+  if (proxyBadge) metaBadges += proxyBadge;
   if (t.location || targetCityName(t)) {
     const locationText = targetLocationLabel(t);
     if (locationText) metaBadges += `<span class="meta-badge meta-loc">${escapeHtml(locationText)}</span>`;
@@ -1042,6 +1044,23 @@ if (document.addEventListener) {
 
 function targetHasPublicLatency(target) {
   return Number(target?.no_public_ip || 0) !== 1;
+}
+
+function proxyStatusBadgeHtml(target) {
+  const checks = Array.isArray(target?.proxy_checks) ? target.proxy_checks : [];
+  if (!checks.length) return '';
+  const fresh = checks.filter((check) => check && check.stale !== true);
+  if (!fresh.length) return '<span class="meta-badge meta-proxy meta-proxy-stale">代理数据过期</span>';
+  const online = fresh.filter((check) => Number(check.ok) === 1).length;
+  const total = fresh.length;
+  const className = online === total ? 'meta-proxy-ok' : online > 0 ? 'meta-proxy-warn' : 'meta-proxy-down';
+  const title = fresh.map((check) => {
+    const timing = Number(check.ok) === 1 && check.total_ms != null
+      ? ` · 总 ${Math.round(Number(check.total_ms))}ms · 握手 ${check.handshake_ms == null ? '-' : Math.round(Number(check.handshake_ms))}ms · 首字节 ${check.first_byte_ms == null ? '-' : Math.round(Number(check.first_byte_ms))}ms`
+      : '';
+    return `${check.name || check.target_id || check.protocol}: ${Number(check.ok) === 1 ? '在线' : '离线'}${timing}`;
+  }).join(' · ');
+  return `<span class="meta-badge meta-proxy ${className}" title="${escapeAttr(title)}">代理 ${online}/${total} 在线</span>`;
 }
 
 function serviceCloudflareLatencyHtml(target) {
@@ -1652,7 +1671,6 @@ async function updatePingChart() {
         agent_id: id,
         hours: String(hours),
         format: 'series',
-        max_points_per_target: String(({ '1h': 360, '6h': 360, '24h': 480 }[range] || 360)),
       });
       const res = await fetchWithTimeout(api(`/api/agent/pings?${params}`), { cache: 'no-store' });
       const data = await res.json();

@@ -6,8 +6,8 @@ import { writeR2Json } from '../storage.js';
 const BACKUP_SCHEMA = 'nie-sla-backup-v1';
 const D1_BATCH_SIZE = 50;
 const BACKUP_PBKDF2_ITERATIONS = 100_000;
-const PORTABLE_TABLES = ['targets', 'ping_targets', 'latency_agents'];
-const SENSITIVE_TABLES = ['agent_credentials'];
+const PORTABLE_TABLES = ['targets', 'ping_targets', 'latency_agents', 'proxy_targets'];
+const SENSITIVE_TABLES = ['agent_credentials', 'proxy_target_secrets'];
 const RUNTIME_TABLES = [
   'latest_status', 'check_buckets', 'incident_events', 'alert_state',
   'agent_metrics_state', 'agent_metrics_history', 'agent_daily_availability',

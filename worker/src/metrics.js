@@ -4,7 +4,7 @@ import { ApiError, requireAgentForId, requireAnyAgent, safeJson, json } from './
 import { readR2Json, readR2JsonStrict, writeR2Json } from './storage.js';
 import { rateLimitByIp } from './ratelimit.js';
 import { recordAgentAvailability } from './agent-availability.js';
-import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn } from './admin/schema.js';
+import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn, ensureAgentProxyChecksColumn } from './admin/schema.js';
 import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry, readBufferedAgentLatestState } from './telemetry-buffer.js';
 import { bufferedAgentStateEnabled, newerAgentMetricRow } from './agent-state.js';
 import { getPingIntervalSec } from './ping-config.js';
@@ -13,6 +13,9 @@ import { getTrafficCorrection } from './admin/traffic-corrections.js';
 
 const MAX_AGENT_SAMPLES_PER_REPORT = 910;
 const MAX_AGENT_PINGS_PER_REPORT = 5_000;
+const MAX_AGENT_PROXY_CHECKS_PER_REPORT = 100;
+const PROXY_CHECK_STAGES = new Set(['config', 'connect', 'handshake', 'canary', 'runtime', 'failed']);
+const PROXY_CHECK_ERRORS = new Set(['timeout', 'auth_failed', 'unsupported', 'handshake_failed', 'canary_failed', 'invalid_config', 'runtime_failed']);
 const MAX_TELEMETRY_HOURS_PER_REPORT = 25;
 const MAX_TELEMETRY_AGE_SEC = 7 * 86400;
 const MAX_TELEMETRY_FUTURE_SEC = 300;
@@ -173,6 +176,39 @@ export function normalizeAgentMetricState(metrics = {}) {
   };
 }
 
+export function normalizeAgentProxyChecks(value, fallbackTs = nowSec()) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_AGENT_PROXY_CHECKS_PER_REPORT).flatMap((item) => {
+    const targetId = String(item?.target_id || item?.id || '').trim().slice(0, 128);
+    const protocol = ['socks5', 'http', 'ss', 'vless', 'vmess', 'trojan', 'hysteria2', 'snell', 'anytls'].includes(String(item?.protocol || '').trim().toLowerCase())
+      ? String(item.protocol).trim().toLowerCase()
+      : '';
+    const ts = Math.floor(Number(item?.ts || fallbackTs));
+    if (!targetId || !protocol || !Number.isFinite(ts) || ts <= 0) return [];
+    const latency = item?.latency_ms == null ? null : Number(item.latency_ms);
+    const duration = (key) => {
+      const value = item?.[key] == null ? null : Number(item[key]);
+      return Number.isFinite(value) && value >= 0 && value <= 120_000 ? Math.round(value) : null;
+    };
+    const ok = item?.ok === true || item?.ok === 1 || item?.ok === '1' ? 1 : 0;
+    const stage = String(item?.stage || (ok ? 'canary' : 'failed')).trim().slice(0, 32);
+    const error = String(item?.error || '').trim().slice(0, 64);
+    return [{
+      target_id: targetId,
+      name: String(item?.name || targetId).trim().slice(0, 96),
+      protocol,
+      ts,
+      latency_ms: Number.isFinite(latency) && latency >= 0 && latency <= 120_000 ? Math.round(latency) : null,
+      handshake_ms: duration('handshake_ms'),
+      first_byte_ms: duration('first_byte_ms'),
+      total_ms: duration('total_ms'),
+      ok,
+      stage: PROXY_CHECK_STAGES.has(stage) ? stage : (ok ? 'canary' : 'failed'),
+      error: PROXY_CHECK_ERRORS.has(error) ? error : null,
+    }];
+  });
+}
+
 export function normalizeAgentCapabilities(value, observedAt = nowSec()) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Number(value.protocol) !== 1) return null;
   const mode = ['manager', 'compatibility', 'telemetry_only'].includes(String(value.mode || ''))
@@ -240,6 +276,7 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   const state = normalizeAgentMetricState(metrics);
 
   const vpsInfo = normalizeAgentVpsInfo(metrics.vps_info);
+  const proxyChecks = normalizeAgentProxyChecks(metrics.proxy_checks, ts);
   const legacyPings = Array.isArray(metrics.pings) ? metrics.pings : [];
   const decodedSeries = pingSeriesToPoints(metrics.ping_series);
   if (decodedSeries.error) throw new ApiError(400, decodedSeries.error);
@@ -256,7 +293,7 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   let latestState = null;
   let mapped = null;
   try {
-    const persisted = await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples: telemetrySamples, pings: telemetryPings, ts }, options);
+    const persisted = await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples: telemetrySamples, pings: telemetryPings, proxyChecks, ts }, options);
     if (persisted && typeof persisted === 'object' && 'latest_state' in persisted && options.wss === true) {
       latestState = persisted.latest_state;
       mapped = { points: persisted.mapped_points || [], pings: persisted.mapped_pings || [] };
@@ -357,6 +394,7 @@ export async function getAgentMetrics(env, url, ctx = null) {
         stats: row.stats ? parseJsonSafe(row.stats) : null, uptime_sec: row.uptime_sec,
         vps_info: row.vps_info ? parseJsonSafe(row.vps_info) : null,
         pings: row.pings ? parseJsonSafe(row.pings) : [],
+        proxy_checks: row.proxy_checks ? parseJsonSafe(row.proxy_checks) : [],
       };
     }
   } catch (error) {
@@ -1428,8 +1466,9 @@ function normalizeOkInt(value) {
 }
 
 async function persistAgentMetrics(env, data, options = {}) {
-  const { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, ts } = data;
+  const { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, proxyChecks, ts } = data;
   const rawPings = mapPings(pings, ts);
+  const rawProxyChecks = normalizeAgentProxyChecks(proxyChecks, ts);
   const wssFast = options.wss === true;
   const d1PreviousState = wssFast
     ? null
@@ -1442,6 +1481,7 @@ async function persistAgentMetrics(env, data, options = {}) {
     : null;
   const previousState = bufferedPreviousState || d1PreviousState;
   const statePings = mergeStatePings(previousState?.pings ?? d1PreviousState?.pings, rawPings, env);
+  const stateProxyChecks = mergeStateProxyChecks(previousState?.proxy_checks ?? d1PreviousState?.proxy_checks, rawProxyChecks);
   if (!wssFast && Number(d1PreviousState?.no_public_ip || 0) === 1) {
     await recordAgentAvailability(env, agentId, previousState?.updated_at || d1PreviousState?.updated_at, ts)
       .catch(err => console.error('recordAgentAvailability failed:', String(err?.message || err)));
@@ -1462,6 +1502,7 @@ async function persistAgentMetrics(env, data, options = {}) {
     ...state,
     vps_info: effectiveVpsInfo,
     pings: statePings,
+    proxy_checks: stateProxyChecks,
     capabilities: effectiveCapabilities,
   };
   if (!options.skipStateD1) await writeAgentMetricState(env, latestState);
@@ -1498,8 +1539,8 @@ async function writeAgentMetricState(env, state) {
   const updatedAt = String(state.updated_at || new Date().toISOString());
   const hostname = String(state.hostname || '').slice(0, 128);
   const writeState = () => env.DB.prepare(`
-    INSERT INTO agent_metrics_state (agent_id, agent_label, agent_version, updated_at, hostname, cpu_percent, process_count, thread_count, memory, load, disk, net, diskio, stats, uptime_sec, vps_info, pings, capabilities)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO agent_metrics_state (agent_id, agent_label, agent_version, updated_at, hostname, cpu_percent, process_count, thread_count, memory, load, disk, net, diskio, stats, uptime_sec, vps_info, pings, proxy_checks, capabilities)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(agent_id) DO UPDATE SET
       agent_label=excluded.agent_label,
       agent_version=COALESCE(excluded.agent_version, agent_version),
@@ -1509,6 +1550,7 @@ async function writeAgentMetricState(env, state) {
       stats=excluded.stats, uptime_sec=excluded.uptime_sec,
       vps_info=CASE WHEN excluded.vps_info IS NOT NULL THEN excluded.vps_info ELSE vps_info END,
       pings=excluded.pings,
+      proxy_checks=excluded.proxy_checks,
       capabilities=CASE WHEN excluded.capabilities IS NOT NULL THEN excluded.capabilities ELSE capabilities END
   `).bind(
     agentId, agentLabel, agentVersion, updatedAt,
@@ -1518,13 +1560,15 @@ async function writeAgentMetricState(env, state) {
     state.stats ? JSON.stringify(state.stats) : null, state.uptime_sec,
     state.vps_info ? JSON.stringify(state.vps_info) : null,
     JSON.stringify(Array.isArray(state.pings) ? state.pings : []),
+    JSON.stringify(Array.isArray(state.proxy_checks) ? state.proxy_checks : []),
     state.capabilities ? JSON.stringify(state.capabilities) : null,
   ).run();
   try {
     await writeState();
   } catch (err) {
-    if (!isMissingAgentCapabilitiesColumn(err)) throw err;
-    await ensureAgentCapabilitiesColumn(env);
+    if (!isMissingAgentCapabilitiesColumn(err) && !isMissingAgentProxyChecksColumn(err)) throw err;
+    if (isMissingAgentProxyChecksColumn(err)) await ensureAgentProxyChecksColumn(env);
+    if (isMissingAgentCapabilitiesColumn(err)) await ensureAgentCapabilitiesColumn(env);
     await writeState();
   }
 }
@@ -1563,6 +1607,28 @@ function mergeStatePings(previousSerialized, incoming, env, maxPerTarget = 60, m
     out.push(...list.slice(-maxPerTarget));
   }
   return out.sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id)).slice(-maxTotal);
+}
+
+function mergeStateProxyChecks(previousSerialized, incoming, maxTotal = MAX_AGENT_PROXY_CHECKS_PER_REPORT) {
+  const byTarget = new Map();
+  const previous = parseJsonSafe(previousSerialized);
+  for (const check of normalizeAgentProxyChecks(previous)) {
+    const current = byTarget.get(check.target_id);
+    if (!current || check.ts >= current.ts) byTarget.set(check.target_id, check);
+  }
+  for (const check of incoming || []) {
+    const current = byTarget.get(check.target_id);
+    if (!current || check.ts >= current.ts) byTarget.set(check.target_id, check);
+  }
+  return [...byTarget.values()]
+    .sort((a, b) => b.ts - a.ts || a.target_id.localeCompare(b.target_id))
+    .slice(0, maxTotal)
+    .sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
+}
+
+function isMissingAgentProxyChecksColumn(err) {
+  const message = String(err?.message || err || '').toLowerCase();
+  return message.includes('no such column: proxy_checks') || message.includes('has no column named proxy_checks');
 }
 
 async function writePingHistory(env, agentId, pings, fallbackTs) {

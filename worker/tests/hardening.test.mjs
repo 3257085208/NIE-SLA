@@ -111,6 +111,7 @@ assert.match(metricsSource, /warnings\.push\('Latest Agent metrics unavailable'\
 assert.match(wranglerSource, /MAX_TARGETS_PER_RUN = "20"/, 'cron work must be spread across minute slots while retaining 100 targets per five minutes');
 assert.match(wranglerSource, /global_fetch_strictly_public/, 'signed cron dispatch must loop through the public Worker endpoint instead of bypassing the Worker route');
 assert.match(wranglerSource, /not_found_handling = "404-page"/, 'unknown browser routes must render the branded 404 asset');
+assert.doesNotMatch(wranglerSource, /!\/\*\.(?:css|js|json)"/, 'dynamic theme files must not be bypassed by extension-wide Assets exclusions');
 assert.doesNotMatch(adminAuthSource.slice(adminAuthSource.indexOf('export async function adminAuthConfig'), adminAuthSource.indexOf('export async function passwordLogin')), /admin_path/, 'anonymous auth config must not expose the admin path');
 assert.match(adminAuthSource, /if \(!githubEnabled\(env\)\) return new Response\(null, \{ status: 404/, 'a disabled OAuth callback must return 404 before resolving the admin path');
 assert.match(adminAuthSource, /throw new ApiError\(404, '未找到'\)/, 'disabled OAuth start and complete endpoints must return 404');

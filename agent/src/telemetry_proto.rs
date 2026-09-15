@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use super::{AggStats, Metrics, PingResult, SamplePoint, Stats, VpsInfo};
+use super::{proxy::ProxyCheckResult, AggStats, Metrics, PingResult, SamplePoint, Stats, VpsInfo};
 
 const PROTOCOL_VERSION: u64 = 1;
 
@@ -54,6 +54,26 @@ fn encode_metrics(metrics: &Metrics) -> Vec<u8> {
     }
     for series in encode_ping_series(&metrics.pings) {
         field_message(&mut out, 14, &series);
+    }
+    for check in &metrics.proxy_checks {
+        field_message(&mut out, 15, &encode_proxy_check(check));
+    }
+    out
+}
+
+fn encode_proxy_check(check: &ProxyCheckResult) -> Vec<u8> {
+    let mut out = Vec::new();
+    field_string(&mut out, 1, &check.target_id);
+    field_string(&mut out, 2, &check.name);
+    field_string(&mut out, 3, &check.protocol);
+    field_varint(&mut out, 4, check.ts.max(0) as u64);
+    if let Some(latency) = check.latency_ms {
+        field_f64(&mut out, 5, latency as f64);
+    }
+    field_varint(&mut out, 6, u64::from(check.ok));
+    field_string(&mut out, 7, &check.stage);
+    if let Some(error) = &check.error {
+        field_string(&mut out, 8, error);
     }
     out
 }

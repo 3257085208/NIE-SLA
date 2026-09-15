@@ -11,6 +11,8 @@ const PROBE_BUFFER_SCHEMA_MARKER = 'schema:worker-v28-probe-buffer';
 const TASK_RETENTION_SCHEMA_MARKER = 'schema:worker-v29-agent-task-retention';
 const BACKROUTE_TASK_SCHEMA_MARKER = 'schema:worker-v30-backroute-task';
 const AGENT_CONTACTS_SCHEMA_MARKER = 'schema:worker-v31-agent-contacts';
+const PROXY_TARGETS_SCHEMA_MARKER = 'schema:worker-v32-proxy-targets';
+const PROXY_LINKS_SCHEMA_MARKER = 'schema:worker-v33-proxy-links';
 
 function createAgentTasksTableSql(tableName = 'agent_tasks', ifNotExists = false) {
   return `CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
@@ -58,6 +60,10 @@ export async function ensureAgentCapabilitiesColumn(env) {
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN capabilities TEXT`);
 }
 
+export async function ensureAgentProxyChecksColumn(env) {
+  await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN proxy_checks TEXT`);
+}
+
 export async function ensureV6Schema(env) {
   if (schemaEnsured || !env.DB) return;
   if (schemaPromise) { await schemaPromise; return; }
@@ -71,7 +77,9 @@ export async function ensureV6Schema(env) {
   const taskRetentionInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(TASK_RETENTION_SCHEMA_MARKER).first().catch(() => null);
   const backrouteTaskInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(BACKROUTE_TASK_SCHEMA_MARKER).first().catch(() => null);
   const agentContactsInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(AGENT_CONTACTS_SCHEMA_MARKER).first().catch(() => null);
-  if (installed?.value === '1' && nextProbeInstalled?.value === '1' && probeBufferInstalled?.value === '1' && taskRetentionInstalled?.value === '1' && backrouteTaskInstalled?.value === '1' && agentContactsInstalled?.value === '1') { schemaEnsured = true; return; }
+  const proxyTargetsInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(PROXY_TARGETS_SCHEMA_MARKER).first().catch(() => null);
+  const proxyLinksInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(PROXY_LINKS_SCHEMA_MARKER).first().catch(() => null);
+  if (installed?.value === '1' && nextProbeInstalled?.value === '1' && probeBufferInstalled?.value === '1' && taskRetentionInstalled?.value === '1' && backrouteTaskInstalled?.value === '1' && agentContactsInstalled?.value === '1' && proxyTargetsInstalled?.value === '1' && proxyLinksInstalled?.value === '1') { schemaEnsured = true; return; }
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS targets (id TEXT PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT 'Default', type TEXT NOT NULL CHECK (type IN ('tcp', 'http')), target_host TEXT, target_port INTEGER, url TEXT, method TEXT DEFAULT 'GET', expected_status TEXT DEFAULT '', timeout_ms INTEGER NOT NULL DEFAULT 5000, interval_sec INTEGER NOT NULL DEFAULT 300, probe_region TEXT NOT NULL DEFAULT 'auto', enabled INTEGER NOT NULL DEFAULT 1, no_public_ip INTEGER NOT NULL DEFAULT 0, sort_order INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, last_checked_at INTEGER, expires_at INTEGER, price REAL, billing_cycle TEXT DEFAULT '', tags TEXT DEFAULT '', location TEXT DEFAULT '', city TEXT DEFAULT '', currency TEXT DEFAULT 'USD', traffic_enabled INTEGER NOT NULL DEFAULT 0, traffic_quota_gb REAL NOT NULL DEFAULT 0, traffic_mode TEXT DEFAULT 'total', traffic_reset_day INTEGER NOT NULL DEFAULT 1, alert_enabled INTEGER NOT NULL DEFAULT 1, alert_expiry_days INTEGER, alert_traffic_remaining_percent REAL, alert_traffic_remaining_gb REAL, provider TEXT DEFAULT '', line_type TEXT DEFAULT '', nq_report TEXT DEFAULT '', nq_updated_at INTEGER)`).run();
   for (const stmt of ['ALTER TABLE targets ADD COLUMN expires_at INTEGER', 'ALTER TABLE targets ADD COLUMN price REAL', 'ALTER TABLE targets ADD COLUMN billing_cycle TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN tags TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN location TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN currency TEXT DEFAULT \'USD\'', 'ALTER TABLE targets ADD COLUMN traffic_enabled INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_quota_gb REAL NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN traffic_mode TEXT DEFAULT \'total\'', 'ALTER TABLE targets ADD COLUMN traffic_reset_day INTEGER', 'ALTER TABLE targets ADD COLUMN alert_enabled INTEGER NOT NULL DEFAULT 1', 'ALTER TABLE targets ADD COLUMN alert_expiry_days INTEGER', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_percent REAL', 'ALTER TABLE targets ADD COLUMN alert_traffic_remaining_gb REAL', 'ALTER TABLE targets ADD COLUMN sort_order INTEGER', 'ALTER TABLE targets ADD COLUMN provider TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN line_type TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN no_public_ip INTEGER NOT NULL DEFAULT 0', 'ALTER TABLE targets ADD COLUMN city TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_report TEXT DEFAULT \'\'', 'ALTER TABLE targets ADD COLUMN nq_updated_at INTEGER', 'ALTER TABLE targets ADD COLUMN next_probe_at INTEGER']) {
     await runOptionalSchemaChange(env, stmt);
@@ -170,12 +178,14 @@ export async function ensureV6Schema(env) {
     process_count INTEGER,
     thread_count INTEGER,
     pings TEXT,
+    proxy_checks TEXT,
     capabilities TEXT
   )`).run();
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN agent_version TEXT`);
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN process_count INTEGER`);
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN thread_count INTEGER`);
   await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN pings TEXT`);
+  await runOptionalSchemaChange(env, `ALTER TABLE agent_metrics_state ADD COLUMN proxy_checks TEXT`);
   await ensureAgentCapabilitiesColumn(env);
 
   // Lightweight manager liveness evidence: the privileged task poller hits
@@ -273,6 +283,32 @@ export async function ensureV6Schema(env) {
     PRIMARY KEY (target_id, agent_id, ts)
   )`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_ping_history_agent_ts ON ping_history(agent_id, ts DESC)`).run();
+
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS proxy_targets (
+    id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    protocol TEXT NOT NULL CHECK (protocol IN ('socks5', 'http', 'ss', 'vless', 'vmess', 'trojan', 'hysteria2', 'snell', 'anytls', 'tuic')),
+    server TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    transport TEXT NOT NULL DEFAULT 'tcp' CHECK (transport IN ('tcp', 'tls', 'ws', 'tls-ws', 'grpc', 'tls-grpc', 'h2', 'tls-h2', 'httpupgrade', 'tls-httpupgrade', 'quic')),
+    sni TEXT NOT NULL DEFAULT '',
+    ws_path TEXT NOT NULL DEFAULT '/',
+    ws_host TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    timeout_ms INTEGER NOT NULL DEFAULT 5000,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`).run();
+  await migrateProxyTargetProtocolSchema(env, proxyTargetsInstalled?.value === '1' && proxyLinksInstalled?.value !== '1');
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_proxy_targets_agent_enabled ON proxy_targets(agent_id, enabled, name)`).run();
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS proxy_target_secrets (
+    target_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    secret_ciphertext TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_proxy_target_secrets_agent ON proxy_target_secrets(agent_id)`).run();
 
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS latency_agents (
     id TEXT PRIMARY KEY,
@@ -456,10 +492,42 @@ export async function ensureV6Schema(env) {
     .bind(BACKROUTE_TASK_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
     .bind(AGENT_CONTACTS_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+    .bind(PROXY_TARGETS_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+    .bind(PROXY_LINKS_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   schemaEnsured = true;
   } catch (e) { schemaPromise = null; throw e; }
   })();
   await schemaPromise;
+}
+
+async function migrateProxyTargetProtocolSchema(env, needed) {
+  if (!needed) return;
+  const current = await env.DB.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'proxy_targets'`).first().catch(() => null);
+  if (String(current?.sql || '').includes("'http'") && String(current?.sql || '').includes("'hysteria2'")) return;
+  await env.DB.batch([
+    env.DB.prepare(`DROP TABLE IF EXISTS proxy_targets_v33`),
+    env.DB.prepare(`CREATE TABLE proxy_targets_v33 (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      protocol TEXT NOT NULL CHECK (protocol IN ('socks5', 'http', 'ss', 'vless', 'vmess', 'trojan', 'hysteria2', 'snell', 'anytls', 'tuic')),
+      server TEXT NOT NULL,
+      port INTEGER NOT NULL,
+      transport TEXT NOT NULL DEFAULT 'tcp' CHECK (transport IN ('tcp', 'tls', 'ws', 'tls-ws', 'grpc', 'tls-grpc', 'h2', 'tls-h2', 'httpupgrade', 'tls-httpupgrade', 'quic')),
+      sni TEXT NOT NULL DEFAULT '',
+      ws_path TEXT NOT NULL DEFAULT '/',
+      ws_host TEXT NOT NULL DEFAULT '',
+      enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+      timeout_ms INTEGER NOT NULL DEFAULT 5000,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )`),
+    env.DB.prepare(`INSERT INTO proxy_targets_v33 (id, agent_id, name, protocol, server, port, transport, sni, ws_path, ws_host, enabled, timeout_ms, created_at, updated_at) SELECT id, agent_id, name, protocol, server, port, transport, sni, ws_path, ws_host, enabled, timeout_ms, created_at, updated_at FROM proxy_targets`),
+    env.DB.prepare(`DROP TABLE proxy_targets`),
+    env.DB.prepare(`ALTER TABLE proxy_targets_v33 RENAME TO proxy_targets`),
+  ]);
 }
 
 async function ensureAgentTaskBackrouteAction(env) {

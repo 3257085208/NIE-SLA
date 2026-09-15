@@ -5,7 +5,9 @@ import { readR2JsonResult, writeR2Json } from '../storage.js';
 import { agentApiBase, agentInstallBase, shellQuote } from './install-command.js';
 import { getMeta, getPublicSettings, setMeta } from './settings.js';
 
-const RESULT_BUCKET_SEC = 60;
+// Preserve the reported second. A one-minute bucket silently merged two
+// 30-second probes and made the public Latency series non-raw.
+const RESULT_BUCKET_SEC = 1;
 const D1_FALLBACK_BUCKET_SEC = 300;
 const ARCHIVE_SEGMENT_SEC = 6 * 3600;
 const ARCHIVE_SCHEMA = 'nie-sla-latency-segment-v1';
@@ -268,7 +270,10 @@ export async function getPublicLatency(env, url) {
   const since = nowSec() - hours * 3600;
   const cutoff = Math.floor(Math.max(since, Number(target.created_at || 0)) / RESULT_BUCKET_SEC) * RESULT_BUCKET_SEC;
   const nodes = await enabledLatencyNodes(env);
-  const archivedRows = await readLatencyArchive(env, nodes, targetId, cutoff, nowSec());
+  // Long public ranges can span many six-hour objects. Prefer the native R2
+  // binding for reads so the S3 compatibility facade does not consume one
+  // external fetch per segment and hit the Worker subrequest ceiling.
+  const archivedRows = await readLatencyArchive({ ...env, ARCHIVE: env.ARCHIVE_NATIVE || env.ARCHIVE }, nodes, targetId, cutoff, nowSec());
   const legacyRows = await env.DB.prepare(`SELECT r.node_id, a.name AS node_name, a.color AS node_color, r.checked_at, r.latency_ms, r.ok FROM latency_results r JOIN latency_agents a ON a.id = r.node_id AND a.enabled = 1 WHERE r.target_id = ? AND r.checked_at >= ? ORDER BY r.checked_at ASC`).bind(targetId, cutoff).all().catch(() => ({ results: [] }));
   return { ok: true, target_id: targetId, sources: groupLatencySeries([...(legacyRows.results || []), ...archivedRows]) };
 }

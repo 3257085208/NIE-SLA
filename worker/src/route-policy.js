@@ -4,6 +4,7 @@ const AGENT_API_PATHS = new Set([
   '/api/agent/metrics',
   '/api/agent/update-policy',
   '/api/agent/ping-targets',
+  '/api/agent/proxy-targets',
   '/api/agent/pings',
   '/api/agent/config',
   '/api/agent/location',

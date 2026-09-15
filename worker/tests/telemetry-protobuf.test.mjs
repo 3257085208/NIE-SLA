@@ -32,6 +32,11 @@ const metrics = concat([
     messageField(3, [varintField(1, 0), varintField(3, 0)]),
     messageField(3, [varintField(1, 20), fixedField(2, 8.5), varintField(3, 1)]),
   ]),
+  messageField(15, [
+    stringField(1, 'vless-main'), stringField(2, 'VLESS main'), stringField(3, 'vless'),
+    varintField(4, 1700000001), fixedField(5, 42.7), varintField(6, 1),
+    stringField(7, 'canary'),
+  ]),
 ]);
 
 const frame = concat([
@@ -55,6 +60,10 @@ assert.equal(decoded.metrics.samples[0].cpu_temp, 45);
 assert.equal(decoded.metrics.vps_info.temperature_sensors[0].temp_c, 55);
 assert.deepEqual(decoded.metrics.ping_series[0].latency_ms, [null, 8.5]);
 assert.deepEqual(decoded.metrics.ping_series[0].ok, [0, 1]);
+assert.deepEqual(decoded.metrics.proxy_checks, [{
+  target_id: 'vless-main', name: 'VLESS main', protocol: 'vless', ts: 1700000001,
+  latency_ms: 42.7, ok: 1, stage: 'canary', error: null,
+}]);
 
 assert.throws(() => decodeAgentMetricsProtobuf(concat([varintField(1, 2), messageField(6, metrics)])), /协议版本/);
 assert.throws(() => decodeAgentMetricsProtobuf(concat([fixedField(1, 1)])), /wire type/);

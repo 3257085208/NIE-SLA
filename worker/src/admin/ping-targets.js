@@ -1,7 +1,7 @@
 
 import { nowSec, clamp, parseBoolean, sanitizeAgentId, retentionSeconds } from '../utils.js';
 import { safeJson, requireAgentForId, requireAnyAgent, ApiError } from '../auth.js';
-import { writeAgentTelemetryR2History, compactPingPointsByTarget, loadAgentPingsR2History, pingLossPointsToRuns, pingPointsToSeries, summarizePingPointsByTarget } from '../metrics.js';
+import { writeAgentTelemetryR2History, loadAgentPingsR2History, pingLossPointsToRuns, pingPointsToSeries, summarizePingPointsByTarget } from '../metrics.js';
 import { rateLimitByIp } from '../ratelimit.js';
 import { getPingIntervalSec, pingConfigPayload } from '../ping-config.js';
 import { normalizePingTarget, normalizeProbeProtocols, pingTargetProtocol } from '../ping-target-protocol.js';
@@ -142,7 +142,7 @@ export async function submitAgentPings(request, env) {
 export async function getAgentPings(env, url, ctx = null) {
   if (!env.DB) return { ok: true, targets: [], pings: [] };
   const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
-  const { hours, maxPerTarget } = resolvePublicPingQuery(url, env);
+  const { hours } = resolvePublicPingQuery(url, env);
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
   const includeLoss = parseBoolean(url.searchParams.get('include_loss'), false);
   const requestedUntil = nowSec();
@@ -174,7 +174,9 @@ export async function getAgentPings(env, url, ctx = null) {
     });
   } catch (_) {}
   const rawPings = [...byKey.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
-  const pings = compactPingPointsByTarget(rawPings, maxPerTarget);
+  // TCP Ping history is a forensic view. Keep every stored point and never
+  // average/compact it at the public API boundary; `hours` remains bounded.
+  const pings = rawPings;
   const pingStats = summarizePingPointsByTarget(rawPings);
   const pingIntervalSec = await getPingIntervalSec(env);
   const payload = {
@@ -183,7 +185,8 @@ export async function getAgentPings(env, url, ctx = null) {
     pings: responseFormat === 'series' ? [] : pings,
     ping_stats: pingStats,
     pings_raw_count: rawPings.length,
-    pings_downsampled: rawPings.length > pings.length,
+    pings_downsampled: false,
+    pings_raw: true,
     ping_interval_sec: pingIntervalSec,
     source: r2.loaded ? 'r2+d1-fallback' : 'd1',
   };
@@ -197,7 +200,7 @@ export async function getAgentPings(env, url, ctx = null) {
 
 export async function getAgentPingsBatch(env, url, ctx = null) {
   if (!env.DB) return { ok: true, targets: [], agents: {} };
-  const { hours, maxPerTarget } = resolvePublicPingQuery(url, env);
+  const { hours } = resolvePublicPingQuery(url, env);
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
   const includeLoss = parseBoolean(url.searchParams.get('include_loss'), false);
   const raw = String(url.searchParams.get('agent_ids') || url.searchParams.get('agentIds') || '').trim();
@@ -241,20 +244,15 @@ export async function getAgentPingsBatch(env, url, ctx = null) {
   if (responseFormat === 'series') {
     for (const v of Object.values(results)) if (v?.ok) { if (Array.isArray(v.series) && v.series.length) continue; if (Array.isArray(v.pings) && v.pings.length) { v.series = pingPointsToSeries(v.pings); v.pings = []; } else if (!v.series) { v.series = []; } }
   }
-  return { ok: true, targets: targets.results || [], ping_interval_sec: pingIntervalSec, hours, max_per_target: maxPerTarget, format: responseFormat || 'pings', include_loss: includeLoss, agents: results };
+  return { ok: true, targets: targets.results || [], ping_interval_sec: pingIntervalSec, hours, max_per_target: null, format: responseFormat || 'pings', include_loss: includeLoss, agents: results };
 }
 
 export function resolvePublicPingQuery(url, env = {}) {
   const publicMaxHours = clamp(Number(env.AGENT_PINGS_PUBLIC_MAX_HOURS || env.AGENT_METRICS_PUBLIC_MAX_HOURS || 72), 1, 168);
   const hours = clamp(Math.floor(Number(url.searchParams.get('hours') || 24)), 1, publicMaxHours);
-  const hardMax = clamp(Number(env.AGENT_PINGS_HARD_MAX_POINTS_PER_TARGET || 2000), 10, 10000);
-  const defaultMax = clamp(Number(env.AGENT_PINGS_MAX_POINTS_PER_TARGET || 360), 10, hardMax);
-  let maxPerTargetRaw = url.searchParams.has('max_points_per_target')
-    ? Number(url.searchParams.get('max_points_per_target'))
-    : defaultMax;
-  if (!Number.isFinite(maxPerTargetRaw) || maxPerTargetRaw <= 0) maxPerTargetRaw = defaultMax;
-  const maxPerTarget = clamp(Math.floor(maxPerTargetRaw), 10, hardMax);
-  return { hours, maxPerTarget, defaultMax, hardMax, publicMaxHours };
+  // Keep the old query parameter tolerated for compatibility, but ignore it:
+  // raw TCP Ping history must not be averaged or compacted.
+  return { hours, maxPerTarget: null, raw: true, publicMaxHours };
 }
 
 function normalizeChartColor(value, fallback) {

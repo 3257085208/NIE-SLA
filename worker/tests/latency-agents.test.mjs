@@ -19,9 +19,9 @@ await ensureV6Schema(env);
 
 const now = Math.floor(Date.now() / 1000);
 database.prepare(`INSERT INTO targets (id, name, group_name, type, target_host, target_port, timeout_ms, interval_sec, probe_region, enabled, no_public_ip, created_at, updated_at) VALUES (?, ?, 'VPS', 'tcp', ?, ?, 5000, 300, 'auto', 1, ?, ?, ?)`)
-  .run('private-vps', 'Private VPS', null, null, 1, now, now);
+  .run('private-vps', 'Private VPS', null, null, 1, now - 3600, now);
 database.prepare(`INSERT INTO targets (id, name, group_name, type, target_host, target_port, timeout_ms, interval_sec, probe_region, enabled, no_public_ip, created_at, updated_at) VALUES (?, ?, 'VPS', 'tcp', ?, ?, 5000, 300, 'auto', 1, ?, ?, ?)`)
-  .run('public-vps', 'Public VPS', '203.0.113.10', 443, 0, now, now);
+  .run('public-vps', 'Public VPS', '203.0.113.10', 443, 0, now - 3600, now);
 
 const privateRow = database.prepare(`SELECT no_public_ip, target_host, target_port FROM targets WHERE id = ?`).get('private-vps');
 assert.equal(privateRow.no_public_ip, 1);
@@ -98,17 +98,30 @@ assert.equal(archived.points[0].latency_ms, 32);
 
 await submitLatencyAgentResults(jsonRequest({}), env, {
   node_id: created.id,
+  results: [{ target_id: 'public-vps', checked_at: checkedAt - 30, latency_ms: 37, ok: true }],
+});
+archived = JSON.parse([...env.ARCHIVE.objects.values()][0].value);
+assert.equal(archived.points.length, 2, 'R2 Latency archive must retain distinct raw seconds');
+assert.deepEqual(archived.points.map(point => point.checked_at), [checkedAt - 30, checkedAt]);
+
+await submitLatencyAgentResults(jsonRequest({}), env, {
+  node_id: created.id,
   results: [{ target_id: 'public-vps', checked_at: checkedAt, latency_ms: 45, ok: true }],
 });
 archived = JSON.parse([...env.ARCHIVE.objects.values()][0].value);
-assert.equal(archived.points.length, 1, 'R2 archive must replace duplicate node/target/time points');
-assert.equal(archived.points[0].latency_ms, 45);
+assert.equal(archived.points.length, 2, 'R2 archive must replace duplicate node/target/time points');
+assert.equal(archived.points.find(point => point.checked_at === checkedAt).latency_ms, 45);
 const latest = JSON.parse(database.prepare(`SELECT latest_results FROM latency_agents WHERE id = ?`).get(created.id).latest_results);
 assert.equal(latest[0].latency_ms, 45);
 const publicHistory = await getPublicLatency(env, new URL('https://api.example.test/api/latency?target_id=public-vps&hours=24'));
 assert.equal(publicHistory.sources.length, 1, JSON.stringify(publicHistory));
-assert.equal(publicHistory.sources[0].points.length, 1);
-assert.equal(publicHistory.sources[0].points[0].latency_ms, 45);
+assert.equal(publicHistory.sources[0].points.length, 2);
+assert.equal(publicHistory.sources[0].points.find(point => point.checked_at === checkedAt).latency_ms, 45);
+assert.equal(publicHistory.sources[0].points.find(point => point.checked_at === checkedAt - 30).latency_ms, 37);
+
+const nativeReadHistory = await getPublicLatency({ ...env, ARCHIVE_NATIVE: env.ARCHIVE, ARCHIVE: memoryR2() }, new URL('https://api.example.test/api/latency?target_id=public-vps&hours=24'));
+assert.equal(nativeReadHistory.sources.length, 1, 'public Latency history must prefer the native R2 read plane');
+assert.equal(nativeReadHistory.sources[0].points.length, 2);
 
 const corruptLatencyArchive = memoryR2();
 const archivedKey = [...env.ARCHIVE.objects.keys()][0];

@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
-const assetVersion = '20260911-cache1';
+const assetVersion = '20260915-proxy2';
 
 async function javascriptFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });

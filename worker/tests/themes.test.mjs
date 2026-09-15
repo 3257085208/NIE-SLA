@@ -30,6 +30,28 @@ const revisionedCss = await getThemeFile(env, 'clean-green', 'theme.css', active
 assert.match(revisionedCss.headers.get('cache-control'), /immutable/);
 await assert.rejects(() => getThemeFile(env, 'clean-green', 'theme.css', 'stale-revision'), /版本不存在/);
 
+const nativeArchive = r2();
+const facadeArchive = r2();
+const nativeEnv = {
+  DB: d1(),
+  ARCHIVE: facadeArchive,
+  ARCHIVE_NATIVE: nativeArchive,
+  PUBLIC_SITE_ORIGIN: 'https://status.example.test',
+};
+const nativeZip = themeZip({
+  schema: 'nie-sla-theme-v1',
+  id: 'native-theme',
+  name: 'Native Theme',
+  version: '1.0.0',
+  type: 'theme',
+  mode: 'css',
+  styles: ['theme.css'],
+}, { 'theme.css': 'body { --native: true; }' });
+await uploadTheme(uploadRequest(nativeZip), nativeEnv);
+await updateTheme('native-theme', jsonRequest({ enabled: true }), nativeEnv);
+assert.equal(facadeArchive.keys().length, 0, 'theme storage must bypass the S3 facade');
+assert.match(await (await getThemeFile(nativeEnv, 'native-theme', 'theme.css')).text(), /--native/);
+
 const replacedCss = await uploadTheme(uploadRequest(cssZip), env);
 assert.equal(replacedCss.theme.enabled, false, 'replacing an active theme must require fresh administrator approval');
 assert.equal((await getPublicTheme(env)).active_theme, null);

@@ -2,7 +2,7 @@ import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValida
 import { requireAgentForId, requireAnyAgent, requireAnyLatencyAgent, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, internalRequestHeaders, resolveCorsOrigin } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
-import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, getAgentPingsBatch, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getStats, cleanupVolatileHistory, getPublicSettings, getPublicAppearanceScript, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation, estimateUsageFromEnv, getUsageActualConfig, saveUsageActualConfig, fetchActualUsage, getFleetVersions, listTrafficCorrections, saveTrafficCorrection, getFinanceSummary, getTurnstileConfig, getTurnstileSecret, saveTurnstileConfig, getAgentReportInterval, setAgentReportInterval, getMeta, listProbeHistoryDeadLetters, replayProbeHistoryDeadLetter, drainProbeHistoryDeadLetters } from './admin.js';
+import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, getAgentPingsBatch, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, listProxyTargets, createProxyTarget, updateProxyTarget, deleteProxyTarget, previewProxyLinks, getAgentProxyTargets, getStats, cleanupVolatileHistory, getPublicSettings, getPublicAppearanceScript, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation, estimateUsageFromEnv, getUsageActualConfig, saveUsageActualConfig, fetchActualUsage, getFleetVersions, listTrafficCorrections, saveTrafficCorrection, getFinanceSummary, getTurnstileConfig, getTurnstileSecret, saveTurnstileConfig, getAgentReportInterval, setAgentReportInterval, getMeta, listProbeHistoryDeadLetters, replayProbeHistoryDeadLetter, drainProbeHistoryDeadLetters } from './admin.js';
 import { createUsageSummaryAccess, getDebugLogSummary, getUsageSummaryAccessStatus, revokeUsageSummaryAccess, usageSummaryBearerToken, validateUsageSummaryAccess } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
@@ -101,6 +101,7 @@ const ROUTES = [
   { method: 'POST', path: '/api/agent/metrics', rl: 'write' },
   { method: 'GET', path: '/api/agent/update-policy', rl: 'write' },
   { method: 'GET', path: '/api/agent/ping-targets', rl: 'write' },
+  { method: 'GET', path: '/api/agent/proxy-targets', rl: 'write' },
   { method: 'POST', path: '/api/agent/pings', rl: 'write' },
   { method: 'GET', path: '/api/agent/config', rl: 'write' },
   { method: 'POST', path: '/api/agent/location', rl: 'write' },
@@ -161,6 +162,11 @@ const ROUTES = [
   { method: 'POST', path: '/api/ping-targets', rl: 'write' },
   { method: 'GET', path: '/api/ping-targets', rl: 'write' },
   { method: 'PATCH', path: '/api/ping-config', rl: 'write' },
+  { method: 'GET', path: '/api/proxy-targets', rl: 'write' },
+  { method: 'POST', path: '/api/proxy-targets/parse', rl: 'write' },
+  { method: 'POST', path: '/api/proxy-targets', rl: 'write' },
+  { method: 'PATCH', path: '/api/proxy-targets/:id', rl: 'write' },
+  { method: 'DELETE', path: '/api/proxy-targets/:id', rl: 'write' },
   { method: 'GET', path: '/api/latency-agents', rl: 'write' },
   { method: 'POST', path: '/api/latency-agents', rl: 'write' },
   { method: 'GET', path: '/api/probe-history/dead-letter', rl: 'write' },
@@ -371,6 +377,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/agent/metrics' && m === 'POST') return submitAgentMetrics(request, env);
   if (path === '/api/agent/update-policy' && m === 'GET') { const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getAgentUpdatePolicy(env, request), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent/ping-targets' && m === 'GET') { const agentId = url.searchParams.get('agent_id') || ''; if (agentId) await requireAgentForId(request, env, agentId); else await requireAnyAgent(request, env); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json(await getPingTargets(env, { protocols: url.searchParams.get('probe_protocols') || 'tcp' }), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/agent/proxy-targets' && m === 'GET') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json({ ok: true, proxy_targets: await getAgentProxyTargets(env, agentId, { includeSecrets: true }), proxy_canary_host: String(env.PROXY_CANARY_HOST || 'example.com').trim() || 'example.com', proxy_canary_port: clamp(Number(env.PROXY_CANARY_PORT || 443), 1, 65535) }, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent/pings' && m === 'POST') return json(await submitAgentPings(request, env), 200, env, { 'cache-control': 'no-store' });
   if (path === '/api/agent/config' && m === 'GET') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); return json(await getAgentRuntimeConfig(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/agent/location' && m === 'POST') { await ensureV6Schema(env); const agentId = url.searchParams.get('agent_id') || ''; await requireAgentForId(request, env, agentId); return json(await submitAgentLocation(request, env, agentId), 200, env, { 'cache-control': 'no-store' }); }
@@ -477,6 +484,9 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/ping-targets' && m === 'POST') { await withAdmin(request, env); return json(await createPingTarget(request, env), 201, env); }
   if (path === '/api/ping-targets' && m === 'GET') { await withAdmin(request, env); return json(await getPingTargets(env, { enabledOnly: false }), 200, env); }
   if (path === '/api/ping-config' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updatePingConfig(request, env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/proxy-targets' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listProxyTargets(env), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/proxy-targets/parse' && m === 'POST') { await withAdmin(request, env); return json(await previewProxyLinks(request), 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/proxy-targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await createProxyTarget(request, env), 201, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agents' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listLatencyAgents(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agents' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await createLatencyAgent(request, env), 201, env, { 'cache-control': 'no-store' }); }
 
@@ -488,6 +498,10 @@ async function dispatchStatic(env, url, request, ctx) {
   const pingMatch = path.match(/^\/api\/ping-targets\/([^/]+)$/);
   if (pingMatch && m === 'PATCH') { await withAdmin(request, env); return json(await updatePingTarget(pathParam(pingMatch[1]), request, env), 200, env); }
   if (pingMatch && m === 'DELETE') { await withAdmin(request, env); return json(await deletePingTarget(pathParam(pingMatch[1]), env), 200, env); }
+
+  const proxyMatch = path.match(/^\/api\/proxy-targets\/([^/]+)$/);
+  if (proxyMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updateProxyTarget(pathParam(proxyMatch[1]), request, env); await clearStatusCaches(url, env); return json(result, 200, env, { 'cache-control': 'no-store' }); }
+  if (proxyMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); const result = await deleteProxyTarget(pathParam(proxyMatch[1]), env); await clearStatusCaches(url, env); return json(result, 200, env, { 'cache-control': 'no-store' }); }
 
   const latencyAgentMatch = path.match(/^\/api\/latency-agents\/([^/]+)$/);
   if (latencyAgentMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateLatencyAgent(pathParam(latencyAgentMatch[1]), request, env), 200, env); }

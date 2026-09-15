@@ -2,7 +2,7 @@ import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFro
 import { json } from './auth.js';
 import { validateAdminSession } from './totp.js';
 import { readR2JsonResult, readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks, verifyR2Json } from './storage.js';
-import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, buildSummaryFallbackOptions, getExchangeRates, convertPriceToCny, getMeta, getPublicSettings, getLatestExternalLatencyByTarget } from './admin.js';
+import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, buildSummaryFallbackOptions, getExchangeRates, convertPriceToCny, getMeta, getPublicSettings, getLatestExternalLatencyByTarget, normalizePublicProxyChecks } from './admin.js';
 import { summarizeTrafficWithPending, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 import { compactStatusPayload, refreshLatencySources } from './status-payload.js';
 import { mergeAgentAvailabilityRows } from './agent-availability.js';
@@ -243,7 +243,7 @@ async function buildStatusPayload(env, url = null, options = {}) {
         }
       } catch (_) {}
     }
-    const publicRow = { ...row, no_public_ip: noPublicIp ? 1 : 0, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || '自动', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, has_nq: hasNq, nq: hasNq ? { has_report: true, updated_at: targetRow.nq_updated_at ? Number(targetRow.nq_updated_at) : null } : null, unlock, ...agentStatusFields(agentState, env, { includeStatusSource: noPublicIp }), ...managerStatusFields(targetRow.id) };
+    const publicRow = { ...row, no_public_ip: noPublicIp ? 1 : 0, target_host: displayHost, url: displayUrl, error: publicError(row.error, row.status_code), cf_colo: null, target: displayTarget, target_display: displayTarget, region_label: REGION_LABELS[row.probe_region || 'auto'] || row.probe_region || '自动', expected_status: parseExpectedStatus(row.expected_status), last_metrics_at: agentState?.updated_at || null, agent_version: agentState?.agent_version || null, machine_uptime_sec: agentState?.uptime_sec || null, agent_metrics: agentState || null, proxy_checks: agentState?.proxy_checks || [], has_nq: hasNq, nq: hasNq ? { has_report: true, updated_at: targetRow.nq_updated_at ? Number(targetRow.nq_updated_at) : null } : null, unlock, ...agentStatusFields(agentState, env, { includeStatusSource: noPublicIp }), ...managerStatusFields(targetRow.id) };
     delete publicRow.nq_report;
     delete publicRow.unlock_data;
     delete publicRow.nq_unlock_data;
@@ -346,6 +346,7 @@ function publicAgentSummary(row, traffic = null) {
     chipset_temp_c: Number.isFinite(Number(vpsInfo?.chipset_temp_c)) ? Number(vpsInfo.chipset_temp_c) : null,
     temperature_sensors: temperatureSensors,
     traffic,
+    proxy_checks: normalizePublicProxyChecks(parseJsonSafe(row.proxy_checks)),
   };
 }
 

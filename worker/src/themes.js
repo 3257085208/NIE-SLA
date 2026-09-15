@@ -315,13 +315,14 @@ export async function uploadTheme(request, env) {
 
   try {
     for (let offset = 0; offset < entries.length; offset += 20) {
-      const writes = await Promise.allSettled(entries.slice(offset, offset + 20).map(([path, data]) => env.ARCHIVE.put(prefix + path, data, {
+      const writes = await Promise.allSettled(entries.slice(offset, offset + 20).map(([path, data]) => themeArchive(env).put(prefix + path, data, {
         httpMetadata: { contentType: contentType(path) },
         customMetadata: { theme_id: theme.id, revision },
       })));
       const failure = writes.find(result => result.status === 'rejected');
       if (failure) throw failure.reason;
     }
+    await verifyThemeObjects(env, record, entries);
     await saveRegistry(env, next);
   } catch (error) {
     const registryState = await registryContainsRevision(env, record.id, revision).catch(() => null);
@@ -369,9 +370,9 @@ export async function getThemeFile(env, id, path, revision = '') {
   const theme = registry.find(item => item.id === cleanId && item.enabled);
   if (revision && theme?.revision !== revision) throw new ApiError(404, '主题版本不存在或已停用');
   if (!theme || !theme.files.includes(cleanPath)) throw new ApiError(404, '主题文件不存在');
-  let object = await env.ARCHIVE.get(`${themePrefix(theme)}${cleanPath}`);
+  let object = await themeArchive(env).get(`${themePrefix(theme)}${cleanPath}`);
   if (!object && theme.storage_root === 'themes/v1') {
-    object = await env.ARCHIVE.get(`extensions/v1/${theme.id}/${theme.revision}/${cleanPath}`);
+    object = await themeArchive(env).get(`extensions/v1/${theme.id}/${theme.revision}/${cleanPath}`);
   }
   if (!object) throw new ApiError(404, '主题文件不存在');
   const headers = new Headers({
@@ -392,7 +393,32 @@ export async function getThemeFile(env, id, path, revision = '') {
   } else if (cleanPath.endsWith('.svg')) {
     headers.set('content-security-policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
   }
-  return new Response(object.body, { headers });
+  // Reading the R2 body into an ArrayBuffer before constructing the Response
+  // avoids a Workers/R2 edge case where forwarding the R2 stream directly
+  // produced a 200 response with content-length 0 even though the object was
+  // present and readable through the R2 management API. Theme files are capped
+  // at 4 MiB, so this bounded copy is preferable to serving a silent blank
+  // iframe or stylesheet.
+  const bytes = await readThemeObjectBytes(object);
+  const declaredSize = Number(object?.size);
+  if (!bytes.byteLength && (!Number.isFinite(declaredSize) || declaredSize > 0)) throw new ApiError(502, '主题文件读取为空，已拒绝返回');
+  headers.set('content-length', String(bytes.byteLength));
+  return new Response(bytes, { headers });
+}
+
+async function verifyThemeObjects(env, theme, entries) {
+  for (const [path, data] of entries) {
+    const object = await themeArchive(env).get(`${themePrefix(theme)}${path}`);
+    if (!object) throw new Error(`主题文件写入后不可读：${path}`);
+    const bytes = await readThemeObjectBytes(object);
+    if (bytes.byteLength !== data.byteLength) throw new Error(`主题文件写入后大小不一致：${path}`);
+  }
+}
+
+async function readThemeObjectBytes(object) {
+  if (typeof object?.arrayBuffer === 'function') return new Uint8Array(await object.arrayBuffer());
+  if (object?.body) return new Uint8Array(await new Response(object.body).arrayBuffer());
+  return new Uint8Array();
 }
 
 function validateManifest(value, files) {
@@ -582,11 +608,18 @@ async function registryContainsRevision(env, id, revision) {
 
 async function deletePrefix(env, prefix) {
   while (true) {
-    const listed = await env.ARCHIVE.list({ prefix, limit: 1000 });
+    const listed = await themeArchive(env).list({ prefix, limit: 1000 });
     const keys = (listed.objects || []).map(item => item.key);
     if (!keys.length) return;
-    for (let offset = 0; offset < keys.length; offset += 100) await env.ARCHIVE.delete(keys.slice(offset, offset + 100));
+    for (let offset = 0; offset < keys.length; offset += 100) await themeArchive(env).delete(keys.slice(offset, offset + 100));
   }
+}
+
+// The application wraps ARCHIVE with the S3 compatibility facade for legacy
+// telemetry paths. Theme packages are served through the native R2 binding so
+// browser reads do not depend on the facade's streamed response behavior.
+function themeArchive(env) {
+  return env.ARCHIVE_NATIVE || env.ARCHIVE;
 }
 
 function themePrefix(theme) {
@@ -595,7 +628,7 @@ function themePrefix(theme) {
 }
 
 function requireThemeStorage(env) {
-  if (!env.DB || !env.ARCHIVE) throw new ApiError(503, '主题存储未配置，需要 D1 与 R2');
+  if (!env.DB || !themeArchive(env)) throw new ApiError(503, '主题存储未配置，需要 D1 与 R2');
 }
 
 function contentType(path) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { createPingTarget, getPingTargets, resolvePublicPingQuery, updatePingTarget } from '../src/admin/ping-targets.js';
+import { createPingTarget, getAgentPings, getPingTargets, resolvePublicPingQuery, updatePingTarget } from '../src/admin/ping-targets.js';
 import { getPingIntervalSec, updatePingConfig } from '../src/ping-config.js';
 import { ensureV6Schema } from '../src/admin/schema.js';
 
@@ -15,10 +15,10 @@ assert.equal(await getPingIntervalSec(env), 20);
 await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES ('agent_ping_interval_sec', '1', 1)`).run();
 assert.equal(await getPingIntervalSec(env), 20, 'obsolete one-second settings must fall back to the 20-second default');
 const oneHourQuery = resolvePublicPingQuery(new URL('https://api.example.test/api/agent/pings?hours=1&max_points_per_target=2000'));
-assert.equal(oneHourQuery.maxPerTarget, 2000);
-assert.equal(oneHourQuery.hardMax, 2000);
-assert.equal(resolvePublicPingQuery(new URL('https://api.example.test/api/agent/pings?max_points_per_target=0')).maxPerTarget, 360, 'unlimited public Ping queries must fall back to the bounded default');
-assert.equal(resolvePublicPingQuery(new URL('https://api.example.test/api/agent/pings?max_points_per_target=9000')).maxPerTarget, 2000, 'public Ping queries must retain a finite hard cap');
+assert.equal(oneHourQuery.maxPerTarget, null, 'raw TCP Ping must not expose a compaction limit');
+assert.equal(oneHourQuery.raw, true);
+assert.equal(resolvePublicPingQuery(new URL('https://api.example.test/api/agent/pings?max_points_per_target=0')).maxPerTarget, null, 'legacy compaction parameters must be ignored');
+assert.equal(resolvePublicPingQuery(new URL('https://api.example.test/api/agent/pings?max_points_per_target=9000')).maxPerTarget, null, 'legacy compaction parameters must be ignored');
 const saved = await updatePingConfig(jsonRequest({ ping_interval_sec: 5 }), env);
 assert.equal(saved.ping_interval_sec, 5);
 assert.equal(saved.min_interval_sec, 5);
@@ -44,6 +44,19 @@ await assert.rejects(updatePingConfig(jsonRequest({ ping_interval_sec: 301 }), e
 await assert.rejects(updatePingConfig(jsonRequest({ ping_interval_sec: 5.5 }), env), /5-300 秒/);
 
 await updatePingConfig(jsonRequest({ ping_interval_sec: 20 }), env);
+
+const rawPingNow = Math.floor(Date.now() / 1000);
+for (let index = 0; index < 500; index += 1) {
+  database.prepare(`INSERT INTO ping_history (target_id, agent_id, ts, latency_ms, ok) VALUES (?, ?, ?, ?, 1)`)
+    .run('target-1', 'agent-raw', rawPingNow - index * 20, 10 + (index % 5));
+}
+const rawPingPayload = await getAgentPings(env, new URL('https://api.example.test/api/agent/pings?agent_id=agent-raw&hours=24&format=series&max_points_per_target=10'));
+assert.equal(rawPingPayload.pings_raw_count, 500);
+assert.equal(rawPingPayload.pings_downsampled, false);
+assert.equal(rawPingPayload.pings_raw, true);
+assert.equal(rawPingPayload.pings.length, 0);
+assert.equal(rawPingPayload.series[0].dt.length, 500, 'public TCP Ping must return all raw points');
+
 await updatePingTarget('target-5', jsonRequest({ enabled: false }), env);
 assert.equal(database.prepare(`SELECT enabled FROM ping_targets WHERE id = 'target-5'`).get().enabled, 0);
 await updatePingTarget('target-5', jsonRequest({ enabled: 'false' }), env);

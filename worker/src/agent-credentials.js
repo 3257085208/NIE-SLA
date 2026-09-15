@@ -176,6 +176,48 @@ export async function migrateAgentCredentialEncryption(env) {
   return { total: (result.results || []).length, migrated };
 }
 
+// Shared envelope helpers for other per-node secrets.  The value is always
+// encrypted with the primary TOTP material for writes and can be read with
+// the same rotation/legacy candidates as Agent credentials.  The scope is
+// included in AES-GCM additional data so ciphertext from one subject cannot
+// be replayed for another.
+export async function encryptScopedSecret(value, env, scope) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encrypted = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: scopedSecretBytes(scope) },
+    await encryptionKey(requirePrimaryEncryptionMaterial(env), ['encrypt']),
+    new TextEncoder().encode(String(value ?? '')),
+  ));
+  const combined = new Uint8Array(iv.length + encrypted.length);
+  combined.set(iv, 0);
+  combined.set(encrypted, iv.length);
+  return CIPHERTEXT_PREFIX + bytesToBase64(combined);
+}
+
+export async function decryptScopedSecret(value, env, scope) {
+  const stored = String(value || '');
+  if (!stored.startsWith(CIPHERTEXT_PREFIX)) throw new Error('受保护配置密文格式无效');
+  const combined = base64ToBytes(stored.slice(CIPHERTEXT_PREFIX.length));
+  if (combined.length <= 12) throw new Error('受保护配置密文无效');
+  let lastError = null;
+  for (const candidate of encryptionMaterials(env)) {
+    try {
+      const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: combined.slice(0, 12), additionalData: scopedSecretBytes(scope) },
+        await encryptionKey(candidate.material, ['decrypt']),
+        combined.slice(12),
+      );
+      return {
+        value: new TextDecoder().decode(decrypted),
+        needsMigration: candidate.source !== 'primary',
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('没有可用的受保护配置加密材料');
+}
+
 export async function legacyScopedToken(env, subjectType, subjectId) {
   const configured = String(env.AGENT_TOKEN || '').trim();
   if (!configured) return '';
@@ -296,6 +338,10 @@ function randomToken() {
 
 function subjectBytes(subject) {
   return new TextEncoder().encode(`nie-sla:${subject.type}:${subject.id}`);
+}
+
+function scopedSecretBytes(scope) {
+  return new TextEncoder().encode(`nie-sla:scoped:${String(scope || '').slice(0, 256)}`);
 }
 
 async function touchCredential(env, subjectType, subjectId) {

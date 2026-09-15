@@ -22,6 +22,7 @@ mod dns_compat;
 mod geoip;
 mod manager;
 mod platform;
+mod proxy;
 mod queue;
 mod tasks;
 mod telemetry_proto;
@@ -36,11 +37,14 @@ const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const DEFAULT_REPORT_SEC: u64 = 300;
 const DEFAULT_SAMPLE_SEC: u64 = 1;
 const DEFAULT_PING_SEC: u64 = 20;
+const DEFAULT_PROXY_SEC: u64 = 60;
 const DEFAULT_PING_TARGET_REFRESH_SEC: u64 = 1800;
 const DEFAULT_UPDATE_CHECK_SEC: u64 = 86_400;
 const INITIAL_UPDATE_CHECK_SEC: u64 = 60;
 const REPORT_MAX_SAMPLES: usize = 900;
 const REPORT_MAX_PINGS: usize = 5_000;
+const REPORT_MAX_PROXY_CHECKS: usize = 100;
+const MAX_PROXY_QUEUE_CAPACITY: usize = 1_000;
 const UPLOAD_STALL_SEC: u64 = 180;
 const DEFAULT_QUEUE_MAX_SAMPLES: usize = 86_400;
 const QUEUE_FLUSH_SEC: u64 = 10;
@@ -280,6 +284,7 @@ struct Metrics {
     samples: Vec<SamplePoint>,
     vps_info: Option<VpsInfo>,
     pings: Vec<PingResult>,
+    proxy_checks: Vec<proxy::ProxyCheckResult>,
 }
 
 #[derive(Debug)]
@@ -287,6 +292,7 @@ struct UploadResult {
     result: Result<WsSubmitResponse>,
     sample_count: usize,
     ping_count: usize,
+    proxy_count: usize,
     generation: u64,
 }
 
@@ -350,6 +356,10 @@ struct PingResult {
 struct PingPlan {
     targets: Vec<PingTarget>,
     interval_sec: u64,
+    proxy_targets: Vec<proxy::ProxyTarget>,
+    proxy_interval_sec: u64,
+    proxy_canary_host: String,
+    proxy_canary_port: u16,
 }
 
 #[derive(Debug, Default)]
@@ -373,6 +383,7 @@ fn traffic_correction_tx() -> i64 {
 #[derive(Debug)]
 struct PingBatch {
     results: Vec<PingResult>,
+    proxy_results: Vec<proxy::ProxyCheckResult>,
     interval_sec: u64,
 }
 
@@ -462,6 +473,7 @@ fn run() -> Result<()> {
         samples.drain(0..samples.len() - cfg.queue_max_samples);
     }
     let mut pings: Vec<PingResult> = Vec::new();
+    let mut proxy_checks: Vec<proxy::ProxyCheckResult> = Vec::new();
     let mut ping_queue_capacity = MIN_PING_QUEUE_CAPACITY;
     let queue_tx = spawn_queue_writer(
         cfg.queue_file.clone(),
@@ -559,11 +571,13 @@ fn run() -> Result<()> {
                     samples.drain(0..drop);
                     let _ = queue_tx.send(QueueCommand::AcknowledgeCount(result.sample_count));
                     drop_ping_prefix(&mut pings, result.ping_count);
+                    drop_proxy_prefix(&mut proxy_checks, result.proxy_count);
                     println!(
-                        "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
+                        "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{},\"proxy_checks\":{}}}",
                         now_sec(),
                         result.sample_count,
-                        result.ping_count
+                        result.ping_count,
+                        result.proxy_count
                     );
                 }
                 Err(err) => {
@@ -584,10 +598,15 @@ fn run() -> Result<()> {
                 .max(expected_cycles.saturating_mul(batch.results.len()))
                 .min(MAX_PING_QUEUE_CAPACITY);
             pings.extend(batch.results);
+            proxy_checks.extend(batch.proxy_results);
         }
         if pings.len() > ping_queue_capacity {
             let keep_from = pings.len().saturating_sub(ping_queue_capacity);
             pings.drain(0..keep_from);
+        }
+        if proxy_checks.len() > MAX_PROXY_QUEUE_CAPACITY {
+            let keep_from = proxy_checks.len().saturating_sub(MAX_PROXY_QUEUE_CAPACITY);
+            proxy_checks.drain(0..keep_from);
         }
 
         if let Some(rx) = &update_rx {
@@ -654,16 +673,19 @@ fn run() -> Result<()> {
         if !uploading && report_due {
             let upload_samples: Vec<_> = samples.iter().take(REPORT_MAX_SAMPLES).cloned().collect();
             let upload_pings = ping_upload_batch(&pings);
+            let upload_proxy_checks = proxy_upload_batch(&proxy_checks);
             let mut metrics = collector.metrics(
                 &hostname,
                 Some(vps_info.clone()),
                 &upload_samples,
                 &upload_pings,
+                &upload_proxy_checks,
             );
             metrics.samples = upload_samples.clone();
             metrics.stats = Some(aggregate(&upload_samples));
             let sample_count = upload_samples.len();
             let ping_count = upload_pings.len();
+            let proxy_count = upload_proxy_checks.len();
             let cfg_for_upload = cfg.clone();
             let http_for_upload = http.clone();
             let ws_for_upload = ws_uploader.clone();
@@ -685,6 +707,7 @@ fn run() -> Result<()> {
                     result,
                     sample_count,
                     ping_count,
+                    proxy_count,
                     generation,
                 });
             });
@@ -698,12 +721,15 @@ fn run() -> Result<()> {
                         apply_ping_interval(&ping_interval_sec, interval);
                     }
                     let _ = queue_tx.send(QueueCommand::AcknowledgeCount(result.sample_count));
+                    drop_ping_prefix(&mut pings, result.ping_count);
+                    drop_proxy_prefix(&mut proxy_checks, result.proxy_count);
                     flush_sample_queue(&queue_tx)?;
                     println!(
-                        "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{}}}",
+                        "{{\"ok\":true,\"submitted_at\":{},\"samples\":{},\"pings\":{},\"proxy_checks\":{}}}",
                         now_sec(),
                         result.sample_count,
-                        result.ping_count
+                        result.ping_count,
+                        result.proxy_count
                     );
                 }
                 break;
@@ -986,6 +1012,7 @@ impl Collector {
         mut vps_info: Option<VpsInfo>,
         samples: &[SamplePoint],
         pings: &[PingResult],
+        proxy_checks: &[proxy::ProxyCheckResult],
     ) -> Metrics {
         let latest = samples.last().cloned().unwrap_or_else(|| self.sample());
         if let Some(info) = vps_info.as_mut() {
@@ -1034,6 +1061,7 @@ impl Collector {
             samples: Vec::new(),
             vps_info,
             pings: pings.to_vec(),
+            proxy_checks: proxy_checks.to_vec(),
         }
     }
 
@@ -1507,7 +1535,19 @@ fn learn_traffic_correction(value: &serde_json::Value) {
 }
 
 fn parse_control_ping_plan(value: &serde_json::Value) -> Option<PingPlan> {
-    let targets = value.get("ping_targets")?.as_array()?;
+    let targets = value
+        .get("ping_targets")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let proxy_values = value
+        .get("proxy_targets")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if targets.is_empty() && proxy_values.is_empty() && value.get("ping_interval_sec").is_none() {
+        return None;
+    }
     let parsed = targets
         .iter()
         .filter_map(|item| {
@@ -1530,10 +1570,42 @@ fn parse_control_ping_plan(value: &serde_json::Value) -> Option<PingPlan> {
     let interval_sec = value
         .get("ping_interval_sec")
         .and_then(serde_json::Value::as_u64)
-        .filter(|interval| (5..=300).contains(interval))?;
+        .filter(|interval| (5..=300).contains(interval))
+        .unwrap_or(DEFAULT_PING_SEC);
+    let proxy_targets = proxy_values
+        .iter()
+        .filter_map(|item| match proxy::ProxyTarget::from_json(item) {
+            Ok(target) if target.is_enabled() => Some(target),
+            _ => None,
+        })
+        .collect();
+    let proxy_interval_sec = value
+        .get("proxy_interval_sec")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|interval| (30..=900).contains(interval))
+        .unwrap_or(DEFAULT_PROXY_SEC);
+    let proxy_canary_host = value
+        .get("proxy_canary_host")
+        .and_then(serde_json::Value::as_str)
+        .filter(|host| !host.trim().is_empty())
+        .unwrap_or("example.com")
+        .trim()
+        .chars()
+        .take(255)
+        .collect();
+    let proxy_canary_port = value
+        .get("proxy_canary_port")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(443);
     Some(PingPlan {
         targets: parsed,
         interval_sec,
+        proxy_targets,
+        proxy_interval_sec,
+        proxy_canary_host,
+        proxy_canary_port,
     })
 }
 
@@ -1579,10 +1651,72 @@ fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
         .and_then(|item| item.as_u64())
         .filter(|interval| (5..=300).contains(interval))
         .unwrap_or(cfg.ping_sec);
+    let (proxy_targets, proxy_canary_host, proxy_canary_port) = match fetch_proxy_targets(cfg, http)
+    {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("proxy target refresh unavailable; keeping no proxy targets: {error}");
+            (Vec::new(), "example.com".into(), 443)
+        }
+    };
     Ok(PingPlan {
         targets,
         interval_sec,
+        proxy_targets,
+        proxy_interval_sec: DEFAULT_PROXY_SEC,
+        proxy_canary_host,
+        proxy_canary_port,
     })
+}
+
+fn fetch_proxy_targets(
+    cfg: &Config,
+    http: &HttpClient,
+) -> Result<(Vec<proxy::ProxyTarget>, String, u16)> {
+    let url = format!(
+        "{}/api/agent/proxy-targets?agent_id={}",
+        cfg.api.trim_end_matches('/'),
+        percent_encode_query(&cfg.agent_id)
+    );
+    let text = http.get(&url, &cfg.token)?;
+    let value: serde_json::Value = serde_json::from_str(&text)?;
+    if !value
+        .get("ok")
+        .and_then(|item| item.as_bool())
+        .unwrap_or(false)
+    {
+        let error = value
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Worker rejected proxy target configuration");
+        return Err(anyhow!("proxy target API rejected request: {error}"));
+    }
+    let targets = value
+        .get("proxy_targets")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| match proxy::ProxyTarget::from_json(item) {
+            Ok(target) if target.is_enabled() => Some(target),
+            _ => None,
+        })
+        .collect();
+    let host = value
+        .get("proxy_canary_host")
+        .and_then(serde_json::Value::as_str)
+        .filter(|host| !host.trim().is_empty())
+        .unwrap_or("example.com")
+        .trim()
+        .chars()
+        .take(255)
+        .collect();
+    let port = value
+        .get("proxy_canary_port")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(443);
+    Ok((targets, host, port))
 }
 
 fn percent_encode_query(value: &str) -> String {
@@ -1633,6 +1767,12 @@ fn metrics_json(m: &Metrics) -> serde_json::Value {
     }
     if !m.pings.is_empty() {
         obj.insert("ping_series".to_string(), ping_series_json(&m.pings));
+    }
+    if !m.proxy_checks.is_empty() {
+        obj.insert(
+            "proxy_checks".to_string(),
+            serde_json::Value::Array(m.proxy_checks.iter().map(proxy_check_json).collect()),
+        );
     }
     value
 }
@@ -1792,6 +1932,34 @@ fn ping_series_json(pings: &[PingResult]) -> serde_json::Value {
             })
             .collect(),
     )
+}
+
+fn proxy_check_json(check: &proxy::ProxyCheckResult) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "target_id": check.target_id,
+        "name": check.name,
+        "protocol": check.protocol,
+        "ts": check.ts,
+        "ok": check.ok,
+        "stage": check.stage,
+    });
+    let object = value.as_object_mut().expect("proxy check json object");
+    if let Some(latency) = check.latency_ms {
+        object.insert("latency_ms".into(), serde_json::json!(latency));
+    }
+    if let Some(handshake) = check.handshake_ms {
+        object.insert("handshake_ms".into(), serde_json::json!(handshake));
+    }
+    if let Some(first_byte) = check.first_byte_ms {
+        object.insert("first_byte_ms".into(), serde_json::json!(first_byte));
+    }
+    if let Some(total) = check.total_ms {
+        object.insert("total_ms".into(), serde_json::json!(total));
+    }
+    if let Some(error) = &check.error {
+        object.insert("error".into(), serde_json::json!(error));
+    }
+    value
 }
 
 impl HttpClient {
@@ -2084,21 +2252,36 @@ fn spawn_ping_worker(
     let (plan_tx, plan_rx) = mpsc::channel::<PingPlan>();
     thread::spawn(move || {
         let mut targets = Vec::new();
+        let mut proxy_targets = Vec::new();
+        let mut proxy_interval_sec = DEFAULT_PROXY_SEC;
+        let mut proxy_canary_host = "example.com".to_string();
+        let mut proxy_canary_port = 443_u16;
         let refresh_period = Duration::from_secs(cfg.ping_target_refresh_sec);
         let mut last_refresh = Instant::now() - refresh_period;
         let mut last_ping = Instant::now() - Duration::from_secs(cfg.ping_sec);
+        let mut last_proxy = Instant::now() - Duration::from_secs(DEFAULT_PROXY_SEC);
         loop {
             while let Ok(plan) = plan_rx.try_recv() {
                 apply_ping_interval(&ping_interval_sec, plan.interval_sec);
                 targets = plan.targets;
+                proxy_targets = plan.proxy_targets;
+                proxy_interval_sec = plan.proxy_interval_sec.clamp(30, 900);
+                proxy_canary_host = plan.proxy_canary_host;
+                proxy_canary_port = plan.proxy_canary_port;
                 last_refresh = Instant::now();
+                last_proxy = Instant::now() - Duration::from_secs(proxy_interval_sec);
             }
             if last_refresh.elapsed() >= refresh_period {
                 match fetch_ping_targets(&cfg, &http) {
                     Ok(plan) => {
                         apply_ping_interval(&ping_interval_sec, plan.interval_sec);
                         targets = plan.targets;
+                        proxy_targets = plan.proxy_targets;
+                        proxy_interval_sec = plan.proxy_interval_sec.clamp(30, 900);
+                        proxy_canary_host = plan.proxy_canary_host;
+                        proxy_canary_port = plan.proxy_canary_port;
                         last_refresh = Instant::now();
+                        last_proxy = Instant::now() - Duration::from_secs(proxy_interval_sec);
                     }
                     Err(error) => {
                         let retry_after = ping_target_refresh_retry_after(refresh_period);
@@ -2112,23 +2295,46 @@ fn spawn_ping_worker(
                 }
             }
             let interval = current_ping_interval(&ping_interval_sec);
-            if last_ping.elapsed() >= Duration::from_secs(interval) {
+            let ping_due = last_ping.elapsed() >= Duration::from_secs(interval);
+            let proxy_period = Duration::from_secs(proxy_interval_sec.clamp(30, 900));
+            let proxy_due = last_proxy.elapsed() >= proxy_period;
+            if ping_due || proxy_due {
                 if tx
                     .send(PingBatch {
-                        results: run_pings(&targets, &cfg.ping_targets, &http),
+                        results: if ping_due {
+                            run_pings(&targets, &cfg.ping_targets, &http)
+                        } else {
+                            Vec::new()
+                        },
+                        proxy_results: if proxy_due {
+                            proxy::run_proxy_checks(
+                                &proxy_targets,
+                                &proxy_canary_host,
+                                proxy_canary_port,
+                            )
+                        } else {
+                            Vec::new()
+                        },
                         interval_sec: interval,
                     })
                     .is_err()
                 {
                     break;
                 }
-                last_ping = Instant::now();
+                if ping_due {
+                    last_ping = Instant::now();
+                }
+                if proxy_due {
+                    last_proxy = Instant::now();
+                }
             }
             thread::sleep(next_ping_worker_sleep(
                 last_refresh.elapsed(),
                 refresh_period,
                 last_ping.elapsed(),
                 Duration::from_secs(current_ping_interval(&ping_interval_sec)),
+                last_proxy.elapsed(),
+                proxy_period,
             ));
         }
     });
@@ -2154,10 +2360,13 @@ fn next_ping_worker_sleep(
     refresh_period: Duration,
     ping_elapsed: Duration,
     ping_period: Duration,
+    proxy_elapsed: Duration,
+    proxy_period: Duration,
 ) -> Duration {
     refresh_period
         .saturating_sub(refresh_elapsed)
         .min(ping_period.saturating_sub(ping_elapsed))
+        .min(proxy_period.saturating_sub(proxy_elapsed))
         .max(Duration::from_millis(50))
 }
 
@@ -2327,6 +2536,18 @@ fn drop_ping_prefix(pings: &mut Vec<PingResult>, count: usize) {
 
 fn ping_upload_batch(pings: &[PingResult]) -> Vec<PingResult> {
     pings.iter().take(REPORT_MAX_PINGS).cloned().collect()
+}
+
+fn drop_proxy_prefix(checks: &mut Vec<proxy::ProxyCheckResult>, count: usize) {
+    checks.drain(0..count.min(checks.len()));
+}
+
+fn proxy_upload_batch(checks: &[proxy::ProxyCheckResult]) -> Vec<proxy::ProxyCheckResult> {
+    checks
+        .iter()
+        .take(REPORT_MAX_PROXY_CHECKS)
+        .cloned()
+        .collect()
 }
 
 fn advance_sample_deadline(previous_deadline: Instant, now: Instant, period: Duration) -> Instant {
@@ -2667,6 +2888,8 @@ mod tests {
                 Duration::from_secs(600),
                 Duration::from_secs(5),
                 Duration::from_secs(20),
+                Duration::from_secs(5),
+                Duration::from_secs(60),
             ),
             Duration::from_secs(15),
         );
@@ -2676,6 +2899,8 @@ mod tests {
                 Duration::from_secs(600),
                 Duration::from_secs(20),
                 Duration::from_secs(20),
+                Duration::from_secs(60),
+                Duration::from_secs(60),
             ),
             Duration::from_millis(50),
         );
