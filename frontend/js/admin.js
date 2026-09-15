@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260915-proxy3";
-import { createAdminClient } from "./admin/api.js?v=20260915-proxy3";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260915-proxy3";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260915-proxy3";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260915-proxy3";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260915-proxy3";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260915-proxy4";
+import { createAdminClient } from "./admin/api.js?v=20260915-proxy4";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260915-proxy4";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260915-proxy4";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260915-proxy4";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260915-proxy4";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260915-proxy3";
+} from "./shared/target-catalogs.js?v=20260915-proxy4";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260915-proxy3";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260915-proxy3";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260915-proxy3";
-import { fmtBytes } from "./shared/format.js?v=20260915-proxy3";
+} from "./shared/grouping.js?v=20260915-proxy4";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260915-proxy4";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260915-proxy4";
+import { fmtBytes } from "./shared/format.js?v=20260915-proxy4";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -190,6 +190,7 @@ let modalReturnFocus = null;
 let modalCancelHandler = null;
 let proxyLinkPreviews = [];
 let proxyLinkIndex = 0;
+let proxyLinkParsedValue = "";
 function toast(m, t = "info") {
   const e = byId("toast");
   clearTimeout(toastTimer);
@@ -2273,6 +2274,11 @@ async function loadPings() {
       );
     }
   }
+  if (!targets.some((target) => String(target?.type || "").toLowerCase() === "tcp")) {
+    try {
+      await ensureProxyAgents();
+    } catch (_) {}
+  }
   try {
     const d = await apiAdmin("/api/proxy-targets", {}, 30000);
     proxyTargets = Array.isArray(d.targets) ? d.targets : [];
@@ -2281,12 +2287,6 @@ async function loadPings() {
   } catch (e) {
     proxyAdminFailed = true;
     errBox("proxyTable", e);
-  }
-  if (!targets.some((target) => target?.type === "tcp")) {
-    try {
-      const d = await apiAdmin("/api/targets", {}, 30000);
-      targets = Array.isArray(d.targets) ? d.targets : targets;
-    } catch (_) {}
   }
 }
 
@@ -2343,11 +2343,34 @@ function renderPings() {
 }
 
 function proxyProtocolLabel(protocol) {
-  return ({ socks5: "SOCKS5", vless: "VLESS", vmess: "VMess" }[String(protocol || "").toLowerCase()] || "未知协议");
+  return ({
+    socks5: "SOCKS5",
+    http: "HTTP CONNECT",
+    ss: "Shadowsocks",
+    vless: "VLESS",
+    vmess: "VMess",
+    trojan: "Trojan",
+    hysteria2: "Hysteria2",
+    snell: "Snell",
+    anytls: "AnyTLS",
+    tuic: "TUIC",
+  }[String(protocol || "").toLowerCase()] || "未知协议");
 }
 
 function proxyTransportLabel(transport) {
-  return ({ tcp: "TCP", tls: "TLS", ws: "WS", "tls-ws": "TLS + WS" }[String(transport || "tcp").toLowerCase()] || "TCP");
+  return ({
+    tcp: "TCP",
+    tls: "TLS",
+    ws: "WS",
+    "tls-ws": "TLS + WS",
+    grpc: "gRPC",
+    "tls-grpc": "TLS + gRPC",
+    h2: "HTTP/2",
+    "tls-h2": "TLS + HTTP/2",
+    httpupgrade: "HTTP Upgrade",
+    "tls-httpupgrade": "TLS + HTTP Upgrade",
+    quic: "QUIC",
+  }[String(transport || "tcp").toLowerCase()] || "TCP");
 }
 
 function proxyActionsHtml(proxy) {
@@ -2398,11 +2421,20 @@ function renderProxyTargets() {
 }
 
 function proxyAgentOptions(agentId) {
-  const agents = targets.filter((target) => target?.type === "tcp");
-  if (!agents.length) return '<option value="">暂无可用 TCP Agent</option>';
+  const agents = targets.filter((target) => String(target?.type || "").toLowerCase() === "tcp");
+  if (!agents.length) return '<option value="" selected>暂无可用 TCP Agent，请先部署或刷新探针列表</option>';
   return agents.map((agent) => '<option value="' + escapeAttr(agent.id) + '"' +
     selectedAttr(String(agent.id) === String(agentId || "")) + '>' +
     escapeHtml(agent.name || agent.id) + ' · ' + escapeHtml(agent.id) + '</option>').join("");
+}
+
+async function ensureProxyAgents() {
+  if (targets.some((target) => String(target?.type || "").toLowerCase() === "tcp")) {
+    return targets;
+  }
+  const data = await apiAdmin("/api/targets", {}, 30000);
+  if (Array.isArray(data.targets)) targets = data.targets;
+  return targets;
 }
 
 function pingActionsHtml(ping) {
@@ -2442,9 +2474,10 @@ function proxyModal(proxy = null) {
   const transport = String(p.transport || "tcp").toLowerCase();
   proxyLinkPreviews = [];
   proxyLinkIndex = 0;
+  proxyLinkParsedValue = "";
   let html = '<h3>' + (edit ? "编辑" : "新增") + '代理检测</h3>';
   html += '<p class="hint">粘贴单条分享链接、订阅文本、Base64 订阅或常见 Clash JSON/YAML 后自动解析。原始链接只在本次请求中传输，不回显、不写入浏览器存储；真正检测仍由选定 TCP Agent 完成协议握手和 HTTPS canary。</p>';
-  html += '<div class="f"><label for="proxyLink">代理分享链接 / 订阅</label><textarea id="proxyLink" rows="4" autocomplete="off" spellcheck="false" placeholder="粘贴 vless://、vmess://、ss://、trojan:// 或订阅内容"></textarea><div class="ma"><button type="button" class="btn btn-blue" id="parseProxyLink">解析链接</button></div><div class="hint" id="proxyLinkStatus" role="status" aria-live="polite">支持多节点解析；请选择一个节点保存。</div><div id="proxyLinkPreview"></div></div>';
+  html += '<div class="f"><label for="proxyLink">代理分享链接 / 订阅</label><textarea id="proxyLink" rows="4" autocomplete="off" spellcheck="false" placeholder="粘贴 vless://、vmess://、ss://、trojan:// 或订阅内容"></textarea><div class="ma"><button type="button" class="btn btn-blue" id="parseProxyLink">解析链接</button></div><div class="hint" id="proxyLinkStatus" role="status" aria-live="polite">支持多节点解析；点击保存时也会自动解析。</div><div id="proxyLinkPreview"></div></div>';
   html += '<details><summary>手动填写 / 调整解析结果</summary>';
   html += inputField("ID", "proxyId", p.id || "", edit ? "readonly" : 'placeholder="例如 hk-vless-01"');
   html += inputField("名称", "proxyName", p.name || "");
@@ -2484,7 +2517,7 @@ function proxyModal(proxy = null) {
   html += formField("VMess 加密", '<select id="proxySecurity"><option value="">留空保留原值</option><option value="auto">auto</option><option value="aes-128-gcm">aes-128-gcm</option><option value="chacha20-poly1305">chacha20-poly1305</option><option value="none">none</option></select>');
   html += inputField("VMess alter_id（留空保留原值）", "proxyAlterId", "", 'type="number" min="0" max="65535" step="1"');
   html += '</details>';
-  html += '<div class="ma"><button class="btn" data-close>取消</button><button class="btn btn-primary" id="saveProxy">保存</button></div>';
+  html += '<div class="hint" id="proxySaveStatus" role="status" aria-live="polite"></div><div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="saveProxy">保存</button></div>';
   byId("modal").innerHTML = html;
   byId("parseProxyLink").onclick = parseProxyLinkInput;
   byId("saveProxy").onclick = () => saveProxyTarget(proxy);
@@ -2508,12 +2541,16 @@ async function parseProxyLinkInput() {
     proxyLinkIndex = 0;
     if (!proxyLinkPreviews.length) throw new Error("没有识别到代理节点");
     applyProxyLinkPreview(0);
+    proxyLinkParsedValue = link;
     status.textContent = `已识别 ${proxyLinkPreviews.length} 个节点；请选择一个节点后保存。`;
+    return true;
   } catch (error) {
     proxyLinkPreviews = [];
+    proxyLinkParsedValue = "";
     status.textContent = "解析失败";
     preview.innerHTML = '<p class="hint">' + escapeHtml(error.message || "代理链接无法解析") + '</p>';
     toast(error.message || "代理链接无法解析", "err");
+    return false;
   }
 }
 
@@ -2547,6 +2584,14 @@ function applyProxyLinkPreview(index) {
 }
 
 async function saveProxyTarget(existing = null) {
+  const button = byId("saveProxy");
+  const saveStatus = byId("proxySaveStatus");
+  const link = byId("proxyLink")?.value?.trim() || "";
+  if (button?.disabled) return;
+  if (link && proxyLinkParsedValue !== link) {
+    const parsed = await parseProxyLinkInput();
+    if (!parsed) return;
+  }
   const id = byId("proxyId").value.trim();
   const name = byId("proxyName").value.trim();
   const agentId = byId("proxyAgent").value;
@@ -2557,7 +2602,6 @@ async function saveProxyTarget(existing = null) {
   const password = byId("proxyPassword").value;
   const security = byId("proxySecurity").value;
   const alterId = byId("proxyAlterId").value.trim();
-  const link = byId("proxyLink")?.value?.trim() || "";
   if (uuid) secret.uuid = uuid;
   if (username) secret.username = username;
   if (password) secret.password = password;
@@ -2582,11 +2626,20 @@ async function saveProxyTarget(existing = null) {
     body.link_index = proxyLinkPreviews.length ? proxyLinkIndex : 0;
   }
   if (!body.name || !body.agent_id || !body.server || !Number.isInteger(body.port)) {
-    return toast("名称、执行 Agent、代理服务器和端口必填", "err");
+    const message = "名称、执行 Agent、代理服务器和端口必填";
+    if (saveStatus) saveStatus.textContent = message;
+    return toast(message, "err");
   }
   if (!existing && (protocol === "vless" || protocol === "vmess") && !uuid) {
-    return toast("新建 VLESS/VMess 必须填写 UUID", "err");
+    const message = "新建 VLESS/VMess 必须填写 UUID；如果使用分享链接，请先解析或直接再次点击保存";
+    if (saveStatus) saveStatus.textContent = message;
+    return toast(message, "err");
   }
+  if (button) {
+    button.disabled = true;
+    button.textContent = "保存中...";
+  }
+  if (saveStatus) saveStatus.textContent = "正在保存代理配置……";
   try {
     const path = existing
       ? "/api/proxy-targets/" + encodeURIComponent(existing.id)
@@ -2599,8 +2652,34 @@ async function saveProxyTarget(existing = null) {
     closeModal();
     await loadPings();
   } catch (error) {
+    if (saveStatus) saveStatus.textContent = `保存失败：${error?.message || "未知错误"}`;
     toast(error.message, "err");
+  } finally {
+    if (button?.isConnected) {
+      button.disabled = false;
+      button.textContent = "保存";
+    }
   }
+}
+
+async function openProxyModal(proxy = null) {
+  const button = byId("addProxyBtn");
+  const oldText = button?.textContent || "+ 新增代理";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "加载执行 Agent...";
+  }
+  try {
+    await ensureProxyAgents();
+  } catch (error) {
+    toast(`执行 Agent 列表加载失败：${error?.message || "未知错误"}`, "err");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  }
+  proxyModal(proxy);
 }
 
 async function toggleProxyTarget(proxy) {
@@ -3867,7 +3946,7 @@ byId("probeBtn").onclick = async () => {
   }
 };
 byId("addPingBtn").onclick = () => pingModal();
-byId("addProxyBtn").onclick = () => proxyModal();
+byId("addProxyBtn").onclick = () => openProxyModal();
 byId("uploadThemeBtn").onclick = () => byId("themeZip").click();
 byId("themeZip").onchange = () => uploadThemePackage(byId("themeZip").files?.[0]);
 byId("themeTable").onclick = (event) => {
@@ -3958,7 +4037,7 @@ byId("proxyTable").onclick = (e) => {
   const row = b.closest("tr");
   const proxy = proxyTargets[Number(row?.dataset?.i)];
   if (!proxy) return;
-  if (b.dataset.a === "proxy-edit") proxyModal(proxy);
+  if (b.dataset.a === "proxy-edit") openProxyModal(proxy);
   if (b.dataset.a === "proxy-toggle") toggleProxyTarget(proxy);
   if (b.dataset.a === "proxy-delete") deleteProxyTarget(proxy);
 };

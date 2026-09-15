@@ -1,4 +1,4 @@
-import { pad } from './format.js?v=20260915-proxy3';
+import { pad } from './format.js?v=20260915-proxy4';
 
 export function formatDateOnly(sec) {
   if (!sec) return '-';

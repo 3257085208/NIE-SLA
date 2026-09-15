@@ -37,7 +37,7 @@ const nqOptionsSource = await readFile(path.join(root, 'js', 'admin', 'nq-option
 assert.match(notFoundHtml, /<title>页面不存在 - NIE-SLA<\/title>/, '404 responses must retain the branded page title');
 assert.match(notFoundHtml, /class="not-found-code">404<\/div>/, '404 responses must visibly identify the status code');
 assert.match(notFoundHtml, /href="\/">返回状态页<\/a>[\s\S]*href="\/admin\.html">管理入口<\/a>/, '404 responses must retain both recovery links');
-assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260915-proxy3"/, 'admin must import the configurable NodeQuality option helpers');
+assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260915-proxy4"/, 'admin must import the configurable NodeQuality option helpers');
 assert.match(adminSource, /const hasSettings = Array\.isArray\(theme\.settings\)/, 'theme cards must derive their settings state from the API payload');
 assert.match(adminSource, /data-theme-action="settings"/, 'theme cards must always expose a settings action');
 assert.match(adminSource, /\/api\/themes\/\$\{encodeURIComponent\(theme\.id\)\}\/config/, 'theme settings must use the protected theme config endpoint');
@@ -86,11 +86,11 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /href="\/admin\.css\?v=20260915-proxy3"/, 'custom admin paths must load CSS from the site root');
+assert.match(adminHtml, /href="\/admin\.css\?v=20260915-proxy4"/, 'custom admin paths must load CSS from the site root');
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
-assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260915-proxy3"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260915-proxy3"/, 'custom admin paths must load the current admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260915-proxy4"/, 'admin login must install a startup failure guard');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260915-proxy4"/, 'custom admin paths must load the current admin module from the site root');
 assert.match(adminSource, /id="runBulkBackroute"/, 'admin must render a bulk backroute button');
 assert.match(adminSource, /bulkTaskModal\("backroute"\)/, 'bulk backroute button must open the task confirmation');
 assert.match(adminSource, /manager_online === true/, 'admin must distinguish stale telemetry from a fully offline Agent');
@@ -139,8 +139,11 @@ assert.match(adminApiSource, /请求可能仍在服务端继续执行，请稍�
 assert.match(adminSource, /任务状态刷新失败[\s\S]*task-load-warning/, 'task polling failures must surface a visible warning');
 assert.match(adminSource, /async function queueAgentTask[\s\S]*catch \(error\) \{[\s\S]*await loadAgentTasks\(\)/, 'single-machine queue failures must refresh task state');
 assert.match(adminSource, /id="backupStatus"[\s\S]*正在加密 Agent Token/, 'protected backup must expose persistent progress next to its controls');
-assert.match(adminSource, /install-command\.js\?v=20260915-proxy3/, 'Agent and Latency install clipboard fixes must use the current cache key');
+assert.match(adminSource, /install-command\.js\?v=20260915-proxy4/, 'Agent and Latency install clipboard fixes must use the current cache key');
 assert.match(adminSource, /latencyInstallCommandFromPayload\(data, node\.id\);\s*await copyText\(command\)/, 'Latency deploy must validate and copy the one-time command without opening a dialog');
+assert.match(adminSource, /async function ensureProxyAgents\(\)[\s\S]*apiAdmin\("\/api\/targets"/, 'proxy editor must load TCP Agents before opening');
+assert.match(adminSource, /if \(link && proxyLinkParsedValue !== link\)[\s\S]*parseProxyLinkInput\(\)/, 'proxy save must auto-parse a pasted or changed link');
+assert.match(adminSource, /id="proxySaveStatus"/, 'proxy save failures must be visible inside the modal');
 const latencyDeploySource = adminSource.slice(adminSource.indexOf('async function deployLatencyNode'), adminSource.indexOf('async function loadPings'));
 assert.doesNotMatch(latencyDeploySource, /openModal\(\)/, 'Latency deploy must not open an install-command dialog');
 assert.match(adminHtml, /id="sAppUpdate"/, 'admin settings must expose the application update center');
@@ -158,8 +161,8 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260915-proxy3/, 'frontend cache key must publish the current release');
-assert.match(indexHtml, /style\.css\?v=20260915-proxy3/, 'frontend CSS cache key must publish the current release');
+assert.match(indexHtml, /app\.js\?v=20260915-proxy4/, 'frontend cache key must publish the current release');
+assert.match(indexHtml, /style\.css\?v=20260915-proxy4/, 'frontend CSS cache key must publish the current release');
 assert.match(indexHtml, /data-metric="proc">Proc<\/button>/, 'metric tabs must expose the process chart with the English metric label');
 assert.doesNotMatch(indexHtml, /data-metric="proc">进程<\/button>/, 'metric tab labels must not mix the process tab into the English metric naming set');
 assert.match(appSource, /if \(metric === 'proc'\)[\s\S]*process_count/, 'process chart must render process_count history samples');
@@ -217,7 +220,7 @@ assert.doesNotMatch(appSource, /wnam:\s*'美国西部'/, 'region labels must use
 assert.match(appSource, /function targetLocationLabel/, 'status page must format country + city labels');
 assert.match(appSource, /s\.source === 'agent'[\s\S]*Agent 在线率/, 'Agent availability bars must distinguish heartbeat uptime from probe counts');
 assert.match(appSource, /service-latency\$\{hasLatency \? '' : ' is-placeholder'\}/, 'targets without public latency must retain an invisible alignment slot');
-assert.match(appSource, /import \{ targetSlaPercentage \} from '\.\/js\/shared\/sla\.js\?v=20260915-proxy3'/, 'VPS rows must calculate SLA with the tested shared helper');
+assert.match(appSource, /import \{ targetSlaPercentage \} from '\.\/js\/shared\/sla\.js\?v=20260915-proxy4'/, 'VPS rows must calculate SLA with the tested shared helper');
 assert.match(appSource, /const slaLabel = [\s\S]*最近 30 天 SLA[\s\S]*service-sla-value">\$\{slaValue\}/, 'status rows must expose the rolling 30-day SLA while keeping the visible value concise');
 assert.doesNotMatch(appSource, /service-sla-period|>30天<\/span>/, 'status rows must not repeat the SLA period beside every percentage');
 assert.doesNotMatch(appSource, /<div class="service-uptime/, 'VPS rows must not retain the old Agent online label slot');
