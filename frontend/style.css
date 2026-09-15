@@ -260,6 +260,7 @@ button { border: 0; cursor: pointer; }
 .meta-proxy-warn { color: #aa7310; background: #fff9e8; }
 .meta-proxy-down { color: #c2413a; background: #fff1f1; }
 .meta-proxy-stale { color: #77869d; background: #f1f4f7; }
+.meta-proxy-pending { color: #8a6510; background: #fff9e8; }
 
 .region-flag {
   width: 18px;

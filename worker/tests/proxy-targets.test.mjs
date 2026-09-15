@@ -9,6 +9,7 @@ import {
   getProxyControlRows,
   listProxyTargets,
   normalizePublicProxyChecks,
+  normalizePublicProxyTargets,
   updateProxyTarget,
 } from '../src/admin/proxy-targets.js';
 import { normalizeAgentProxyChecks } from '../src/metrics.js';
@@ -79,6 +80,14 @@ assert.deepEqual(checks[0], {
 });
 assert.equal(normalizePublicProxyChecks(checks, now)[0].stale, false);
 assert.equal(normalizePublicProxyChecks([{ ...checks[0], ts: now - 901 }], now)[0].stale, true);
+const publicTargets = normalizePublicProxyTargets([{
+  id: 'vless-main', name: 'VLESS renamed', protocol: 'VLESS', transport: 'TLS-WS',
+  server: 'proxy.example.test', port: 443, sni: 'secret.example.test',
+  secret: { uuid: '8c7f969f-0000-4000-8000-000000000001', password: 'secret' },
+}]);
+assert.deepEqual(publicTargets, [{ target_id: 'vless-main', name: 'VLESS renamed', protocol: 'vless', transport: 'tls-ws' }]);
+assert.equal('server' in publicTargets[0], false, 'public proxy metadata must not expose the endpoint');
+assert.equal(normalizePublicProxyTargets([{ id: 'invalid', name: 'invalid', protocol: 'unknown', transport: 'tcp' }]).length, 0, 'unknown protocol metadata must be rejected');
 assert.equal(normalizeAgentProxyChecks([{
   ...checks[0], stage: 'attacker-controlled', error: 'proxy.example.test:443/secret',
 }], now)[0].stage, 'canary');

@@ -88,6 +88,9 @@ assert.match(telemetrySource, /startAfter/, 'unbounded storage.list() calls must
 assert.match(wranglerSource, /REGION_PROXY_BATCH_ENABLED = "true"/, 'production config must enable region batching');
 assert.match(indexSource, /out\.probe\.results\.map\(item => item\?\.warning\)/, 'scheduled probe diagnostics must retain state sync warnings');
 assert.match(statusSource, /optionalQuery[\s\S]{0,220}warnings\.push\(warning\)/, 'partial status query failures must be visible in the status warnings');
+assert.match(statusSource, /SELECT p\.id, p\.agent_id, p\.name, p\.protocol, p\.transport FROM proxy_targets/, 'public status must select only credential-free proxy metadata');
+assert.match(statusSource, /proxy_targets: normalizePublicProxyTargets\(/, 'public status must expose configured proxy metadata for pending checks');
+assert.doesNotMatch(statusSource, /SELECT p\.\*.*proxy_targets/, 'public status must not select complete proxy configuration rows');
 assert.match(statusSource, /Live status overlay unavailable/, 'snapshot overlay failures must remain visible to status consumers');
 assert.match(schemaSource, /CREATE TABLE IF NOT EXISTS agent_contacts/, 'manager contact liveness table must exist');
 assert.match(schemaSource, /schema:worker-v31-agent-contacts/, 'agent contacts migration must be tracked');

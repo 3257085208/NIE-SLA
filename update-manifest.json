@@ -1,11 +1,12 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.48",
-  "agent_version": "v1.1.48",
-  "source_ref": "app-v1.1.48",
-  "published_at": "2026-09-15T10:23:24Z",
-  "title": "NIE-SLA 1.1.48",
+  "version": "1.1.49",
+  "agent_version": "v1.1.49",
+  "source_ref": "app-v1.1.49",
+  "published_at": "2026-09-15T14:41:48Z",
+  "title": "NIE-SLA 1.1.49",
   "changelog": [
+    "修正代理检测配置已保存但公开前端无任何提示的问题：公开状态只下发脱敏的代理名称、协议和传输方式，首次真实握手完成前显示待检测，避免把保存成功误认为检测失败。",
     "修正 Cloudflare Assets 的扩展名排除规则：动态 NodeGet 主题的 CSS、JS、JSON 请求继续进入 Worker，再由原生 R2 返回，不会被静态资产 404 页面截走。",
     "修正 NodeGet 主题读取路径：主题文件强制使用原生 R2 binding，不再误走遥测兼容用的 S3 facade，避免 R2 对象存在但浏览器收到空响应或 502。",
     "增加主题存储绕过 S3 facade 的回归测试，保留上传后逐文件读回和大小校验。",

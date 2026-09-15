@@ -1,9 +1,9 @@
-import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260915-proxy4';
+import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260915-proxy5';
 import {
   billingCycleSuffix,
   isLifetimeBilling,
   normalizeBillingCycle,
-} from './js/shared/billing.js?v=20260915-proxy4';
+} from './js/shared/billing.js?v=20260915-proxy5';
 import {
   cssEscape,
   clampNumber,
@@ -18,11 +18,11 @@ import {
   normalizeCityName,
   pad,
   timeAgoSec,
-} from './js/shared/format.js?v=20260915-proxy4';
-import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260915-proxy4';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260915-proxy4';
-import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260915-proxy4';
-import { countryByCode } from './js/shared/target-catalogs.js?v=20260915-proxy4';
+} from './js/shared/format.js?v=20260915-proxy5';
+import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260915-proxy5';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260915-proxy5';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260915-proxy5';
+import { countryByCode } from './js/shared/target-catalogs.js?v=20260915-proxy5';
 import {
   clampChartRange,
   countChartGaps,
@@ -30,15 +30,15 @@ import {
   filterChecksByRange,
   hexToRgba,
   trimEmptyPointEdges,
-} from './js/shared/chart-data.js?v=20260915-proxy4';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260915-proxy4';
-import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260915-proxy4';
-import { unlockState } from './js/shared/unlock.js?v=20260915-proxy4';
-import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260915-proxy4';
-import { targetSlaPercentage } from './js/shared/sla.js?v=20260915-proxy4';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260915-proxy4';
-import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260915-proxy4';
-import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260915-proxy4';
+} from './js/shared/chart-data.js?v=20260915-proxy5';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260915-proxy5';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260915-proxy5';
+import { unlockState } from './js/shared/unlock.js?v=20260915-proxy5';
+import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260915-proxy5';
+import { targetSlaPercentage } from './js/shared/sla.js?v=20260915-proxy5';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260915-proxy5';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260915-proxy5';
+import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260915-proxy5';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -1047,20 +1047,51 @@ function targetHasPublicLatency(target) {
 }
 
 function proxyStatusBadgeHtml(target) {
+  const configured = Array.isArray(target?.proxy_targets) ? target.proxy_targets : [];
   const checks = Array.isArray(target?.proxy_checks) ? target.proxy_checks : [];
-  if (!checks.length) return '';
-  const fresh = checks.filter((check) => check && check.stale !== true);
-  if (!fresh.length) return '<span class="meta-badge meta-proxy meta-proxy-stale">代理数据过期</span>';
-  const online = fresh.filter((check) => Number(check.ok) === 1).length;
-  const total = fresh.length;
-  const className = online === total ? 'meta-proxy-ok' : online > 0 ? 'meta-proxy-warn' : 'meta-proxy-down';
-  const title = fresh.map((check) => {
+  if (!configured.length && !checks.length) return '';
+  const checkById = new Map(checks.map((check) => [String(check?.target_id || ''), check]));
+  const items = configured.map((config) => ({
+    config,
+    check: checkById.get(String(config?.target_id || '')) || null,
+  }));
+  const configuredIds = new Set(items.map(({ config }) => String(config?.target_id || '')));
+  for (const check of checks) {
+    if (!configuredIds.has(String(check?.target_id || ''))) items.push({ config: check, check });
+  }
+  if (!items.length) return '';
+  const fresh = items.filter(({ check }) => check && check.stale !== true);
+  const stale = items.filter(({ check }) => check?.stale === true);
+  const pending = items.filter(({ check }) => !check);
+  const online = fresh.filter(({ check }) => Number(check.ok) === 1).length;
+  const total = items.length;
+  const className = pending.length || stale.length
+    ? (fresh.length ? 'meta-proxy-warn' : 'meta-proxy-pending')
+    : (online === total ? 'meta-proxy-ok' : online > 0 ? 'meta-proxy-warn' : 'meta-proxy-down');
+  const itemName = ({ config, check }) => String(config?.name || check?.name || config?.target_id || check?.target_id || config?.protocol || '代理').trim();
+  const title = items.map(({ config, check }) => {
+    const name = itemName({ config, check });
+    if (!check) return `${name}: 待首次检测（${String(config?.protocol || '').toUpperCase()}/${String(config?.transport || 'tcp')}）`;
+    if (check.stale === true) return `${name}: 数据过期`;
     const timing = Number(check.ok) === 1 && check.total_ms != null
       ? ` · 总 ${Math.round(Number(check.total_ms))}ms · 握手 ${check.handshake_ms == null ? '-' : Math.round(Number(check.handshake_ms))}ms · 首字节 ${check.first_byte_ms == null ? '-' : Math.round(Number(check.first_byte_ms))}ms`
       : '';
-    return `${check.name || check.target_id || check.protocol}: ${Number(check.ok) === 1 ? '在线' : '离线'}${timing}`;
+    return `${name}: ${Number(check.ok) === 1 ? '在线' : '离线'}${timing}`;
   }).join(' · ');
-  return `<span class="meta-badge meta-proxy ${className}" title="${escapeAttr(title)}">代理 ${online}/${total} 在线</span>`;
+  let label;
+  if (total === 1) {
+    const item = items[0];
+    const name = itemName(item);
+    if (!item.check) label = `代理 ${name} · 待检测`;
+    else if (item.check.stale === true) label = `代理 ${name} · 已过期`;
+    else if (Number(item.check.ok) === 1) label = `代理 ${name} · 在线${item.check.total_ms == null ? '' : ` ${Math.round(Number(item.check.total_ms))}ms`}`;
+    else label = `代理 ${name} · 离线`;
+  } else {
+    label = `代理 ${online}/${total} 在线`;
+    if (pending.length) label += ` · ${pending.length} 待检测`;
+    if (stale.length) label += ` · ${stale.length} 过期`;
+  }
+  return `<span class="meta-badge meta-proxy ${className}" title="${escapeAttr(title)}">${escapeHtml(label)}</span>`;
 }
 
 function serviceCloudflareLatencyHtml(target) {

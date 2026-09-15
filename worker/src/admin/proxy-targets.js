@@ -109,6 +109,26 @@ export function normalizePublicProxyChecks(value, now = nowSec()) {
   });
 }
 
+// The public status page needs to distinguish "configured, waiting for the
+// first Agent result" from "no proxy target configured".  Keep this metadata
+// deliberately smaller than the admin/control rows: endpoint and credential
+// fields must never cross the public boundary.
+export function normalizePublicProxyTargets(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_PROXY_TARGETS_PER_AGENT).flatMap((item) => {
+    const id = String(item?.target_id || item?.id || '').trim().slice(0, 128);
+    const protocol = String(item?.protocol || '').trim().toLowerCase();
+    const transport = String(item?.transport || 'tcp').trim().toLowerCase();
+    if (!id || !PROXY_PROTOCOLS.includes(protocol) || !PROXY_TRANSPORTS.includes(transport)) return [];
+    return [{
+      target_id: id,
+      name: String(item?.name || id).trim().slice(0, 96),
+      protocol,
+      transport,
+    }];
+  });
+}
+
 export async function getAgentProxyTargets(env, agentId, { includeSecrets = true } = {}) {
   const rows = await getProxyTargetRows(env, agentId, true);
   const targets = [];
