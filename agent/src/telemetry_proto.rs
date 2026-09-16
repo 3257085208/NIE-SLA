@@ -75,6 +75,15 @@ fn encode_proxy_check(check: &ProxyCheckResult) -> Vec<u8> {
     if let Some(error) = &check.error {
         field_string(&mut out, 8, error);
     }
+    if let Some(handshake) = check.handshake_ms {
+        field_varint(&mut out, 9, handshake.min(u64::MAX as u128) as u64);
+    }
+    if let Some(first_byte) = check.first_byte_ms {
+        field_varint(&mut out, 10, first_byte.min(u64::MAX as u128) as u64);
+    }
+    if let Some(total) = check.total_ms {
+        field_varint(&mut out, 11, total.min(u64::MAX as u128) as u64);
+    }
     out
 }
 
@@ -304,6 +313,27 @@ fn varint(out: &mut Vec<u8>, mut value: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proxy_check_binary_preserves_stage_timings() {
+        let check = ProxyCheckResult {
+            target_id: "proxy-a".into(),
+            name: "Proxy A".into(),
+            protocol: "vless".into(),
+            ts: 1_700_000_000,
+            latency_ms: Some(43),
+            handshake_ms: Some(12),
+            first_byte_ms: Some(31),
+            total_ms: Some(43),
+            ok: true,
+            stage: "canary".into(),
+            error: None,
+        };
+        let encoded = encode_proxy_check(&check);
+        assert!(encoded.windows(2).any(|bytes| bytes == [0x48, 12]));
+        assert!(encoded.windows(2).any(|bytes| bytes == [0x50, 31]));
+        assert!(encoded.windows(2).any(|bytes| bytes == [0x58, 43]));
+    }
 
     #[test]
     fn envelope_has_version_and_binary_metrics() {

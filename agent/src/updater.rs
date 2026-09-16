@@ -205,6 +205,17 @@ const UPDATE_LOCK_PATH: &str = "/var/lib/nie-sla-agent-manager/update.lock";
 
 #[cfg(target_os = "linux")]
 fn pending_marker_path() -> Result<PathBuf> {
+    for key in ["NIE_SLA_QUEUE_FILE", "NSTATUS_QUEUE_FILE"] {
+        if let Ok(queue_file) = env::var(key) {
+            let queue_path = PathBuf::from(queue_file);
+            if let Some(parent) = queue_path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                return Ok(parent.join(UPDATE_PENDING_MARKER));
+            }
+        }
+    }
     let current = std::env::current_exe().with_context(|| "locate current Agent executable")?;
     let dir = current
         .parent()
@@ -242,9 +253,13 @@ pub(super) fn confirm_pending_update() -> Result<()> {
         if let Some(dir) = current.parent() {
             let backup = dir.join(BACKUP_FILE_NAME);
             if backup.is_file() && !backup.is_symlink() {
-                remove_file_durable(&backup).with_context(|| {
-                    format!("remove confirmed Agent backup {}", backup.display())
-                })?;
+                // The privileged manager owns the system-installed binary
+                // and normally removes its backup after the stability
+                // watchdog confirms the update.  Marker removal is the
+                // telemetry process's confirmation boundary; inability to
+                // remove that root-owned housekeeping file must not turn a
+                // successful report into a repeated update error.
+                let _ = remove_file_durable(&backup);
             }
         }
     }

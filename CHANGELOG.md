@@ -1,6 +1,11 @@
 # 更新日志
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
+## 1.1.56 - 2026-09-16
+
+- 修复 Agent Protobuf 遥测上报遗漏 `handshake_ms`、`first_byte_ms` 与 `total_ms` 的问题；启用 Protobuf 的 Agent 不再丢失真实代理阶段耗时。
+- 修复 Linux 自动更新确认标记写入 root-only 二进制目录、导致非 root Agent 反复报告 `update_confirmation_error` 的问题；标记改放到 Agent 可写的状态目录，系统管理器仍负责二进制回滚与备份清理。
+
 ## 1.1.55 - 2026-09-16
 
 - 兼容小火箭（Shadowrocket）导出的单节点 JSON：识别 `host`、`port`、`title`、`password`、`peer`、`tls`、`xtls`、`publicKey` 与 `shortId`，正确还原 VLESS Reality + Vision 配置。

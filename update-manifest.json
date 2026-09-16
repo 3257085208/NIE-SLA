@@ -1,11 +1,13 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.55",
-  "agent_version": "v1.1.55",
-  "source_ref": "app-v1.1.55",
-  "published_at": "2026-09-16T13:02:51Z",
-  "title": "NIE-SLA 1.1.55",
+  "version": "1.1.56",
+  "agent_version": "v1.1.56",
+  "source_ref": "app-v1.1.56",
+  "published_at": "2026-09-16T14:15:00Z",
+  "title": "NIE-SLA 1.1.56",
   "changelog": [
+    "修复 Agent Protobuf 遥测上报遗漏 handshake_ms、first_byte_ms 与 total_ms；启用 Protobuf 的 Agent 会保留真实代理阶段耗时。",
+    "修复 Linux 自动更新确认标记放在 root-only 二进制目录导致非 root Agent 反复报告 update_confirmation_error；标记改放到 Agent 可写状态目录。",
     "兼容小火箭（Shadowrocket）导出的单节点 JSON：识别 host、port、title、password、peer、tls、xtls、publicKey 与 shortId，正确还原 VLESS Reality + Vision 配置。",
     "兼容复制过程中把 Base64URL 下划线写成反斜杠下划线的 JSON 文本，以及被 Markdown 包裹的 SNI 主机名；仅修复确定的格式噪声，不自动抓取远程订阅。",
     "解析预览增加安全模式与 flow 信息，但继续不返回 UUID、密码、Reality 公钥、短 ID 或原始分享内容。",

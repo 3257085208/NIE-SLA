@@ -298,7 +298,11 @@ function decodePingPoint(reader) {
 }
 
 function decodeProxyCheck(reader) {
-  const value = { target_id: '', name: '', protocol: '', ts: 0, latency_ms: null, ok: 0, stage: '', error: null };
+  const value = {
+    target_id: '', name: '', protocol: '', ts: 0, latency_ms: null,
+    handshake_ms: null, first_byte_ms: null, total_ms: null,
+    ok: 0, stage: '', error: null,
+  };
   while (!reader.done()) {
     const [field, wire] = reader.key();
     if (field === 1) value.target_id = reader.string();
@@ -309,6 +313,9 @@ function decodeProxyCheck(reader) {
     else if (field === 6) value.ok = reader.varint() === 1 ? 1 : 0;
     else if (field === 7) value.stage = reader.string();
     else if (field === 8) value.error = reader.string();
+    else if (field === 9) value.handshake_ms = reader.varint();
+    else if (field === 10) value.first_byte_ms = reader.varint();
+    else if (field === 11) value.total_ms = reader.varint();
     else reader.skip(wire);
   }
   return value;

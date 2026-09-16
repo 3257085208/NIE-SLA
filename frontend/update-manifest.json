@@ -1,10 +1,10 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.55",
-  "agent_version": "v1.1.55",
-  "source_ref": "app-v1.1.55",
-  "published_at": "2026-09-16T13:02:51Z",
-  "title": "NIE-SLA 1.1.55",
+  "version": "1.1.56",
+  "agent_version": "v1.1.56",
+  "source_ref": "app-v1.1.56",
+  "published_at": "2026-09-16T14:15:00Z",
+  "title": "NIE-SLA 1.1.56",
   "changelog": [
     "兼容小火箭（Shadowrocket）导出的单节点 JSON：识别 host、port、title、password、peer、tls、xtls、publicKey 与 shortId，正确还原 VLESS Reality + Vision 配置。",
     "兼容复制过程中把 Base64URL 下划线写成反斜杠下划线的 JSON 文本，以及被 Markdown 包裹的 SNI 主机名；仅修复确定的格式噪声，不自动抓取远程订阅。",
@@ -34,7 +34,9 @@
     "TCP Ping 与 External Latency 历史读取保留原始点，不再在公开读取边界降采样或按分钟合并不同秒的探测结果。",
     "修正 Load/Proc 指标图表在数据成功返回后未触发坐标范围计算与重绘的问题。",
     "修正 Agent 指标页的 Proc 标签与异步切换状态；加载期间不再短暂显示旧时间范围或旧指标，TCP Ping 卡片标题也会同步更新。",
-    "Worker 为 proc 请求只返回 process_count 字段，减少无关遥测数据和切换等待时间。"
+    "Worker 为 proc 请求只返回 process_count 字段，减少无关遥测数据和切换等待时间。",
+    "修正 Protobuf 遥测上传丢失 handshake_ms、first_byte_ms 与 total_ms 的问题；启用 Protobuf 的 Agent 现在也能完整显示阶段耗时。",
+    "修正 Linux 非特权 Agent 无法清理更新确认标记的问题：标记跟随可写队列目录保存，备份文件由特权更新管理器负责清理。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

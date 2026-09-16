@@ -35,7 +35,7 @@ const metrics = concat([
   messageField(15, [
     stringField(1, 'vless-main'), stringField(2, 'VLESS main'), stringField(3, 'vless'),
     varintField(4, 1700000001), fixedField(5, 42.7), varintField(6, 1),
-    stringField(7, 'canary'),
+    stringField(7, 'canary'), varintField(9, 12), varintField(10, 31), varintField(11, 43),
   ]),
 ]);
 
@@ -62,7 +62,8 @@ assert.deepEqual(decoded.metrics.ping_series[0].latency_ms, [null, 8.5]);
 assert.deepEqual(decoded.metrics.ping_series[0].ok, [0, 1]);
 assert.deepEqual(decoded.metrics.proxy_checks, [{
   target_id: 'vless-main', name: 'VLESS main', protocol: 'vless', ts: 1700000001,
-  latency_ms: 42.7, ok: 1, stage: 'canary', error: null,
+  latency_ms: 42.7, handshake_ms: 12, first_byte_ms: 31, total_ms: 43,
+  ok: 1, stage: 'canary', error: null,
 }]);
 
 assert.throws(() => decodeAgentMetricsProtobuf(concat([varintField(1, 2), messageField(6, metrics)])), /协议版本/);
