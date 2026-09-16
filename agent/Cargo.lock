@@ -1730,8 +1730,6 @@ dependencies = [
 [[package]]
 name = "meow-transport"
 version = "0.21.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "293f11d6cd0d90a738064b9aca0e2b494c58a5eac3b294d9252f102b41cd2804"
 dependencies = [
  "aes-gcm 0.10.3",
  "async-trait",
@@ -1780,7 +1778,7 @@ dependencies = [
 
 [[package]]
 name = "nie-sla-agent"
-version = "1.1.56"
+version = "1.1.57"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

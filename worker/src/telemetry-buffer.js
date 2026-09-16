@@ -419,7 +419,7 @@ export class TelemetryBuffer {
         ...control,
         proxy_targets: proxyTargets,
         proxy_canary_host: String(this.env.PROXY_CANARY_HOST || 'example.com').trim() || 'example.com',
-        proxy_canary_port: Math.max(1, Math.min(65535, Number(this.env.PROXY_CANARY_PORT || 80) || 80)),
+        proxy_canary_port: Math.max(1, Math.min(65535, Number(this.env.PROXY_CANARY_PORT || 443) || 443)),
       };
     };
     if (cached?.control && Number(cached.fetched_at || 0) + ttl > now) return materialize(cached.control);

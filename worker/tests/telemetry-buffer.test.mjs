@@ -382,6 +382,7 @@ const firstControl = await controlBuffer.readControlSnapshot();
 const secondControl = await controlBuffer.readControlSnapshot();
 assert.deepEqual(secondControl, firstControl, 'WSS control snapshots must be cached in the DO');
 assert.equal(firstControl.ping_targets[0].protocol, 'tcp');
+assert.equal(firstControl.proxy_canary_port, 443, 'WSS control must use the HTTPS canary default');
 assert.equal(controlQueries, 4, 'a cached WSS control snapshot should read D1 once for targets, interval and traffic corrections');
 
 const pagedStorage = memoryStorage();

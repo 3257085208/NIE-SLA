@@ -1,10 +1,10 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.56",
-  "agent_version": "v1.1.56",
-  "source_ref": "app-v1.1.56",
-  "published_at": "2026-09-16T14:15:00Z",
-  "title": "NIE-SLA 1.1.56",
+  "version": "1.1.57",
+  "agent_version": "v1.1.57",
+  "source_ref": "app-v1.1.57",
+  "published_at": "2026-09-16T16:43:52Z",
+  "title": "NIE-SLA 1.1.57",
   "changelog": [
     "修复 Agent Protobuf 遥测上报遗漏 handshake_ms、first_byte_ms 与 total_ms；启用 Protobuf 的 Agent 会保留真实代理阶段耗时。",
     "修复 Linux 自动更新确认标记放在 root-only 二进制目录导致非 root Agent 反复报告 update_confirmation_error；标记改放到 Agent 可写状态目录。",
@@ -36,7 +36,9 @@
     "TCP Ping 与 External Latency 历史读取保留原始点，不再在公开读取边界降采样或按分钟合并不同秒的探测结果。",
     "修正 Load/Proc 指标图表在数据成功返回后未触发坐标范围计算与重绘的问题。",
     "修正 Agent 指标页的 Proc 标签与异步切换状态；加载期间不再短暂显示旧时间范围或旧指标，TCP Ping 卡片标题也会同步更新。",
-    "Worker 为 proc 请求只返回 process_count 字段，减少无关遥测数据和切换等待时间。"
+    "Worker 为 proc 请求只返回 process_count 字段，减少无关遥测数据和切换等待时间。",
+    "修正 VLESS Reality 客户端在服务端把完整握手消息合并到单个 TLS 记录时只消费首条消息、随后错误等待下一条记录的问题；现在会消费同一记录中的完整握手航班，恢复真实握手、首字节和总耗时。",
+    "修正 WSS 控制通道未配置 canary 端口时默认使用 HTTP 80 的问题，统一使用 HTTPS canary 443。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
