@@ -15,12 +15,27 @@ const DEFAULT_PORTS = {
 const KNOWN_SCHEMES = new Set(['socks', 'socks5', 'http', 'https', 'ss', 'ssr', 'vless', 'vmess', 'trojan', 'hysteria2', 'hy2', 'snell', 'anytls', 'tuic']);
 const RUNTIME_PROTOCOLS = new Set(['socks5', 'http', 'ss', 'vless', 'vmess', 'trojan', 'hysteria2', 'snell', 'anytls']);
 const TRANSPORTS = new Set(['tcp', 'tls', 'ws', 'tls-ws', 'grpc', 'tls-grpc', 'h2', 'tls-h2', 'httpupgrade', 'tls-httpupgrade', 'quic']);
+const PROTOCOL_ALIASES = {
+  socks: 'socks5',
+  socks5: 'socks5',
+  'http-connect': 'http',
+  https: 'http',
+  shadowsocks: 'ss',
+  ss: 'ss',
+  hysteria: 'hysteria2',
+  hy2: 'hysteria2',
+  hysteria2: 'hysteria2',
+};
+const REMOTE_SUBSCRIPTION_SCHEMES = /^(?:clash|clashmeta|surge|shadowrocket|quantumult|quantumultx):\/\//iu;
+const YAML_UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export function parseProxyLinks(raw, { maxItems = MAX_ITEMS } = {}) {
   const text = String(raw ?? '').trim();
   if (!text || text.length > MAX_LINK_BYTES) throw new Error('代理链接为空或超过 64 KiB');
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)) throw new Error('代理链接包含不允许的控制字符');
-  const candidates = expandCandidates(text).slice(0, maxItems);
+  if (REMOTE_SUBSCRIPTION_SCHEMES.test(text)) throw new Error('请粘贴订阅内容，不自动抓取远程订阅地址');
+  const limit = Math.max(1, Math.min(MAX_ITEMS, Number(maxItems) || MAX_ITEMS));
+  const candidates = expandCandidates(text).slice(0, limit);
   if (!candidates.length) throw new Error('未找到可识别的代理分享链接');
   const parsed = [];
   for (const candidate of candidates) {
@@ -42,6 +57,7 @@ export function proxyLinkPreview(item) {
     ws_path: item.ws_path,
     ws_host: item.ws_host,
     runtime_supported: Boolean(item.runtime_supported),
+    runtime_reason: item.runtime_reason || '',
   };
 }
 
@@ -58,6 +74,28 @@ export function isRuntimeProxyTargetSupported(protocol, transport) {
   }
   if (normalizedProtocol === 'hysteria2') return normalizedTransport === 'quic';
   return normalizedTransport !== 'quic';
+}
+
+function runtimeSupportReason(protocol, transport, secret = {}) {
+  const normalizedProtocol = String(protocol || '').toLowerCase();
+  const normalizedTransport = String(transport || '').toLowerCase();
+  if (!isRuntimeProxyTargetSupported(normalizedProtocol, normalizedTransport)) {
+    return '该协议或传输组合当前 Agent 尚未内置真实握手';
+  }
+  if (normalizedProtocol === 'vless' && String(secret.security || '').toLowerCase() === 'reality') {
+    return 'VLESS Reality 当前 Agent 尚未内置真实握手';
+  }
+  if (normalizedProtocol === 'vless' && secret.flow && secret.flow !== 'xtls-rprx-vision') {
+    return '该 VLESS flow 当前 Agent 尚未内置真实握手';
+  }
+  if (normalizedProtocol === 'vmess' && Number(secret.alter_id || 0) > 0) {
+    return '当前 Agent 仅支持 VMess alter_id=0';
+  }
+  if (normalizedProtocol === 'hysteria2' && secret.obfs && String(secret.obfs).toLowerCase() !== 'salamander') {
+    return '当前 Agent 仅支持 Hysteria2 salamander 混淆';
+  }
+  if (normalizedProtocol === 'tuic') return 'TUIC 当前 Agent 尚未内置真实握手';
+  return '';
 }
 
 function expandCandidates(text) {
@@ -90,7 +128,11 @@ function expandStructuredText(text) {
   if (!trimmed) return [];
   try {
     const value = JSON.parse(trimmed);
-    const nodes = Array.isArray(value) ? value : (Array.isArray(value.proxies) ? value.proxies : (Array.isArray(value.outbounds) ? value.outbounds : []));
+    const nodes = Array.isArray(value)
+      ? value
+      : (Array.isArray(value?.proxies)
+        ? value.proxies
+        : (Array.isArray(value?.outbounds) ? value.outbounds : (value?.server && value?.type ? [value] : [])));
     return nodes.flatMap(node => proxyObjectToLink(node)).filter(Boolean);
   } catch (_) {}
   return parseSimpleClashYaml(trimmed);
@@ -98,62 +140,378 @@ function expandStructuredText(text) {
 
 function proxyObjectToLink(node) {
   if (!node || typeof node !== 'object' || Array.isArray(node)) return '';
-  const type = String(node.type || '').trim().toLowerCase();
-  if (!type || !node.server || !node.port) return '';
-  if (type === 'ss' || type === 'shadowsocks') {
-    const cipher = String(node.cipher || node.method || '').trim();
-    const password = String(node.password || '').trim();
+  const type = normalizeProtocol(nodeValue(node, 'type', 'protocol'));
+  const server = nodeText(nodeValue(node, 'server', 'address'));
+  const port = Number(nodeValue(node, 'port', 'server_port', 'serverPort') || DEFAULT_PORTS[type]);
+  if (!type || !server || !Number.isInteger(port) || port < 1 || port > 65535) return '';
+  const name = cleanName(nodeValue(node, 'name', 'ps'), type);
+  if (type === 'vmess') return proxyObjectToVmessLink(node, server, port, name);
+  if (type === 'ss') {
+    const cipher = nodeText(nodeValue(node, 'cipher', 'method'));
+    const password = nodeText(nodeValue(node, 'password'));
     if (!cipher || !password) return '';
-    return `ss://${encodeURIComponent(cipher)}:${encodeURIComponent(password)}@${node.server}:${node.port}#${encodeURIComponent(String(node.name || type))}`;
+    const query = new URLSearchParams();
+    const plugin = nodeText(nodeValue(node, 'plugin'));
+    const pluginOpts = serializePluginOptions(nodeValue(node, 'plugin-opts', 'plugin_opts'));
+    if (plugin) query.set('plugin', [plugin, pluginOpts].filter(Boolean).join(';'));
+    return `ss://${encodeURIComponent(cipher)}:${encodeURIComponent(password)}@${authorityHost(server)}:${port}${query.size ? `?${query}` : ''}#${encodeURIComponent(name)}`;
   }
+
   const query = new URLSearchParams();
-  const network = String(node.network || node.net || '').trim().toLowerCase();
-  const tls = node.tls === true || String(node.security || '').toLowerCase() === 'tls';
-  if (network) query.set('type', network === 'websocket' ? 'ws' : network);
-  if (tls) query.set('security', 'tls');
-  if (node.sni || node.servername) query.set('sni', String(node.sni || node.servername));
-  const wsOpts = node['ws-opts'] && typeof node['ws-opts'] === 'object' ? node['ws-opts'] : {};
-  if (wsOpts.path || node.path) query.set('path', String(wsOpts.path || node.path));
-  const headers = wsOpts.headers && typeof wsOpts.headers === 'object' ? wsOpts.headers : {};
-  if (headers.Host || headers.host || node.host) query.set('host', String(headers.Host || headers.host || node.host));
-  const user = node.uuid || node.username || '';
-  const password = node.password || '';
-  const authority = `${encodeURIComponent(String(user))}${password ? `:${encodeURIComponent(String(password))}` : ''}@${node.server}:${node.port}`;
-  return `${type}://${authority}${query.size ? `?${query}` : ''}#${encodeURIComponent(String(node.name || type))}`;
+  const tlsConfig = nodeObject(nodeValue(node, 'tls'));
+  const transportConfig = nodeObject(nodeValue(node, 'transport'));
+  const network = normalizeNetwork(nodeValue(node, 'network', 'net') || transportConfig?.type);
+  const realityOpts = nodeObject(nodeValue(node, 'reality-opts', 'reality_opts'));
+  const security = nodeText(nodeValue(node, 'security')) || nodeText(tlsConfig?.security) || (realityOpts ? 'reality' : '');
+  const tlsEnabled = type === 'trojan' || nodeBoolean(nodeValue(node, 'tls')) || nodeBoolean(tlsConfig?.enabled)
+    || ['tls', 'reality', 'https'].includes(security.toLowerCase());
+  const effectiveSecurity = security || (tlsEnabled ? 'tls' : '');
+  if (network && network !== 'tcp') query.set('type', network);
+  if (effectiveSecurity) query.set('security', effectiveSecurity);
+  const sni = nodeText(nodeValue(node, 'sni', 'servername')) || nodeText(tlsConfig?.server_name, tlsConfig?.serverName) || server;
+  if (sni) query.set('sni', sni);
+  const wsOpts = nodeObject(nodeValue(node, 'ws-opts', 'ws_opts'));
+  const grpcOpts = nodeObject(nodeValue(node, 'grpc-opts', 'grpc_opts'));
+  const h2Opts = nodeObject(nodeValue(node, 'h2-opts', 'h2_opts'));
+  const httpOpts = nodeObject(nodeValue(node, 'http-opts', 'http_opts'));
+  const headers = nodeObject(wsOpts?.headers) || nodeObject(transportConfig?.headers);
+  const path = nodeText(wsOpts?.path, nodeValue(node, 'path'))
+    || nodeText(transportConfig?.path, h2Opts?.path, httpOpts?.path);
+  const host = nodeText(headers?.Host, headers?.host, nodeValue(node, 'host'))
+    || nodeText(transportConfig?.host, tlsConfig?.server_name, sni);
+  if (path) query.set('path', path);
+  if (host && ['ws', 'h2', 'httpupgrade'].includes(network)) query.set('host', host);
+  const serviceName = nodeText(nodeValue(node, 'serviceName', 'service_name'), grpcOpts?.['grpc-service-name'], grpcOpts?.serviceName, transportConfig?.service_name);
+  if (serviceName && network === 'grpc') query.set('serviceName', serviceName);
+  const flow = nodeText(nodeValue(node, 'flow'));
+  if (flow) query.set('flow', flow);
+  const encryption = nodeText(nodeValue(node, 'encryption'));
+  if (encryption) query.set('encryption', encryption);
+  const skipCertVerify = nodeBoolean(nodeValue(node, 'skip-cert-verify', 'skip_cert_verify')) || nodeBoolean(tlsConfig?.insecure);
+  if (skipCertVerify) query.set('allowInsecure', '1');
+  const fingerprint = nodeText(nodeValue(node, 'client-fingerprint', 'client_fingerprint', 'fingerprint'), tlsConfig?.fingerprint);
+  if (fingerprint) query.set('fingerprint', fingerprint);
+  const alpn = serializeList(nodeValue(node, 'alpn') ?? tlsConfig?.alpn);
+  if (alpn) query.set('alpn', alpn);
+  const obfs = nodeText(nodeValue(node, 'obfs'));
+  const obfsPassword = nodeText(nodeValue(node, 'obfs-password', 'obfs_password'));
+  const obfsHost = nodeText(nodeValue(node, 'obfs-host', 'obfs_host'));
+  if (obfs) query.set('obfs', obfs);
+  if (obfsPassword) query.set('obfs-password', obfsPassword);
+  if (obfsHost) query.set('obfs-host', obfsHost);
+  if (type === 'tuic') {
+    const uuid = nodeText(nodeValue(node, 'uuid', 'id'));
+    const password = nodeText(nodeValue(node, 'password'));
+    if (uuid) query.set('uuid', uuid);
+    if (nodeValue(node, 'congestion_control')) query.set('congestion_control', nodeText(nodeValue(node, 'congestion_control')));
+    return `tuic://${encodeURIComponent(`${uuid}:${password}`)}@${authorityHost(server)}:${port}${query.size ? `?${query}` : ''}#${encodeURIComponent(name)}`;
+  }
+  const nodePassword = nodeText(nodeValue(node, 'password'));
+  const user = type === 'vless'
+    ? nodeText(nodeValue(node, 'uuid', 'id'))
+    : ['trojan', 'hysteria2', 'anytls'].includes(type)
+      ? nodePassword
+      : nodeText(nodeValue(node, 'username'));
+  const password = ['trojan', 'hysteria2', 'anytls'].includes(type)
+    ? ''
+    : nodePassword || (type === 'snell' ? nodeText(nodeValue(node, 'psk')) : '');
+  if (type === 'snell') {
+    if (nodeValue(node, 'version')) query.set('version', nodeText(nodeValue(node, 'version')));
+    return `snell://${encodeURIComponent(password)}@${authorityHost(server)}:${port}${query.size ? `?${query}` : ''}#${encodeURIComponent(name)}`;
+  }
+  const scheme = type === 'http' && tlsEnabled ? 'https' : type;
+  const authority = `${encodeURIComponent(user)}${password ? `:${encodeURIComponent(password)}` : ''}@${authorityHost(server)}:${port}`;
+  if (type === 'http' || type === 'socks5') {
+    if (tlsEnabled && type === 'socks5') query.set('tls', '1');
+    const suffix = query.size ? `?${query}` : '';
+    return `${scheme}://${authority}${suffix}#${encodeURIComponent(name)}`;
+  }
+  return `${scheme}://${authority}${query.size ? `?${query}` : ''}#${encodeURIComponent(name)}`;
 }
 
 function parseSimpleClashYaml(text) {
-  if (!/^\s*proxies\s*:\s*$/m.test(text)) return [];
+  if (!/^\s*proxies\s*:/m.test(text)) return [];
   const out = [];
+  let inProxies = false;
+  let proxiesIndent = 0;
+  let itemIndent = null;
   let current = null;
-  let nested = '';
+  const contexts = [];
+  const pushCurrent = () => {
+    if (current) out.push(current);
+    current = null;
+    contexts.length = 0;
+  };
+
   for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.replace(/\t/g, '    ');
-    const item = line.match(/^\s*-\s*([^:]+):\s*(.*)$/);
-    if (item) {
-      if (current) out.push(current);
-      current = {};
-      nested = '';
-      setYamlValue(current, item[1], item[2]);
+    const line = stripYamlComment(rawLine.replace(/\t/g, '  '));
+    if (!line.trim() || /^\s*(?:---|\.\.\.)\s*$/.test(line)) continue;
+    const indent = line.length - line.trimStart().length;
+    const body = line.trim();
+    const root = body.match(/^proxies\s*:\s*(.*)$/iu);
+    if (!inProxies) {
+      if (root) {
+        inProxies = true;
+        proxiesIndent = indent;
+        if (root[1]) {
+          const inline = parseYamlScalar(root[1]);
+          if (Array.isArray(inline)) out.push(...inline.filter(item => item && typeof item === 'object'));
+        }
+      }
+      continue;
+    }
+    if (indent <= proxiesIndent && !body.startsWith('-')) {
+      pushCurrent();
+      inProxies = false;
+      if (root) {
+        inProxies = true;
+        proxiesIndent = indent;
+      }
+      continue;
+    }
+    if (body === '-' || body.startsWith('- ')) {
+      const value = body.slice(1).trim();
+      if (itemIndent === null || indent <= itemIndent) {
+        pushCurrent();
+        current = Object.create(null);
+        itemIndent = indent;
+        if (value) {
+          const keyValue = value.match(/^([^:]+):\s*(.*)$/u);
+          if (keyValue && safeYamlKey(keyValue[1])) setYamlValue(current, keyValue[1], keyValue[2]);
+        }
+        continue;
+      }
+      const context = contexts[contexts.length - 1];
+      if (context) {
+        if (context.value && !Array.isArray(context.value) && Object.keys(context.value).length === 0) {
+          context.parent[context.key] = [];
+          context.value = context.parent[context.key];
+        }
+        if (Array.isArray(context.value)) context.value.push(parseYamlScalar(value));
+      }
       continue;
     }
     if (!current) continue;
-    const key = line.match(/^\s{2,}([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (!key) continue;
-    if (key[2] === '') { nested = key[1]; continue; }
-    if (nested === 'ws-opts') current['ws-opts'] ||= {};
-    setYamlValue(nested === 'ws-opts' ? current['ws-opts'] : current, key[1], key[2]);
+    while (contexts.length && indent <= contexts[contexts.length - 1].indent) contexts.pop();
+    const key = body.match(/^([^:]+):(?:\s*(.*))?$/u);
+    if (!key || !safeYamlKey(key[1])) continue;
+    const name = unquoteYaml(String(key[1]).trim());
+    const rawValue = key[2] == null ? '' : key[2];
+    const parent = contexts.length ? contexts[contexts.length - 1].value : current;
+    if (!parent || Array.isArray(parent)) continue;
+    if (!rawValue.trim()) {
+      const nested = Object.create(null);
+      parent[name] = nested;
+      contexts.push({ indent, parent, key: name, value: nested });
+    } else {
+      setYamlValue(parent, name, rawValue);
+    }
   }
-  if (current) out.push(current);
+  pushCurrent();
   return out.map(proxyObjectToLink).filter(Boolean);
 }
 
 function setYamlValue(target, key, raw) {
-  const value = String(raw || '').trim().replace(/^['"]|['"]$/g, '');
-  if (!value) return;
-  if (/^(true|false)$/i.test(value)) target[key] = value.toLowerCase() === 'true';
-  else if (/^\d+$/.test(value)) target[key] = Number(value);
-  else target[key] = value;
+  const name = unquoteYaml(String(key || '').trim());
+  if (!safeYamlKey(name)) return;
+  const value = parseYamlScalar(raw);
+  if (value !== null && value !== '') target[name] = value;
+}
+
+function normalizeProtocol(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (PROTOCOL_ALIASES[normalized]) return PROTOCOL_ALIASES[normalized];
+  return [...RUNTIME_PROTOCOLS, 'tuic'].includes(normalized) ? normalized : '';
+}
+
+function nodeValue(node, ...keys) {
+  for (const key of keys) {
+    if (node && node[key] !== undefined && node[key] !== null) return node[key];
+  }
+  return undefined;
+}
+
+function nodeObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+}
+
+function nodeText(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null || value === '') continue;
+    if (Array.isArray(value)) {
+      const list = serializeList(value);
+      if (list) return list;
+      continue;
+    }
+    if (typeof value === 'object') continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function nodeBoolean(value) {
+  return value === true || value === 1 || /^(?:1|true|yes|on)$/iu.test(String(value || '').trim());
+}
+
+function normalizeNetwork(value) {
+  const normalized = String(value || 'tcp').trim().toLowerCase()
+    .replace(/^websocket$/u, 'ws')
+    .replace(/^http[-_]?upgrade$/u, 'httpupgrade');
+  return ['tcp', 'ws', 'grpc', 'h2', 'httpupgrade', 'quic'].includes(normalized) ? normalized : 'tcp';
+}
+
+function serializeList(value) {
+  if (Array.isArray(value)) return value.map(item => nodeText(item)).filter(Boolean).join(',');
+  return nodeText(value);
+}
+
+function serializePluginOptions(value) {
+  if (!value) return '';
+  if (typeof value !== 'object' || Array.isArray(value)) return nodeText(value);
+  return Object.entries(value)
+    .filter(([key]) => safeYamlKey(key))
+    .map(([key, item]) => `${key}=${nodeText(item)}`)
+    .filter(part => !part.endsWith('='))
+    .join(';');
+}
+
+function safeYamlKey(value) {
+  return !YAML_UNSAFE_KEYS.has(unquoteYaml(String(value || '').trim()));
+}
+
+function unquoteYaml(value) {
+  const text = String(value || '').trim();
+  if (text.length >= 2 && text.startsWith('"') && text.endsWith('"')) {
+    try { return JSON.parse(text); } catch (_) {}
+  }
+  if (text.length >= 2 && text.startsWith("'") && text.endsWith("'")) return text.slice(1, -1).replace(/''/g, "'");
+  return text;
+}
+
+function stripYamlComment(value) {
+  const text = String(value || '');
+  let quote = '';
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote === '"' && char === '\\' && !escaped) {
+      escaped = true;
+      continue;
+    }
+    if (quote === '"' && char === '"' && !escaped) quote = '';
+    else if (quote === "'" && char === "'") {
+      if (text[index + 1] === "'") index += 1;
+      else quote = '';
+    } else if (!quote && (char === '"' || char === "'")) quote = char;
+    if (char === '#' && !quote && (index === 0 || /\s/u.test(text[index - 1]))) return text.slice(0, index);
+    escaped = false;
+  }
+  return text;
+}
+
+function parseYamlScalar(raw) {
+  const text = stripYamlComment(String(raw ?? '').trim()).trim();
+  if (!text || /^(?:null|~)$/iu.test(text)) return null;
+  const unquoted = unquoteYaml(text);
+  if (unquoted !== text) return unquoted;
+  if (/^(?:true|false)$/iu.test(text)) return text.toLowerCase() === 'true';
+  if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(text)) return Number(text);
+  if (text.startsWith('[') && text.endsWith(']')) return splitYamlCollection(text.slice(1, -1));
+  if (text.startsWith('{') && text.endsWith('}')) {
+    const object = Object.create(null);
+    for (const part of splitYamlCollectionParts(text.slice(1, -1))) {
+      const index = part.indexOf(':');
+      if (index <= 0) continue;
+      const key = unquoteYaml(part.slice(0, index).trim());
+      if (safeYamlKey(key)) object[key] = parseYamlScalar(part.slice(index + 1));
+    }
+    return object;
+  }
+  return text;
+}
+
+function splitYamlCollection(value) {
+  return splitYamlCollectionParts(value).map(part => parseYamlScalar(part));
+}
+
+function splitYamlCollectionParts(value) {
+  const parts = [];
+  let start = 0;
+  let quote = '';
+  let depth = 0;
+  let escaped = false;
+  const text = String(value || '');
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quote === '"' && char === '\\' && !escaped) {
+      escaped = true;
+      continue;
+    }
+    if (quote === '"' && char === '"' && !escaped) quote = '';
+    else if (quote === "'" && char === "'") {
+      if (text[index + 1] === "'") index += 1;
+      else quote = '';
+    } else if (!quote && (char === '"' || char === "'")) quote = char;
+    else if (!quote && ['[', '{'].includes(char)) depth += 1;
+    else if (!quote && [']', '}'].includes(char)) depth = Math.max(0, depth - 1);
+    else if (!quote && char === ',' && depth === 0) {
+      parts.push(text.slice(start, index).trim());
+      start = index + 1;
+    }
+    escaped = false;
+  }
+  if (text.slice(start).trim()) parts.push(text.slice(start).trim());
+  return parts;
+}
+
+function authorityHost(value) {
+  const host = String(value || '').trim();
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+}
+
+function proxyObjectToVmessLink(node, server, port, name) {
+  const tlsConfig = nodeObject(nodeValue(node, 'tls'));
+  const transportConfig = nodeObject(nodeValue(node, 'transport'));
+  const wsOpts = nodeObject(nodeValue(node, 'ws-opts', 'ws_opts'));
+  const grpcOpts = nodeObject(nodeValue(node, 'grpc-opts', 'grpc_opts'));
+  const h2Opts = nodeObject(nodeValue(node, 'h2-opts', 'h2_opts'));
+  const network = normalizeNetwork(nodeValue(node, 'network', 'net') || transportConfig?.type);
+  const realityOpts = nodeObject(nodeValue(node, 'reality-opts', 'reality_opts'));
+  const securityValue = nodeText(nodeValue(node, 'cipher', 'scy', 'security')).toLowerCase();
+  const security = ['auto', 'aes-128-gcm', 'chacha20-poly1305', 'none'].includes(securityValue) ? securityValue : 'auto';
+  const tls = nodeBoolean(nodeValue(node, 'tls')) || nodeBoolean(tlsConfig?.enabled)
+    || ['tls', 'reality', 'https'].includes(nodeText(nodeValue(node, 'security')).toLowerCase())
+    || Boolean(realityOpts);
+  const headers = nodeObject(wsOpts?.headers) || nodeObject(transportConfig?.headers);
+  const path = nodeText(wsOpts?.path, nodeValue(node, 'path'), transportConfig?.path, h2Opts?.path);
+  const host = nodeText(headers?.Host, headers?.host, nodeValue(node, 'host'), transportConfig?.host);
+  const sni = nodeText(nodeValue(node, 'sni', 'servername'), tlsConfig?.server_name, tlsConfig?.serverName, host, server);
+  const serviceName = nodeText(nodeValue(node, 'serviceName', 'service_name'), grpcOpts?.['grpc-service-name'], grpcOpts?.serviceName, transportConfig?.service_name);
+  const uuid = nodeText(nodeValue(node, 'uuid', 'id'));
+  const alterId = Number(nodeValue(node, 'alter_id', 'alterId', 'aid') || 0);
+  const config = {
+    v: '2',
+    ps: name,
+    add: server,
+    port: String(port),
+    id: uuid,
+    aid: String(Number.isInteger(alterId) && alterId >= 0 ? alterId : 0),
+    scy: security,
+    net: network,
+    type: 'none',
+    host,
+    path: network === 'grpc' ? (serviceName || path) : path,
+    tls: tls ? 'tls' : '',
+    sni,
+  };
+  const skipCertVerify = nodeBoolean(nodeValue(node, 'skip-cert-verify', 'skip_cert_verify')) || nodeBoolean(tlsConfig?.insecure);
+  if (skipCertVerify) config.allowInsecure = true;
+  const fingerprint = nodeText(nodeValue(node, 'client-fingerprint', 'client_fingerprint', 'fingerprint'), tlsConfig?.fingerprint);
+  if (fingerprint) config.fp = fingerprint;
+  const alpn = serializeList(nodeValue(node, 'alpn') ?? tlsConfig?.alpn);
+  if (alpn) config.alpn = alpn;
+  return `vmess://${encodeBase64(JSON.stringify(config))}#${encodeURIComponent(name)}`;
 }
 
 function parseOne(raw) {
@@ -176,7 +534,8 @@ function parseOne(raw) {
 }
 
 function parseBasicProxy(url, protocol) {
-  const transport = url.protocol === 'https:' ? 'tls' : 'tcp';
+  const secure = url.protocol === 'https:' || nodeBoolean(url.searchParams.get('tls') || url.searchParams.get('secure'));
+  const transport = secure ? 'tls' : 'tcp';
   return finish({
     name: linkName(url, protocol), protocol, server: url.hostname, port: linkPort(url, protocol), transport,
     sni: url.hostname, ws_path: '/', ws_host: url.hostname,
@@ -187,11 +546,23 @@ function parseBasicProxy(url, protocol) {
 function parseVless(url) {
   const query = url.searchParams;
   const transport = transportName(query.get('type') || query.get('net') || 'tcp', query.get('security') || '');
+  const allowInsecure = nodeBoolean(query.get('allowInsecure') || query.get('allow-insecure') || query.get('insecure'));
   return finish({
     name: linkName(url, 'vless'), protocol: 'vless', server: url.hostname, port: linkPort(url, 'vless'), transport,
     sni: query.get('sni') || query.get('servername') || url.hostname,
     ws_path: query.get('path') || '/', ws_host: query.get('host') || query.get('authority') || query.get('sni') || url.hostname,
-    secret: { uuid: decodePart(url.username), flow: query.get('flow') || '', encryption: query.get('encryption') || 'none', security: query.get('security') || '' , grpc_service_name: query.get('serviceName') || query.get('serviceName'.toLowerCase()) || '', h2_path: query.get('path') || '' },
+    secret: {
+      uuid: decodePart(url.username),
+      flow: query.get('flow') || '',
+      encryption: query.get('encryption') || 'none',
+      security: query.get('security') || '',
+      grpc_service_name: query.get('serviceName') || query.get('service_name') || query.get('grpc-service-name') || '',
+      h2_path: query.get('path') || '',
+      http_upgrade_path: query.get('path') || '',
+      skip_cert_verify: allowInsecure,
+      fingerprint: query.get('fp') || query.get('fingerprint') || '',
+      alpn: query.get('alpn') || '',
+    },
   });
 }
 
@@ -206,13 +577,24 @@ function parseVmess(value) {
   const port = Number(config.port || 443);
   if (!server || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('invalid vmess endpoint');
   const type = String(config.net || config.network || 'tcp').toLowerCase();
-  const security = String(config.tls || config.security || '').toLowerCase();
-  const transport = transportName(type, security);
+  const tlsSecurity = String(config.tls || '').toLowerCase();
+  const transport = transportName(type, tlsSecurity);
   const label = fragmentAt >= 0 ? decodePart(value.slice(fragmentAt + 1)) : String(config.ps || 'VMess');
   return finish({
     name: cleanName(label, 'vmess'), protocol: 'vmess', server, port, transport,
     sni: String(config.sni || config.host || server), ws_path: String(config.path || '/'), ws_host: String(config.host || config.sni || server),
-    secret: { uuid: String(config.id || ''), security: String(config.scy || 'auto').toLowerCase(), alter_id: Number(config.aid || 0), grpc_service_name: String(config.path || ''), h2_path: String(config.path || ''), encryption: security },
+    secret: {
+      uuid: String(config.id || ''),
+      security: String(config.scy || 'auto').toLowerCase(),
+      alter_id: Number(config.aid || 0),
+      grpc_service_name: type === 'grpc' ? String(config.path || '') : '',
+      h2_path: type === 'h2' ? String(config.path || '') : '',
+      http_upgrade_path: type === 'httpupgrade' ? String(config.path || '') : '',
+      encryption: tlsSecurity,
+      skip_cert_verify: nodeBoolean(config.allowInsecure || config.insecure),
+      fingerprint: String(config.fp || config.fingerprint || ''),
+      alpn: serializeList(config.alpn),
+    },
   });
 }
 
@@ -322,10 +704,11 @@ function finish(item) {
   }
   const transport = item.transport;
   const name = cleanName(item.name, protocol);
+  const runtime_reason = runtimeSupportReason(protocol, transport, secret);
   return {
     name, protocol, server: item.server, port: Number(item.port), transport,
     sni: cleanHost(item.sni || item.server), ws_path: cleanPath(item.ws_path || '/'), ws_host: cleanHost(item.ws_host || item.sni || item.server),
-    secret, runtime_supported: isRuntimeProxyTargetSupported(protocol, transport),
+    secret, runtime_supported: !runtime_reason, runtime_reason,
   };
 }
 
@@ -334,6 +717,7 @@ function safeUrl(value) {
 }
 
 function linkPort(url, protocol) {
+  if (protocol === 'http' && url.protocol === 'https:' && !url.port) return 443;
   const port = Number(url.port || DEFAULT_PORTS[protocol]);
   return port;
 }
@@ -366,6 +750,13 @@ function decodeBase64(value) {
     const binary = atob(padded);
     return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(binary, char => char.charCodeAt(0)));
   } catch (_) { return ''; }
+}
+
+function encodeBase64(value) {
+  const bytes = new TextEncoder().encode(String(value || ''));
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 function decodePart(value) {

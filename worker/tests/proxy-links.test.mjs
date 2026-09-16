@@ -44,7 +44,67 @@ const clash = parseProxyLinks(`proxies:\n  - name: Clash SS\n    type: ss\n    s
 assert.equal(clash[0].protocol, 'ss');
 assert.equal(clash[0].server, 'clash.example.test');
 
+const clashMixedText = `proxies:
+  - name: VLESS Clash
+    type: vless
+    server: vless-clash.example.test
+    port: 443
+    uuid: ${uuid}
+    network: ws
+    tls: true
+    servername: sni-clash.example.test
+    skip-cert-verify: true
+    ws-opts:
+      path: /proxy
+      headers:
+        Host: cdn-clash.example.test
+    alpn: [h2, http/1.1]
+  - name: VMess Clash
+    type: vmess
+    server: vmess-clash.example.test
+    port: 443
+    uuid: ${uuid}
+    alterId: 0
+    cipher: auto
+    network: grpc
+    tls: true
+    grpc-opts:
+      grpc-service-name: edge-service`;
+const clashMixed = parseProxyLinks(clashMixedText);
+assert.equal(clashMixed.length, 2);
+assert.equal(clashMixed[0].transport, 'tls-ws');
+assert.equal(clashMixed[0].sni, 'sni-clash.example.test');
+assert.equal(clashMixed[0].ws_host, 'cdn-clash.example.test');
+assert.equal(clashMixed[0].secret.alpn, 'h2,http/1.1');
+assert.equal(clashMixed[0].secret.skip_cert_verify, true);
+assert.equal(clashMixed[1].transport, 'tls-grpc');
+assert.equal(clashMixed[1].secret.grpc_service_name, 'edge-service');
+assert.equal(clashMixed[1].runtime_supported, true);
+
+const encodedClash = Buffer.from(clashMixedText).toString('base64url');
+assert.deepEqual(parseProxyLinks(encodedClash).map(item => item.name), ['VLESS Clash', 'VMess Clash']);
+
+const singBox = parseProxyLinks(JSON.stringify({ outbounds: [{
+  type: 'vless', tag: 'ignored tag', server: 'singbox.example.test', server_port: 443, uuid,
+  tls: { enabled: true, server_name: 'singbox.sni.test', insecure: true },
+  transport: { type: 'ws', path: '/singbox', headers: { Host: 'singbox.host.test' } },
+}] }));
+assert.equal(singBox.length, 1);
+assert.equal(singBox[0].name, 'vless');
+assert.equal(singBox[0].transport, 'tls-ws');
+assert.equal(singBox[0].sni, 'singbox.sni.test');
+assert.equal(singBox[0].ws_host, 'singbox.host.test');
+assert.equal(singBox[0].secret.skip_cert_verify, true);
+
+const reality = parseProxyLinks(`vless://${uuid}@reality.example.test:443?security=reality&type=tcp#Reality`)[0];
+assert.equal(reality.runtime_supported, false);
+assert.match(reality.runtime_reason, /Reality/);
+const legacyVmess = parseProxyLinks(`vmess://${Buffer.from(JSON.stringify({ add: 'legacy-vmess.example.test', port: 443, id: uuid, aid: 1, net: 'tcp' })).toString('base64')}`)[0];
+assert.equal(legacyVmess.runtime_supported, false);
+assert.match(legacyVmess.runtime_reason, /alter_id/);
+
 assert.throws(() => parseProxyLinks('not a proxy link'), /可识别/);
 assert.throws(() => parseProxyLinks('vless://\u0000bad'), /控制字符/);
+assert.throws(() => parseProxyLinks('clash://install-config?url=https%3A%2F%2Fsub.example.test'), /不自动抓取/);
 
 console.log('proxy link parser and credential redaction passed');

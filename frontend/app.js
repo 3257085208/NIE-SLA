@@ -1,9 +1,9 @@
-import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260916-proxy6';
+import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260916-proxy7';
 import {
   billingCycleSuffix,
   isLifetimeBilling,
   normalizeBillingCycle,
-} from './js/shared/billing.js?v=20260916-proxy6';
+} from './js/shared/billing.js?v=20260916-proxy7';
 import {
   cssEscape,
   clampNumber,
@@ -18,11 +18,11 @@ import {
   normalizeCityName,
   pad,
   timeAgoSec,
-} from './js/shared/format.js?v=20260916-proxy6';
-import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260916-proxy6';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260916-proxy6';
-import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260916-proxy6';
-import { countryByCode } from './js/shared/target-catalogs.js?v=20260916-proxy6';
+} from './js/shared/format.js?v=20260916-proxy7';
+import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260916-proxy7';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260916-proxy7';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260916-proxy7';
+import { countryByCode } from './js/shared/target-catalogs.js?v=20260916-proxy7';
 import {
   clampChartRange,
   countChartGaps,
@@ -30,15 +30,15 @@ import {
   filterChecksByRange,
   hexToRgba,
   trimEmptyPointEdges,
-} from './js/shared/chart-data.js?v=20260916-proxy6';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260916-proxy6';
-import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260916-proxy6';
-import { unlockState } from './js/shared/unlock.js?v=20260916-proxy6';
-import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260916-proxy6';
-import { targetSlaPercentage } from './js/shared/sla.js?v=20260916-proxy6';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260916-proxy6';
-import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260916-proxy6';
-import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260916-proxy6';
+} from './js/shared/chart-data.js?v=20260916-proxy7';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260916-proxy7';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260916-proxy7';
+import { unlockState } from './js/shared/unlock.js?v=20260916-proxy7';
+import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260916-proxy7';
+import { targetSlaPercentage } from './js/shared/sla.js?v=20260916-proxy7';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260916-proxy7';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260916-proxy7';
+import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260916-proxy7';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -72,6 +72,9 @@ const state = {
   proxyChecksLoadedHours: 0,
   proxyHistoryRawCount: 0,
   proxyHistoryTruncated: false,
+  proxyLatestChecks: new Map(),
+  proxyStatusHydrationAt: new Map(),
+  proxyStatusHydrationInFlight: new Set(),
   dailyPoints: [],
   checksSource: '',
   checksPage: 1,
@@ -123,6 +126,7 @@ const els = {
   chartServiceName: $('#chartServiceName'),
   chartAvg: $('#chartAvg'),
   pingLossStats: $('#pingLossStats'),
+  proxyDetailGrid: $('#proxyDetailGrid'),
   checks: $('#checks'),
   checksHint: $('#checksHint'),
   checksPanel: $('.checks-panel'),
@@ -513,6 +517,7 @@ function render(data) {
 
   renderIncidentLog(data);
   renderGroupsIfChanged(data);
+  hydrateProxyStatuses(data);
   publishThemeStatus(data);
 }
 
@@ -902,9 +907,16 @@ function buildProxyServices(data) {
       const protocol = String(config?.protocol || check?.protocol || '').trim().toLowerCase();
       if (!protocol) return;
       seen.add(targetId);
-      const normalizedCheck = check || checkById.get(targetId) || null;
+      const serviceId = proxyServiceId(parent.id, targetId);
+      const normalizedCheck = state.proxyLatestChecks.get(serviceId)
+        || check
+        || checkById.get(targetId)
+        || null;
+      if (normalizedCheck && !state.proxyLatestChecks.has(serviceId)) {
+        state.proxyLatestChecks.set(serviceId, normalizedCheck);
+      }
       services.push({
-        id: proxyServiceId(parent.id, targetId),
+        id: serviceId,
         kind: 'proxy',
         type: 'proxy',
         name: String(config?.name || normalizedCheck?.name || targetId).trim().slice(0, 96),
@@ -929,11 +941,99 @@ function proxyServiceId(agentId, targetId) {
   return `proxy:${encodeURIComponent(String(agentId || ''))}:${encodeURIComponent(String(targetId || ''))}`;
 }
 
+function rememberProxyCheck(proxy, rawCheck) {
+  const check = normalizeProxyCheck(rawCheck);
+  const targetId = String(proxy?.proxy_target_id || check?.target_id || '').trim();
+  const agentId = String(proxy?.proxy_agent_id || '').trim();
+  if (!check || !targetId || !agentId) return false;
+  const serviceId = proxy.id || proxyServiceId(agentId, targetId);
+  const previous = state.proxyLatestChecks.get(serviceId);
+  if (previous && previous.ts > check.ts) return false;
+  const parent = (state.data?.targets || []).find(target => String(target?.id || '') === agentId);
+  const parentChecks = Array.isArray(parent?.proxy_checks) ? parent.proxy_checks : [];
+  const current = parentChecks.find(item => String(item?.target_id || '') === targetId);
+  const currentNormalized = normalizeProxyCheck(current);
+  if (currentNormalized && currentNormalized.ts > check.ts) {
+    state.proxyLatestChecks.set(serviceId, currentNormalized);
+    return false;
+  }
+  const changed = !previous
+    || previous.ts !== check.ts
+    || previous.ok !== check.ok
+    || previous.stage !== check.stage
+    || previous.error !== check.error
+    || previous.total_ms !== check.total_ms
+    || previous.handshake_ms !== check.handshake_ms
+    || previous.first_byte_ms !== check.first_byte_ms;
+  state.proxyLatestChecks.set(serviceId, check);
+  if (parent) {
+    parent.proxy_checks = parentChecks.filter(item => String(item?.target_id || '') !== targetId).concat(check);
+  }
+  if (state.selectedKind === 'proxy' && state.selectedId === serviceId) {
+    state.selectedProxy = { ...(state.selectedProxy || proxy), proxy_check: check };
+  }
+  return changed;
+}
+
+async function fetchLatestProxyCheck(proxy) {
+  const targetId = String(proxy?.proxy_target_id || '').trim();
+  if (!targetId) return null;
+  const params = new URLSearchParams({ target_id: targetId, hours: '1', max_points: '1' });
+  const response = await fetchWithTimeout(api(`/api/proxy-checks?${params}`), { cache: 'no-store' });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+  const latest = normalizeProxyCheck(data.latest);
+  if (latest) return latest;
+  return (Array.isArray(data.checks) ? data.checks : [])
+    .map(normalizeProxyCheck)
+    .filter(Boolean)
+    .sort((a, b) => b.ts - a.ts)[0] || null;
+}
+
+function hydrateProxyStatuses(data) {
+  if (!data || state.data !== data) return;
+  const now = Date.now();
+  const candidates = buildProxyServices(data).filter((proxy) => {
+    const latest = proxy.proxy_check || state.proxyLatestChecks.get(proxy.id);
+    const timestamp = timestampSeconds(latest?.checked_at ?? latest?.ts);
+    const recent = timestamp && now / 1000 - timestamp < 600 && latest?.stale !== true;
+    const lastAttempt = Number(state.proxyStatusHydrationAt.get(proxy.id) || 0);
+    return !recent && !state.proxyStatusHydrationInFlight.has(proxy.id) && now - lastAttempt >= 60_000;
+  }).slice(0, 50);
+  if (!candidates.length) return;
+  const queue = candidates.slice();
+  for (const proxy of candidates) state.proxyStatusHydrationAt.set(proxy.id, now);
+  let changed = false;
+  const worker = async () => {
+    while (queue.length) {
+      const proxy = queue.shift();
+      if (!proxy) return;
+      state.proxyStatusHydrationInFlight.add(proxy.id);
+      try {
+        const latest = await fetchLatestProxyCheck(proxy);
+        if (latest && state.data === data) changed = rememberProxyCheck(proxy, latest) || changed;
+      } catch (_) {
+        // A public history read can fail independently of the status page. Keep
+        // the configured target pending and retry on the next hydration window.
+      } finally {
+        state.proxyStatusHydrationInFlight.delete(proxy.id);
+      }
+    }
+  };
+  Promise.all(Array.from({ length: Math.min(4, candidates.length) }, () => worker())).then(() => {
+    if (changed && state.data === data) {
+      state.lastGroupsRenderKey = '';
+      renderGroupsIfChanged(data);
+    }
+  }).catch(() => {});
+}
+
 function normalizeProxyCheck(check) {
   if (!check || typeof check !== 'object') return null;
   const ts = timestampSeconds(check.checked_at ?? check.ts);
   if (!ts) return null;
   const numberOrNull = value => {
+    if (value == null || value === '' || typeof value === 'boolean') return null;
     const number = Number(value);
     return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
   };
@@ -948,11 +1048,18 @@ function normalizeProxyCheck(check) {
     first_byte_ms: numberOrNull(check.first_byte_ms),
     total_ms: numberOrNull(check.total_ms),
     ok: Number(check.ok) === 1 ? 1 : 0,
-    stage: String(check.stage || '').trim(),
-    error: String(check.error || '').trim(),
+    stage: check.stage == null ? '' : String(check.stage).trim(),
+    error: check.error == null ? '' : String(check.error).trim(),
     stale: check.stale === true,
   };
 }
+
+function proxyDuration(value) {
+  if (value == null || value === '' || typeof value === 'boolean') return null;
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
+}
+
 function renderGroup(name, list, days, summaries, index = 0) {
   const checked = list.filter(targetHasStatus);
   const down = checked.filter(t => !targetIsUp(t)).length;
@@ -1090,12 +1197,14 @@ function renderProxyService(t) {
   const displayName = String(t.name || t.proxy_target_id || '代理').trim();
   const protocol = String(t.protocol || '').toUpperCase();
   const transport = String(t.transport || 'tcp').toUpperCase();
-  const total = check?.total_ms;
-  const totalHtml = isUp && Number.isFinite(Number(total)) ? `<strong title="真实代理链路总耗时">${Math.round(Number(total))} ms</strong>` : '<strong title="真实代理链路总耗时">-</strong>';
-  const handshake = Number.isFinite(Number(check?.handshake_ms)) ? `${Math.round(Number(check.handshake_ms))} ms` : '-';
-  const firstByte = Number.isFinite(Number(check?.first_byte_ms)) ? `${Math.round(Number(check.first_byte_ms))} ms` : '-';
+  const total = proxyDuration(check?.total_ms);
+  const handshake = proxyDuration(check?.handshake_ms);
+  const firstByte = proxyDuration(check?.first_byte_ms);
+  const totalHtml = total != null ? `<strong title="本次真实代理链路总耗时">${total} ms</strong>` : '<strong title="本次真实代理链路总耗时">-</strong>';
+  const handshakeText = handshake == null ? '-' : `${handshake} ms`;
+  const firstByteText = firstByte == null ? '-' : `${firstByte} ms`;
   const note = checked
-    ? `真实握手 · TLS / 协议 ${handshake} · 首字节 ${firstByte}`
+    ? `真实握手 · TLS / 协议 ${handshakeText} · 首字节 ${firstByteText}`
     : '等待 Agent 完成真实代理握手检测';
   const detail = checked && check.error ? ` · ${check.error}` : '';
   const freshness = stale ? ' · 数据过期' : '';
@@ -1113,7 +1222,7 @@ function renderProxyService(t) {
         </span>
       </div>
       <div class="service-status">${status}</div>
-      <div class="service-latency${isUp && total != null ? '' : ' is-placeholder'}">${totalHtml}</div>
+      <div class="service-latency${total != null ? '' : ' is-placeholder'}">${totalHtml}</div>
       <div class="service-sla sla-unknown" title="代理可用率将在独立历史数据积累后显示" aria-label="代理可用率将在独立历史数据积累后显示">
         <strong class="service-sla-value">-</strong>
       </div>
@@ -1333,6 +1442,7 @@ async function selectService(id, name, el) {
     state.latencyVisibleSources = null;
     state.latencyChartSources = [];
     state.latencyChartSamples = [];
+    renderProxyDetails([]);
 
     if (els.inlineChartPanel) {
       els.inlineChartPanel.hidden = true;
@@ -1366,6 +1476,7 @@ async function selectService(id, name, el) {
     state.allChecks = [];
     state.checksSource = '';
     state.dailyPoints = [];
+    renderProxyDetails([]);
     document.querySelectorAll('.metric-tab').forEach(button => {
       const proxyMetric = isProxyMetric(button.dataset.metric);
       button.classList.toggle('active', button.dataset.metric === 'proxy-total');
@@ -1385,6 +1496,7 @@ async function selectService(id, name, el) {
 
   state.selectedKind = 'target';
   state.selectedProxy = null;
+  renderProxyDetails([]);
   const hasLatency = targetHasPublicLatency(target);
   state.selectedMetric = hasLatency ? 'latency' : 'cpu';
   state.selectedMetricRange = '1h';
@@ -1564,10 +1676,16 @@ async function loadProxyChecks(proxy, options = {}) {
     state.proxyHistoryTruncated = data.history_truncated === true;
     state.checksSource = data.source || '';
     state.checksPage = 1;
-    state.selectedProxy = { ...proxy, proxy_check: normalizeProxyCheck(data.latest) || proxy.proxy_check };
+    const latest = normalizeProxyCheck(data.latest) || proxy.proxy_check;
+    if (latest) rememberProxyCheck(proxy, latest);
+    state.selectedProxy = { ...proxy, proxy_check: latest || null };
     updateChartForCurrentRange();
     renderChecksPage();
     renderVPSInfo();
+    if (state.data) {
+      state.lastGroupsRenderKey = '';
+      renderGroupsIfChanged(state.data);
+    }
   } catch (error) {
     if (superseded()) return;
     state.proxyChecks = [];
@@ -2132,6 +2250,20 @@ function chartTooltipFailures() {
     .map(id => `${names.get(id) || id}: 超时`);
 }
 
+function proxyTooltipDetails(check) {
+  if (!check) return [];
+  const duration = (label, value) => `${label}：${proxyDuration(value) == null ? '-' : `${proxyDuration(value)} ms`}`;
+  const lines = [
+    `状态：${Number(check.ok) === 1 ? '成功' : '失败'}`,
+    duration('真实链路总耗时', check.total_ms),
+    duration('TLS / 协议握手', check.handshake_ms),
+    duration('首字节时间', check.first_byte_ms),
+  ];
+  if (check.stage) lines.push(`阶段：${check.stage}`);
+  if (check.error) lines.push(`错误：${check.error}`);
+  return ['', ...lines];
+}
+
 function normalizePingPayload(data) {
   if (!Array.isArray(data?.series)) return data;
   const pings = [];
@@ -2201,11 +2333,11 @@ function renderProxyChecksPage() {
   els.checks.classList.remove('muted');
   els.checks.innerHTML = pageRows.map((check, index) => `
     <div class="check-card proxy-check-card" style="--delay:${Math.min(index * 35, 220)}ms">
-      <div>${escapeHtml(fmtTime(check.checked_at || check.ts))}</div>
-      <div class="${checkStatusClass(check)}">${checkStatusLabel(check)}</div>
-      <div>${escapeHtml(check.total_ms == null ? '-' : `${check.total_ms} ms`)}</div>
-      <div>${escapeHtml(check.handshake_ms == null ? '-' : `${check.handshake_ms} ms`)}</div>
-      <div>${escapeHtml(check.first_byte_ms == null ? '-' : `${check.first_byte_ms} ms`)}</div>
+      <div data-label="时间">${escapeHtml(fmtTime(check.checked_at || check.ts))}</div>
+      <div data-label="状态" class="${checkStatusClass(check)}">${checkStatusLabel(check)}</div>
+      <div data-label="总耗时">${escapeHtml(check.total_ms == null ? '-' : `${check.total_ms} ms`)}</div>
+      <div data-label="握手">${escapeHtml(check.handshake_ms == null ? '-' : `${check.handshake_ms} ms`)}</div>
+      <div data-label="首字节">${escapeHtml(check.first_byte_ms == null ? '-' : `${check.first_byte_ms} ms`)}</div>
       <div class="small check-extra">${formatProxyCheckExtraHtml(check)}</div>
     </div>
   `).join('') || `<div class="empty">${escapeHtml(state.appearance.checks_no_records)}</div>`;
@@ -2222,6 +2354,73 @@ function formatProxyCheckExtraHtml(check) {
   if (check?.error) parts.push(`<span class="fail-text">${escapeHtml(check.error)}</span>`);
   if (check?.stale) parts.push('<span class="warn-text">数据过期</span>');
   return parts.join(' · ') || '真实代理握手成功';
+}
+
+function proxyPercentile(sorted, ratio) {
+  if (!sorted.length) return null;
+  const position = (sorted.length - 1) * ratio;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower];
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * (position - lower);
+}
+
+function proxyDurationStats(checks, field) {
+  const values = checks.map(check => proxyDuration(check?.[field])).filter(value => value != null).sort((a, b) => a - b);
+  if (!values.length) return { count: 0, min: null, p50: null, p95: null, max: null };
+  return {
+    count: values.length,
+    min: values[0],
+    p50: proxyPercentile(values, .5),
+    p95: proxyPercentile(values, .95),
+    max: values[values.length - 1],
+  };
+}
+
+function proxyDurationSummary(stats) {
+  if (!stats.count) return { value: '暂无有效值', note: '失败会在未完成该阶段时保留为 -' };
+  const format = value => `${Math.round(value)} ms`;
+  return {
+    value: `P50 ${format(stats.p50)} · P95 ${format(stats.p95)}`,
+    note: `Min ${format(stats.min)} · Max ${format(stats.max)} · 有效 ${stats.count} 条`,
+  };
+}
+
+function renderProxyDetails(checks) {
+  if (!els.proxyDetailGrid) return;
+  if (state.selectedKind !== 'proxy') {
+    els.proxyDetailGrid.hidden = true;
+    els.proxyDetailGrid.innerHTML = '';
+    return;
+  }
+  const rows = Array.isArray(checks) ? checks.slice().sort((a, b) => Number(a.ts) - Number(b.ts)) : [];
+  const latest = rows[rows.length - 1] || null;
+  const okCount = rows.filter(check => Number(check.ok) === 1).length;
+  const failCount = rows.length - okCount;
+  const status = !latest
+    ? { value: '待检测', className: 'unknown', note: '等待 Agent 上报第一条真实握手结果' }
+    : Number(latest.ok) === 1
+      ? { value: latest.stale ? '数据过期' : '在线', className: latest.stale ? 'warn' : 'ok', note: `最近 ${fmtTime(latest.ts)}` }
+      : { value: '离线', className: 'down', note: `最近 ${fmtTime(latest.ts)}${latest.stage ? ` · 阶段 ${latest.stage}` : ''}` };
+  const rawCount = Math.max(rows.length, Number(state.proxyHistoryRawCount || 0));
+  const totalStats = proxyDurationSummary(proxyDurationStats(rows, 'total_ms'));
+  const handshakeStats = proxyDurationSummary(proxyDurationStats(rows, 'handshake_ms'));
+  const firstByteStats = proxyDurationSummary(proxyDurationStats(rows, 'first_byte_ms'));
+  const successRate = rows.length ? `${((okCount / rows.length) * 100).toFixed(2)}%` : '-';
+  const latestResult = latest
+    ? (Number(latest.ok) === 1 ? '真实握手成功' : [latest.stage, latest.error].filter(Boolean).join(' · ') || '真实握手失败')
+    : '-';
+  const latestNote = latest ? `总耗时 ${proxyDuration(latest.total_ms) == null ? '-' : `${proxyDuration(latest.total_ms)} ms`}` : '暂无结果';
+  const card = (label, value, note, className = '') => `<div class="proxy-detail-card"><span class="proxy-detail-label">${escapeHtml(label)}</span><strong class="proxy-detail-value ${className}">${escapeHtml(value)}</strong><small class="proxy-detail-note">${escapeHtml(note)}</small></div>`;
+  els.proxyDetailGrid.innerHTML = [
+    card('当前状态', status.value, status.note, status.className),
+    card('成功率', successRate, `成功 ${okCount} · 失败 ${failCount} · ${rawCount} 个原始样本`),
+    card('真实链路总耗时', totalStats.value, totalStats.note),
+    card('TLS / 协议握手', handshakeStats.value, handshakeStats.note),
+    card('首字节时间', firstByteStats.value, firstByteStats.note),
+    card('最近结果', latestResult, latestNote, latest && !Number(latest.ok) ? 'down' : ''),
+  ].join('');
+  els.proxyDetailGrid.hidden = false;
 }
 
 function checkStatusLabel(c) {
@@ -2351,7 +2550,11 @@ function initChart() {
               return `${context.dataset.label}: ${v}${u}`;
             },
 
-            afterBody() {
+            afterBody(items) {
+              if (isProxyMetric(state.selectedMetric)) {
+                const check = (items || []).map(item => item?.raw?.proxyCheck).find(Boolean);
+                return proxyTooltipDetails(check);
+              }
               const failures = chartTooltipFailures();
               return failures.length ? ['', ...failures] : [];
             },
@@ -2439,6 +2642,7 @@ function updateChartForCurrentRange() {
     updateProxyChart();
     return;
   }
+  renderProxyDetails([]);
   if (state.selectedMetric === 'ping') {
     updatePingChart().catch(err => {
       console.error('TCP Ping chart render failed', err);
@@ -2477,28 +2681,33 @@ function updateProxyChart() {
   };
   const definition = definitions[metric] || definitions['proxy-total'];
   const checks = filterProxyChecksByRange(state.proxyChecks, state.selectedRange);
-  const values = checks.map(check => Number(check?.[definition.field])).filter(Number.isFinite);
+  const values = checks.map(check => proxyDuration(check?.[definition.field])).filter(value => value != null);
   const points = checks.map(check => ({
     x: Number(check.ts),
-    y: Number.isFinite(Number(check?.[definition.field])) ? Number(check[definition.field]) : null,
+    y: proxyDuration(check?.[definition.field]),
+    proxyCheck: check,
   }));
   const okCount = checks.filter(check => Number(check.ok) === 1).length;
   const failCount = checks.length - okCount;
   const suffix = state.proxyHistoryTruncated ? ' · 已达到返回上限，未降采样' : '';
   els.chartTitle.textContent = definition.label;
   els.chartServiceName.textContent = `${state.selectedName || '代理服务'} ${definition.label}`;
+  renderProxyDetails(checks);
 
   if (!checks.length || !values.length) {
-    els.chartMeta.textContent = checks.length ? `${rangeLabel(state.selectedRange)} · 暂无${definition.label}数值` : `${rangeLabel(state.selectedRange)}内暂无真实代理握手样本`;
-    els.chartAvg.textContent = '-';
+    els.chartMeta.textContent = checks.length
+      ? `${rangeLabel(state.selectedRange)} · ${checks.length} 个原始样本 · 成功 ${okCount} · 失败 ${failCount} · 暂无${definition.label}有效数值`
+      : `${rangeLabel(state.selectedRange)}内暂无真实代理握手样本`;
+    els.chartAvg.textContent = checks.length ? `有效值：${values.length} / ${checks.length}` : '-';
     clearMetricChart();
     return;
   }
 
   const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const latest = values[values.length - 1];
+  const stats = proxyDurationStats(checks, definition.field);
+  const latest = proxyDuration(checks[checks.length - 1]?.[definition.field]);
   els.chartMeta.textContent = `${rangeLabel(state.selectedRange)} · ${checks.length} 个原始样本 · 成功 ${okCount} · 失败 ${failCount} · 真握手${suffix}`;
-  els.chartAvg.textContent = `平均值：${average.toFixed(0)} ms · 最近：${latest.toFixed(0)} ms`;
+  els.chartAvg.textContent = `平均 ${average.toFixed(0)} ms · P50 ${Math.round(stats.p50)} ms · P95 ${Math.round(stats.p95)} ms · 最近 ${latest == null ? '-' : `${latest} ms`}`;
   if (!state.chart) return;
   delete state.chart.options.scales.y.title;
   delete state.chart.options.scales.y.max;

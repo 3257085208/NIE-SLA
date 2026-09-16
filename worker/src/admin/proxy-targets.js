@@ -14,7 +14,10 @@ export async function previewProxyLinks(request) {
   const body = await safeJson(request, 64 * 1024);
   let items;
   try { items = parseProxyLinks(body?.link || body?.text || ''); }
-  catch (_) { throw new ApiError(400, '代理分享链接无法解析'); }
+  catch (error) {
+    const message = String(error?.message || '');
+    throw new ApiError(400, message === '请粘贴订阅内容，不自动抓取远程订阅地址' ? message : '代理分享链接无法解析');
+  }
   return { ok: true, items: items.map((item, index) => ({ index, ...proxyLinkPreview(item) })) };
 }
 
@@ -215,6 +218,15 @@ function normalizeSecret(protocol, value, fallback = {}) {
   if (protocol === 'vmess') {
     secret.security = ['auto', 'aes-128-gcm', 'chacha20-poly1305', 'none'].includes(String(secret.security || 'auto').toLowerCase()) ? String(secret.security || 'auto').toLowerCase() : 'auto';
     secret.alter_id = Number.isInteger(secret.alter_id) ? secret.alter_id : 0;
+    if (secret.alter_id > 0) throw new ApiError(400, '当前 Agent 仅支持 VMess alter_id=0');
+  }
+  if (protocol === 'vless') {
+    const flow = String(secret.flow || '').toLowerCase();
+    if (flow && flow !== 'xtls-rprx-vision') throw new ApiError(400, '当前 Agent 仅支持 VLESS flow=xtls-rprx-vision');
+    if (String(secret.security || '').toLowerCase() === 'reality') throw new ApiError(400, '当前 Agent 尚未内置 VLESS Reality 真实握手');
+  }
+  if (protocol === 'hysteria2' && secret.obfs && String(secret.obfs).toLowerCase() !== 'salamander') {
+    throw new ApiError(400, '当前 Agent 仅支持 Hysteria2 salamander 混淆');
   }
   if (protocol === 'socks5') {
     secret.username = String(secret.username || '').slice(0, 256);
@@ -233,7 +245,10 @@ function resolveLinkBody(body) {
   if (!body?.link) return body || {};
   let items;
   try { items = parseProxyLinks(body.link, { maxItems: 50 }); }
-  catch (_) { throw new ApiError(400, '代理分享链接无法解析'); }
+  catch (error) {
+    const message = String(error?.message || '');
+    throw new ApiError(400, message === '请粘贴订阅内容，不自动抓取远程订阅地址' ? message : '代理分享链接无法解析');
+  }
   const requestedIndex = body.link_index === undefined || body.link_index === null || body.link_index === ''
     ? 0
     : Number(body.link_index);
