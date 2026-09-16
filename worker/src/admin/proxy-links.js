@@ -56,6 +56,8 @@ export function proxyLinkPreview(item) {
     sni: item.sni,
     ws_path: item.ws_path,
     ws_host: item.ws_host,
+    security: item.secret?.security || '',
+    flow: item.secret?.flow || '',
     runtime_supported: Boolean(item.runtime_supported),
     runtime_reason: item.runtime_reason || '',
   };
@@ -130,24 +132,41 @@ function expandStructuredText(text) {
   const trimmed = String(text || '').trim();
   if (!trimmed) return [];
   try {
-    const value = JSON.parse(trimmed);
+    const value = parseClipboardJson(trimmed);
+    if (!value) return parseSimpleClashYaml(trimmed);
     const nodes = Array.isArray(value)
       ? value
       : (Array.isArray(value?.proxies)
         ? value.proxies
-        : (Array.isArray(value?.outbounds) ? value.outbounds : (value?.server && value?.type ? [value] : [])));
+        : (Array.isArray(value?.outbounds) ? value.outbounds : (isProxyObject(value) ? [value] : [])));
     return nodes.flatMap(node => proxyObjectToLink(node)).filter(Boolean);
   } catch (_) {}
   return parseSimpleClashYaml(trimmed);
 }
 
+function parseClipboardJson(text) {
+  try { return JSON.parse(text); } catch (_) {}
+  // Some chat/export surfaces escape a base64url underscore as "\\_".
+  // That is not valid JSON, but repairing this one non-semantic character
+  // makes the pasted export usable without weakening general JSON parsing.
+  const repaired = String(text || '').replace(/\\_/gu, '_');
+  if (repaired === text) return null;
+  try { return JSON.parse(repaired); } catch (_) { return null; }
+}
+
+function isProxyObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && nodeText(nodeValue(value, 'type', 'protocol'))
+    && nodeText(nodeValue(value, 'server', 'address', 'add', 'host')));
+}
+
 function proxyObjectToLink(node) {
   if (!node || typeof node !== 'object' || Array.isArray(node)) return '';
   const type = normalizeProtocol(nodeValue(node, 'type', 'protocol'));
-  const server = nodeText(nodeValue(node, 'server', 'address'));
+  const server = unwrapMarkdownHost(nodeText(nodeValue(node, 'server', 'address', 'add', 'host')));
   const port = Number(nodeValue(node, 'port', 'server_port', 'serverPort') || DEFAULT_PORTS[type]);
   if (!type || !server || !Number.isInteger(port) || port < 1 || port > 65535) return '';
-  const name = cleanName(nodeValue(node, 'name', 'ps'), type);
+  const name = cleanName(nodeValue(node, 'name', 'ps', 'title', 'remarks', 'remark'), type);
   if (type === 'vmess') return proxyObjectToVmessLink(node, server, port, name);
   if (type === 'ss') {
     const cipher = nodeText(nodeValue(node, 'cipher', 'method'));
@@ -165,13 +184,23 @@ function proxyObjectToLink(node) {
   const transportConfig = nodeObject(nodeValue(node, 'transport'));
   const network = normalizeNetwork(nodeValue(node, 'network', 'net') || transportConfig?.type);
   const realityOpts = nodeObject(nodeValue(node, 'reality-opts', 'reality_opts')) || nodeObject(tlsConfig?.reality);
-  const security = nodeText(nodeValue(node, 'security')) || nodeText(tlsConfig?.security) || (realityOpts ? 'reality' : '');
+  const realityPublicKey = nodeText(
+    nodeValue(node, 'public-key', 'public_key', 'publicKey', 'pbk'),
+    realityOpts?.['public-key'], realityOpts?.public_key, realityOpts?.publicKey, realityOpts?.pbk,
+  );
+  const realityShortId = nodeText(
+    nodeValue(node, 'short-id', 'short_id', 'shortId', 'sid'),
+    realityOpts?.['short-id'], realityOpts?.short_id, realityOpts?.shortId, realityOpts?.sid,
+  );
+  const security = nodeText(nodeValue(node, 'security')) || nodeText(tlsConfig?.security)
+    || (realityPublicKey || realityShortId ? 'reality' : '');
   const tlsEnabled = type === 'trojan' || nodeBoolean(nodeValue(node, 'tls')) || nodeBoolean(tlsConfig?.enabled)
     || ['tls', 'reality', 'https'].includes(security.toLowerCase());
   const effectiveSecurity = security || (tlsEnabled ? 'tls' : '');
   if (network && network !== 'tcp') query.set('type', network);
   if (effectiveSecurity) query.set('security', effectiveSecurity);
-  const sni = nodeText(nodeValue(node, 'sni', 'servername')) || nodeText(tlsConfig?.server_name, tlsConfig?.serverName) || server;
+  const sni = unwrapMarkdownHost(nodeText(nodeValue(node, 'sni', 'servername', 'server_name', 'peer')))
+    || unwrapMarkdownHost(nodeText(tlsConfig?.server_name, tlsConfig?.serverName)) || server;
   if (sni) query.set('sni', sni);
   const wsOpts = nodeObject(nodeValue(node, 'ws-opts', 'ws_opts'));
   const grpcOpts = nodeObject(nodeValue(node, 'grpc-opts', 'grpc_opts'));
@@ -186,7 +215,7 @@ function proxyObjectToLink(node) {
   if (host && ['ws', 'h2', 'httpupgrade'].includes(network)) query.set('host', host);
   const serviceName = nodeText(nodeValue(node, 'serviceName', 'service_name'), grpcOpts?.['grpc-service-name'], grpcOpts?.serviceName, transportConfig?.service_name);
   if (serviceName && network === 'grpc') query.set('serviceName', serviceName);
-  const flow = nodeText(nodeValue(node, 'flow'));
+  const flow = nodeText(nodeValue(node, 'flow')) || (type === 'vless' ? vlessFlowFromShadowrocket(nodeValue(node, 'xtls')) : '');
   if (flow) query.set('flow', flow);
   const encryption = nodeText(nodeValue(node, 'encryption'));
   if (encryption) query.set('encryption', encryption);
@@ -194,14 +223,6 @@ function proxyObjectToLink(node) {
   if (skipCertVerify) query.set('allowInsecure', '1');
   const fingerprint = nodeText(nodeValue(node, 'client-fingerprint', 'client_fingerprint', 'fingerprint'), tlsConfig?.fingerprint);
   if (fingerprint) query.set('fingerprint', fingerprint);
-  const realityPublicKey = nodeText(
-    nodeValue(node, 'public-key', 'public_key', 'publicKey', 'pbk'),
-    realityOpts?.['public-key'], realityOpts?.public_key, realityOpts?.publicKey, realityOpts?.pbk,
-  );
-  const realityShortId = nodeText(
-    nodeValue(node, 'short-id', 'short_id', 'shortId', 'sid'),
-    realityOpts?.['short-id'], realityOpts?.short_id, realityOpts?.shortId, realityOpts?.sid,
-  );
   if (security.toLowerCase() === 'reality') {
     if (realityPublicKey) query.set('pbk', realityPublicKey);
     if (realityShortId) query.set('sid', realityShortId);
@@ -222,12 +243,15 @@ function proxyObjectToLink(node) {
     return `tuic://${encodeURIComponent(`${uuid}:${password}`)}@${authorityHost(server)}:${port}${query.size ? `?${query}` : ''}#${encodeURIComponent(name)}`;
   }
   const nodePassword = nodeText(nodeValue(node, 'password'));
+  const vlessUuid = vlessObjectUuid(node, nodePassword);
   const user = type === 'vless'
-    ? nodeText(nodeValue(node, 'uuid', 'id'))
+    ? vlessUuid
     : ['trojan', 'hysteria2', 'anytls'].includes(type)
       ? nodePassword
       : nodeText(nodeValue(node, 'username'));
-  const password = ['trojan', 'hysteria2', 'anytls'].includes(type)
+  const password = type === 'vless'
+    ? ''
+    : ['trojan', 'hysteria2', 'anytls'].includes(type)
     ? ''
     : nodePassword || (type === 'snell' ? nodeText(nodeValue(node, 'psk')) : '');
   if (type === 'snell') {
@@ -363,6 +387,30 @@ function nodeText(...values) {
     if (text) return text;
   }
   return '';
+}
+
+function unwrapMarkdownHost(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^\[([^\]]+)\]\(https?:\/\/[^)]+\)$/u);
+  return (match ? match[1] : text).trim();
+}
+
+function vlessObjectUuid(node, password) {
+  const uuid = nodeText(nodeValue(node, 'uuid', 'id'));
+  const shadowrocketShape = node?.host !== undefined
+    && (node?.title !== undefined || node?.peer !== undefined || node?.publicKey !== undefined || node?.shortId !== undefined || node?.xtls !== undefined);
+  // Shadowrocket's exported VLESS object uses `password` for the VLESS UUID;
+  // its `uuid` field is an internal node identifier.  Other JSON formats use
+  // the conventional uuid/id field, so keep that precedence outside this
+  // recognizable shape.
+  if (shadowrocketShape && isUuidLike(password)) return password;
+  return uuid || password;
+}
+
+function isUuidLike(value) {
+  const text = String(value || '').trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(text)
+    || /^[0-9a-f]{32}$/iu.test(text);
 }
 
 function nodeBoolean(value) {

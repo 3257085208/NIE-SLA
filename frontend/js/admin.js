@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260916-proxy11";
-import { createAdminClient } from "./admin/api.js?v=20260916-proxy11";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260916-proxy11";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260916-proxy11";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260916-proxy11";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260916-proxy11";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260916-proxy12";
+import { createAdminClient } from "./admin/api.js?v=20260916-proxy12";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260916-proxy12";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260916-proxy12";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260916-proxy12";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260916-proxy12";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260916-proxy11";
+} from "./shared/target-catalogs.js?v=20260916-proxy12";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260916-proxy11";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260916-proxy11";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260916-proxy11";
-import { fmtBytes } from "./shared/format.js?v=20260916-proxy11";
+} from "./shared/grouping.js?v=20260916-proxy12";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260916-proxy12";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260916-proxy12";
+import { fmtBytes } from "./shared/format.js?v=20260916-proxy12";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -2476,8 +2476,8 @@ function proxyModal(proxy = null) {
   proxyLinkIndex = 0;
   proxyLinkParsedValue = "";
   let html = '<h3>' + (edit ? "编辑" : "新增") + '代理检测</h3>';
-  html += '<p class="hint">支持小火箭（Shadowrocket）常见分享 URI、多行节点、Base64 订阅，以及 Clash / Mihomo JSON、YAML。原始内容只在本次请求中传输，不回显、不写入浏览器存储；不会自动抓取远程订阅 URL。真正检测仍由选定 TCP Agent 完成协议握手和 HTTPS canary。编辑旧目标时敏感参数不会回填；如果是 VLESS Reality，请重新粘贴完整分享链接保存。</p>';
-  html += '<div class="f"><label for="proxyLink">代理分享链接 / 订阅内容</label><textarea id="proxyLink" rows="4" autocomplete="off" spellcheck="false" placeholder="粘贴 vless://、vmess://、ss://、trojan://、Clash YAML 或 Base64 内容"></textarea><div class="ma"><button type="button" class="btn btn-blue" id="parseProxyLink">解析链接</button></div><div class="hint" id="proxyLinkStatus" role="status" aria-live="polite">支持多节点解析；点击保存时也会自动解析。</div><div id="proxyLinkPreview"></div></div>';
+  html += '<p class="hint">支持小火箭（Shadowrocket）分享 URI、节点导出 JSON、多行节点、Base64 订阅，以及 Clash / Mihomo JSON、YAML。原始内容只在本次请求中传输，不回显、不写入浏览器存储；不会自动抓取远程订阅 URL。真正检测仍由选定 TCP Agent 完成协议握手和 HTTPS canary。编辑旧目标时敏感参数不会回填；如果是 VLESS Reality，请重新粘贴完整分享内容保存。</p>';
+  html += '<div class="f"><label for="proxyLink">代理分享链接 / 订阅内容</label><textarea id="proxyLink" rows="4" autocomplete="off" spellcheck="false" placeholder="粘贴 vless://、小火箭节点 JSON、vmess://、ss://、Clash YAML 或 Base64 内容"></textarea><div class="ma"><button type="button" class="btn btn-blue" id="parseProxyLink">解析链接</button></div><div class="hint" id="proxyLinkStatus" role="status" aria-live="polite">支持多节点解析；点击保存时也会自动解析。</div><div id="proxyLinkPreview"></div></div>';
   html += '<details><summary>手动填写 / 调整解析结果</summary>';
   html += inputField("ID", "proxyId", p.id || "", edit ? "readonly" : 'placeholder="例如 hk-vless-01"');
   html += inputField("名称", "proxyName", p.name || "");
@@ -2567,7 +2567,9 @@ function renderProxyLinkPreview() {
     ? '<span class="tag tag-on">可进行真实握手</span>'
     : '<span class="tag tag-warn">已识别但 Agent 暂不支持真实握手</span>';
   const reason = !item.runtime_supported && item.runtime_reason ? ' · ' + escapeHtml(item.runtime_reason) : '';
-  box.innerHTML = '<div class="f"><label for="proxyLinkChoice">选择节点</label><select id="proxyLinkChoice">' + options + '</select><p class="hint">' + support + reason + ' · 传输：' + escapeHtml(item.transport || "tcp") + ' · 地址：' + escapeHtml(item.server + ":" + item.port) + '</p></div>';
+  const security = item.security ? ' · 安全：' + escapeHtml(item.security) : '';
+  const flow = item.flow ? ' · flow：' + escapeHtml(item.flow) : '';
+  box.innerHTML = '<div class="f"><label for="proxyLinkChoice">选择节点</label><select id="proxyLinkChoice">' + options + '</select><p class="hint">' + support + reason + ' · 传输：' + escapeHtml(item.transport || "tcp") + security + flow + ' · 地址：' + escapeHtml(item.server + ":" + item.port) + '</p></div>';
   byId("proxyLinkChoice").onchange = (event) => applyProxyLinkPreview(Number(event.target.value));
 }
 

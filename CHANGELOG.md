@@ -1,6 +1,13 @@
 # 更新日志
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
+## 1.1.55 - 2026-09-16
+
+- 兼容小火箭（Shadowrocket）导出的单节点 JSON：识别 `host`、`port`、`title`、`password`、`peer`、`tls`、`xtls`、`publicKey` 与 `shortId`，正确还原 VLESS Reality + Vision 配置。
+- 兼容复制过程中把 Base64URL 下划线写成反斜杠下划线的 JSON 文本，以及被 Markdown 包裹的 SNI 主机名；仅修复确定的格式噪声，不自动抓取远程订阅。
+- 解析预览增加安全模式与 flow 信息，但继续不返回 UUID、密码、Reality 公钥、短 ID 或原始分享内容。
+- 代理详情在当前样本尚未完成对应阶段时明确显示“未完成”；TLS/协议握手和首字节只统计真实成功完成的阶段，不用失败耗时伪造成功数值。
+
 ## 1.1.54 - 2026-09-16
 
 - 修正小火箭常见的 Base64 VLESS 分享链接：正确解码 UUID、服务器和端口，不再把编码串当作服务器地址。

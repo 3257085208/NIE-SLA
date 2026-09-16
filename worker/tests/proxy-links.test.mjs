@@ -115,6 +115,36 @@ assert.equal(shadowrocketReality.secret.uuid, uuid);
 assert.equal(shadowrocketReality.secret.security, 'reality');
 assert.equal(shadowrocketReality.secret.flow, 'xtls-rprx-vision');
 assert.equal(shadowrocketReality.runtime_supported, true);
+const shadowrocketJsonUuid = '00000000-0000-4000-8000-000000000002';
+const shadowrocketJsonPublicKey = Buffer.alloc(32, 0xff).toString('base64url');
+const shadowrocketJson = `{
+  "host": "shadowrocket-json.example.test",
+  "tls": true,
+  "uuid": "00000000-0000-4000-8000-000000000003",
+  "xtls": 2,
+  "type": "VLESS",
+  "port": "8880",
+  "publicKey": "${shadowrocketJsonPublicKey.replace(/_/gu, '\\_')}",
+  "peer": "[json-sni.example.test](https://json-sni.example.test)",
+  "title": "Shadowrocket JSON",
+  "password": "${shadowrocketJsonUuid}",
+  "shortId": "0a0b"
+}`;
+const parsedShadowrocketJson = parseProxyLinks(shadowrocketJson)[0];
+assert.equal(parsedShadowrocketJson.name, 'Shadowrocket JSON');
+assert.equal(parsedShadowrocketJson.server, 'shadowrocket-json.example.test');
+assert.equal(parsedShadowrocketJson.port, 8880);
+assert.equal(parsedShadowrocketJson.sni, 'json-sni.example.test');
+assert.equal(parsedShadowrocketJson.transport, 'tls');
+assert.equal(parsedShadowrocketJson.secret.uuid, shadowrocketJsonUuid);
+assert.equal(parsedShadowrocketJson.secret.security, 'reality');
+assert.equal(parsedShadowrocketJson.secret.flow, 'xtls-rprx-vision');
+assert.equal(parsedShadowrocketJson.secret.reality_public_key, shadowrocketJsonPublicKey);
+assert.equal(parsedShadowrocketJson.secret.reality_short_id, '0a0b');
+assert.equal(parsedShadowrocketJson.runtime_supported, true);
+assert.equal(proxyLinkPreview(parsedShadowrocketJson).security, 'reality');
+assert.equal(proxyLinkPreview(parsedShadowrocketJson).flow, 'xtls-rprx-vision');
+assert.equal('secret' in proxyLinkPreview(parsedShadowrocketJson), false, 'JSON preview must not expose credentials');
 const clashReality = parseProxyLinks(`proxies:
   - name: Clash Reality
     type: vless
