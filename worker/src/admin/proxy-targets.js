@@ -201,7 +201,7 @@ function normalizeProxyInput(body, existing) {
 function normalizeSecret(protocol, value, fallback = {}) {
   const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const secret = { ...fallback };
-  for (const key of ['uuid', 'username', 'password', 'security', 'cipher', 'plugin', 'plugin_opts', 'flow', 'encryption', 'grpc_service_name', 'h2_path', 'http_upgrade_path', 'obfs', 'obfs_password', 'obfs_host', 'snell_version', 'fingerprint', 'congestion_control', 'alpn']) {
+  for (const key of ['uuid', 'username', 'password', 'security', 'cipher', 'plugin', 'plugin_opts', 'flow', 'encryption', 'grpc_service_name', 'h2_path', 'http_upgrade_path', 'obfs', 'obfs_password', 'obfs_host', 'snell_version', 'fingerprint', 'congestion_control', 'alpn', 'reality_public_key', 'reality_short_id', 'public_key', 'short_id']) {
     if (input[key] !== undefined) secret[key] = String(input[key] || '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 2048);
   }
   for (const key of ['skip_cert_verify', 'insecure']) {
@@ -222,8 +222,20 @@ function normalizeSecret(protocol, value, fallback = {}) {
   }
   if (protocol === 'vless') {
     const flow = String(secret.flow || '').toLowerCase();
+    if (flow) secret.flow = flow;
     if (flow && flow !== 'xtls-rprx-vision') throw new ApiError(400, '当前 Agent 仅支持 VLESS flow=xtls-rprx-vision');
-    if (String(secret.security || '').toLowerCase() === 'reality') throw new ApiError(400, '当前 Agent 尚未内置 VLESS Reality 真实握手');
+    const security = String(secret.security || '').toLowerCase();
+    if (security) secret.security = security;
+    if (security === 'reality') {
+      const publicKey = String(secret.reality_public_key || secret.public_key || '').trim();
+      const shortId = String(secret.reality_short_id || secret.short_id || '').trim().toLowerCase();
+      if (!isRealityPublicKey(publicKey)) throw new ApiError(400, 'VLESS Reality 必须包含有效的公钥参数 pbk');
+      if (!isRealityShortId(shortId)) throw new ApiError(400, 'VLESS Reality 的短 ID 参数 sid 无效');
+      secret.reality_public_key = publicKey;
+      secret.reality_short_id = shortId;
+      delete secret.public_key;
+      delete secret.short_id;
+    }
   }
   if (protocol === 'hysteria2' && secret.obfs && String(secret.obfs).toLowerCase() !== 'salamander') {
     throw new ApiError(400, '当前 Agent 仅支持 Hysteria2 salamander 混淆');
@@ -349,4 +361,20 @@ function normalizeEnabled(value, fallback) {
   if (value === true || value === 1 || value === '1') return 1;
   if (value === false || value === 0 || value === '0') return 0;
   throw new ApiError(400, 'enabled 必须是布尔值');
+}
+
+function isRealityPublicKey(value) {
+  const raw = String(value || '').trim().replace(/-/g, '+').replace(/_/g, '/');
+  if (!raw || !/^[A-Za-z0-9+/]*={0,2}$/u.test(raw)) return false;
+  const padded = raw + '='.repeat((4 - (raw.length % 4)) % 4);
+  try {
+    return atob(padded).length === 32;
+  } catch (_) {
+    return false;
+  }
+}
+
+function isRealityShortId(value) {
+  const normalized = String(value || '').trim();
+  return normalized === '' || (normalized.length <= 16 && normalized.length % 2 === 0 && /^[0-9a-f]+$/iu.test(normalized));
 }

@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260916-proxy7";
-import { createAdminClient } from "./admin/api.js?v=20260916-proxy7";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260916-proxy7";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260916-proxy7";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260916-proxy7";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260916-proxy7";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260916-proxy9";
+import { createAdminClient } from "./admin/api.js?v=20260916-proxy9";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260916-proxy9";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260916-proxy9";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260916-proxy9";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260916-proxy9";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260916-proxy7";
+} from "./shared/target-catalogs.js?v=20260916-proxy9";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260916-proxy7";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260916-proxy7";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260916-proxy7";
-import { fmtBytes } from "./shared/format.js?v=20260916-proxy7";
+} from "./shared/grouping.js?v=20260916-proxy9";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260916-proxy9";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260916-proxy9";
+import { fmtBytes } from "./shared/format.js?v=20260916-proxy9";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -2476,7 +2476,7 @@ function proxyModal(proxy = null) {
   proxyLinkIndex = 0;
   proxyLinkParsedValue = "";
   let html = '<h3>' + (edit ? "编辑" : "新增") + '代理检测</h3>';
-  html += '<p class="hint">支持小火箭（Shadowrocket）常见分享 URI、多行节点、Base64 订阅，以及 Clash / Mihomo JSON、YAML。原始内容只在本次请求中传输，不回显、不写入浏览器存储；不会自动抓取远程订阅 URL。真正检测仍由选定 TCP Agent 完成协议握手和 HTTPS canary。</p>';
+  html += '<p class="hint">支持小火箭（Shadowrocket）常见分享 URI、多行节点、Base64 订阅，以及 Clash / Mihomo JSON、YAML。原始内容只在本次请求中传输，不回显、不写入浏览器存储；不会自动抓取远程订阅 URL。真正检测仍由选定 TCP Agent 完成协议握手和 HTTPS canary。编辑旧目标时敏感参数不会回填；如果是 VLESS Reality，请重新粘贴完整分享链接保存。</p>';
   html += '<div class="f"><label for="proxyLink">代理分享链接 / 订阅内容</label><textarea id="proxyLink" rows="4" autocomplete="off" spellcheck="false" placeholder="粘贴 vless://、vmess://、ss://、trojan://、Clash YAML 或 Base64 内容"></textarea><div class="ma"><button type="button" class="btn btn-blue" id="parseProxyLink">解析链接</button></div><div class="hint" id="proxyLinkStatus" role="status" aria-live="polite">支持多节点解析；点击保存时也会自动解析。</div><div id="proxyLinkPreview"></div></div>';
   html += '<details><summary>手动填写 / 调整解析结果</summary>';
   html += inputField("ID", "proxyId", p.id || "", edit ? "readonly" : 'placeholder="例如 hk-vless-01"');
@@ -2512,6 +2512,10 @@ function proxyModal(proxy = null) {
   html += inputField("WebSocket Host（可选）", "proxyWsHost", p.ws_host || "", 'placeholder="默认使用 SNI"');
   html += inputField("超时（毫秒）", "proxyTimeout", p.timeout_ms || 5000, 'type="number" min="1000" max="15000" step="100"');
   html += inputField("UUID（新建或更换时填写）", "proxyUuid", "", 'autocomplete="off" placeholder="VLESS / VMess"');
+  html += formField("VLESS 安全模式（手动填写时）", '<select id="proxyVlessSecurity"><option value="">留空保留原值</option><option value="tls">TLS</option><option value="reality">Reality</option></select>');
+  html += inputField("VLESS flow（可选）", "proxyVlessFlow", "", 'autocomplete="off" placeholder="xtls-rprx-vision"');
+  html += inputField("Reality 公钥 pbk（手动填写时）", "proxyRealityPublicKey", "", 'autocomplete="off" spellcheck="false" placeholder="仅 Reality 必填"');
+  html += inputField("Reality 短 ID sid（可选）", "proxyRealityShortId", "", 'autocomplete="off" spellcheck="false" placeholder="十六进制，最长 16 位"');
   html += inputField("SOCKS5 用户名（可选）", "proxyUsername", "", 'autocomplete="off"');
   html += formField("SOCKS5 密码（可选）", '<input id="proxyPassword" type="password" value="" autocomplete="new-password">');
   html += formField("VMess 加密", '<select id="proxySecurity"><option value="">留空保留原值</option><option value="auto">auto</option><option value="aes-128-gcm">aes-128-gcm</option><option value="chacha20-poly1305">chacha20-poly1305</option><option value="none">none</option></select>');
@@ -2599,11 +2603,19 @@ async function saveProxyTarget(existing = null) {
   const protocol = byId("proxyProtocol").value;
   const secret = {};
   const uuid = byId("proxyUuid").value.trim();
+  const vlessSecurity = byId("proxyVlessSecurity").value;
+  const vlessFlow = byId("proxyVlessFlow").value.trim();
+  const realityPublicKey = byId("proxyRealityPublicKey").value.trim();
+  const realityShortId = byId("proxyRealityShortId").value.trim();
   const username = byId("proxyUsername").value.trim();
   const password = byId("proxyPassword").value;
   const security = byId("proxySecurity").value;
   const alterId = byId("proxyAlterId").value.trim();
   if (uuid) secret.uuid = uuid;
+  if (vlessSecurity) secret.security = vlessSecurity;
+  if (vlessFlow) secret.flow = vlessFlow;
+  if (realityPublicKey) secret.reality_public_key = realityPublicKey;
+  if (realityShortId) secret.reality_short_id = realityShortId;
   if (username) secret.username = username;
   if (password) secret.password = password;
   if (security) secret.security = security;

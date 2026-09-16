@@ -1,6 +1,6 @@
 ﻿[package]
 name = "nie-sla-agent"
-version = "1.1.51"
+version = "1.1.52"
 edition = "2021"
 license = "MIT"
 description = "NIE-SLA cross-platform metrics agent"
@@ -18,7 +18,7 @@ sha2 = "0.10"
 sysinfo = "=0.30.13"
 meow-common = "0.21.2"
 meow-proxy = { version = "0.21.2", default-features = false, features = ["ss", "trojan", "vless", "vless-vision", "vmess", "hysteria2", "snell", "anytls"] }
-meow-transport = { version = "0.21.2", default-features = false, features = ["tls", "ws", "grpc", "h2", "httpupgrade"] }
+meow-transport = { version = "0.21.2", default-features = false, features = ["tls", "reality", "ws", "grpc", "h2", "httpupgrade"] }
 tokio = { version = "1", features = ["io-util", "net", "rt", "time"] }
 ureq = { version = "3.3.0", default-features = false, features = ["rustls", "rustls-webpki-roots"] }
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }

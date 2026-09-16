@@ -3,6 +3,8 @@ use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use meow_common::{Metadata, ProxyAdapter, ProxyConn};
 use meow_proxy::{
     AnytlsAdapter, HttpAdapter, Hy2Adapter, Hy2Obfs, Hy2Options, ShadowsocksAdapter, SnellAdapter,
@@ -12,7 +14,7 @@ use meow_proxy::{
 use meow_transport::grpc::{GrpcConfig, GrpcLayer};
 use meow_transport::h2::{H2Config, H2Layer};
 use meow_transport::httpupgrade::{HttpUpgradeConfig, HttpUpgradeLayer};
-use meow_transport::tls::{TlsConfig, TlsLayer};
+use meow_transport::tls::{RealityConfig, TlsConfig, TlsLayer};
 use meow_transport::ws::{WsConfig, WsLayer};
 use meow_transport::{Stream as TransportStream, Transport};
 use serde_json::Value;
@@ -129,6 +131,9 @@ pub(crate) struct ProxyTarget {
     snell_version: String,
     fingerprint: String,
     alpn: String,
+    vless_security: String,
+    reality_public_key: String,
+    reality_short_id: String,
     vmess_security: String,
     vmess_alter_id: u32,
 }
@@ -249,7 +254,7 @@ impl ProxyTarget {
         {
             return Err("invalid proxy host".into());
         }
-        let vmess_security = secret
+        let security = secret
             .get("security")
             .and_then(Value::as_str)
             .unwrap_or("auto")
@@ -322,7 +327,10 @@ impl ProxyTarget {
             snell_version,
             fingerprint,
             alpn,
-            vmess_security,
+            vless_security: security.clone(),
+            reality_public_key: secret_string(&secret, "reality_public_key"),
+            reality_short_id: secret_string(&secret, "reality_short_id"),
+            vmess_security: security,
             vmess_alter_id,
         })
     }
@@ -801,6 +809,8 @@ async fn verify_https_canary(
 
 fn build_transport_chain(target: &ProxyTarget) -> Result<TransportChain, ProbeError> {
     let mut chain = TransportChain::empty();
+    let reality = matches!(target.protocol, ProxyProtocol::Vless)
+        && target.vless_security.eq_ignore_ascii_case("reality");
     if matches!(
         target.transport,
         ProxyTransport::Tls
@@ -808,7 +818,8 @@ fn build_transport_chain(target: &ProxyTarget) -> Result<TransportChain, ProbeEr
             | ProxyTransport::TlsGrpc
             | ProxyTransport::TlsH2
             | ProxyTransport::TlsHttpUpgrade
-    ) {
+    ) || reality
+    {
         let mut tls_config = TlsConfig::new(if target.sni.is_empty() {
             &target.server
         } else {
@@ -825,6 +836,28 @@ fn build_transport_chain(target: &ProxyTarget) -> Result<TransportChain, ProbeEr
         }
         if !target.fingerprint.is_empty() {
             tls_config.fingerprint = Some(target.fingerprint.clone());
+        }
+        if reality {
+            let public_key = if target.reality_public_key.is_empty() {
+                return Err(ProbeError {
+                    stage: "config",
+                    code: "unsupported",
+                });
+            } else {
+                parse_reality_public_key(&target.reality_public_key).ok_or(ProbeError {
+                    stage: "config",
+                    code: "invalid_config",
+                })?
+            };
+            let short_id = parse_reality_short_id(&target.reality_short_id).ok_or(ProbeError {
+                stage: "config",
+                code: "invalid_config",
+            })?;
+            tls_config.reality = Some(RealityConfig {
+                public_key,
+                short_id,
+                support_x25519_mlkem768: false,
+            });
         }
         let layer = TlsLayer::new(&tls_config).map_err(|_| ProbeError {
             stage: "config",
@@ -905,6 +938,37 @@ fn build_transport_chain(target: &ProxyTarget) -> Result<TransportChain, ProbeEr
         _ => {}
     }
     Ok(chain)
+}
+
+fn parse_reality_public_key(value: &str) -> Option<[u8; 32]> {
+    let mut normalized = value.trim().replace('-', "+").replace('_', "/");
+    if normalized.is_empty()
+        || !normalized
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
+    {
+        return None;
+    }
+    while normalized.len() % 4 != 0 {
+        normalized.push('=');
+    }
+    let bytes = BASE64_STANDARD.decode(normalized).ok()?;
+    bytes.try_into().ok()
+}
+
+fn parse_reality_short_id(value: &str) -> Option<[u8; 8]> {
+    let normalized = value.trim();
+    if normalized.len() > 16
+        || normalized.len() % 2 != 0
+        || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return None;
+    }
+    let mut output = [0_u8; 8];
+    for (index, pair) in normalized.as_bytes().chunks(2).enumerate() {
+        output[index] = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(output)
 }
 
 fn canary_metadata(host: &str, port: u16) -> Metadata {
@@ -1056,5 +1120,46 @@ mod tests {
         .unwrap();
         let error = probe_proxy_target_inner(&target, "example.com", 80).unwrap_err();
         assert_eq!(error.code, "unsupported");
+    }
+
+    #[test]
+    fn parses_reality_material_and_builds_a_reality_transport() {
+        let public_key = BASE64_STANDARD.encode([0x42_u8; 32]);
+        let target = ProxyTarget::from_json(&serde_json::json!({
+            "id": "reality",
+            "name": "Reality",
+            "protocol": "vless",
+            "server": "127.0.0.1",
+            "port": 443,
+            "transport": "tls",
+            "sni": "example.com",
+            "ws_path": "/",
+            "ws_host": "example.com",
+            "timeout_ms": 1000,
+            "enabled": true,
+            "secret": {
+                "uuid": "00000000-0000-4000-8000-000000000000",
+                "security": "reality",
+                "flow": "xtls-rprx-vision",
+                "reality_public_key": public_key,
+                "reality_short_id": "0a0b"
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(target.vless_security, "reality");
+        assert!(build_transport_chain(&target).is_ok());
+    }
+
+    #[test]
+    fn reality_short_id_is_zero_padded_and_rejects_unsafe_values() {
+        assert_eq!(
+            parse_reality_short_id("0a0b").unwrap(),
+            [0x0a, 0x0b, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(parse_reality_short_id("").unwrap(), [0; 8]);
+        assert!(parse_reality_short_id("0").is_none());
+        assert!(parse_reality_short_id("0123456789abcdef0").is_none());
+        assert!(parse_reality_short_id("zz").is_none());
     }
 }

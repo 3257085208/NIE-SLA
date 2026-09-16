@@ -1,11 +1,13 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.51",
-  "agent_version": "v1.1.51",
-  "source_ref": "app-v1.1.51",
-  "published_at": "2026-09-16T04:52:00Z",
-  "title": "NIE-SLA 1.1.51",
+  "version": "1.1.52",
+  "agent_version": "v1.1.52",
+  "source_ref": "app-v1.1.52",
+  "published_at": "2026-09-16T06:27:53Z",
+  "title": "NIE-SLA 1.1.52",
   "changelog": [
+    "修正 VLESS Reality 代理检测：分享链接、Clash/Mihomo 与 sing-box 内容会保留 pbk/sid，TCP Agent 使用真正的 Reality 握手；缺少关键参数时明确提示配置问题。",
+    "后台增加 VLESS 安全模式、flow、Reality 公钥与短 ID 的手动字段；代理凭据仍只在 Worker 加密存储并通过认证 Agent 通道临时下发。",
     "修正代理已有历史时公开卡片仍停在待检测：页面会从脱敏历史接口补齐最新真实结果，失败显示离线并保留握手阶段。",
     "代理详情增加原始样本数、成功率、P50/P95、Min/Max、最近结果和逐点 tooltip；失败阶段未实际完成的握手/首字节时间显示为 -，不再把 null 伪装成 0 ms。",
     "新增独立代理监控分组：代理目标不再只显示在 VPS 行内，可单独查看状态、真实链路总耗时、TLS/协议握手、首字节时间和最近检查记录。",

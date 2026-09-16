@@ -67,6 +67,23 @@ await assert.rejects(
   }), env),
   /SOCKS5.*TCP/,
 );
+await assert.rejects(
+  createProxyTarget(jsonRequest({
+    id: 'bad-reality', agent_id: 'agent-a', name: 'Bad Reality', protocol: 'vless',
+    server: 'reality.example.test', port: 443, transport: 'tls',
+    secret: { uuid: '00000000-0000-4000-8000-000000000000', security: 'reality' },
+  }), env),
+  /Reality.*公钥/,
+);
+await createProxyTarget(jsonRequest({
+  id: 'reality-main', agent_id: 'agent-a', name: 'Reality', protocol: 'vless',
+  server: 'reality.example.test', port: 443, transport: 'tls',
+  secret: {
+    uuid: '00000000-0000-4000-8000-000000000000', security: 'reality',
+    reality_public_key: Buffer.alloc(32, 0x42).toString('base64url'), reality_short_id: '0a0b',
+  },
+}), env);
+assert.equal((await getAgentProxyTargets(env, 'agent-a')).find(target => target.id === 'reality-main').secret.reality_short_id, '0a0b');
 
 const checks = normalizeAgentProxyChecks([{
   target_id: 'vless-main', name: 'VLESS renamed', protocol: 'vless', ts: now,
@@ -114,6 +131,7 @@ assert.equal(normalizeAgentProxyChecks([{
 
 await deleteProxyTarget('vless-main', env);
 await deleteProxyTarget('http-main', env);
+await deleteProxyTarget('reality-main', env);
 assert.equal((await listProxyTargets(env)).targets.length, 0);
 
 console.log('proxy target storage and credential boundary passed');

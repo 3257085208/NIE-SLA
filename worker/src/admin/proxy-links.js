@@ -83,9 +83,12 @@ function runtimeSupportReason(protocol, transport, secret = {}) {
     return '该协议或传输组合当前 Agent 尚未内置真实握手';
   }
   if (normalizedProtocol === 'vless' && String(secret.security || '').toLowerCase() === 'reality') {
-    return 'VLESS Reality 当前 Agent 尚未内置真实握手';
+    const publicKey = String(secret.reality_public_key || secret.public_key || '').trim();
+    const shortId = String(secret.reality_short_id || secret.short_id || '').trim();
+    if (!isRealityPublicKey(publicKey)) return 'VLESS Reality 缺少有效的公钥参数 pbk';
+    if (!isRealityShortId(shortId)) return 'VLESS Reality 的短 ID 参数 sid 无效';
   }
-  if (normalizedProtocol === 'vless' && secret.flow && secret.flow !== 'xtls-rprx-vision') {
+  if (normalizedProtocol === 'vless' && String(secret.flow || '').toLowerCase() && String(secret.flow || '').toLowerCase() !== 'xtls-rprx-vision') {
     return '该 VLESS flow 当前 Agent 尚未内置真实握手';
   }
   if (normalizedProtocol === 'vmess' && Number(secret.alter_id || 0) > 0) {
@@ -161,7 +164,7 @@ function proxyObjectToLink(node) {
   const tlsConfig = nodeObject(nodeValue(node, 'tls'));
   const transportConfig = nodeObject(nodeValue(node, 'transport'));
   const network = normalizeNetwork(nodeValue(node, 'network', 'net') || transportConfig?.type);
-  const realityOpts = nodeObject(nodeValue(node, 'reality-opts', 'reality_opts'));
+  const realityOpts = nodeObject(nodeValue(node, 'reality-opts', 'reality_opts')) || nodeObject(tlsConfig?.reality);
   const security = nodeText(nodeValue(node, 'security')) || nodeText(tlsConfig?.security) || (realityOpts ? 'reality' : '');
   const tlsEnabled = type === 'trojan' || nodeBoolean(nodeValue(node, 'tls')) || nodeBoolean(tlsConfig?.enabled)
     || ['tls', 'reality', 'https'].includes(security.toLowerCase());
@@ -191,6 +194,18 @@ function proxyObjectToLink(node) {
   if (skipCertVerify) query.set('allowInsecure', '1');
   const fingerprint = nodeText(nodeValue(node, 'client-fingerprint', 'client_fingerprint', 'fingerprint'), tlsConfig?.fingerprint);
   if (fingerprint) query.set('fingerprint', fingerprint);
+  const realityPublicKey = nodeText(
+    nodeValue(node, 'public-key', 'public_key', 'publicKey', 'pbk'),
+    realityOpts?.['public-key'], realityOpts?.public_key, realityOpts?.publicKey, realityOpts?.pbk,
+  );
+  const realityShortId = nodeText(
+    nodeValue(node, 'short-id', 'short_id', 'shortId', 'sid'),
+    realityOpts?.['short-id'], realityOpts?.short_id, realityOpts?.shortId, realityOpts?.sid,
+  );
+  if (security.toLowerCase() === 'reality') {
+    if (realityPublicKey) query.set('pbk', realityPublicKey);
+    if (realityShortId) query.set('sid', realityShortId);
+  }
   const alpn = serializeList(nodeValue(node, 'alpn') ?? tlsConfig?.alpn);
   if (alpn) query.set('alpn', alpn);
   const obfs = nodeText(nodeValue(node, 'obfs'));
@@ -562,6 +577,8 @@ function parseVless(url) {
       skip_cert_verify: allowInsecure,
       fingerprint: query.get('fp') || query.get('fingerprint') || '',
       alpn: query.get('alpn') || '',
+      reality_public_key: query.get('pbk') || query.get('publicKey') || query.get('public_key') || '',
+      reality_short_id: query.get('sid') || query.get('shortId') || query.get('short_id') || '',
     },
   });
 }
@@ -775,4 +792,25 @@ function cleanHost(value) {
 function cleanPath(value) {
   const path = String(value || '/').trim().slice(0, 256);
   return path.startsWith('/') ? path : `/${path}`;
+}
+
+function isRealityPublicKey(value) {
+  const bytes = decodeBase64Bytes(value);
+  return bytes?.length === 32;
+}
+
+function isRealityShortId(value) {
+  const normalized = String(value || '').trim();
+  return normalized === '' || (normalized.length <= 16 && normalized.length % 2 === 0 && /^[0-9a-f]+$/iu.test(normalized));
+}
+
+function decodeBase64Bytes(value) {
+  const raw = String(value || '').trim().replace(/-/g, '+').replace(/_/g, '/');
+  if (!raw || !/^[A-Za-z0-9+/]*={0,2}$/u.test(raw)) return null;
+  const padded = raw + '='.repeat((4 - (raw.length % 4)) % 4);
+  try {
+    return Uint8Array.from(atob(padded), char => char.charCodeAt(0));
+  } catch (_) {
+    return null;
+  }
 }

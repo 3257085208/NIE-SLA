@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { parseProxyLinks, proxyLinkPreview } from '../src/admin/proxy-links.js';
 
 const uuid = '8c7f969f-0000-4000-8000-000000000001';
+const realityPublicKey = Buffer.alloc(32, 0x42).toString('base64url');
 const vmess = `vmess://${Buffer.from(JSON.stringify({
   v: '2', ps: 'VMess demo', add: 'vmess.example.test', port: '443', id: uuid,
   aid: '0', scy: 'auto', net: 'ws', host: 'vmess.example.test', path: '/ws', tls: 'tls',
@@ -99,6 +100,33 @@ assert.equal(singBox[0].secret.skip_cert_verify, true);
 const reality = parseProxyLinks(`vless://${uuid}@reality.example.test:443?security=reality&type=tcp#Reality`)[0];
 assert.equal(reality.runtime_supported, false);
 assert.match(reality.runtime_reason, /Reality/);
+const supportedReality = parseProxyLinks(`vless://${uuid}@reality.example.test:443?security=reality&type=tcp&pbk=${realityPublicKey}&sid=0a0b&fp=chrome#Reality%20supported`)[0];
+assert.equal(supportedReality.runtime_supported, true);
+assert.equal(supportedReality.secret.reality_public_key, realityPublicKey);
+assert.equal(supportedReality.secret.reality_short_id, '0a0b');
+const clashReality = parseProxyLinks(`proxies:
+  - name: Clash Reality
+    type: vless
+    server: reality-clash.example.test
+    port: 443
+    uuid: ${uuid}
+    network: tcp
+    tls: true
+    servername: reality-clash.example.test
+    flow: xtls-rprx-vision
+    reality-opts:
+      public-key: ${realityPublicKey}
+      short-id: 0a0b`)[0];
+assert.equal(clashReality.runtime_supported, true);
+assert.equal(clashReality.secret.reality_public_key, realityPublicKey);
+assert.equal(clashReality.secret.reality_short_id, '0a0b');
+const singBoxReality = parseProxyLinks(JSON.stringify({ outbounds: [{
+  type: 'vless', server: 'singbox-reality.example.test', server_port: 443, uuid,
+  tls: { enabled: true, server_name: 'singbox-reality.example.test', reality: { public_key: realityPublicKey, short_id: '0a0b' } },
+}] }))[0];
+assert.equal(singBoxReality.runtime_supported, true);
+assert.equal(singBoxReality.secret.reality_public_key, realityPublicKey);
+assert.equal(singBoxReality.secret.reality_short_id, '0a0b');
 const legacyVmess = parseProxyLinks(`vmess://${Buffer.from(JSON.stringify({ add: 'legacy-vmess.example.test', port: 443, id: uuid, aid: 1, net: 'tcp' })).toString('base64')}`)[0];
 assert.equal(legacyVmess.runtime_supported, false);
 assert.match(legacyVmess.runtime_reason, /alter_id/);
