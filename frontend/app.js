@@ -1,9 +1,9 @@
-import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260916-proxy9';
+import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260916-proxy10';
 import {
   billingCycleSuffix,
   isLifetimeBilling,
   normalizeBillingCycle,
-} from './js/shared/billing.js?v=20260916-proxy9';
+} from './js/shared/billing.js?v=20260916-proxy10';
 import {
   cssEscape,
   clampNumber,
@@ -18,11 +18,11 @@ import {
   normalizeCityName,
   pad,
   timeAgoSec,
-} from './js/shared/format.js?v=20260916-proxy9';
-import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260916-proxy9';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260916-proxy9';
-import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260916-proxy9';
-import { countryByCode } from './js/shared/target-catalogs.js?v=20260916-proxy9';
+} from './js/shared/format.js?v=20260916-proxy10';
+import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260916-proxy10';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260916-proxy10';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260916-proxy10';
+import { countryByCode } from './js/shared/target-catalogs.js?v=20260916-proxy10';
 import {
   clampChartRange,
   countChartGaps,
@@ -30,15 +30,15 @@ import {
   filterChecksByRange,
   hexToRgba,
   trimEmptyPointEdges,
-} from './js/shared/chart-data.js?v=20260916-proxy9';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260916-proxy9';
-import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260916-proxy9';
-import { unlockState } from './js/shared/unlock.js?v=20260916-proxy9';
-import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260916-proxy9';
-import { targetSlaPercentage } from './js/shared/sla.js?v=20260916-proxy9';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260916-proxy9';
-import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260916-proxy9';
-import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260916-proxy9';
+} from './js/shared/chart-data.js?v=20260916-proxy10';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260916-proxy10';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260916-proxy10';
+import { unlockState } from './js/shared/unlock.js?v=20260916-proxy10';
+import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260916-proxy10';
+import { targetSlaPercentage } from './js/shared/sla.js?v=20260916-proxy10';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260916-proxy10';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260916-proxy10';
+import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260916-proxy10';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -1060,6 +1060,43 @@ function proxyDuration(value) {
   return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
 }
 
+const PROXY_STAGE_LABELS = {
+  config: '配置',
+  connect: '连接',
+  handshake: '协议握手',
+  canary: '出站验证',
+  runtime: '运行时',
+  failed: '失败',
+};
+
+const PROXY_ERROR_LABELS = {
+  timeout: '检测超时',
+  auth_failed: '代理认证失败',
+  unsupported: '配置不完整或当前 Agent 不支持此组合',
+  handshake_failed: '协议握手失败',
+  canary_failed: '代理出站验证失败',
+  invalid_config: '代理配置无效',
+  runtime_failed: 'Agent 运行时失败',
+};
+
+function proxyStageLabel(value) {
+  const raw = String(value || '').trim();
+  return raw && PROXY_STAGE_LABELS[raw] ? `${PROXY_STAGE_LABELS[raw]}（${raw}）` : raw;
+}
+
+function proxyErrorLabel(value) {
+  const raw = String(value || '').trim();
+  return raw && PROXY_ERROR_LABELS[raw] ? `${PROXY_ERROR_LABELS[raw]}（${raw}）` : raw;
+}
+
+function proxyDisplayDuration(check, field) {
+  const value = proxyDuration(check?.[field]);
+  // Config rejection happens before timing starts; total_ms=0 is not a
+  // measured zero and must not look like a successful zero-latency check.
+  if (field === 'total_ms' && Number(check?.ok) !== 1 && String(check?.stage || '').toLowerCase() === 'config') return null;
+  return value;
+}
+
 function renderGroup(name, list, days, summaries, index = 0) {
   const checked = list.filter(targetHasStatus);
   const down = checked.filter(t => !targetIsUp(t)).length;
@@ -1197,16 +1234,16 @@ function renderProxyService(t) {
   const displayName = String(t.name || t.proxy_target_id || '代理').trim();
   const protocol = String(t.protocol || '').toUpperCase();
   const transport = String(t.transport || 'tcp').toUpperCase();
-  const total = proxyDuration(check?.total_ms);
-  const handshake = proxyDuration(check?.handshake_ms);
-  const firstByte = proxyDuration(check?.first_byte_ms);
+  const total = proxyDisplayDuration(check, 'total_ms');
+  const handshake = proxyDisplayDuration(check, 'handshake_ms');
+  const firstByte = proxyDisplayDuration(check, 'first_byte_ms');
   const totalHtml = total != null ? `<strong title="本次真实代理链路总耗时">${total} ms</strong>` : '<strong title="本次真实代理链路总耗时">-</strong>';
   const handshakeText = handshake == null ? '-' : `${handshake} ms`;
   const firstByteText = firstByte == null ? '-' : `${firstByte} ms`;
   const note = checked
     ? `真实握手 · TLS / 协议 ${handshakeText} · 首字节 ${firstByteText}`
     : '等待 Agent 完成真实代理握手检测';
-  const detail = checked && check.error ? ` · ${check.error}` : '';
+  const detail = checked && check.error ? ` · ${proxyErrorLabel(check.error)}` : '';
   const freshness = stale ? ' · 数据过期' : '';
 
   return `
@@ -2252,15 +2289,15 @@ function chartTooltipFailures() {
 
 function proxyTooltipDetails(check) {
   if (!check) return [];
-  const duration = (label, value) => `${label}：${proxyDuration(value) == null ? '-' : `${proxyDuration(value)} ms`}`;
+  const duration = (label, value) => `${label}：${value == null ? '-' : `${value} ms`}`;
   const lines = [
     `状态：${Number(check.ok) === 1 ? '成功' : '失败'}`,
-    duration('真实链路总耗时', check.total_ms),
-    duration('TLS / 协议握手', check.handshake_ms),
-    duration('首字节时间', check.first_byte_ms),
+    duration('真实链路总耗时', proxyDisplayDuration(check, 'total_ms')),
+    duration('TLS / 协议握手', proxyDisplayDuration(check, 'handshake_ms')),
+    duration('首字节时间', proxyDisplayDuration(check, 'first_byte_ms')),
   ];
-  if (check.stage) lines.push(`阶段：${check.stage}`);
-  if (check.error) lines.push(`错误：${check.error}`);
+  if (check.stage) lines.push(`阶段：${proxyStageLabel(check.stage)}`);
+  if (check.error) lines.push(`错误：${proxyErrorLabel(check.error)}`);
   return ['', ...lines];
 }
 
@@ -2335,9 +2372,9 @@ function renderProxyChecksPage() {
     <div class="check-card proxy-check-card" style="--delay:${Math.min(index * 35, 220)}ms">
       <div data-label="时间">${escapeHtml(fmtTime(check.checked_at || check.ts))}</div>
       <div data-label="状态" class="${checkStatusClass(check)}">${checkStatusLabel(check)}</div>
-      <div data-label="总耗时">${escapeHtml(check.total_ms == null ? '-' : `${check.total_ms} ms`)}</div>
-      <div data-label="握手">${escapeHtml(check.handshake_ms == null ? '-' : `${check.handshake_ms} ms`)}</div>
-      <div data-label="首字节">${escapeHtml(check.first_byte_ms == null ? '-' : `${check.first_byte_ms} ms`)}</div>
+      <div data-label="总耗时">${escapeHtml(proxyDisplayDuration(check, 'total_ms') == null ? '-' : `${proxyDisplayDuration(check, 'total_ms')} ms`)}</div>
+      <div data-label="握手">${escapeHtml(proxyDisplayDuration(check, 'handshake_ms') == null ? '-' : `${proxyDisplayDuration(check, 'handshake_ms')} ms`)}</div>
+      <div data-label="首字节">${escapeHtml(proxyDisplayDuration(check, 'first_byte_ms') == null ? '-' : `${proxyDisplayDuration(check, 'first_byte_ms')} ms`)}</div>
       <div class="small check-extra">${formatProxyCheckExtraHtml(check)}</div>
     </div>
   `).join('') || `<div class="empty">${escapeHtml(state.appearance.checks_no_records)}</div>`;
@@ -2350,8 +2387,8 @@ function renderProxyChecksPage() {
 
 function formatProxyCheckExtraHtml(check) {
   const parts = [];
-  if (check?.stage) parts.push(`阶段 <strong>${escapeHtml(check.stage)}</strong>`);
-  if (check?.error) parts.push(`<span class="fail-text">${escapeHtml(check.error)}</span>`);
+  if (check?.stage) parts.push(`阶段 <strong>${escapeHtml(proxyStageLabel(check.stage))}</strong>`);
+  if (check?.error) parts.push(`<span class="fail-text">${escapeHtml(proxyErrorLabel(check.error))}</span>`);
   if (check?.stale) parts.push('<span class="warn-text">数据过期</span>');
   return parts.join(' · ') || '真实代理握手成功';
 }
@@ -2366,7 +2403,7 @@ function proxyPercentile(sorted, ratio) {
 }
 
 function proxyDurationStats(checks, field) {
-  const values = checks.map(check => proxyDuration(check?.[field])).filter(value => value != null).sort((a, b) => a - b);
+  const values = checks.map(check => proxyDisplayDuration(check, field)).filter(value => value != null).sort((a, b) => a - b);
   if (!values.length) return { count: 0, min: null, p50: null, p95: null, max: null };
   return {
     count: values.length,
@@ -2401,16 +2438,16 @@ function renderProxyDetails(checks) {
     ? { value: '待检测', className: 'unknown', note: '等待 Agent 上报第一条真实握手结果' }
     : Number(latest.ok) === 1
       ? { value: latest.stale ? '数据过期' : '在线', className: latest.stale ? 'warn' : 'ok', note: `最近 ${fmtTime(latest.ts)}` }
-      : { value: '离线', className: 'down', note: `最近 ${fmtTime(latest.ts)}${latest.stage ? ` · 阶段 ${latest.stage}` : ''}` };
+      : { value: '离线', className: 'down', note: `最近 ${fmtTime(latest.ts)}${latest.stage ? ` · 阶段 ${proxyStageLabel(latest.stage)}` : ''}` };
   const rawCount = Math.max(rows.length, Number(state.proxyHistoryRawCount || 0));
   const totalStats = proxyDurationSummary(proxyDurationStats(rows, 'total_ms'));
   const handshakeStats = proxyDurationSummary(proxyDurationStats(rows, 'handshake_ms'));
   const firstByteStats = proxyDurationSummary(proxyDurationStats(rows, 'first_byte_ms'));
   const successRate = rows.length ? `${((okCount / rows.length) * 100).toFixed(2)}%` : '-';
   const latestResult = latest
-    ? (Number(latest.ok) === 1 ? '真实握手成功' : [latest.stage, latest.error].filter(Boolean).join(' · ') || '真实握手失败')
+    ? (Number(latest.ok) === 1 ? '真实握手成功' : [proxyStageLabel(latest.stage), proxyErrorLabel(latest.error)].filter(Boolean).join(' · ') || '真实握手失败')
     : '-';
-  const latestNote = latest ? `总耗时 ${proxyDuration(latest.total_ms) == null ? '-' : `${proxyDuration(latest.total_ms)} ms`}` : '暂无结果';
+  const latestNote = latest ? `总耗时 ${proxyDisplayDuration(latest, 'total_ms') == null ? '-' : `${proxyDisplayDuration(latest, 'total_ms')} ms`}` : '暂无结果';
   const card = (label, value, note, className = '') => `<div class="proxy-detail-card"><span class="proxy-detail-label">${escapeHtml(label)}</span><strong class="proxy-detail-value ${className}">${escapeHtml(value)}</strong><small class="proxy-detail-note">${escapeHtml(note)}</small></div>`;
   els.proxyDetailGrid.innerHTML = [
     card('当前状态', status.value, status.note, status.className),
@@ -2681,10 +2718,10 @@ function updateProxyChart() {
   };
   const definition = definitions[metric] || definitions['proxy-total'];
   const checks = filterProxyChecksByRange(state.proxyChecks, state.selectedRange);
-  const values = checks.map(check => proxyDuration(check?.[definition.field])).filter(value => value != null);
+  const values = checks.map(check => proxyDisplayDuration(check, definition.field)).filter(value => value != null);
   const points = checks.map(check => ({
     x: Number(check.ts),
-    y: proxyDuration(check?.[definition.field]),
+    y: proxyDisplayDuration(check, definition.field),
     proxyCheck: check,
   }));
   const okCount = checks.filter(check => Number(check.ok) === 1).length;
@@ -2705,7 +2742,7 @@ function updateProxyChart() {
 
   const average = values.reduce((sum, value) => sum + value, 0) / values.length;
   const stats = proxyDurationStats(checks, definition.field);
-  const latest = proxyDuration(checks[checks.length - 1]?.[definition.field]);
+  const latest = proxyDisplayDuration(checks[checks.length - 1], definition.field);
   els.chartMeta.textContent = `${rangeLabel(state.selectedRange)} · ${checks.length} 个原始样本 · 成功 ${okCount} · 失败 ${failCount} · 真握手${suffix}`;
   els.chartAvg.textContent = `平均 ${average.toFixed(0)} ms · P50 ${Math.round(stats.p50)} ms · P95 ${Math.round(stats.p95)} ms · 最近 ${latest == null ? '-' : `${latest} ms`}`;
   if (!state.chart) return;
