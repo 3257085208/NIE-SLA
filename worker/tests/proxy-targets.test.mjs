@@ -12,7 +12,7 @@ import {
   normalizePublicProxyTargets,
   updateProxyTarget,
 } from '../src/admin/proxy-targets.js';
-import { normalizeAgentProxyChecks } from '../src/metrics.js';
+import { getAgentProxyChecks, normalizeAgentProxyChecks } from '../src/metrics.js';
 import { ensureV6Schema } from '../src/admin/schema.js';
 
 globalThis.crypto ||= webcrypto;
@@ -88,6 +88,14 @@ const publicTargets = normalizePublicProxyTargets([{
 assert.deepEqual(publicTargets, [{ target_id: 'vless-main', name: 'VLESS renamed', protocol: 'vless', transport: 'tls-ws' }]);
 assert.equal('server' in publicTargets[0], false, 'public proxy metadata must not expose the endpoint');
 assert.equal(normalizePublicProxyTargets([{ id: 'invalid', name: 'invalid', protocol: 'unknown', transport: 'tcp' }]).length, 0, 'unknown protocol metadata must be rejected');
+const publicProxyResponse = await getAgentProxyChecks(env, new URL('https://api.example.test/api/proxy-checks?target_id=vless-main&hours=24'));
+const publicProxyBody = await publicProxyResponse.json();
+assert.equal(publicProxyResponse.status, 200);
+assert.deepEqual(publicProxyBody.target, {
+  target_id: 'vless-main', name: 'VLESS renamed', protocol: 'vless', transport: 'tls-ws', agent_name: 'Agent A',
+});
+assert.equal('server' in publicProxyBody.target, false, 'public proxy history metadata must not expose the endpoint');
+assert.equal('secret' in publicProxyBody, false, 'public proxy history must never expose credentials');
 assert.equal(normalizeAgentProxyChecks([{
   ...checks[0], stage: 'attacker-controlled', error: 'proxy.example.test:443/secret',
 }], now)[0].stage, 'canary');

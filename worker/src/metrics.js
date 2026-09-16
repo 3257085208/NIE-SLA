@@ -10,10 +10,13 @@ import { bufferedAgentStateEnabled, newerAgentMetricRow } from './agent-state.js
 import { getPingIntervalSec } from './ping-config.js';
 import { getAgentReportInterval } from './admin/settings.js';
 import { getTrafficCorrection } from './admin/traffic-corrections.js';
+import { normalizePublicProxyChecks } from './admin/proxy-targets.js';
 
 const MAX_AGENT_SAMPLES_PER_REPORT = 910;
 const MAX_AGENT_PINGS_PER_REPORT = 5_000;
 const MAX_AGENT_PROXY_CHECKS_PER_REPORT = 100;
+const MAX_AGENT_PROXY_HISTORY_HOURS = 720;
+const MAX_AGENT_PROXY_HISTORY_POINTS = 50_000;
 const PROXY_CHECK_STAGES = new Set(['config', 'connect', 'handshake', 'canary', 'runtime', 'failed']);
 const PROXY_CHECK_ERRORS = new Set(['timeout', 'auth_failed', 'unsupported', 'handshake_failed', 'canary_failed', 'invalid_config', 'runtime_failed']);
 const MAX_TELEMETRY_HOURS_PER_REPORT = 25;
@@ -180,7 +183,7 @@ export function normalizeAgentProxyChecks(value, fallbackTs = nowSec()) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, MAX_AGENT_PROXY_CHECKS_PER_REPORT).flatMap((item) => {
     const targetId = String(item?.target_id || item?.id || '').trim().slice(0, 128);
-    const protocol = ['socks5', 'http', 'ss', 'vless', 'vmess', 'trojan', 'hysteria2', 'snell', 'anytls'].includes(String(item?.protocol || '').trim().toLowerCase())
+    const protocol = ['socks5', 'http', 'ss', 'vless', 'vmess', 'trojan', 'hysteria2', 'snell', 'anytls', 'tuic'].includes(String(item?.protocol || '').trim().toLowerCase())
       ? String(item.protocol).trim().toLowerCase()
       : '';
     const ts = Math.floor(Number(item?.ts || fallbackTs));
@@ -281,10 +284,11 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   const decodedSeries = pingSeriesToPoints(metrics.ping_series);
   if (decodedSeries.error) throw new ApiError(400, decodedSeries.error);
   const pings = legacyPings.concat(decodedSeries.pings);
-  const telemetryBatch = filterTelemetryBatch(rawSamples, pings, ts);
+  const telemetryBatch = filterTelemetryBatch(rawSamples, pings, proxyChecks, ts);
   if (telemetryBatch.error) throw new ApiError(400, telemetryBatch.error);
   const telemetrySamples = telemetryBatch.samples;
   const telemetryPings = telemetryBatch.pings;
+  const telemetryProxyChecks = telemetryBatch.proxy_checks;
   const telemetryDropped = telemetryBatch.dropped;
   if (telemetryDropped > 0 && options.wss !== true) {
     console.error(`agent telemetry: dropped ${telemetryDropped} out-of-window points for ${agentId}`);
@@ -293,10 +297,10 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   let latestState = null;
   let mapped = null;
   try {
-    const persisted = await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples: telemetrySamples, pings: telemetryPings, proxyChecks, ts }, options);
+    const persisted = await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples: telemetrySamples, pings: telemetryPings, proxyChecks: telemetryProxyChecks, ts }, options);
     if (persisted && typeof persisted === 'object' && 'latest_state' in persisted && options.wss === true) {
       latestState = persisted.latest_state;
-      mapped = { points: persisted.mapped_points || [], pings: persisted.mapped_pings || [] };
+      mapped = { points: persisted.mapped_points || [], pings: persisted.mapped_pings || [], proxyChecks: persisted.mapped_proxy_checks || [] };
     } else {
       latestState = persisted;
     }
@@ -324,6 +328,7 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   if (options.wss === true) {
     result.mapped_points = mapped?.points || [];
     result.mapped_pings = mapped?.pings || [];
+    result.mapped_proxy_checks = mapped?.proxyChecks || [];
     result.net = metrics?.net || null;
   }
   return result;
@@ -461,6 +466,130 @@ export async function getAgentMetricsCached(request, env, url, ctx = null) {
   return response;
 }
 
+export async function getAgentProxyChecks(env, url, ctx = null) {
+  if (!env.DB) return json({ ok: true, target: null, latest: null, checks: [], source: 'unavailable' }, 200, env);
+
+  const targetId = String(url.searchParams.get('target_id') || '').trim().slice(0, 128);
+  if (!targetId) return json({ ok: false, error: '缺少代理检测目标 ID' }, 400, env);
+  const target = await env.DB.prepare(`
+    SELECT p.id, p.agent_id, p.name, p.protocol, p.transport, t.name AS agent_name
+    FROM proxy_targets p
+    INNER JOIN targets t ON t.id = p.agent_id
+    WHERE p.id = ? AND p.enabled = 1 AND t.enabled = 1
+  `).bind(targetId).first();
+  if (!target) return json({ ok: false, error: '未找到请求的资源' }, 404, env);
+
+  const { hours, maxPoints, publicMaxHours, hardMax } = resolvePublicProxyChecksQuery(url, env);
+  const until = nowSec();
+  const since = until - hours * 3600;
+  const warnings = [];
+  const history = [];
+  let r2 = { loaded: false, count: 0 };
+  try {
+    r2 = await loadAgentProxyChecksR2History(env, target.agent_id, since, until, history, ctx, targetId);
+  } catch (error) {
+    console.error('Agent proxy check history unavailable:', String(error?.message || error));
+    warnings.push('代理历史数据暂时不可用');
+  }
+
+  let latestState = null;
+  try {
+    const row = await env.DB.prepare(`SELECT proxy_checks, updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(target.agent_id).first();
+    latestState = row ? { proxy_checks: parseJsonSafe(row.proxy_checks), updated_at: row.updated_at || null } : null;
+  } catch (error) {
+    warnings.push('代理最新状态暂时不可用');
+  }
+  if (bufferedAgentStateEnabled(env)) {
+    const buffered = await readBufferedAgentLatestState(env, target.agent_id).catch(() => null);
+    if (buffered && (!latestState || agentStateTimestamp(buffered.updated_at) >= agentStateTimestamp(latestState.updated_at))) latestState = buffered;
+  }
+
+  const byKey = new Map();
+  for (const check of history) {
+    if (String(check?.target_id || '') === targetId) byKey.set(proxyCheckKey(check), check);
+  }
+  for (const check of normalizeAgentProxyChecks(latestState?.proxy_checks, until)) {
+    if (check.target_id === targetId && check.ts >= since && check.ts <= until) byKey.set(proxyCheckKey(check), check);
+  }
+  const rawChecks = [...byKey.values()].sort((a, b) => a.ts - b.ts);
+  const returnedChecks = rawChecks.length > maxPoints ? rawChecks.slice(-maxPoints) : rawChecks;
+  const checks = returnedChecks.map(check => publicProxyCheck(check, until, target));
+  const latest = checks[checks.length - 1] || null;
+  const source = env.ARCHIVE ? (r2.loaded ? 'r2' : 'r2-empty') : (rawChecks.length ? 'd1-latest' : 'unavailable');
+
+  return json({
+    ok: true,
+    target: {
+      target_id: String(target.id),
+      name: String(target.name || target.id).slice(0, 96),
+      protocol: String(target.protocol || '').toLowerCase(),
+      transport: String(target.transport || 'tcp').toLowerCase(),
+      agent_name: String(target.agent_name || '').slice(0, 96) || null,
+    },
+    latest,
+    checks,
+    history_raw_count: rawChecks.length,
+    history_returned_count: checks.length,
+    history_truncated: rawChecks.length > checks.length,
+    history_downsampled: false,
+    source,
+    retention_hours: clamp(Number(env.PROXY_CHECK_R2_RETENTION_HOURS || MAX_AGENT_PROXY_HISTORY_HOURS), 1, MAX_AGENT_PROXY_HISTORY_HOURS),
+    query: { hours, max_points: maxPoints, public_max_hours: publicMaxHours, hard_max_points: hardMax },
+    warnings,
+  }, 200, env, { 'cache-control': 'public, max-age=15' });
+}
+
+export async function getAgentProxyChecksCached(request, env, url, ctx = null) {
+  if (!globalThis.caches?.default || request.method !== 'GET') return getAgentProxyChecks(env, url, ctx);
+  const cacheUrl = normalizedProxyChecksCacheUrl(url, env);
+  const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
+  const cached = await caches.default.match(cacheKey);
+  if (cached) return cached;
+  const response = await getAgentProxyChecks(env, url, ctx);
+  if (response.ok) {
+    const task = caches.default.put(cacheKey, response.clone());
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(task);
+    else await task;
+  }
+  return response;
+}
+
+export function resolvePublicProxyChecksQuery(url, env = {}) {
+  const publicMaxHours = clamp(Number(env.PROXY_CHECK_PUBLIC_MAX_HOURS || MAX_AGENT_PROXY_HISTORY_HOURS), 1, MAX_AGENT_PROXY_HISTORY_HOURS);
+  const hours = clamp(Math.floor(Number(url.searchParams.get('hours') || 24)), 1, publicMaxHours);
+  const hardMax = clamp(Number(env.PROXY_CHECK_HARD_MAX_POINTS || MAX_AGENT_PROXY_HISTORY_POINTS), 1, MAX_AGENT_PROXY_HISTORY_POINTS);
+  const maxPointsRaw = Number(url.searchParams.get('max_points') || hardMax);
+  const maxPoints = clamp(Math.floor(Number.isFinite(maxPointsRaw) && maxPointsRaw > 0 ? maxPointsRaw : hardMax), 1, hardMax);
+  return { hours, maxPoints, publicMaxHours, hardMax };
+}
+
+function normalizedProxyChecksCacheUrl(url, env) {
+  const normalized = new URL(url.origin + '/api/proxy-checks');
+  const { hours, maxPoints } = resolvePublicProxyChecksQuery(url, env);
+  normalized.searchParams.set('target_id', String(url.searchParams.get('target_id') || '').trim().slice(0, 128));
+  normalized.searchParams.set('hours', String(hours));
+  normalized.searchParams.set('max_points', String(maxPoints));
+  normalized.searchParams.set('privacy', publicCachePrivacyVersion(env));
+  return normalized;
+}
+
+function publicProxyCheck(check, now, target = null) {
+  const normalized = normalizePublicProxyChecks([{
+    ...check,
+    target_id: target?.id || check?.target_id,
+    name: target?.name || check?.name,
+    protocol: target?.protocol || check?.protocol,
+  }], now)[0];
+  return normalized || null;
+}
+
+function agentStateTimestamp(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric > 1e12 ? numeric / 1000 : numeric;
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed / 1000 : 0;
+}
+
 function normalizedMetricsCacheUrl(url, env) {
   const normalized = new URL(url.origin + '/api/agent/metrics');
   const { hours, maxPoints } = resolvePublicMetricsQuery(url, env);
@@ -496,11 +625,12 @@ export function defaultMetricsMaxPointsForHours(hours, env = {}) {
   return clamp(Number(env.AGENT_METRICS_MAX_POINTS || 900), 60, 10000);
 }
 
-function filterTelemetryBatch(samples, pings, now) {
+function filterTelemetryBatch(samples, pings, proxyChecks, now) {
   if (pings.length > MAX_AGENT_PINGS_PER_REPORT) return { error: `too many pings; max ${MAX_AGENT_PINGS_PER_REPORT}` };
   const candidates = [];
   const keptSamples = [];
   const keptPings = [];
+  const keptProxyChecks = [];
   let dropped = 0;
   const keep = (point, sink) => {
     const ts = Math.floor(Number(point?.ts || 0));
@@ -511,6 +641,7 @@ function filterTelemetryBatch(samples, pings, now) {
   };
   for (const point of samples) keep(point, keptSamples);
   for (const point of pings) keep(point, keptPings);
+  for (const point of proxyChecks) keep(point, keptProxyChecks);
   let allowedBuckets = null;
   const bucketOf = (ts) => hourStartSec(ts);
   const allBuckets = new Set(candidates.map(candidate => bucketOf(candidate.ts)));
@@ -521,7 +652,7 @@ function filterTelemetryBatch(samples, pings, now) {
     if (allowedBuckets && !allowedBuckets.has(bucketOf(candidate.ts))) { dropped += 1; continue; }
     candidate.sink.push(candidate.point);
   }
-  return { samples: keptSamples, pings: keptPings, dropped };
+  return { samples: keptSamples, pings: keptPings, proxy_checks: keptProxyChecks, dropped };
 }
 
 const MAX_TRAFFIC_COUNTER_BYTES = 1e15;
@@ -784,16 +915,39 @@ async function loadAgentMetricsR2History(env, agentId, since, until, historyByTs
   return { loaded: count > 0, count };
 }
 
-export async function writeAgentTelemetryR2History(env, agentId, points = [], pings = []) {
-  if (!env.ARCHIVE || (!points?.length && !pings?.length)) return { ok: true, skipped: true };
-  const buffered = await appendBufferedAgentTelemetry(env, agentId, points, pings);
+export async function loadAgentProxyChecksR2History(env, agentId, since, until, out = [], ctx = null, targetId = '') {
+  if (!env.ARCHIVE) return { loaded: false, count: 0, checks: out };
+  const id = sanitizeAgentId(agentId);
+  await mapWithConcurrency(historyHours(since, until), 24, async (hour) => {
+    const telemetry = await readR2Json(env, agentTelemetryHourKey(env, id, hour), null);
+    for (const check of proxyCheckPointsFromPayload(telemetry?.proxy_checks)) {
+      if ((!targetId || check.target_id === targetId) && check.ts >= since && check.ts <= until) out.push(check);
+    }
+    return 0;
+  });
+  const buffered = await readBufferedAgentTelemetry(env, id, since, until).catch(() => ({ proxy_checks: [] }));
+  for (const check of buffered.proxy_checks || []) {
+    const normalized = normalizeAgentProxyChecks([check])[0];
+    if (normalized && (!targetId || normalized.target_id === targetId) && normalized.ts >= since && normalized.ts <= until) out.push(normalized);
+  }
+  const unique = new Map();
+  for (const check of out) {
+    if (check?.target_id && check?.ts) unique.set(proxyCheckKey(check), check);
+  }
+  out.splice(0, out.length, ...[...unique.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id)));
+  return { loaded: out.length > 0, count: out.length, checks: out };
+}
+
+export async function writeAgentTelemetryR2History(env, agentId, points = [], pings = [], proxyChecks = []) {
+  if (!env.ARCHIVE || (!points?.length && !pings?.length && !proxyChecks?.length)) return { ok: true, skipped: true };
+  const buffered = await appendBufferedAgentTelemetry(env, agentId, points, pings, proxyChecks);
   if (buffered) return buffered;
   const lock = await acquireAgentHistoryLock(env, agentId);
   if (env.DB && !lock) throw new Error('Agent 历史数据正在写入，请重试本次上报');
   try {
   const byHour = new Map();
   const ensureHour = (hour) => {
-    const bucket = byHour.get(hour) || { points: [], pings: [] };
+    const bucket = byHour.get(hour) || { points: [], pings: [], proxyChecks: [] };
     byHour.set(hour, bucket);
     return bucket;
   };
@@ -810,9 +964,16 @@ export async function writeAgentTelemetryR2History(env, agentId, points = [], pi
     if (!ts || !normalized.target_id) continue;
     ensureHour(hourStartSec(ts)).pings.push(normalized);
   }
+  for (const check of proxyChecks || []) {
+    const normalized = normalizeAgentProxyChecks([check])[0];
+    const ts = Number(normalized?.ts || 0);
+    if (!normalized || !ts) continue;
+    ensureHour(hourStartSec(ts)).proxyChecks.push(normalized);
+  }
 
   let written = 0;
   let pingWritten = 0;
+  let proxyWritten = 0;
   for (const [hour, hourData] of byHour.entries()) {
     const telemetryKey = agentTelemetryHourKey(env, agentId, hour);
     const existingTelemetry = await readR2JsonStrict(env, telemetryKey);
@@ -839,6 +1000,14 @@ export async function writeAgentTelemetryR2History(env, agentId, points = [], pi
     }
     for (const ping of hourData.pings) byPing.set(pingKey(ping), ping);
     const mergedPings = [...byPing.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
+    const existingProxyChecks = proxyCheckPointsFromPayload(existingTelemetry?.proxy_checks);
+    const byProxyCheck = new Map();
+    for (const check of existingProxyChecks) {
+      const normalized = normalizeAgentProxyChecks([check])[0];
+      if (normalized && normalized.ts >= hour && normalized.ts < hour + 3600) byProxyCheck.set(proxyCheckKey(normalized), normalized);
+    }
+    for (const check of hourData.proxyChecks) byProxyCheck.set(proxyCheckKey(check), check);
+    const mergedProxyChecks = [...byProxyCheck.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
     const dayHour = utcDayHour(hour);
     await writeR2Json(env, telemetryKey, {
       schema: 'nie-sla-agent-telemetry-hour-v1',
@@ -848,11 +1017,13 @@ export async function writeAgentTelemetryR2History(env, agentId, points = [], pi
       updated_at: new Date().toISOString(),
       metrics: { schema: 'nie-sla-agent-metrics-hour-v2', series: metricPointsToColumns(merged) },
       pings: { schema: 'nie-sla-agent-pings-hour-v2', series: pingPointsToSeries(mergedPings) },
+      proxy_checks: { schema: 'nie-sla-proxy-checks-hour-v1', series: proxyCheckPointsToSeries(mergedProxyChecks) },
     }, { schema: 'nie-sla-agent-telemetry-hour-v1', agent_id: sanitizeAgentId(agentId), day: dayHour.day, hour: dayHour.hour });
     written += merged.length;
     pingWritten += mergedPings.length;
+    proxyWritten += mergedProxyChecks.length;
   }
-  return { ok: true, hours: byHour.size, points: written, pings: pingWritten };
+  return { ok: true, hours: byHour.size, points: written, pings: pingWritten, proxy_checks: proxyWritten };
   } finally {
     await releaseAgentHistoryLock(env, lock);
   }
@@ -904,7 +1075,11 @@ export async function deleteAgentTelemetry(env, agentId) {
 
 export async function cleanupAgentMetricsR2(env, options = {}) {
   if (!env.ARCHIVE || !env.DB) return { ok: true, skipped: true };
-  const retentionHours = options.hours == null ? Number(env.AGENT_METRICS_R2_RETENTION_HOURS || 72) : Number(options.hours);
+  const configuredRetention = Math.max(
+    Number(env.AGENT_METRICS_R2_RETENTION_HOURS || 72),
+    Number(env.PROXY_CHECK_R2_RETENTION_HOURS || MAX_AGENT_PROXY_HISTORY_HOURS),
+  );
+  const retentionHours = options.hours == null ? configuredRetention : Number(options.hours);
   const retention = clamp(retentionHours, 1, 720) * 3600;
   const cutoffHour = hourStartSec(nowSec() - retention);
   const maxDeletes = clamp(Number(options.max_deletes || 500), 1, 5000);
@@ -1385,6 +1560,73 @@ export function pingPointsFromPayload(payload) {
   return (Array.isArray(payload.pings) ? payload.pings : []).map(ping => normalizePingPoint(ping));
 }
 
+export function proxyCheckPointsToSeries(checks) {
+  const grouped = new Map();
+  for (const check of checks || []) {
+    const normalized = normalizeAgentProxyChecks([check])[0];
+    if (!normalized?.target_id || !normalized.ts) continue;
+    const list = grouped.get(normalized.target_id) || [];
+    list.push(normalized);
+    grouped.set(normalized.target_id, list);
+  }
+  return [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([targetId, list]) => {
+    list.sort((a, b) => a.ts - b.ts);
+    const first = list[0];
+    const t0 = Number(first.ts);
+    return {
+      target_id: targetId,
+      name: first.name,
+      protocol: first.protocol,
+      t0,
+      dt: list.map(check => check.ts - t0),
+      latency_ms: list.map(check => check.latency_ms),
+      handshake_ms: list.map(check => check.handshake_ms),
+      first_byte_ms: list.map(check => check.first_byte_ms),
+      total_ms: list.map(check => check.total_ms),
+      ok: list.map(check => check.ok),
+      stage: list.map(check => check.stage),
+      error: list.map(check => check.error),
+    };
+  });
+}
+
+export function proxyCheckPointsFromPayload(payload) {
+  if (!payload) return [];
+  if (Array.isArray(payload.checks)) return normalizeAgentProxyChecks(payload.checks);
+  if (!Array.isArray(payload.series)) return [];
+  const out = [];
+  for (const series of payload.series) {
+    const targetId = String(series?.target_id || '').trim();
+    const name = String(series?.name || targetId).trim();
+    const protocol = String(series?.protocol || '').trim().toLowerCase();
+    const t0 = Number(series?.t0 || 0);
+    const dt = Array.isArray(series?.dt) ? series.dt : [];
+    if (!targetId || !protocol || !Number.isFinite(t0) || t0 <= 0) continue;
+    for (let index = 0; index < dt.length; index += 1) {
+      const ts = t0 + Number(dt[index] || 0);
+      const check = normalizeAgentProxyChecks([{
+        target_id: targetId,
+        name,
+        protocol,
+        ts,
+        latency_ms: series.latency_ms?.[index],
+        handshake_ms: series.handshake_ms?.[index],
+        first_byte_ms: series.first_byte_ms?.[index],
+        total_ms: series.total_ms?.[index],
+        ok: series.ok?.[index],
+        stage: series.stage?.[index],
+        error: series.error?.[index],
+      }])[0];
+      if (check) out.push(check);
+    }
+  }
+  return out;
+}
+
+function proxyCheckKey(check) {
+  return `${String(check?.target_id || '')}:${Number(check?.ts || 0)}`;
+}
+
 function decodeStoredPingSeries(seriesList) {
   const out = [];
   for (const series of seriesList || []) {
@@ -1512,7 +1754,7 @@ async function persistAgentMetrics(env, data, options = {}) {
   const temperatureSensors = normalizeTemperatureSensors(vpsInfo?.temperature_sensors);
   if (temperatureSensors.length) rawPoints[rawPoints.length - 1].temperature_sensors = temperatureSensors;
   if (env.ARCHIVE && !wssFast) {
-    await writeAgentTelemetryR2History(env, agentId, rawPoints, rawPings);
+    await writeAgentTelemetryR2History(env, agentId, rawPoints, rawPings, rawProxyChecks);
   }
 
   if (rawPings.length > 0 && parseBoolean(env.AGENT_PINGS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE)) await writePingHistory(env, agentId, rawPings, ts);
@@ -1526,7 +1768,7 @@ async function persistAgentMetrics(env, data, options = {}) {
     try { await env.DB.prepare(`DELETE FROM agent_metrics_history WHERE agent_id = ? AND ts < ?`).bind(agentId, ts - retentionSeconds(env, 'AGENT_METRICS_RETENTION_HOURS', 6, 1, 72)).run(); } catch (_) {}
   }
   if (wssFast) {
-    return { latest_state: latestState, mapped_points: rawPoints, mapped_pings: rawPings };
+    return { latest_state: latestState, mapped_points: rawPoints, mapped_pings: rawPings, mapped_proxy_checks: rawProxyChecks };
   }
   return latestState;
 }

@@ -261,6 +261,9 @@ button { border: 0; cursor: pointer; }
 .meta-proxy-down { color: #c2413a; background: #fff1f1; }
 .meta-proxy-stale { color: #77869d; background: #f1f4f7; }
 .meta-proxy-pending { color: #8a6510; background: #fff9e8; }
+.meta-proxy-kind { color: #2563eb; background: #eef4ff; border: 1px solid #c9dcff; }
+.meta-proxy-parent { color: #64748b; background: #f4f6f8; border: 1px solid #dce2e8; }
+.proxy-service-note { min-width: 0; color: var(--muted); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
 
 .region-flag {
   width: 18px;
@@ -725,6 +728,9 @@ button { border: 0; cursor: pointer; }
   padding: 11px 18px;
   border-top: 1px solid var(--line);
   font-size: 14px;
+}
+.proxy-check-card {
+  grid-template-columns: 180px 80px 110px 110px 110px minmax(160px, 1fr);
 }
 .check-card:first-child { border-top: 0; }
 .ok-text { color: var(--green); font-weight: 600; }

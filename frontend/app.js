@@ -1,9 +1,9 @@
-import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260915-proxy5';
+import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260916-proxy6';
 import {
   billingCycleSuffix,
   isLifetimeBilling,
   normalizeBillingCycle,
-} from './js/shared/billing.js?v=20260915-proxy5';
+} from './js/shared/billing.js?v=20260916-proxy6';
 import {
   cssEscape,
   clampNumber,
@@ -18,11 +18,11 @@ import {
   normalizeCityName,
   pad,
   timeAgoSec,
-} from './js/shared/format.js?v=20260915-proxy5';
-import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260915-proxy5';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260915-proxy5';
-import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260915-proxy5';
-import { countryByCode } from './js/shared/target-catalogs.js?v=20260915-proxy5';
+} from './js/shared/format.js?v=20260916-proxy6';
+import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260916-proxy6';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260916-proxy6';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260916-proxy6';
+import { countryByCode } from './js/shared/target-catalogs.js?v=20260916-proxy6';
 import {
   clampChartRange,
   countChartGaps,
@@ -30,15 +30,15 @@ import {
   filterChecksByRange,
   hexToRgba,
   trimEmptyPointEdges,
-} from './js/shared/chart-data.js?v=20260915-proxy5';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260915-proxy5';
-import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260915-proxy5';
-import { unlockState } from './js/shared/unlock.js?v=20260915-proxy5';
-import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260915-proxy5';
-import { targetSlaPercentage } from './js/shared/sla.js?v=20260915-proxy5';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260915-proxy5';
-import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260915-proxy5';
-import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260915-proxy5';
+} from './js/shared/chart-data.js?v=20260916-proxy6';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260916-proxy6';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260916-proxy6';
+import { unlockState } from './js/shared/unlock.js?v=20260916-proxy6';
+import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260916-proxy6';
+import { targetSlaPercentage } from './js/shared/sla.js?v=20260916-proxy6';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260916-proxy6';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260916-proxy6';
+import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260916-proxy6';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -55,6 +55,8 @@ const state = {
   filteredText: '',
   selectedId: null,
   selectedName: '',
+  selectedKind: 'target',
+  selectedProxy: null,
   selectedTargetIntervalSec: 300,
   selectedRange: 'day',
   chart: null,
@@ -66,6 +68,10 @@ const state = {
   chartPan: null,
   allChecks: [],
   checksLoadedHours: 0,
+  proxyChecks: [],
+  proxyChecksLoadedHours: 0,
+  proxyHistoryRawCount: 0,
+  proxyHistoryTruncated: false,
   dailyPoints: [],
   checksSource: '',
   checksPage: 1,
@@ -232,11 +238,13 @@ document.querySelectorAll('.metric-tab').forEach((btn) => {
     state.selectedMetric = btn.dataset.metric;
     syncContinuousButtonVisibility();
     const isLatency = state.selectedMetric === 'latency';
+    const isProxyMetric = state.selectedMetric.startsWith('proxy-');
     const rangeTabs = document.getElementById('rangeTabs');
     const metricRangeTabs = document.getElementById('metricRangeTabs');
-    if (rangeTabs) rangeTabs.style.display = isLatency ? '' : 'none';
-    if (metricRangeTabs) metricRangeTabs.style.display = isLatency ? 'none' : '';
-    if (!isLatency) ensureTargetMetricsLoaded();
+    if (rangeTabs) rangeTabs.style.display = (isLatency || isProxyMetric) ? '' : 'none';
+    if (metricRangeTabs) metricRangeTabs.style.display = (isLatency || isProxyMetric) ? 'none' : '';
+    if (isProxyMetric) ensureChecksForSelectedRange();
+    else if (!isLatency) ensureTargetMetricsLoaded();
     updateChartForCurrentRange();
     renderVPSInfo();
   });
@@ -262,7 +270,7 @@ document.querySelectorAll('.metric-range-tab').forEach((btn) => {
     document.querySelectorAll('.metric-range-tab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     state.selectedMetricRange = btn.dataset.range;
-    ensureTargetMetricsLoaded();
+    if (!isProxyMetric(state.selectedMetric)) ensureTargetMetricsLoaded();
     updateChartForCurrentRange();
   });
 });
@@ -824,18 +832,23 @@ function renderGroups(data) {
   const summaries = indexSummaries(data.summaries || []);
   const days = data.days || [];
   const allTargets = data.targets || [];
+  const proxyServices = buildProxyServices(data);
   const text = state.filteredText;
   const targets = text
     ? allTargets.filter(target => targetSearchText(target).includes(text))
     : allTargets;
+  const visibleProxyServices = text
+    ? proxyServices.filter(target => targetSearchText(target).includes(text))
+    : proxyServices;
 
-  if (!targets.length) {
+  if (!targets.length && !visibleProxyServices.length) {
     els.groups.innerHTML = `<div class="empty">${escapeHtml(state.appearance.no_search_results)}</div>`;
     if (els.inlineChartPanel) els.inlineChartPanel.hidden = true;
     return;
   }
 
   const groups = groupByDimension(targets, state.groupByMode || 'group');
+  if (visibleProxyServices.length) groups['代理'] = visibleProxyServices;
   els.groups.innerHTML = Object.entries(groups)
     .map(([name, list], index) => renderGroup(name, list, days, summaries, index))
     .join('');
@@ -861,6 +874,10 @@ function renderGroups(data) {
     });
   });
 
+  if (state.selectedKind === 'proxy' && state.selectedId) {
+    const currentProxy = proxyServices.find(service => service.id === state.selectedId);
+    if (currentProxy) state.selectedProxy = currentProxy;
+  }
   if (state.selectedId) {
     const selected = document.querySelector(`.service[data-id="${cssEscape(state.selectedId)}"]`);
     if (selected) {
@@ -870,6 +887,71 @@ function renderGroups(data) {
       els.inlineChartPanel.hidden = true;
     }
   }
+}
+
+function buildProxyServices(data) {
+  const services = [];
+  for (const parent of data?.targets || []) {
+    const configs = Array.isArray(parent?.proxy_targets) ? parent.proxy_targets : [];
+    const checks = Array.isArray(parent?.proxy_checks) ? parent.proxy_checks : [];
+    const checkById = new Map(checks.map(check => [String(check?.target_id || ''), normalizeProxyCheck(check)]));
+    const seen = new Set();
+    const append = (config, check = null) => {
+      const targetId = String(config?.target_id || check?.target_id || '').trim();
+      if (!targetId || seen.has(targetId)) return;
+      const protocol = String(config?.protocol || check?.protocol || '').trim().toLowerCase();
+      if (!protocol) return;
+      seen.add(targetId);
+      const normalizedCheck = check || checkById.get(targetId) || null;
+      services.push({
+        id: proxyServiceId(parent.id, targetId),
+        kind: 'proxy',
+        type: 'proxy',
+        name: String(config?.name || normalizedCheck?.name || targetId).trim().slice(0, 96),
+        group_name: '代理',
+        protocol,
+        transport: String(config?.transport || 'tcp').trim().toLowerCase(),
+        proxy_target_id: targetId,
+        proxy_agent_id: String(parent.id || '').trim(),
+        proxy_parent_name: serviceDisplayName(parent),
+        proxy_check: normalizedCheck,
+        proxy_agent_online: parent.agent_online === true,
+        interval_sec: Math.max(300, Number(parent.interval_sec || 300)),
+      });
+    };
+    for (const config of configs) append(config);
+    for (const check of checks) append(check, normalizeProxyCheck(check));
+  }
+  return services;
+}
+
+function proxyServiceId(agentId, targetId) {
+  return `proxy:${encodeURIComponent(String(agentId || ''))}:${encodeURIComponent(String(targetId || ''))}`;
+}
+
+function normalizeProxyCheck(check) {
+  if (!check || typeof check !== 'object') return null;
+  const ts = timestampSeconds(check.checked_at ?? check.ts);
+  if (!ts) return null;
+  const numberOrNull = value => {
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
+  };
+  return {
+    target_id: String(check.target_id || check.id || '').trim(),
+    name: String(check.name || '').trim(),
+    protocol: String(check.protocol || '').trim().toLowerCase(),
+    ts,
+    checked_at: ts,
+    latency_ms: numberOrNull(check.latency_ms),
+    handshake_ms: numberOrNull(check.handshake_ms),
+    first_byte_ms: numberOrNull(check.first_byte_ms),
+    total_ms: numberOrNull(check.total_ms),
+    ok: Number(check.ok) === 1 ? 1 : 0,
+    stage: String(check.stage || '').trim(),
+    error: String(check.error || '').trim(),
+    stale: check.stale === true,
+  };
 }
 function renderGroup(name, list, days, summaries, index = 0) {
   const checked = list.filter(targetHasStatus);
@@ -915,6 +997,7 @@ function renderGroup(name, list, days, summaries, index = 0) {
 }
 
 function renderService(t, days, summaries) {
+  if (t.kind === 'proxy') return renderProxyService(t);
   const checked = targetHasStatus(t);
   const isUp = targetIsUp(t);
   const stale = checked && isUp && isTargetStale(t);
@@ -996,6 +1079,51 @@ function renderService(t, days, summaries) {
   `;
 }
 
+function renderProxyService(t) {
+  const check = normalizeProxyCheck(t.proxy_check);
+  const checked = Boolean(check?.ts);
+  const isUp = checked && Number(check.ok) === 1;
+  const stale = checked && isUp && (check.stale === true || isTargetStale(t));
+  const status = checked ? (isUp ? (stale ? '数据延迟' : '运行正常') : '离线') : '待检测';
+  const statusClass = checked ? (isUp ? (stale ? 'degraded' : '') : 'down') : 'unknown';
+  const selectedClass = t.id === state.selectedId ? ' selected' : '';
+  const displayName = String(t.name || t.proxy_target_id || '代理').trim();
+  const protocol = String(t.protocol || '').toUpperCase();
+  const transport = String(t.transport || 'tcp').toUpperCase();
+  const total = check?.total_ms;
+  const totalHtml = isUp && Number.isFinite(Number(total)) ? `<strong title="真实代理链路总耗时">${Math.round(Number(total))} ms</strong>` : '<strong title="真实代理链路总耗时">-</strong>';
+  const handshake = Number.isFinite(Number(check?.handshake_ms)) ? `${Math.round(Number(check.handshake_ms))} ms` : '-';
+  const firstByte = Number.isFinite(Number(check?.first_byte_ms)) ? `${Math.round(Number(check.first_byte_ms))} ms` : '-';
+  const note = checked
+    ? `真实握手 · TLS / 协议 ${handshake} · 首字节 ${firstByte}`
+    : '等待 Agent 完成真实代理握手检测';
+  const detail = checked && check.error ? ` · ${check.error}` : '';
+  const freshness = stale ? ' · 数据过期' : '';
+
+  return `
+    <div class="service proxy-service ${statusClass}${selectedClass}" data-id="${escapeAttr(t.id)}" data-name="${escapeAttr(displayName)}">
+      <div class="service-name">
+        <span class="service-title-line">
+          <span class="service-title-text">${escapeHtml(displayName)}</span>
+        </span>
+        <span class="service-meta">
+          <span class="meta-badge meta-proxy-kind">${escapeHtml(protocol)}</span>
+          <span class="meta-badge meta-proxy-kind">${escapeHtml(transport)}</span>
+          <span class="meta-badge meta-proxy-parent">${escapeHtml(t.proxy_parent_name || 'Agent')}</span>
+        </span>
+      </div>
+      <div class="service-status">${status}</div>
+      <div class="service-latency${isUp && total != null ? '' : ' is-placeholder'}">${totalHtml}</div>
+      <div class="service-sla sla-unknown" title="代理可用率将在独立历史数据积累后显示" aria-label="代理可用率将在独立历史数据积累后显示">
+        <strong class="service-sla-value">-</strong>
+      </div>
+      <div class="service-bottom-row">
+        <div class="proxy-service-note" title="${escapeAttr(`${note}${detail}${freshness}`)}">${escapeHtml(`${note}${detail}${freshness}`)}</div>
+      </div>
+    </div>
+  `;
+}
+
 async function openNodeQualityReport(targetId, targetName = '', returnTarget = null) {
   if (!targetId) return;
   closeNodeQualityReport();
@@ -1044,6 +1172,10 @@ if (document.addEventListener) {
 
 function targetHasPublicLatency(target) {
   return Number(target?.no_public_ip || 0) !== 1;
+}
+
+function isProxyMetric(metric) {
+  return String(metric || '').startsWith('proxy-');
 }
 
 function proxyStatusBadgeHtml(target) {
@@ -1114,7 +1246,9 @@ function configuredChartColor(value, fallback) {
 }
 
 function isTargetStale(target = {}) {
-  const source = target?.status_source === 'agent'
+  const source = target?.kind === 'proxy'
+    ? target.proxy_check?.checked_at
+    : target?.status_source === 'agent'
     ? target.last_metrics_at
     : (target.checked_at ?? target.last_checked_at);
   const timestamp = timestampSeconds(source);
@@ -1181,10 +1315,16 @@ async function selectService(id, name, el) {
   if (isSame) {
     state.selectedId = null;
     state.selectedName = '';
+    state.selectedKind = 'target';
+    state.selectedProxy = null;
     state.selectedTargetIntervalSec = 300;
     state.allChecks = [];
     state.dailyPoints = [];
     state.checksSource = '';
+    state.proxyChecks = [];
+    state.proxyChecksLoadedHours = 0;
+    state.proxyHistoryRawCount = 0;
+    state.proxyHistoryTruncated = false;
     state.targetMetrics = null;
     state.metricsLoading = false;
     state.metricsError = '';
@@ -1206,7 +1346,45 @@ async function selectService(id, name, el) {
   state.selectedName = name;
   state.checksPage = 1;
 
+  const proxyTarget = buildProxyServices(state.data).find(service => service.id === id) || null;
   const target = (state.data?.targets || []).find(t => t.id === id);
+  if (proxyTarget) {
+    state.selectedKind = 'proxy';
+    state.selectedProxy = proxyTarget;
+    state.selectedName = proxyTarget.name;
+    state.selectedTargetIntervalSec = proxyTarget.interval_sec;
+    state.selectedRange = 'day';
+    state.selectedMetric = 'proxy-total';
+    state.selectedMetricRange = '1h';
+    state.targetMetrics = null;
+    state.metricsLoading = false;
+    state.metricsError = '';
+    state.proxyChecks = [];
+    state.proxyChecksLoadedHours = 0;
+    state.proxyHistoryRawCount = 0;
+    state.proxyHistoryTruncated = false;
+    state.allChecks = [];
+    state.checksSource = '';
+    state.dailyPoints = [];
+    document.querySelectorAll('.metric-tab').forEach(button => {
+      const proxyMetric = isProxyMetric(button.dataset.metric);
+      button.classList.toggle('active', button.dataset.metric === 'proxy-total');
+      button.style.display = proxyMetric ? '' : 'none';
+    });
+    const rangeTabs = document.getElementById('rangeTabs');
+    const metricRangeTabs = document.getElementById('metricRangeTabs');
+    if (rangeTabs) rangeTabs.style.display = '';
+    if (metricRangeTabs) metricRangeTabs.style.display = 'none';
+    document.querySelectorAll('.range-tab').forEach(button => button.classList.toggle('active', button.dataset.range === 'day'));
+    document.querySelectorAll('.metric-range-tab').forEach(button => button.classList.remove('active'));
+    el?.classList.add('selected');
+    attachInlineChart(el);
+    await loadProxyChecks(proxyTarget, { hours: rangeHours('day') });
+    return;
+  }
+
+  state.selectedKind = 'target';
+  state.selectedProxy = null;
   const hasLatency = targetHasPublicLatency(target);
   state.selectedMetric = hasLatency ? 'latency' : 'cpu';
   state.selectedMetricRange = '1h';
@@ -1226,6 +1404,10 @@ async function selectService(id, name, el) {
   document.querySelector(`.metric-tab[data-metric="${hasLatency ? 'latency' : 'cpu'}"]`)?.classList.add('active');
 
   document.querySelectorAll('.metric-tab[data-metric]').forEach(b => {
+    if (isProxyMetric(b.dataset.metric)) {
+      b.style.display = 'none';
+      return;
+    }
     if (b.dataset.metric === 'latency') {
       b.style.display = hasLatency ? '' : 'none';
     } else {
@@ -1344,6 +1526,69 @@ async function loadChecks(id, name, target = null, options = {}) {
   }
 }
 
+async function loadProxyChecks(proxy, options = {}) {
+  const id = proxy?.id || state.selectedId;
+  const targetId = proxy?.proxy_target_id;
+  if (!id || !targetId) return;
+  const seq = ++state.checksRequestSeq;
+  const superseded = () => state.selectedId !== id || state.selectedKind !== 'proxy' || state.checksRequestSeq !== seq;
+  const requestedHours = Math.max(1, Math.min(720, Number(options.hours || rangeHours(state.selectedRange) || 24)));
+  const quiet = Boolean(options.quiet);
+  if (!quiet) {
+    els.chartTitle.textContent = '真实链路总耗时';
+    els.chartMeta.textContent = '正在加载代理真实握手记录...';
+    els.chartServiceName.textContent = `${proxy.name || nameOrService(proxy)} 真实链路`;
+    els.chartAvg.textContent = '平均值：-';
+    els.checksHint.textContent = proxy.name || '代理服务';
+    els.checks.textContent = '正在加载...';
+    els.checks.classList.add('muted');
+  } else if (isProxyMetric(state.selectedMetric)) {
+    els.chartMeta.textContent = `正在加载${rangeLabel(state.selectedRange)}代理真实握手数据...`;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      target_id: targetId,
+      hours: String(requestedHours),
+      max_points: '50000',
+    });
+    const response = await fetchWithTimeout(api(`/api/proxy-checks?${params}`), { cache: 'no-store' });
+    const data = await response.json().catch(() => null);
+    if (superseded()) return;
+    if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
+    const checks = (Array.isArray(data.checks) ? data.checks : []).map(normalizeProxyCheck).filter(Boolean).sort((a, b) => a.ts - b.ts);
+    state.proxyChecks = checks;
+    state.allChecks = checks.slice().sort((a, b) => b.ts - a.ts);
+    state.proxyChecksLoadedHours = requestedHours;
+    state.proxyHistoryRawCount = Number(data.history_raw_count || checks.length) || checks.length;
+    state.proxyHistoryTruncated = data.history_truncated === true;
+    state.checksSource = data.source || '';
+    state.checksPage = 1;
+    state.selectedProxy = { ...proxy, proxy_check: normalizeProxyCheck(data.latest) || proxy.proxy_check };
+    updateChartForCurrentRange();
+    renderChecksPage();
+    renderVPSInfo();
+  } catch (error) {
+    if (superseded()) return;
+    state.proxyChecks = [];
+    state.allChecks = [];
+    state.proxyChecksLoadedHours = 0;
+    state.proxyHistoryRawCount = 0;
+    state.proxyHistoryTruncated = false;
+    state.checksSource = '';
+    if (isProxyMetric(state.selectedMetric)) {
+      els.chartMeta.textContent = `代理真实握手记录加载失败：${error.message}`;
+      els.checks.innerHTML = `<div class="empty fail-text">${escapeHtml(error.message)}</div>`;
+    }
+    updateChartForCurrentRange();
+    updatePageInfo();
+  }
+}
+
+function nameOrService(target) {
+  return String(target?.name || '代理服务').trim();
+}
+
 function rangeHours(range) {
   if (range === 'month') return 24 * 30;
   if (range === 'week') return 24 * 7;
@@ -1359,14 +1604,24 @@ function metricRangeLabel(range) {
 }
 
 function ensureChecksForSelectedRange() {
-  if (!state.selectedId || state.selectedMetric !== 'latency') return;
+  if (!state.selectedId) return;
+  if (state.selectedKind === 'proxy' && isProxyMetric(state.selectedMetric)) {
+    const needed = rangeHours(state.selectedRange);
+    if (state.proxyChecksLoadedHours >= needed) {
+      updateChartForCurrentRange();
+      return;
+    }
+    loadProxyChecks(state.selectedProxy || buildProxyServices(state.data).find(service => service.id === state.selectedId), { hours: needed, quiet: true }).catch(() => {});
+    return;
+  }
+  if (state.selectedMetric !== 'latency') return;
   const needed = rangeHours(state.selectedRange);
   if (state.checksLoadedHours >= needed) return;
   loadChecks(state.selectedId, state.selectedName || '服务', null, { hours: needed, quiet: true }).catch(() => {});
 }
 
 async function ensureTargetMetricsLoaded() {
-  if (!state.selectedId) return;
+  if (!state.selectedId || state.selectedKind === 'proxy') return;
   const id = state.selectedId;
   const metric = state.selectedMetric;
   const range = state.selectedMetricRange;
@@ -1455,6 +1710,11 @@ function normalizeAgentMetricsPayload(data) {
 function renderVPSInfo() {
   const bar = document.getElementById('vpsInfoBar');
   if (!bar) return;
+  if (state.selectedKind === 'proxy') {
+    bar.hidden = true;
+    bar.innerHTML = '';
+    return;
+  }
   if (!state.appearance.show_vps_details) {
     bar.hidden = true;
     bar.innerHTML = '';
@@ -1900,6 +2160,11 @@ function renderChecksPage() {
     return;
   }
 
+  if (state.selectedKind === 'proxy') {
+    renderProxyChecksPage();
+    return;
+  }
+
   const total = state.allChecks.length;
   const totalPages = getTotalCheckPages();
 
@@ -1925,15 +2190,51 @@ function renderChecksPage() {
   updatePageInfo();
 }
 
+function renderProxyChecksPage() {
+  const total = state.allChecks.length;
+  const totalPages = getTotalCheckPages();
+  state.checksPage = Math.min(Math.max(state.checksPage, 1), totalPages);
+  const start = (state.checksPage - 1) * state.checksPageSize;
+  const pageRows = state.allChecks.slice(start, start + state.checksPageSize);
+  const name = state.selectedProxy?.name || state.selectedName || '代理服务';
+
+  els.checks.classList.remove('muted');
+  els.checks.innerHTML = pageRows.map((check, index) => `
+    <div class="check-card proxy-check-card" style="--delay:${Math.min(index * 35, 220)}ms">
+      <div>${escapeHtml(fmtTime(check.checked_at || check.ts))}</div>
+      <div class="${checkStatusClass(check)}">${checkStatusLabel(check)}</div>
+      <div>${escapeHtml(check.total_ms == null ? '-' : `${check.total_ms} ms`)}</div>
+      <div>${escapeHtml(check.handshake_ms == null ? '-' : `${check.handshake_ms} ms`)}</div>
+      <div>${escapeHtml(check.first_byte_ms == null ? '-' : `${check.first_byte_ms} ms`)}</div>
+      <div class="small check-extra">${formatProxyCheckExtraHtml(check)}</div>
+    </div>
+  `).join('') || `<div class="empty">${escapeHtml(state.appearance.checks_no_records)}</div>`;
+
+  const rawCount = state.proxyHistoryRawCount || total;
+  const truncation = state.proxyHistoryTruncated ? ' · 已达到原始数据返回上限' : '';
+  els.checksHint.textContent = `${name} · 最近 ${rawCount} 条真实握手记录${state.checksSource ? ` · ${state.checksSource}` : ''}${truncation}`;
+  updatePageInfo();
+}
+
+function formatProxyCheckExtraHtml(check) {
+  const parts = [];
+  if (check?.stage) parts.push(`阶段 <strong>${escapeHtml(check.stage)}</strong>`);
+  if (check?.error) parts.push(`<span class="fail-text">${escapeHtml(check.error)}</span>`);
+  if (check?.stale) parts.push('<span class="warn-text">数据过期</span>');
+  return parts.join(' · ') || '真实代理握手成功';
+}
+
 function checkStatusLabel(c) {
   if (c.missed) return '漏检';
   return Number(c.ok) ? '成功' : '失败';
 }
 function targetHasStatus(target) {
+  if (target?.kind === 'proxy') return Boolean(timestampSeconds(target.proxy_check?.checked_at ?? target.proxy_check?.ts));
   return target?.status_source === 'agent' ? Boolean(timestampSeconds(target.last_metrics_at)) : Boolean(timestampSeconds(target?.checked_at));
 }
 
 function targetIsUp(target) {
+  if (target?.kind === 'proxy') return Number(target.proxy_check?.ok) === 1;
   return target?.status_source === 'agent' ? target.agent_online === true : Number(target?.ok) === 1;
 }
 
@@ -2046,7 +2347,7 @@ function initChart() {
                 if (v >= 1024) return `${context.dataset.label}: ${(v/1024).toFixed(1)} KB/s`;
                 return `${context.dataset.label}: ${v.toFixed(0)} B/s`;
               }
-              const u = m === 'cpu' || m === 'mem' || m === 'disk' ? '%' : m === 'latency' ? ' ms' : '';
+              const u = m === 'cpu' || m === 'mem' || m === 'disk' ? '%' : (m === 'latency' || isProxyMetric(m)) ? ' ms' : '';
               return `${context.dataset.label}: ${v}${u}`;
             },
 
@@ -2115,7 +2416,7 @@ function initChart() {
 }
 
 function chartAxisRange() {
-  if (state.selectedMetric === 'latency') return state.selectedRange;
+  if (state.selectedMetric === 'latency' || isProxyMetric(state.selectedMetric)) return state.selectedRange;
   return state.selectedMetricRange === '24h' ? 'week' : 'day';
 }
 
@@ -2131,7 +2432,12 @@ function syncContinuousButtonVisibility() {
 
 function updateChartForCurrentRange() {
   if (state.chart?.options?.plugins?.legend) {
-    state.chart.options.plugins.legend.display = !['latency', 'ping'].includes(state.selectedMetric);
+    state.chart.options.plugins.legend.display = !['latency', 'ping'].includes(state.selectedMetric) && !isProxyMetric(state.selectedMetric);
+  }
+  if (isProxyMetric(state.selectedMetric)) {
+    renderPingLossStats([]);
+    updateProxyChart();
+    return;
   }
   if (state.selectedMetric === 'ping') {
     updatePingChart().catch(err => {
@@ -2160,6 +2466,56 @@ function updateChartForCurrentRange() {
     ? `Cloudflare 每 5 分钟${externalCount ? ` + ${externalCount} 个外部 Latency 节点` : ''}${gapCount ? `，${gapCount} 个数据间断` : ''}${missedCount ? `，${missedCount} 次漏检` : ''}`
     : (externalCount ? `${externalCount} 个外部 Latency 节点` : '无原始检查数据');
   els.chartMeta.innerHTML = chartMetaHtml(state.selectedRange, rangeChecks.length, '', mode);
+}
+
+function updateProxyChart() {
+  const metric = state.selectedMetric;
+  const definitions = {
+    'proxy-total': { field: 'total_ms', label: '真实链路总耗时', color: '#159754' },
+    'proxy-handshake': { field: 'handshake_ms', label: 'TLS / 协议握手', color: '#2f80ed' },
+    'proxy-first-byte': { field: 'first_byte_ms', label: '首字节时间', color: '#e4572e' },
+  };
+  const definition = definitions[metric] || definitions['proxy-total'];
+  const checks = filterProxyChecksByRange(state.proxyChecks, state.selectedRange);
+  const values = checks.map(check => Number(check?.[definition.field])).filter(Number.isFinite);
+  const points = checks.map(check => ({
+    x: Number(check.ts),
+    y: Number.isFinite(Number(check?.[definition.field])) ? Number(check[definition.field]) : null,
+  }));
+  const okCount = checks.filter(check => Number(check.ok) === 1).length;
+  const failCount = checks.length - okCount;
+  const suffix = state.proxyHistoryTruncated ? ' · 已达到返回上限，未降采样' : '';
+  els.chartTitle.textContent = definition.label;
+  els.chartServiceName.textContent = `${state.selectedName || '代理服务'} ${definition.label}`;
+
+  if (!checks.length || !values.length) {
+    els.chartMeta.textContent = checks.length ? `${rangeLabel(state.selectedRange)} · 暂无${definition.label}数值` : `${rangeLabel(state.selectedRange)}内暂无真实代理握手样本`;
+    els.chartAvg.textContent = '-';
+    clearMetricChart();
+    return;
+  }
+
+  const average = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const latest = values[values.length - 1];
+  els.chartMeta.textContent = `${rangeLabel(state.selectedRange)} · ${checks.length} 个原始样本 · 成功 ${okCount} · 失败 ${failCount} · 真握手${suffix}`;
+  els.chartAvg.textContent = `平均值：${average.toFixed(0)} ms · 最近：${latest.toFixed(0)} ms`;
+  if (!state.chart) return;
+  delete state.chart.options.scales.y.title;
+  delete state.chart.options.scales.y.max;
+  state.chart.options.scales.y.min = 0;
+  state.chart.options.scales.y.beginAtZero = true;
+  state.chart.options.scales.y.grace = '18%';
+  state.chart.data.datasets = [netDataset(definition.label, points, definition.color)];
+  const allPoints = points.filter(point => Number.isFinite(point.x));
+  applyChartFullRange(allPoints);
+  tuneChartAnimation(allPoints.length);
+  state.chart.update();
+}
+
+function filterProxyChecksByRange(checks, range) {
+  const seconds = range === 'month' ? 30 * 86400 : range === 'week' ? 7 * 86400 : 86400;
+  const cutoff = Math.floor(Date.now() / 1000) - seconds;
+  return (checks || []).filter(check => Number(check?.ts) >= cutoff).sort((a, b) => Number(a.ts) - Number(b.ts));
 }
 
 function clearMetricChart() {
@@ -3093,6 +3449,7 @@ function formatCheckExtraHtml(c) {
 function describeGroup(name, total, up) {
   const lower = String(name || '').toLowerCase();
 
+  if (lower === '代理' || lower.includes('proxy')) return `${total} 个代理服务`;
   if (lower.includes('web')) return `${total} 个网站服务`;
   if (lower.includes('vps')) return `${total} 个 VPS 节点`;
   if (lower.includes('api')) return `${total} 个 API 服务`;
@@ -3118,6 +3475,12 @@ function targetSearchText(t) {
     t.target_host,
     t.target_port,
     t.url,
+    ...(Array.isArray(t.proxy_targets) ? t.proxy_targets.flatMap(proxy => [proxy.name, proxy.protocol, proxy.transport]) : []),
+    t.proxy_parent_name,
+    t.proxy_agent_id,
+    t.proxy_target_id,
+    t.protocol,
+    t.transport,
     t.probe_region,
     t.region_label,
   ]

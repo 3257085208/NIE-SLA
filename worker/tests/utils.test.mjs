@@ -3,7 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { agentStatusFields, assertPublicHttpUrl, buildMissedPoints, buildOpenMissedPoints, isPrivateHost, lastPersistedCheckAt, normalizeTarget, parseBoolean, publicCachePrivacyVersion, publicCheckPoint, sanitizeId, sanitizePublicAgentMetrics, sanitizePublicStatusPayload, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
 import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, requireLatencyAgentForId, safeJson } from '../src/auth.js';
 import { clearRateLimitD1, rateLimitD1, rateLimitStatusD1 } from '../src/ratelimit.js';
-import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, normalizeAgentMetricState, normalizeAgentVpsInfo, pingLossPointsToRuns, pingLossRunsToPoints, pingPointsFromPayload, pingPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
+import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, loadAgentProxyChecksR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, normalizeAgentMetricState, normalizeAgentVpsInfo, pingLossPointsToRuns, pingLossRunsToPoints, pingPointsFromPayload, pingPointsToSeries, proxyCheckPointsFromPayload, proxyCheckPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
 import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeAgentPublicBase, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
@@ -722,6 +722,20 @@ assert.deepEqual(metricPointsFromPayload(telemetryObject.value.metrics)[0].proce
 assert.deepEqual(metricPointsFromPayload(telemetryObject.value.metrics)[0].load5, 0.2, '5-minute load history must survive R2 normalization');
 assert.deepEqual(metricPointsFromPayload(telemetryObject.value.metrics)[0].load15, 0.3, '15-minute load history must survive R2 normalization');
 assert.equal(r2Env._puts, 2, 'each report should use one R2 write');
+const proxyPoints = [
+  { target_id: 'proxy-a', name: 'Proxy A', protocol: 'vless', ts: hourStart + 600, handshake_ms: 12, first_byte_ms: 31, total_ms: 43, ok: 1, stage: 'canary', error: null },
+  { target_id: 'proxy-a', name: 'Proxy A', protocol: 'vless', ts: hourStart + 900, handshake_ms: null, first_byte_ms: null, total_ms: 5000, ok: 0, stage: 'connect', error: 'timeout' },
+];
+assert.equal(proxyCheckPointsToSeries(proxyPoints)[0].dt.length, 2, 'proxy series must preserve every raw timing sample');
+await writeAgentTelemetryR2History(r2Env, 'vps-a', [], [], proxyPoints);
+const telemetryWithProxy = [...r2Env._objects.values()].find(item => item.key.endsWith('/telemetry.json'));
+const storedProxyPoints = proxyCheckPointsFromPayload(telemetryWithProxy.value.proxy_checks);
+assert.deepEqual(storedProxyPoints.map(point => [point.ts, point.handshake_ms, point.first_byte_ms, point.total_ms, point.ok]), [
+  [hourStart + 600, 12, 31, 43, 1],
+  [hourStart + 900, null, null, 5000, 0],
+], 'proxy R2 history must preserve raw handshake, first-byte, total, and failure values');
+const loadedProxy = await loadAgentProxyChecksR2History(r2Env, 'vps-a', hourStart, hourStart + 3600);
+assert.deepEqual(loadedProxy.checks.map(point => point.target_id), ['proxy-a', 'proxy-a'], 'proxy history loader must read the combined telemetry object');
 
 const pingPoints = Array.from({ length: 500 }, (_, i) => ({ target_id: 'a', ts: 2000 + i, latency_ms: 10 + i, ok: 1 }))
   .concat(Array.from({ length: 20 }, (_, i) => ({ target_id: 'b', ts: 3000 + i, latency_ms: 20, ok: 1 })));

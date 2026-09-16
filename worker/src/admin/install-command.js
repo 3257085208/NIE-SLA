@@ -31,7 +31,7 @@ export async function getAgentInstallCommand(env, url, request = null) {
   const apiBase = await agentApiBase(env, request, url, installBase);
   const pingSec = String(await getPingIntervalSec(env));
   const release = await loadAgentRelease(env, request).catch(() => null);
-  const sha256SumsSha256 = String(env.NIE_SLA_SHA256SUMS_SHA256 || env.NSTATUS_SHA256SUMS_SHA256 || '').trim() || String(release?.manifest_sha256 || '').trim();
+const sha256SumsSha256 = String(env.NIE_SLA_SHA256SUMS_SHA256 || env.NSTATUS_SHA256SUMS_SHA256 || '').trim() || String(release?.manifest_sha256 || '').trim();
   const expectedVersion = String(env.AGENT_LATEST_VERSION || '').trim() || String(release?.latest_version || '').trim();
   const installTicket = randomInstallTicket();
   const now = nowSec();

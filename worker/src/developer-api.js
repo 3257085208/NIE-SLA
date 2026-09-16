@@ -6,6 +6,7 @@ const ENDPOINTS = [
   { path: '/status', description: 'Public status, targets, summaries, incidents, and current telemetry' },
   { path: '/checks', description: 'Availability and Cloudflare latency history for one target' },
   { path: '/metrics', description: 'Public VPS metric history for one Agent target' },
+  { path: '/proxy-checks', description: 'Public raw proxy handshake and link timing history for one proxy target' },
   { path: '/pings', description: 'Public Agent TCP Ping history' },
   { path: '/latency', description: 'External Latency Agent history for one target' },
 ];

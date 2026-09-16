@@ -1,7 +1,7 @@
 import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValidatedRedirects, sanitizeAgentId, sanitizeId, publicCachePrivacyVersion, timezoneOffsetMin } from './utils.js';
 import { requireAgentForId, requireAnyAgent, requireAnyLatencyAgent, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, internalRequestHeaders, resolveCorsOrigin } from './auth.js';
 import { getStatusCached, getChecksCached } from './status.js';
-import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
+import { submitAgentMetrics, getAgentMetricsCached, getAgentProxyChecksCached, cleanupAgentMetricsR2 } from './metrics.js';
 import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, getAgentPingsBatch, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, listProxyTargets, createProxyTarget, updateProxyTarget, deleteProxyTarget, previewProxyLinks, getAgentProxyTargets, getStats, cleanupVolatileHistory, getPublicSettings, getPublicAppearanceScript, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation, estimateUsageFromEnv, getUsageActualConfig, saveUsageActualConfig, fetchActualUsage, getFleetVersions, listTrafficCorrections, saveTrafficCorrection, getFinanceSummary, getTurnstileConfig, getTurnstileSecret, saveTurnstileConfig, getAgentReportInterval, setAgentReportInterval, getMeta, listProbeHistoryDeadLetters, replayProbeHistoryDeadLetter, drainProbeHistoryDeadLetters } from './admin.js';
 import { createUsageSummaryAccess, getDebugLogSummary, getUsageSummaryAccessStatus, revokeUsageSummaryAccess, usageSummaryBearerToken, validateUsageSummaryAccess } from './admin.js';
 import { enrichCfContext } from './probe.js';
@@ -82,6 +82,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/status/ws', rl: 'public' },
   { method: 'GET', path: '/api/checks', rl: 'public' },
   { method: 'GET', path: '/api/agent/metrics', rl: 'public' },
+  { method: 'GET', path: '/api/proxy-checks', rl: 'public' },
   { method: 'GET', path: '/api/agent/pings', rl: 'public' },
   { method: 'GET', path: '/api/latency', rl: 'public' },
   { method: 'GET', path: '/api/appearance-script.js', rl: 'public' },
@@ -90,6 +91,7 @@ const ROUTES = [
   { method: 'GET', path: '/api/v1/status', rl: 'public' },
   { method: 'GET', path: '/api/v1/checks', rl: 'public' },
   { method: 'GET', path: '/api/v1/metrics', rl: 'public' },
+  { method: 'GET', path: '/api/v1/proxy-checks', rl: 'public' },
   { method: 'GET', path: '/api/v1/pings', rl: 'public' },
   { method: 'GET', path: '/api/v1/latency', rl: 'public' },
   { method: 'GET', path: '/api/themes', rl: 'public' },
@@ -222,12 +224,14 @@ async function dispatchStatic(env, url, request, ctx) {
     return new Response(`${await getPublicAppearanceScript(env)}\n`, { status: 200, headers: { 'cache-control': 'no-store', 'content-type': 'application/javascript; charset=utf-8', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' } });
   }
   if (path === '/api/agent/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'agent-metrics' })) return deny(); return getAgentMetricsCached(request, env, url, ctx); }
+  if (path === '/api/proxy-checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'proxy-checks' })) return deny(); return getAgentProxyChecksCached(request, env, url, ctx); }
   if (path === '/api/agent/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true, keyPrefix: 'agent-pings' })) return deny(); return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
   if (path === '/api/latency' && m === 'GET') { if (!await allowPublicLatencyRequest(request, env)) return deny(60); await ensureV6Schema(env); return getPublicLatencyCached(env, url, ctx); }
   if ((path === '/api/v1' || path === '/api/v1/manifest') && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(getDeveloperApiManifest(request, env, VERSION), 200, env, { 'cache-control': 'public, max-age=300' }), request, env); }
   if (path === '/api/v1/status' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getStatusCached(request, env, developerApiUrl(url, '/api/status'), ctx), request, env); }
   if (path === '/api/v1/checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getChecksCached(request, env, developerApiUrl(url, '/api/checks'), ctx), request, env); }
   if (path === '/api/v1/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'v1-metrics' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getAgentMetricsCached(request, env, developerApiUrl(url, '/api/agent/metrics'), ctx), request, env); }
+  if (path === '/api/v1/proxy-checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'v1-proxy-checks' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getAgentProxyChecksCached(request, env, developerApiUrl(url, '/api/proxy-checks'), ctx), request, env); }
   if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true, keyPrefix: 'v1-pings' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/v1/latency' && m === 'GET') { if (!await allowPublicLatencyRequest(request, env)) return withDeveloperApiHeaders(deny(60), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(await getPublicLatencyCached(env, developerApiUrl(url, '/api/latency'), ctx), request, env); }
   if (path === '/api/agent/pings/batch' && m === 'GET') { if (!await rateLimitByIp(request, env, 100, 60, { bestEffort: true, keyPrefix: 'pings-batch' })) return deny(); return json(await getAgentPingsBatch(env, url, ctx), 200, env, { 'cache-control': 'public, max-age=20' }); }

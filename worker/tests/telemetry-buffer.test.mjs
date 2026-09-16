@@ -38,6 +38,7 @@ await append(buffer, {
     temperature_sensors: [{ id: 'pch:temp1', label: 'PCH', kind: 'chipset', temp_c: 34 }],
   }],
   pings: [{ target_id: 'cn', ts: currentHour + 10, latency_ms: null, ok: 0 }],
+  proxy_checks: [{ target_id: 'proxy-a', name: 'Proxy A', protocol: 'vless', ts: currentHour + 10, handshake_ms: 12, first_byte_ms: 31, total_ms: 43, ok: 1, stage: 'canary' }],
 });
 await append(buffer, {
   agent_id: 'vps-a',
@@ -57,6 +58,10 @@ await append(buffer, {
     { target_id: 'cn', ts: currentHour + 10, latency_ms: null, ok: 0 },
     { target_id: 'cn', ts: currentHour + 310, latency_ms: 30, ok: 1 },
   ],
+  proxy_checks: [
+    { target_id: 'proxy-a', name: 'Proxy A', protocol: 'vless', ts: currentHour + 10, handshake_ms: 12, first_byte_ms: 31, total_ms: 43, ok: 1, stage: 'canary' },
+    { target_id: 'proxy-a', name: 'Proxy A', protocol: 'vless', ts: currentHour + 310, handshake_ms: null, first_byte_ms: null, total_ms: 5000, ok: 0, stage: 'connect', error: 'timeout' },
+  ],
 });
 
 assert.equal((await storage.list({ prefix: 'chunk:' })).size, 2, 'active data uses fixed five-minute chunks');
@@ -67,6 +72,7 @@ assert.deepEqual(live.points.map(point => point.temperature_sensors), [
   [{ id: 'pch:temp1', label: 'PCH', kind: 'chipset', temp_c: 36 }],
 ], 'dynamic temperature sensors must survive buffered retries');
 assert.deepEqual(live.pings.map(point => point.latency_ms), [null, 30], 'loss samples retain null latency');
+assert.deepEqual(live.proxy_checks.map(point => [point.total_ms, point.handshake_ms, point.first_byte_ms, point.ok]), [[43, 12, 31, 1], [5000, null, null, 0]], 'proxy timings and failures survive buffered retries');
 
 const latestState = {
   schema: 'nie-sla-agent-metrics-v1',
@@ -117,6 +123,7 @@ await sendAgentMetrics(wssBuffer, socketA, {
     net: { rx_bytes: 100, tx_bytes: 100 },
     vps_info: { os: 'A-OS' },
     pings: [{ target_id: 'target-a', ts: reportTs, latency_ms: 10, ok: 1 }],
+    proxy_checks: [{ target_id: 'proxy-a', name: 'Proxy A', protocol: 'vless', ts: reportTs, handshake_ms: 12, first_byte_ms: 31, total_ms: 43, ok: 1, stage: 'canary' }],
   },
 });
 await sendAgentMetrics(wssBuffer, socketB, {
@@ -134,6 +141,7 @@ const stateB = await readLatest(wssBuffer, 'vps-b');
 assert.equal(stateA.cpu_percent, 11);
 assert.equal(stateB.cpu_percent, 22, 'Agents sharing one WSS instance must not overwrite each other');
 assert.deepEqual(stateA.pings.map(ping => ping.target_id), ['target-a']);
+assert.deepEqual(stateA.proxy_checks.map(check => check.target_id), ['proxy-a']);
 assert.deepEqual(stateB.pings.map(ping => ping.target_id), ['target-b'], 'an Agent must never merge another Agent\'s pings');
 assert.equal(stateA.vps_info?.os, 'A-OS');
 assert.equal(stateB.vps_info, null, 'an Agent must never inherit another Agent\'s vps_info');
@@ -249,6 +257,10 @@ assert.deepEqual(payload.metrics.series.temperature_sensors, [{
 assert.equal(payload.pings.series[0].dt.length, 2);
 assert.deepEqual(payload.pings.series[0].latency_ms, [null, 30]);
 assert.deepEqual(payload.pings.series[0].ok, [0, 1]);
+assert.deepEqual(payload.proxy_checks.series[0].total_ms, [43, 5000]);
+assert.deepEqual(payload.proxy_checks.series[0].handshake_ms, [12, null]);
+assert.deepEqual(payload.proxy_checks.series[0].first_byte_ms, [31, null]);
+assert.deepEqual(payload.proxy_checks.series[0].ok, [1, 0]);
 
 const capacityStorage = memoryStorage();
 const capacityBuffer = new TelemetryBuffer({ storage: capacityStorage }, testEnv({ ARCHIVE: memoryR2() }));

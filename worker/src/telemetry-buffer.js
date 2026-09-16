@@ -163,10 +163,11 @@ export class TelemetryBuffer {
         state: acceptedState,
         points: result?.mapped_points || [],
         pings: result?.mapped_pings || [],
+        proxy_checks: result?.mapped_proxy_checks || [],
         net: result?.net || null,
       });
       await this.scheduleReportDrain();
-      const { latest_state: _latestState, mapped_points: _p, mapped_pings: _q, net: _n, ...ack } = result || {};
+      const { latest_state: _latestState, mapped_points: _p, mapped_pings: _q, mapped_proxy_checks: _r, net: _n, ...ack } = result || {};
       const control = await this.readControlSnapshot(agentId);
       const scopedControl = control
         ? { ...control, traffic_correction: control.traffic_corrections?.[agentId] || null, traffic_corrections: undefined }
@@ -250,8 +251,9 @@ export class TelemetryBuffer {
       try {
         const points = group.flatMap(item => item.points || []);
         const pings = group.flatMap(item => item.pings || []);
-        if ((points.length || pings.length) && !group.every(item => drainState(item).telemetryAppended)) {
-          await appendBufferedAgentTelemetry(this.env, agentId, points, pings);
+        const proxyChecks = group.flatMap(item => item.proxy_checks || []);
+        if ((points.length || pings.length || proxyChecks.length) && !group.every(item => drainState(item).telemetryAppended)) {
+          await appendBufferedAgentTelemetry(this.env, agentId, points, pings, proxyChecks);
           for (const item of group) drainState(item).telemetryAppended = true;
         }
       } catch (error) {
@@ -372,7 +374,7 @@ export class TelemetryBuffer {
   async append(body) {
     const agentId = sanitizeAgentId(body?.agent_id);
     if (!agentId) throw new Error('Agent ID 无效');
-    const grouped = groupByChunk(body?.points, body?.pings);
+    const grouped = groupByChunk(body?.points, body?.pings, body?.proxy_checks);
     if (!grouped.size) return { ok: true, skipped: true };
 
     await this.state.storage.transaction(async (txn) => {
@@ -461,6 +463,7 @@ export class TelemetryBuffer {
     const rows = await this.bufferRows();
     const points = [];
     const pings = [];
+    const proxyChecks = [];
     for (const value of rows.values()) {
       for (const point of bufferPoints(value)) {
         const ts = Number(point?.ts || 0);
@@ -470,10 +473,15 @@ export class TelemetryBuffer {
         const ts = Number(ping?.ts || 0);
         if (ts >= start && ts <= end) pings.push(ping);
       }
+      for (const check of bufferProxyChecks(value)) {
+        const ts = Number(check?.ts || 0);
+        if (ts >= start && ts <= end) proxyChecks.push(check);
+      }
     }
     points.sort((a, b) => Number(a.ts) - Number(b.ts));
     pings.sort((a, b) => Number(a.ts) - Number(b.ts) || String(a.target_id).localeCompare(String(b.target_id)));
-    return { ok: true, points, pings };
+    proxyChecks.sort((a, b) => Number(a.ts) - Number(b.ts) || String(a.target_id).localeCompare(String(b.target_id)));
+    return { ok: true, points, pings, proxy_checks: proxyChecks };
   }
 
   async flushCompletedHours(currentAt) {
@@ -609,32 +617,33 @@ function parseBinaryMessage(message) {
   return decodeAgentMetricsProtobuf(bytes);
 }
 
-export async function appendBufferedAgentTelemetry(env, agentId, points, pings) {
+export async function appendBufferedAgentTelemetry(env, agentId, points, pings, proxyChecks = []) {
   if (!env.TELEMETRY_BUFFER) return null;
   const id = sanitizeAgentId(agentId);
   const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(`agent:${id}`));
   const response = await stub.fetch('https://nie-sla.internal/append', {
     method: 'POST',
     headers: internalRequestHeaders(env),
-    body: JSON.stringify({ agent_id: id, points, pings }),
+    body: JSON.stringify({ agent_id: id, points, pings, proxy_checks: proxyChecks }),
   });
   if (!response.ok) throw new Error(`遥测缓冲写入失败：HTTP ${response.status}`);
   return response.json();
 }
 
 export async function readBufferedAgentTelemetry(env, agentId, since, until) {
-  if (!env.TELEMETRY_BUFFER) return { points: [], pings: [] };
+  if (!env.TELEMETRY_BUFFER) return { points: [], pings: [], proxy_checks: [] };
   const id = sanitizeAgentId(agentId);
   const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(`agent:${id}`));
   const url = new URL('https://nie-sla.internal/read');
   url.searchParams.set('since', String(Math.floor(Number(since) || 0)));
   url.searchParams.set('until', String(Math.floor(Number(until) || nowSec())));
   const response = await stub.fetch(url.toString(), { headers: internalRequestHeaders(env) });
-  if (!response.ok) return { points: [], pings: [] };
+  if (!response.ok) return { points: [], pings: [], proxy_checks: [] };
   const body = await response.json().catch(() => ({}));
   return {
     points: Array.isArray(body?.points) ? body.points : [],
     pings: Array.isArray(body?.pings) ? body.pings : [],
+    proxy_checks: Array.isArray(body?.proxy_checks) ? body.proxy_checks : [],
   };
 }
 
@@ -683,11 +692,11 @@ export async function deleteBufferedAgentTelemetry(env, agentId) {
   return response.json();
 }
 
-function groupByChunk(points, pings) {
+function groupByChunk(points, pings, proxyChecks) {
   const grouped = new Map();
   const bucket = (ts) => {
     const chunk = chunkStart(ts);
-    const value = grouped.get(chunk) || { points: [], pings: [] };
+    const value = grouped.get(chunk) || { points: [], pings: [], proxy_checks: [] };
     grouped.set(chunk, value);
     return value;
   };
@@ -698,6 +707,10 @@ function groupByChunk(points, pings) {
   for (const ping of Array.isArray(pings) ? pings : []) {
     const ts = Number(ping?.ts || 0);
     if (ts > 0 && ping?.target_id) bucket(ts).pings.push(ping);
+  }
+  for (const check of Array.isArray(proxyChecks) ? proxyChecks : []) {
+    const ts = Number(check?.ts || 0);
+    if (ts > 0 && check?.target_id) bucket(ts).proxy_checks.push(check);
   }
   return grouped;
 }
@@ -714,6 +727,12 @@ function mergeBuffer(existing, incoming, agentId, start, duration) {
     const targetId = String(ping?.target_id || '');
     if (targetId && ts >= start && ts < start + duration) byPing.set(`${targetId}:${ts}`, ping);
   }
+  const byProxyCheck = new Map();
+  for (const check of [...bufferProxyChecks(existing), ...bufferProxyChecks(incoming)]) {
+    const ts = Number(check?.ts || 0);
+    const targetId = String(check?.target_id || '');
+    if (targetId && ts >= start && ts < start + duration) byProxyCheck.set(`${targetId}:${ts}`, check);
+  }
   return {
     schema: duration === CHUNK_SEC ? 'nie-sla-telemetry-buffer-v2' : 'nie-sla-telemetry-buffer-v1',
     agent_id: agentId,
@@ -721,6 +740,7 @@ function mergeBuffer(existing, incoming, agentId, start, duration) {
     hour: hourStart(start),
     points: [...byPoint.values()].sort((a, b) => Number(a.ts) - Number(b.ts)),
     pings: [...byPing.values()].sort((a, b) => Number(a.ts) - Number(b.ts) || String(a.target_id).localeCompare(String(b.target_id))),
+    proxy_checks: [...byProxyCheck.values()].sort((a, b) => Number(a.ts) - Number(b.ts) || String(a.target_id).localeCompare(String(b.target_id))),
   };
 }
 
@@ -733,6 +753,7 @@ async function flushHour(env, buffered) {
   const merged = mergeBuffer({
     points: metricsFromPayload(existing?.metrics),
     pings: pingsFromPayload(existing?.pings),
+    proxy_checks: proxyChecksFromPayload(existing?.proxy_checks),
   }, buffered, agentId, hour, HOUR_SEC);
   const dayHour = utcDayHour(hour);
   const body = JSON.stringify({
@@ -743,6 +764,7 @@ async function flushHour(env, buffered) {
     updated_at: new Date().toISOString(),
     metrics: { schema: 'nie-sla-agent-metrics-hour-v2', series: metricPointsToColumns(merged.points) },
     pings: { schema: 'nie-sla-agent-pings-hour-v2', series: pingPointsToSeries(merged.pings) },
+    proxy_checks: { schema: 'nie-sla-proxy-checks-hour-v1', series: proxyChecksToSeries(merged.proxy_checks) },
   });
   const bodyBytes = new TextEncoder().encode(body).byteLength;
   await env.ARCHIVE.put(key, body, {
@@ -759,7 +781,7 @@ async function flushHour(env, buffered) {
     || String(persisted.agent_id || '') !== agentId
     || String(persisted.day || '') !== dayHour.day
     || String(persisted.hour || '') !== dayHour.hour
-    || !persisted.metrics || !persisted.pings) {
+    || !persisted.metrics || !persisted.pings || !persisted.proxy_checks) {
     throw new Error(`R2 telemetry hour readback validation failed (${agentId} ${dayHour.day}/${dayHour.hour})`);
   }
 }
@@ -816,7 +838,7 @@ function telemetryKey(env, agentId, hour) {
 }
 
 function emptyBuffer(agentId, start) {
-  return { agent_id: agentId, chunk: start, hour: hourStart(start), points: [], pings: [] };
+  return { agent_id: agentId, chunk: start, hour: hourStart(start), points: [], pings: [], proxy_checks: [] };
 }
 
 function compactBuffer(buffer) {
@@ -827,6 +849,7 @@ function compactBuffer(buffer) {
     hour: buffer.hour,
     metric_series: metricPointsToColumns(buffer.points),
     ping_series: pingPointsToSeries(buffer.pings),
+    proxy_check_series: proxyChecksToSeries(buffer.proxy_checks),
   };
 }
 
@@ -838,6 +861,11 @@ function bufferPoints(value) {
 function bufferPings(value) {
   if (Array.isArray(value?.pings)) return value.pings;
   return pingsFromPayload({ series: value?.ping_series });
+}
+
+function bufferProxyChecks(value) {
+  if (Array.isArray(value?.proxy_checks)) return value.proxy_checks;
+  return proxyChecksFromPayload({ series: value?.proxy_check_series });
 }
 
 function chunkKey(chunk) {
@@ -941,6 +969,64 @@ function pingPointsToSeries(pings) {
       ok: list.map(point => Number(point.ok || 0)),
     };
   });
+}
+
+function proxyChecksToSeries(checks) {
+  const grouped = new Map();
+  for (const check of checks || []) {
+    const targetId = String(check?.target_id || '');
+    if (!targetId) continue;
+    const list = grouped.get(targetId) || [];
+    list.push(check);
+    grouped.set(targetId, list);
+  }
+  return [...grouped.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([targetId, list]) => {
+    list.sort((a, b) => Number(a.ts) - Number(b.ts));
+    const t0 = Number(list[0]?.ts || 0);
+    return {
+      target_id: targetId,
+      name: String(list[0]?.name || targetId).slice(0, 96),
+      protocol: String(list[0]?.protocol || '').slice(0, 24),
+      t0,
+      dt: list.map(check => Number(check.ts) - t0),
+      latency_ms: list.map(check => check.latency_ms == null ? null : Number(check.latency_ms)),
+      handshake_ms: list.map(check => check.handshake_ms == null ? null : Number(check.handshake_ms)),
+      first_byte_ms: list.map(check => check.first_byte_ms == null ? null : Number(check.first_byte_ms)),
+      total_ms: list.map(check => check.total_ms == null ? null : Number(check.total_ms)),
+      ok: list.map(check => Number(check.ok || 0)),
+      stage: list.map(check => String(check.stage || '').slice(0, 32)),
+      error: list.map(check => check.error == null ? null : String(check.error).slice(0, 64)),
+    };
+  });
+}
+
+function proxyChecksFromPayload(payload) {
+  if (!payload) return [];
+  if (Array.isArray(payload.checks)) return payload.checks;
+  if (!Array.isArray(payload.series)) return [];
+  const out = [];
+  for (const series of payload.series) {
+    const targetId = String(series?.target_id || '');
+    const t0 = Number(series?.t0 || 0);
+    if (!targetId || !t0) continue;
+    const dt = Array.isArray(series.dt) ? series.dt : [];
+    for (let index = 0; index < dt.length; index += 1) {
+      out.push({
+        target_id: targetId,
+        name: String(series.name || targetId),
+        protocol: String(series.protocol || ''),
+        ts: t0 + Number(dt[index] || 0),
+        latency_ms: series.latency_ms?.[index] == null ? null : Number(series.latency_ms[index]),
+        handshake_ms: series.handshake_ms?.[index] == null ? null : Number(series.handshake_ms[index]),
+        first_byte_ms: series.first_byte_ms?.[index] == null ? null : Number(series.first_byte_ms[index]),
+        total_ms: series.total_ms?.[index] == null ? null : Number(series.total_ms[index]),
+        ok: Number(series.ok?.[index] || 0),
+        stage: String(series.stage?.[index] || ''),
+        error: series.error?.[index] == null ? null : String(series.error[index]),
+      });
+    }
+  }
+  return out;
 }
 
 function utcDayHour(ts) {
