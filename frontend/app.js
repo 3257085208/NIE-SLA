@@ -1,9 +1,9 @@
-import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260916-proxy10';
+import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260916-proxy11';
 import {
   billingCycleSuffix,
   isLifetimeBilling,
   normalizeBillingCycle,
-} from './js/shared/billing.js?v=20260916-proxy10';
+} from './js/shared/billing.js?v=20260916-proxy11';
 import {
   cssEscape,
   clampNumber,
@@ -18,11 +18,11 @@ import {
   normalizeCityName,
   pad,
   timeAgoSec,
-} from './js/shared/format.js?v=20260916-proxy10';
-import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260916-proxy10';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260916-proxy10';
-import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260916-proxy10';
-import { countryByCode } from './js/shared/target-catalogs.js?v=20260916-proxy10';
+} from './js/shared/format.js?v=20260916-proxy11';
+import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260916-proxy11';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260916-proxy11';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260916-proxy11';
+import { countryByCode } from './js/shared/target-catalogs.js?v=20260916-proxy11';
 import {
   clampChartRange,
   countChartGaps,
@@ -30,15 +30,15 @@ import {
   filterChecksByRange,
   hexToRgba,
   trimEmptyPointEdges,
-} from './js/shared/chart-data.js?v=20260916-proxy10';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260916-proxy10';
-import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260916-proxy10';
-import { unlockState } from './js/shared/unlock.js?v=20260916-proxy10';
-import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260916-proxy10';
-import { targetSlaPercentage } from './js/shared/sla.js?v=20260916-proxy10';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260916-proxy10';
-import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260916-proxy10';
-import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260916-proxy10';
+} from './js/shared/chart-data.js?v=20260916-proxy11';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260916-proxy11';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260916-proxy11';
+import { unlockState } from './js/shared/unlock.js?v=20260916-proxy11';
+import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260916-proxy11';
+import { targetSlaPercentage } from './js/shared/sla.js?v=20260916-proxy11';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260916-proxy11';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260916-proxy11';
+import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260916-proxy11';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);

@@ -104,6 +104,17 @@ const supportedReality = parseProxyLinks(`vless://${uuid}@reality.example.test:4
 assert.equal(supportedReality.runtime_supported, true);
 assert.equal(supportedReality.secret.reality_public_key, realityPublicKey);
 assert.equal(supportedReality.secret.reality_short_id, '0a0b');
+const shadowrocketAuthority = Buffer.from(`auto:${uuid}@shadowrocket.example.test:8880`).toString('base64url');
+const shadowrocketReality = parseProxyLinks(`vless://${shadowrocketAuthority}?remarks=Shadowrocket%20Reality&tls=1&peer=peer.example.test&udp=1&xtls=2&pbk=${realityPublicKey}&sid=dd67791848c5c702`)[0];
+assert.equal(shadowrocketReality.name, 'Shadowrocket Reality');
+assert.equal(shadowrocketReality.server, 'shadowrocket.example.test');
+assert.equal(shadowrocketReality.port, 8880);
+assert.equal(shadowrocketReality.sni, 'peer.example.test');
+assert.equal(shadowrocketReality.transport, 'tls');
+assert.equal(shadowrocketReality.secret.uuid, uuid);
+assert.equal(shadowrocketReality.secret.security, 'reality');
+assert.equal(shadowrocketReality.secret.flow, 'xtls-rprx-vision');
+assert.equal(shadowrocketReality.runtime_supported, true);
 const clashReality = parseProxyLinks(`proxies:
   - name: Clash Reality
     type: vless

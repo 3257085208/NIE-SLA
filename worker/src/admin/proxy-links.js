@@ -539,7 +539,7 @@ function parseOne(raw) {
   const url = safeUrl(value);
   const protocol = scheme === 'socks' ? 'socks5' : (scheme === 'hy2' ? 'hysteria2' : (scheme === 'https' ? 'http' : scheme));
   if (protocol === 'http' || protocol === 'socks5') return parseBasicProxy(url, protocol);
-  if (protocol === 'vless') return parseVless(url);
+  if (protocol === 'vless') return parseVless(value);
   if (protocol === 'trojan') return parseTrojan(url);
   if (protocol === 'hysteria2') return parseHysteria2(url);
   if (protocol === 'snell') return parseSnell(url);
@@ -558,29 +558,63 @@ function parseBasicProxy(url, protocol) {
   });
 }
 
-function parseVless(url) {
+function parseVless(value) {
+  const url = safeUrl(value);
   const query = url.searchParams;
-  const transport = transportName(query.get('type') || query.get('net') || 'tcp', query.get('security') || '');
+  const encodedAuthority = decodeVlessAuthority(value);
+  const server = encodedAuthority?.server || url.hostname;
+  const port = encodedAuthority?.port || linkPort(url, 'vless');
+  const publicKey = query.get('pbk') || query.get('publicKey') || query.get('public_key') || '';
+  const shortId = query.get('sid') || query.get('shortId') || query.get('short_id') || '';
+  const securityParam = query.get('security') || '';
+  const tlsEnabled = nodeBoolean(query.get('tls') || query.get('ssl') || query.get('secure'));
+  const security = securityParam || (publicKey ? 'reality' : (tlsEnabled ? 'tls' : ''));
+  const flow = query.get('flow') || vlessFlowFromShadowrocket(query.get('xtls'));
+  const transport = transportName(query.get('type') || query.get('net') || 'tcp', security);
   const allowInsecure = nodeBoolean(query.get('allowInsecure') || query.get('allow-insecure') || query.get('insecure'));
+  const label = query.get('remarks') || query.get('remark') || query.get('name') || '';
+  const name = cleanName(decodePart(label) || (url.hash ? decodePart(url.hash.slice(1)) : '') || `vless ${server}:${port}`, 'vless');
   return finish({
-    name: linkName(url, 'vless'), protocol: 'vless', server: url.hostname, port: linkPort(url, 'vless'), transport,
-    sni: query.get('sni') || query.get('servername') || url.hostname,
-    ws_path: query.get('path') || '/', ws_host: query.get('host') || query.get('authority') || query.get('sni') || url.hostname,
+    name, protocol: 'vless', server, port, transport,
+    sni: query.get('sni') || query.get('servername') || query.get('peer') || query.get('serverName') || server,
+    ws_path: query.get('path') || '/', ws_host: query.get('host') || query.get('authority') || query.get('sni') || query.get('peer') || server,
     secret: {
-      uuid: decodePart(url.username),
-      flow: query.get('flow') || '',
+      uuid: encodedAuthority?.uuid || decodePart(url.username),
+      flow,
       encryption: query.get('encryption') || 'none',
-      security: query.get('security') || '',
+      security,
       grpc_service_name: query.get('serviceName') || query.get('service_name') || query.get('grpc-service-name') || '',
       h2_path: query.get('path') || '',
       http_upgrade_path: query.get('path') || '',
       skip_cert_verify: allowInsecure,
       fingerprint: query.get('fp') || query.get('fingerprint') || '',
       alpn: query.get('alpn') || '',
-      reality_public_key: query.get('pbk') || query.get('publicKey') || query.get('public_key') || '',
-      reality_short_id: query.get('sid') || query.get('shortId') || query.get('short_id') || '',
+      reality_public_key: publicKey,
+      reality_short_id: shortId,
     },
   });
+}
+
+function decodeVlessAuthority(value) {
+  const schemeEnd = String(value || '').indexOf('://');
+  if (schemeEnd < 0) return null;
+  const rest = String(value).slice(schemeEnd + 3);
+  const queryStart = rest.search(/[?#]/u);
+  const encoded = (queryStart >= 0 ? rest.slice(0, queryStart) : rest).trim();
+  if (!encoded || encoded.includes('@')) return null;
+  const decoded = decodeBase64(decodePart(encoded));
+  if (!decoded || !decoded.includes('@')) return null;
+  const atIndex = decoded.lastIndexOf('@');
+  let uuid = decoded.slice(0, atIndex).trim();
+  const endpoint = decoded.slice(atIndex + 1).trim();
+  if (/^(?:auto|vless):/iu.test(uuid)) uuid = uuid.replace(/^(?:auto|vless):/iu, '');
+  if (!uuid || !endpoint) return null;
+  let endpointUrl;
+  try { endpointUrl = new URL(`vless://${endpoint}`); } catch (_) { return null; }
+  const server = endpointUrl.hostname;
+  const port = linkPort(endpointUrl, 'vless');
+  if (!server || !Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return { uuid: decodePart(uuid), server, port };
 }
 
 function parseVmess(value) {
@@ -752,6 +786,13 @@ function transportName(type, security) {
   if (normalized === 'httpupgrade') return secure ? 'tls-httpupgrade' : 'httpupgrade';
   if (normalized === 'ws') return secure ? 'tls-ws' : 'ws';
   return secure && normalized === 'tcp' ? 'tls' : 'tcp';
+}
+
+function vlessFlowFromShadowrocket(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['2', 'vision', 'xtls-rprx-vision'].includes(normalized)) return 'xtls-rprx-vision';
+  if (['1', 'origin', 'xtls-rprx-origin'].includes(normalized)) return 'xtls-rprx-origin';
+  return '';
 }
 
 function hasKnownScheme(value) {

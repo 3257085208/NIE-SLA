@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260916-proxy10";
-import { createAdminClient } from "./admin/api.js?v=20260916-proxy10";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260916-proxy10";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260916-proxy10";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260916-proxy10";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260916-proxy10";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260916-proxy11";
+import { createAdminClient } from "./admin/api.js?v=20260916-proxy11";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260916-proxy11";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260916-proxy11";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260916-proxy11";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260916-proxy11";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260916-proxy10";
+} from "./shared/target-catalogs.js?v=20260916-proxy11";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260916-proxy10";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260916-proxy10";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260916-proxy10";
-import { fmtBytes } from "./shared/format.js?v=20260916-proxy10";
+} from "./shared/grouping.js?v=20260916-proxy11";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260916-proxy11";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260916-proxy11";
+import { fmtBytes } from "./shared/format.js?v=20260916-proxy11";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
