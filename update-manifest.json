@@ -1,10 +1,10 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.60",
-  "agent_version": "v1.1.60",
-  "source_ref": "app-v1.1.60",
-  "published_at": "2026-09-17T04:05:09Z",
-  "title": "NIE-SLA 1.1.60",
+  "version": "1.1.61",
+  "agent_version": "v1.1.61",
+  "source_ref": "app-v1.1.61",
+  "published_at": "2026-09-17T04:44:20Z",
+  "title": "NIE-SLA 1.1.61",
   "changelog": [
     "修复 Agent Protobuf 遥测上报遗漏 handshake_ms、first_byte_ms 与 total_ms；启用 Protobuf 的 Agent 会保留真实代理阶段耗时。",
     "修复 Linux 自动更新确认标记放在 root-only 二进制目录导致非 root Agent 反复报告 update_confirmation_error；标记改放到 Agent 可写状态目录。",
@@ -48,7 +48,8 @@
     "后台「CF 用量估算」与「实际消耗（CF API）」现在同构：估算点估计与官方数据偏差收敛到约 ±10%，且 CF API 查询新增 Workers 请求与 R2 A/B 类实际值。",
     "归档对象默认启用 gzip 压缩：R2 中的遥测、探针历史、代理历史与状态快照 JSON 对象以 gzip 存储，读取自动识别并兼容旧对象，相同数据的存储占用约降低 4-8 倍。",
     "后台新增“数据保留”设置：默认 72 小时（3 天），最长可调到 720 小时（30 天），作用于 Agent 指标、Ping 与代理历史的读取与清理。",
-    "把数据保留调高到 72 小时以上时会弹出提示，建议为长期归档启用 S3 兼容的外部存储，避免接近 Cloudflare R2 免费存储额度。"
+    "把数据保留调高到 72 小时以上时会弹出提示，建议为长期归档启用 S3 兼容的外部存储，避免接近 Cloudflare R2 免费存储额度。",
+    "修正开发门禁的 ESLint globals 声明（CompressionStream/DecompressionStream），使包含 gzip 归档模块的快照可以通过完整本地门禁；无运行时行为变化。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
