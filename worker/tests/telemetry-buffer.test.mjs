@@ -165,6 +165,13 @@ assert.equal(stateASecond.cpu_percent, 12);
 assert.deepEqual(stateASecond.pings.map(ping => ping.target_id), ['target-a'], 'follow-up reports merge against the Agent\'s own previous state');
 assert.deepEqual((await readLatest(wssBuffer, 'vps-b')).pings.map(ping => ping.target_id), ['target-b'], 'an Agent\'s follow-up report must not touch other Agents');
 
+const fleetAfterWs = await wssBuffer.fetch(new Request('https://nie-sla.internal/fleet/latest', {
+  headers: { 'x-nie-sla-internal-secret': 'telemetry-test-secret' },
+}));
+const fleetStatesAfterWs = (await fleetAfterWs.json()).states;
+assert.equal(fleetStatesAfterWs['vps-a']?.cpu_percent, 12, 'fleet latest must include the in-memory state before the throttled storage persist runs');
+assert.equal(fleetStatesAfterWs['vps-b']?.cpu_percent, 22, 'fleet latest must include every Agent held in memory');
+
 // Deleting a target must invalidate reports already queued in the shared WSS
 // instance, and an old socket must not write again after the target is
 // recreated. This reproduces the former memLatest=false/pendingReports=1 race.

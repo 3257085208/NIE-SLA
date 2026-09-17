@@ -397,6 +397,18 @@ export class TelemetryBuffer {
       const agentId = sanitizeAgentId(String(key).slice(LATEST_STATE_PREFIX.length));
       if (agentId && value && typeof value === 'object' && !Array.isArray(value)) states[agentId] = value;
     }
+    // Storage persists latest states at most once per LATEST_PERSIST_THROTTLE_SEC,
+    // so fleet readers (status snapshot, alerts, admin) could briefly see an
+    // older row while this instance already holds a fresher report in memory.
+    // In-memory states are never older than their persisted copy: overlay them.
+    for (const [key, value] of this.memLatest || []) {
+      const agentId = sanitizeAgentId(value?.agent_id || key);
+      if (!agentId || !value || typeof value !== 'object' || Array.isArray(value)) continue;
+      const current = states[agentId];
+      if (!current || agentStateTimestamp(value.updated_at) >= agentStateTimestamp(current.updated_at)) {
+        states[agentId] = value;
+      }
+    }
     return { ok: true, states };
   }
 

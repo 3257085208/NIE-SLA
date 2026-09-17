@@ -1,10 +1,10 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.57",
-  "agent_version": "v1.1.57",
-  "source_ref": "app-v1.1.57",
-  "published_at": "2026-09-16T16:43:52Z",
-  "title": "NIE-SLA 1.1.57",
+  "version": "1.1.58",
+  "agent_version": "v1.1.58",
+  "source_ref": "app-v1.1.58",
+  "published_at": "2026-09-17T02:15:00Z",
+  "title": "NIE-SLA 1.1.58",
   "changelog": [
     "修复 Agent Protobuf 遥测上报遗漏 handshake_ms、first_byte_ms 与 total_ms；启用 Protobuf 的 Agent 会保留真实代理阶段耗时。",
     "修复 Linux 自动更新确认标记放在 root-only 二进制目录导致非 root Agent 反复报告 update_confirmation_error；标记改放到 Agent 可写状态目录。",
@@ -38,7 +38,9 @@
     "修正 Agent 指标页的 Proc 标签与异步切换状态；加载期间不再短暂显示旧时间范围或旧指标，TCP Ping 卡片标题也会同步更新。",
     "Worker 为 proc 请求只返回 process_count 字段，减少无关遥测数据和切换等待时间。",
     "修正 VLESS Reality 客户端在服务端把完整握手消息合并到单个 TLS 记录时只消费首条消息、随后错误等待下一条记录的问题；现在会消费同一记录中的完整握手航班，恢复真实握手、首字节和总耗时。",
-    "修正 WSS 控制通道未配置 canary 端口时默认使用 HTTP 80 的问题，统一使用 HTTPS canary 443。"
+    "修正 WSS 控制通道未配置 canary 端口时默认使用 HTTP 80 的问题，统一使用 HTTPS canary 443。",
+    "修正状态聚合在 Agent 状态持久化节流窗口内可能短暂读取旧值、导致公开状态误显示离线或上报中断的问题：聚合读取现在优先使用缓冲中的最新状态。",
+    "内部维护：清理发布临时 worktree、空目录与损坏的本地引用，不改变任何用户可见行为。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
