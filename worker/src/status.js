@@ -1,4 +1,4 @@
-import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA, LEGACY_STATUS_SNAPSHOT_SCHEMA } from './utils.js';
+import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, statusCacheKey, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA, LEGACY_STATUS_SNAPSHOT_SCHEMA } from './utils.js';
 import { json } from './auth.js';
 import { validateAdminSession } from './totp.js';
 import { readR2JsonResult, readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks, verifyR2Json } from './storage.js';
@@ -13,14 +13,9 @@ import { readFleetLatestAgentStates } from './telemetry-buffer.js';
 export async function getStatusCached(request, env, url, ctx = null) {
   const ttl = clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300);
   const wantsFresh = url.searchParams.get('fresh') === '1' || url.searchParams.get('cache') === '0';
-  const wantsLite = url.searchParams.get('lite') === '1';
   const adminRequest = wantsFresh ? await isAdminRequest(request, env) : false;
   if (!ttl || (wantsFresh && adminRequest)) return getStatusFresh(env, url);
-  const cacheUrl = new URL(url.origin + url.pathname);
-  cacheUrl.searchParams.set('days', String(clamp(Number(url.searchParams.get('days') || 30), 1, 90)));
-  cacheUrl.searchParams.set('privacy', publicCachePrivacyVersion(env));
-  if (wantsLite) cacheUrl.searchParams.set('lite', '1');
-  const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
+  const cacheKey = statusCacheKey(url, env);
   const cache = caches.default;
   const cached = await cache.match(cacheKey);
   if (cached) return withCacheState(cached, ttl, 'hit');

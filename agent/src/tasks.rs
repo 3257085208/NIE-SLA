@@ -22,6 +22,7 @@ const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_EXCERPT_CHARS: usize = 16 * 1024;
 const MAX_NODEQUALITY_ARTIFACT_BYTES: usize = 24 * 1024;
 const MAX_NODEQUALITY_CAPTURE_CHARS: usize = 180 * 1024;
+const MAX_JSON_PARSE_ATTEMPTS: usize = 256;
 const IP_UNLOCK_TIMEOUT_SEC: u64 = 600;
 const NODEQUALITY_DEFAULT_TIMEOUT_SEC: u64 = 3600;
 const NODEQUALITY_MAX_TIMEOUT_SEC: u64 = 7200;
@@ -945,13 +946,16 @@ fn ensure_script_success(output: &FixedScriptOutput) -> Result<()> {
 }
 
 fn parse_unlock_json(output: &str) -> Option<Vec<Value>> {
-    output.match_indices('{').find_map(|(start, _)| {
-        let value = serde_json::Deserializer::from_str(&output[start..])
-            .into_iter::<Value>()
-            .next()?
-            .ok()?;
-        unlock_services_from_json(&value)
-    })
+    output
+        .match_indices('{')
+        .take(MAX_JSON_PARSE_ATTEMPTS)
+        .find_map(|(start, _)| {
+            let value = serde_json::Deserializer::from_str(&output[start..])
+                .into_iter::<Value>()
+                .next()?
+                .ok()?;
+            unlock_services_from_json(&value)
+        })
 }
 
 fn unlock_services_from_json(value: &Value) -> Option<Vec<Value>> {
@@ -1756,6 +1760,7 @@ fn normalize_nodequality_report_url(value: &str) -> Option<String> {
 fn extract_nodequality_token(output: &str) -> Option<String> {
     output
         .match_indices('{')
+        .take(MAX_JSON_PARSE_ATTEMPTS)
         .filter_map(|(start, _)| {
             serde_json::Deserializer::from_str(&output[start..])
                 .into_iter::<Value>()
@@ -1771,7 +1776,7 @@ fn extract_nodequality_token(output: &str) -> Option<String> {
                 .filter(|token| valid_nodequality_token(token))
                 .map(str::to_string)
         })
-        .next_back()
+        .last()
 }
 
 fn valid_nodequality_token(value: &str) -> bool {
@@ -2256,6 +2261,25 @@ mod tests {
         let services = parse_unlock_json(output).unwrap();
         assert_eq!(services.len(), 1);
         assert_eq!(services[0]["region"], "JP");
+    }
+
+    #[test]
+    fn json_scan_attempts_are_capped() {
+        let unlock = r#"{"Media":{"TikTok":{"Status":"Yes","Region":"US","Type":"Native"}}}"#;
+        let noisy = format!("{}{}", "{".repeat(MAX_JSON_PARSE_ATTEMPTS + 8), unlock);
+        assert!(parse_unlock_json(&noisy).is_none());
+
+        let token = r#"{"success":true,"data":{"token":"abcdefgh"}}"#;
+        let noisy_token = format!("{}{}", "{".repeat(MAX_JSON_PARSE_ATTEMPTS + 8), token);
+        assert!(extract_nodequality_token(&noisy_token).is_none());
+
+        let early = format!("progress {{}}\n{unlock}");
+        assert!(parse_unlock_json(&early).is_some());
+        let early_token = format!("progress {{}}\n{token}");
+        assert_eq!(
+            extract_nodequality_token(&early_token).as_deref(),
+            Some("abcdefgh")
+        );
     }
 
     #[test]

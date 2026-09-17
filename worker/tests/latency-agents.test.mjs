@@ -78,7 +78,16 @@ await assert.rejects(
   /无效|已使用/,
 );
 
-const checkedAt = Math.floor(Date.now() / 1000);
+// Latency archives are grouped into 6-hour UTC segments while the API accepts
+// timestamps only within [-900s, +300s] of now. Anchor the fixture inside both
+// windows so `checkedAt - 30` always lands in the same archive segment.
+const ARCHIVE_SEGMENT_SEC = 6 * 3600;
+const fixtureNow = Math.floor(Date.now() / 1000);
+const fixtureSegmentStart = Math.floor(fixtureNow / ARCHIVE_SEGMENT_SEC) * ARCHIVE_SEGMENT_SEC;
+const checkedAt = Math.min(
+  Math.max(fixtureNow, fixtureSegmentStart + 30),
+  Math.min(fixtureNow + 300, fixtureSegmentStart + ARCHIVE_SEGMENT_SEC - 30),
+);
 const submitted = await submitLatencyAgentResults(jsonRequest({}), env, {
   node_id: created.id,
   results: [

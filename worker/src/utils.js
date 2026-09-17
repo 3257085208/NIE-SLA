@@ -415,6 +415,15 @@ export function publicCachePrivacyVersion(env) {
   ].join('-');
 }
 
+export function statusCacheKey(url, env) {
+  const cacheUrl = new URL(url.origin + url.pathname);
+  cacheUrl.searchParams.set('days', String(clamp(Number(url.searchParams.get('days') || 30), 1, 90)));
+  cacheUrl.searchParams.set('privacy', publicCachePrivacyVersion(env));
+  if (url.searchParams.get('lite') === '1') cacheUrl.searchParams.set('lite', '1');
+  if (url.searchParams.get('fresh') === '1' || url.searchParams.get('cache') === '0') cacheUrl.searchParams.set('fresh', '1');
+  return new Request(cacheUrl.toString(), { method: 'GET' });
+}
+
 function maskIpLikeHost(host) {
   const value = String(host || '').trim();
   if (!value) return value;

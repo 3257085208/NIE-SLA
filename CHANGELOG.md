@@ -1,6 +1,11 @@
 # 更新日志
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
+## 1.1.63 - 2026-09-17
+
+- Rust Agent 硬化：root manager 工作目录改为 /；原子写入使用 create_new 拒绝跟随符号链接；任务输出 JSON 扫描尝试上限。
+- 缓存隔离：/api/status 的 fresh=1 与 cache=0 使用独立缓存键。
+
 ## 1.1.62 - 2026-09-17
 
 - 安全与资源加固：共享遥测 WSS 每 Agent 消息上限与内存硬上限；Ping 目标 ID 字符集/长度/基数限制；Influx 转义补换行；Agent 接口限流前置与派生凭据缓存；未知 Agent 读取短路；6 个 Agent 端点与 3 个管理端点补限流；状态流错误脱敏；NodeQuality 公开发布报告打码；GeoIP 私网校验统一；任务摘要清洗；调试 IP 头收敛；Turnstile CSP；workers.dev 入口默认拒绝。

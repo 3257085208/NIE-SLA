@@ -730,12 +730,8 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
         .map(|value| value.as_nanos())
         .unwrap_or(0);
     let temp = path.with_extension(format!("tmp-{}-{unique}", std::process::id()));
-    if temp.exists() || temp.is_symlink() {
-        fs::remove_file(&temp).context("remove stale temporary file")?;
-    }
     {
-        let mut file =
-            fs::File::create(&temp).with_context(|| format!("create {}", temp.display()))?;
+        let mut file = create_temp_file(&temp)?;
         use std::io::Write;
         file.write_all(content)
             .with_context(|| format!("write {}", temp.display()))?;
@@ -743,6 +739,29 @@ fn atomic_write(path: &Path, content: &[u8]) -> Result<()> {
             .with_context(|| format!("sync {}", temp.display()))?;
     }
     fs::rename(&temp, path).with_context(|| format!("install {}", path.display()))
+}
+
+fn create_temp_file(path: &Path) -> Result<fs::File> {
+    // `create_new` opens with `O_CREAT | O_EXCL`, which never follows a
+    // symlink at the final component. A stale temp file or planted symlink
+    // only makes the first attempt fail; removing it removes the link
+    // itself, and the second attempt refuses to follow anything.
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(file) => Ok(file),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            fs::remove_file(path).context("remove stale temporary file")?;
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .with_context(|| format!("create {}", path.display()))
+        }
+        Err(error) => Err(error).with_context(|| format!("create {}", path.display())),
+    }
 }
 
 fn atomic_write_shared(path: &Path, content: &[u8]) -> Result<()> {
@@ -775,7 +794,7 @@ fn systemd_telemetry_unit() -> String {
 
 fn systemd_manager_unit() -> String {
     format!(
-        "[Unit]\nDescription=NIE-SLA privileged Agent manager\nAfter=network-online.target {TELEMETRY_SERVICE}.service\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nEnvironment=NIE_SLA_TASK_RUNNER_ONLY=1\nExecStart={AGENT_BINARY} --task-runner-only\nRestart=on-failure\nRestartSec=20\nUser=root\nPrivateTmp=true\nProtectHome=true\nUMask=0027\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=NIE-SLA privileged Agent manager\nAfter=network-online.target {TELEMETRY_SERVICE}.service\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory=/\nEnvironmentFile={ENV_FILE}\nEnvironment=NIE_SLA_TASK_RUNNER_ONLY=1\nExecStart={AGENT_BINARY} --task-runner-only\nRestart=on-failure\nRestartSec=20\nUser=root\nPrivateTmp=true\nProtectHome=true\nUMask=0027\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
     )
 }
 
@@ -797,7 +816,7 @@ fn openrc_telemetry_service() -> String {
 
 fn openrc_manager_service() -> String {
     format!(
-        "#!/sbin/openrc-run\nname=\"{MANAGER_SERVICE}\"\ndescription=\"NIE-SLA privileged Agent manager\"\n\nstart() {{\n    ebegin \"Starting {MANAGER_SERVICE}\"\n    start-stop-daemon --start --background --make-pidfile \\\n        --pidfile /run/{MANAGER_SERVICE}.pid \\\n        --exec /bin/sh -- \\\n        -c 'cd \"{STATE_DIR}\"; set -a; . \"{ENV_FILE}\"; set +a; export NIE_SLA_TASK_RUNNER_ONLY=1; exec \"{AGENT_BINARY}\" --task-runner-only >>\"/var/log/{MANAGER_SERVICE}.log\" 2>&1'\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping {MANAGER_SERVICE}\"\n    start-stop-daemon --stop --pidfile /run/{MANAGER_SERVICE}.pid\n    eend $?\n}}\n\ndepend() {{ need net; after {TELEMETRY_SERVICE}; }}\n"
+        "#!/sbin/openrc-run\nname=\"{MANAGER_SERVICE}\"\ndescription=\"NIE-SLA privileged Agent manager\"\n\nstart() {{\n    ebegin \"Starting {MANAGER_SERVICE}\"\n    start-stop-daemon --start --background --make-pidfile \\\n        --pidfile /run/{MANAGER_SERVICE}.pid \\\n        --exec /bin/sh -- \\\n        -c 'cd /; set -a; . \"{ENV_FILE}\"; set +a; export NIE_SLA_TASK_RUNNER_ONLY=1; exec \"{AGENT_BINARY}\" --task-runner-only >>\"/var/log/{MANAGER_SERVICE}.log\" 2>&1'\n    eend $?\n}}\n\nstop() {{\n    ebegin \"Stopping {MANAGER_SERVICE}\"\n    start-stop-daemon --stop --pidfile /run/{MANAGER_SERVICE}.pid\n    eend $?\n}}\n\ndepend() {{ need net; after {TELEMETRY_SERVICE}; }}\n"
     )
 }
 
@@ -900,14 +919,19 @@ mod tests {
         assert!(unit.contains("ExecStart=/opt/nie-sla-agent/nie-sla-agent --task-runner-only"));
         assert!(unit.contains("User=root"));
         assert!(unit.contains("Restart=on-failure"));
+        assert!(unit.contains("WorkingDirectory=/\n"));
+        assert!(!unit.contains("WorkingDirectory=/var/lib/nie-sla-agent"));
         assert!(!unit.contains("$NSTATUS_TASK"));
         assert!(!unit.contains("curl"));
 
         let telemetry = systemd_telemetry_unit();
         assert!(telemetry.contains("Restart=on-failure"));
+        assert!(telemetry.contains("WorkingDirectory=/var/lib/nie-sla-agent"));
 
         let openrc = openrc_manager_service();
         assert!(openrc.contains("start-stop-daemon --start --background --make-pidfile"));
+        assert!(openrc.contains("cd /; set -a;"));
+        assert!(!openrc.contains("cd \"/var/lib/nie-sla-agent\""));
         assert!(openrc.contains("exec \"/opt/nie-sla-agent/nie-sla-agent\" --task-runner-only"));
         assert!(!openrc.contains("--user nie-sla"));
 
@@ -920,6 +944,42 @@ mod tests {
         let status = Command::new("sh").arg("-n").arg(&path).status().unwrap();
         let _ = fs::remove_file(path);
         assert!(status.success());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_temp_files_never_follow_symlinks() {
+        use std::io::Write;
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!(
+            "nie-sla-atomic-temp-{}-{}",
+            std::process::id(),
+            now_sec()
+        ));
+        fs::create_dir_all(&base).unwrap();
+
+        let target = base.join("state.json");
+        fs::write(&target, b"original").unwrap();
+        let planted = base.join("state.tmp");
+        symlink(&target, &planted).unwrap();
+        let mut file = create_temp_file(&planted).unwrap();
+        file.write_all(b"replaced").unwrap();
+        drop(file);
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        assert!(!fs::symlink_metadata(&planted)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read(&planted).unwrap(), b"replaced");
+
+        let stale = base.join("stale.tmp");
+        fs::write(&stale, b"stale").unwrap();
+        let mut file = create_temp_file(&stale).unwrap();
+        file.write_all(b"fresh").unwrap();
+        drop(file);
+        assert_eq!(fs::read(&stale).unwrap(), b"fresh");
+
+        let _ = fs::remove_dir_all(base);
     }
 
     #[test]
