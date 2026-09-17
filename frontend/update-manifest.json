@@ -1,10 +1,10 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.58",
-  "agent_version": "v1.1.58",
-  "source_ref": "app-v1.1.58",
-  "published_at": "2026-09-17T02:15:00Z",
-  "title": "NIE-SLA 1.1.58",
+  "version": "1.1.59",
+  "agent_version": "v1.1.59",
+  "source_ref": "app-v1.1.59",
+  "published_at": "2026-09-17T02:56:12Z",
+  "title": "NIE-SLA 1.1.59",
   "changelog": [
     "修复 Agent Protobuf 遥测上报遗漏 handshake_ms、first_byte_ms 与 total_ms；启用 Protobuf 的 Agent 会保留真实代理阶段耗时。",
     "修复 Linux 自动更新确认标记放在 root-only 二进制目录导致非 root Agent 反复报告 update_confirmation_error；标记改放到 Agent 可写状态目录。",
@@ -40,7 +40,12 @@
     "修正 VLESS Reality 客户端在服务端把完整握手消息合并到单个 TLS 记录时只消费首条消息、随后错误等待下一条记录的问题；现在会消费同一记录中的完整握手航班，恢复真实握手、首字节和总耗时。",
     "修正 WSS 控制通道未配置 canary 端口时默认使用 HTTP 80 的问题，统一使用 HTTPS canary 443。",
     "修正状态聚合在 Agent 状态持久化节流窗口内可能短暂读取旧值、导致公开状态误显示离线或上报中断的问题：聚合读取现在优先使用缓冲中的最新状态。",
-    "内部维护：清理发布临时 worktree、空目录与损坏的本地引用，不改变任何用户可见行为。"
+    "内部维护：清理发布临时 worktree、空目录与损坏的本地引用，不改变任何用户可见行为。",
+    "降低 D1 读取：探针桶过期清理改为按目标范围使用覆盖索引，只读取实际过期的桶行，不再扫描整个截止日。",
+    "降低 D1 读取：后台路径与 Ping 间隔配置改为按数据中心的共享短缓存（保持约 60 秒生效语义），减少每个 isolate 的重复查询。",
+    "降低 D1 读取与响应体积：每分钟调度扫描改为显式列查询，不再读取探针的大 JSON 列（快照与后台详情数据不变）。",
+    "用量模型升级到 usage-model-v1.3.4：补全 Agent 最新状态回退写入、Manager 心跳、探针 5 分钟桶与过期清理扫描、每分钟目标扫描等结构性路径；按 Cloudflare 计费规则纳入 D1 索引行放大与 R2 写入后回读校验；用五个 6 小时官方窗口重新拟合输出系数。",
+    "后台「CF 用量估算」与「实际消耗（CF API）」现在同构：估算点估计与官方数据偏差收敛到约 ±10%，且 CF API 查询新增 Workers 请求与 R2 A/B 类实际值。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

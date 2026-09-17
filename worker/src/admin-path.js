@@ -1,4 +1,5 @@
 import { ApiError } from './auth.js';
+import { readSharedConfig, invalidateSharedConfig } from './config-cache.js';
 
 export const DEFAULT_ADMIN_PATH = '/admin';
 
@@ -22,15 +23,19 @@ export function normalizeAdminPath(value, { strict = false } = {}) {
 }
 
 export async function getAdminPath(env) {
-  if (env?.DB) {
-    try {
-      const row = await env.DB.prepare('SELECT value FROM app_meta WHERE key = ?')
-        .bind(ADMIN_PATH_KEY)
-        .first();
-      if (row?.value) return normalizeAdminPath(row.value);
-    } catch (_) {}
-  }
-  return normalizeAdminPath(env?.ADMIN_PATH);
+  const configured = Number(env?.ADMIN_PATH_CACHE_SEC ?? 60);
+  const ttlSec = Number.isFinite(configured) && configured > 0 ? configured : 60;
+  return readSharedConfig(env, ADMIN_PATH_KEY, ttlSec, async () => {
+    if (env?.DB) {
+      try {
+        const row = await env.DB.prepare('SELECT value FROM app_meta WHERE key = ?')
+          .bind(ADMIN_PATH_KEY)
+          .first();
+        if (row?.value) return normalizeAdminPath(row.value);
+      } catch (_) {}
+    }
+    return normalizeAdminPath(env?.ADMIN_PATH);
+  });
 }
 
 export async function setAdminPath(env, value) {
@@ -40,5 +45,6 @@ export async function setAdminPath(env, value) {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
     .bind(ADMIN_PATH_KEY, path, Math.floor(Date.now() / 1000))
     .run();
+  await invalidateSharedConfig(ADMIN_PATH_KEY);
   return path;
 }

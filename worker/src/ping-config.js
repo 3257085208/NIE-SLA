@@ -1,13 +1,13 @@
 import { nowSec } from './utils.js';
 import { ApiError, safeJson } from './auth.js';
+import { readSharedConfig, invalidateSharedConfig } from './config-cache.js';
 
 export const MIN_PING_INTERVAL_SEC = 5;
 export const MAX_PING_INTERVAL_SEC = 300;
 export const DEFAULT_PING_INTERVAL_SEC = 20;
 
 const META_KEY = 'agent_ping_interval_sec';
-const CACHE_TTL_MS = 60_000;
-const pingConfigCaches = new WeakMap();
+const CONFIG_TTL_SEC = 60;
 
 export function normalizePingIntervalSec(value, fallback = DEFAULT_PING_INTERVAL_SEC) {
   const number = Number(value);
@@ -24,32 +24,18 @@ export async function getPingIntervalSec(env) {
   const database = env?.DB;
   if (!database || (typeof database !== 'object' && typeof database !== 'function')) return fallback;
 
-  const now = Date.now();
-  const cached = pingConfigCaches.get(database);
-  if (cached?.value !== undefined && cached.expires_at > now) return cached.value;
-  if (cached?.promise) return cached.promise;
-
-  const pending = { promise: null };
-  const promise = (async () => {
+  return readSharedConfig(env, META_KEY, CONFIG_TTL_SEC, async () => {
     let stored = null;
     try {
       stored = await database.prepare(`SELECT value FROM app_meta WHERE key = ?`)
         .bind(META_KEY).first();
     } catch (_) {}
-    const value = normalizePingIntervalSec(stored?.value, fallback);
-    if (pingConfigCaches.get(database) === pending) {
-      pingConfigCaches.set(database, { value, expires_at: Date.now() + CACHE_TTL_MS });
-    }
-    return value;
-  })();
-  pending.promise = promise;
-  pingConfigCaches.set(database, pending);
-  return promise;
+    return normalizePingIntervalSec(stored?.value, fallback);
+  });
 }
 
 export function invalidatePingIntervalCache(env) {
-  const database = env?.DB;
-  if (database && (typeof database === 'object' || typeof database === 'function')) pingConfigCaches.delete(database);
+  return invalidateSharedConfig(META_KEY);
 }
 
 export async function updatePingConfig(request, env) {

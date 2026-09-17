@@ -1,5 +1,5 @@
 import { connect } from 'cloudflare:sockets';
-import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatus, withTimeout, ALLOWED_REGIONS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC, BUCKET_SEC, isPrivateHost, buildMissedPoints, lastPersistedCheckAt, assertPublicHttpUrl, fetchPublicHttpWithValidatedRedirects } from './utils.js';
+import { clamp, nowSec, parseBoolean, sanitizeId, dayFromSec, parseExpectedStatus, withTimeout, ALLOWED_REGIONS, DEFAULT_TIMEOUT_MS, DEFAULT_INTERVAL_SEC, MIN_INTERVAL_SEC, BUCKET_SEC, isPrivateHost, buildMissedPoints, lastPersistedCheckAt, assertPublicHttpUrl, fetchPublicHttpWithValidatedRedirects, TARGET_RUNTIME_COLUMNS } from './utils.js';
 import { internalRequestHeaders } from './auth.js';
 import { readR2State, mergeR2StateUpdates, setDailySummary, cachedDailySummaryBefore, dailySummaryFromPoints, statsFromDailySummaries } from './storage.js';
 import { applyProbeWriteBatch, readCheckBucketDaySummary, latestStatusToD1Enabled, upsertLatestStatus } from './admin.js';
@@ -290,7 +290,7 @@ export async function runDueTargets(env, options = {}) {
   // marker (lastCheckedAt gate below); fast-status writes never touch that
   // marker, and next_probe_at in D1 is only a coarse crash-recovery mirror.
   const rows = await env.DB.prepare(
-     `SELECT t.*, t.last_checked_at AS last_checked_at
+     `SELECT ${TARGET_RUNTIME_COLUMNS}
       FROM targets t
       WHERE t.enabled = 1
         AND COALESCE(t.no_public_ip, 0) = 0
@@ -365,7 +365,7 @@ export async function runFastStatusTargets(env, options = {}) {
   // truncated.
   const maxTargets = clamp(Number(env.FAST_STATUS_MAX_TARGETS || 100), 1, 200);
   const now = nowSec();
-  const rows = await env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0 ORDER BY group_name, name`).all();
+  const rows = await env.DB.prepare(`SELECT ${TARGET_RUNTIME_COLUMNS} FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0 ORDER BY group_name, name`).all();
   const state = await readR2State(env);
   const d1Latest = await readLatestStatusMap(env, (rows.results || []).map((target) => target.id));
   const previousById = buildPreviousStateMap(rows.results || [], state, d1Latest);

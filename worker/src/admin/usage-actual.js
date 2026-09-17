@@ -58,11 +58,18 @@ export async function fetchActualUsage(env, hours = 24) {
   const data = await gql(token, `query {
     viewer {
       accounts(filter: { accountTag: "${accountTag}" }) {
+        workers: workersInvocationsAdaptive(limit: 10000, filter: { ${window} }) {
+          sum { requests errors }
+        }
         d1: d1AnalyticsAdaptiveGroups(limit: 1, filter: { ${window} }) {
-          sum { rowsWritten rowsRead }
+          sum { rowsWritten rowsRead readQueries writeQueries }
         }
         durableObjects: durableObjectsInvocationsAdaptiveGroups(limit: 1, filter: { ${window} }) {
           sum { requests wallTime }
+        }
+        r2: r2OperationsAdaptiveGroups(limit: 50, filter: { ${window} }) {
+          dimensions { actionType }
+          sum { requests }
         }
       }
     }
@@ -70,20 +77,33 @@ export async function fetchActualUsage(env, hours = 24) {
 
   const account = data?.viewer?.accounts?.[0] || {};
   const sumOf = (group) => (Array.isArray(group) ? group[0]?.sum : group?.sum) || {};
+  const sumAll = (group, key) => (Array.isArray(group) ? group : [group])
+    .reduce((total, item) => total + Number(item?.sum?.[key] || 0), 0);
   const d1 = sumOf(account.d1);
   const durable = sumOf(account.durableObjects);
+  const r2ClassA = new Set(['PutObject', 'CopyObject', 'ListObjects', 'ListObjectsV2', 'ListBuckets', 'HeadBucket', 'DeleteObject', 'DeleteObjects', 'CreateMultipartUpload', 'CompleteMultipartUpload', 'UploadPart', 'UploadPartCopy']);
+  let r2A = 0;
+  let r2B = 0;
+  for (const group of Array.isArray(account.r2) ? account.r2 : [account.r2]) {
+    const type = String(group?.dimensions?.actionType || '');
+    const count = Number(group?.sum?.requests || 0);
+    if (r2ClassA.has(type)) r2A += count;
+    else r2B += count;
+  }
   const result = {
     window_hours: Math.min(168, Math.max(1, hours)),
     actual: {
+      workers_calls: sumAll(account.workers, 'requests'),
       d1_rows_written: Number(d1.rowsWritten || 0),
       d1_rows_read: Number(d1.rowsRead || 0),
+      d1_queries: Number(d1.readQueries || 0) + Number(d1.writeQueries || 0),
       do_requests: Number(durable.requests || 0),
       do_wall_time_sec: Math.round(Number(durable.wallTime || 0) / 1_000_000),
-      workers_calls: null,
-      r2_class_a: null,
-      r2_class_b: null,
+      r2_class_a: r2A,
+      r2_class_b: r2B,
+      r2_requests: r2A + r2B,
     },
-    unavailable: ['workers_calls（免费账户无账户级指标，请在控制台查看）', 'r2_class_a/b（本查询未覆盖）'],
+    unavailable: ['DO SQLite 行写入（GraphQL 未暴露，请在控制台查看）'],
     fetched_at: Math.floor(now / 1000),
   };
   cache = { hours, expiresAt: now + CACHE_TTL_MS, data: result };

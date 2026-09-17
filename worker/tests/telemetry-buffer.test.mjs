@@ -386,11 +386,15 @@ const controlBuffer = new TelemetryBuffer({ storage: controlStorage }, testEnv({
   },
 }));
 const firstControl = await controlBuffer.readControlSnapshot();
+const firstControlQueries = controlQueries;
 const secondControl = await controlBuffer.readControlSnapshot();
 assert.deepEqual(secondControl, firstControl, 'WSS control snapshots must be cached in the DO');
+assert.equal(controlQueries, firstControlQueries, 'a cached control snapshot must not touch D1 again');
 assert.equal(firstControl.ping_targets[0].protocol, 'tcp');
 assert.equal(firstControl.proxy_canary_port, 443, 'WSS control must use the HTTPS canary default');
-assert.equal(controlQueries, 4, 'a cached WSS control snapshot should read D1 once for targets, interval and traffic corrections');
+// The ping interval may be served by the shared config cache, so the first
+// snapshot issues 3-4 D1 reads depending on whether that cache is warm.
+assert.ok(firstControlQueries >= 3 && firstControlQueries <= 4, `control snapshot D1 reads ${firstControlQueries}`);
 
 const pagedStorage = memoryStorage();
 const pagedBuffer = new TelemetryBuffer({ storage: pagedStorage }, testEnv());

@@ -5,7 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-export const MODEL_VERSION = 'usage-model-v1.3.3';
+export const MODEL_VERSION = 'usage-model-v1.3.4';
 export const DEFAULT_BASE_URL = 'https://status.example.com';
 export const DEFAULT_CALIBRATION_FILE = new URL('./usage-model-calibration.json', import.meta.url);
 
@@ -80,6 +80,7 @@ export const DEFAULT_CALIBRATION = {
     d1_query_path_multiplier: { point: 1.135, low: 1.05, high: 1.23 },
     d1_rows_read_multiplier: { point: 2.65, low: 2.05, high: 3.25 },
     d1_rows_written_multiplier: { point: 1.92, low: 1.55, high: 2.30 },
+    d1_index_write_multiplier: { point: 3, low: 2, high: 5 },
     probe_event_multiplier: { point: 1.15, low: 1.05, high: 1.25 },
     public_cache_miss_rate: { point: 0.06, low: 0.04, high: 0.09 },
   },
@@ -93,11 +94,13 @@ export const DEFAULT_CALIBRATION = {
     d1_query_path_multiplier: { point: 1.135, low: 0.9, high: 1.5 },
     d1_rows_read_multiplier: { point: 2.65, low: 0.85, high: 4 },
     d1_rows_written_multiplier: { point: 1.92, low: 1, high: 3.5 },
+    d1_index_write_multiplier: { point: 3, low: 1.5, high: 6 },
     probe_event_multiplier: { point: 1.15, low: 1, high: 1.4 },
     public_cache_miss_rate: { point: 0.06, low: 0.02, high: 0.15 },
   },
   output_multipliers: {
     workers_calls: { point: 1, low: 0.90, high: 1.10 },
+    do_requests: { point: 2.05, low: 1.69, high: 2.16 },
     r2_class_a: { point: 1, low: 0.95, high: 1.05 },
     r2_class_b: { point: 1, low: 0.94, high: 1.06 },
     r2_requests: { point: 1, low: 0.92, high: 1.08 },
@@ -107,6 +110,7 @@ export const DEFAULT_CALIBRATION = {
   },
   stress_output_multipliers: {
     workers_calls: { point: 1, low: 0.9, high: 1.1 },
+    do_requests: { point: 2.05, low: 1.6, high: 2.6 },
     r2_class_a: { point: 1, low: 0.9, high: 1.1 },
     r2_class_b: { point: 1, low: 0.9, high: 1.1 },
     r2_requests: { point: 1, low: 0.9, high: 1.1 },
@@ -721,6 +725,20 @@ function estimateR2(workers, duration, options, calibration) {
     r2B: 1,
   });
 
+  // v1.1.40 added PUT→HEAD→GET readback verification for every JSON object
+  // write; each object write therefore performs two extra Class B operations.
+  const writeEventCounts = events
+    .filter((event) => finiteNumber(event?.r2?.class_a?.estimate) > 0)
+    .map((event) => event.count);
+  addEvent(events, {
+    id: 'r2_readback_verify',
+    label: 'R2 写入后回读校验',
+    count: sumRanges(writeEventCounts.length ? writeEventCounts : [exact(0)]),
+    source: 'derived',
+    note: '写入状态/遥测/归档对象后执行 HEAD+GET 校验，每次写入额外产生 2 个 B 类操作。',
+    r2B: 2,
+  });
+
   const baseA = sumEventMetric(events, ['r2', 'class_a']);
   const baseB = sumEventMetric(events, ['r2', 'class_b']);
   const classA = multiplyRange(baseA, factor('r2_class_a_multiplier', 1.37));
@@ -864,6 +882,57 @@ function estimateD1(workers, duration, options, calibration) {
     profile: { rowsWritten: 1 },
   });
 
+  // Structural events calibrated against the 2026-09-16 dashboard windows:
+  // the WSS buffer still mirrors every Agent's latest state into D1, the
+  // task poller touches agent_contacts, every history probe writes a
+  // check_buckets row, the hourly maintenance delete scans one calendar day
+  // of buckets, and both per-minute schedulers scan the enabled targets.
+  const stateUpserts = fleet.agent_count * periodicCount(duration, reportSec);
+  addEvent(events, {
+    id: 'd1_agent_state_upserts',
+    label: 'Agent 最新状态回退写入 · D1',
+    count: exact(stateUpserts),
+    source: 'derived',
+    note: 'DO 缓冲在每次 drain 后仍会把最新状态回退写入 agent_metrics_state。',
+    profile: { write: 1, rowsWritten: 1 },
+  });
+  const contactTouches = fleet.agent_count * periodicCount(duration, 600);
+  addEvent(events, {
+    id: 'd1_agent_contacts',
+    label: 'Manager 活跃心跳 · D1',
+    count: exact(contactTouches),
+    source: 'derived',
+    note: '任务轮询按 600 秒节流更新 agent_contacts。',
+    profile: { read: 1, write: 1, rowsWritten: 1 },
+  });
+  const bucketWrites = fleet.probe_target_count * periodicCount(duration, reportSec);
+  addEvent(events, {
+    id: 'd1_check_buckets',
+    label: '探针 5 分钟桶写入 · D1',
+    count: exact(bucketWrites),
+    source: 'derived',
+    note: '每次历史探测写一个 check_buckets 桶；D1 的行写入计数包含表行与索引行，由 d1_index_write_multiplier 统一放大。',
+    profile: { write: 1, rowsWritten: 1 },
+  });
+  const cleanupRuns = Math.ceil(duration / HOUR_SEC);
+  addEvent(events, {
+    id: 'd1_check_bucket_cleanup',
+    label: '探针桶过期清理 · D1',
+    count: exact(cleanupRuns),
+    source: 'derived',
+    note: '每小时维护按 day 索引删除过期桶；cutoff 当天切片要扫描该日全部桶（约每目标 288 行），实际删除约每目标每小时 12 行。',
+    profile: { read: 1, write: 2, rowsRead: Math.max(1, fleet.probe_target_count) * 288, rowsWritten: Math.max(1, fleet.probe_target_count) * 12 },
+  });
+  const scheduleScans = periodicCount(duration, MINUTE_SEC) * 2;
+  addEvent(events, {
+    id: 'd1_schedule_scans',
+    label: '调度目标扫描 · D1',
+    count: exact(scheduleScans),
+    source: 'derived',
+    note: '每分钟的历史探测与 fast-status 各扫描一次启用目标（使用显式列，不读取大 JSON 列）。',
+    profile: { read: 1, rowsRead: Math.max(1, fleet.probe_target_count) },
+  });
+
   const readBase = sumEventMetric(events, ['d1', 'read_queries']);
   const writeBase = sumEventMetric(events, ['d1', 'write_queries']);
   const rowsReadBase = sumEventMetric(events, ['d1', 'rows_read']);
@@ -871,24 +940,29 @@ function estimateD1(workers, duration, options, calibration) {
   const queryMultiplier = calibratedFactor(calibration, 'd1_query_path_multiplier', 1.135);
   const rowsReadMultiplier = calibratedFactor(calibration, 'd1_rows_read_multiplier', 2.65);
   const rowsWrittenMultiplier = calibratedFactor(calibration, 'd1_rows_written_multiplier', 1.92);
+  const indexWriteMultiplier = calibratedFactor(calibration, 'd1_index_write_multiplier', 3);
   const queries = multiplyRange(addRanges(readBase, writeBase), queryMultiplier);
   return {
     read_queries: multiplyRange(readBase, queryMultiplier),
     write_queries: multiplyRange(writeBase, queryMultiplier),
     queries,
     rows_read: multiplyRange(rowsReadBase, rowsReadMultiplier),
-    rows_written: multiplyRange(rowsWrittenBase, rowsWrittenMultiplier),
+    rows_written: multiplyRange(multiplyRange(rowsWrittenBase, indexWriteMultiplier), rowsWrittenMultiplier),
     base: {
       read_queries: readBase,
       write_queries: writeBase,
       rows_read: rowsReadBase,
-      rows_written: rowsWrittenBase,
+      // Index entries are written alongside the table row and are billed as
+      // rows written, so the structural base already carries the index
+      // multiplier; output calibration only absorbs path-level residuals.
+      rows_written: multiplyRange(rowsWrittenBase, indexWriteMultiplier),
     },
     events,
     assumptions: {
       query_path_multiplier: queryMultiplier,
       rows_read_multiplier: rowsReadMultiplier,
       rows_written_multiplier: rowsWrittenMultiplier,
+      index_write_multiplier: indexWriteMultiplier,
       credential_touch_sec: positiveNumber(options.credentialTouchSec, DEFAULT_CREDENTIAL_TOUCH_SEC),
       observed_debug_route_events: workers.events
         .filter((event) => ['agent_tasks', 'agent_task_action', 'agent_update_policy', 'agent_config', 'agent_location', 'latency_update_policy', 'admin_agent_tasks', 'other_debug'].includes(event.id))
@@ -964,6 +1038,7 @@ function applyOutputCalibration(result, calibration) {
   };
   const output = clone(result);
   output.workers.function_calls = apply(output.workers.function_calls, 'workers_calls');
+  output.do.requests = apply(output.do.requests, 'do_requests');
   output.r2.class_a = apply(output.r2.class_a, 'r2_class_a');
   output.r2.class_b = apply(output.r2.class_b, 'r2_class_b');
   output.r2.requests_distribution = apply(output.r2.requests_distribution, 'r2_requests');

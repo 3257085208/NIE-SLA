@@ -1,4 +1,4 @@
-import { clamp, nowSec, parseBoolean, sanitizeAgentId, isPrivateHost, bytesToBase64, base64ToBytes } from './utils.js';
+import { clamp, nowSec, parseBoolean, sanitizeAgentId, isPrivateHost, bytesToBase64, base64ToBytes, TARGET_RUNTIME_COLUMNS } from './utils.js';
 import { summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffic.js';
 import { ApiError, safeJson } from './auth.js';
 import { readR2State } from './storage.js';
@@ -146,7 +146,7 @@ export async function runAlertChecks(env, options = {}) {
   await ensureAlertStateTable(env);
 
   const [targetRows, metricRows, trafficRows, latestRows, stateRows, bufferedMetrics] = await Promise.all([
-    env.DB.prepare(`SELECT * FROM targets WHERE enabled = 1 ORDER BY group_name, name`).all(),
+    env.DB.prepare(`SELECT ${TARGET_RUNTIME_COLUMNS} FROM targets WHERE enabled = 1 ORDER BY group_name, name`).all(),
     env.DB.prepare(`SELECT * FROM agent_metrics_state`).all(),
     env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all(),
     env.DB.prepare(`SELECT * FROM latest_status`).all(),

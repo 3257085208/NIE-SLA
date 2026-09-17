@@ -551,12 +551,15 @@ export async function cleanupOldCheckBuckets(env, daysToKeep = 31) {
   try {
     const cutoff = nowSec() - daysToKeep * 86400;
     const cutoffDay = dayFromSec(cutoff, env);
-    // Keep the exact timestamp boundary while using the existing day index.
-    // The previous bucket_at-only predicate had no leading bucket_at index and
-    // performed a full-table scan on every maintenance invocation.
+    // The day-index predicate has to scan every bucket of the cutoff day.
+    // Scoping by the enabled target ids lets SQLite use the covering
+    // (target_id, day, bucket_at) index, so only rows that actually expire
+    // are read. A bucket_at-only index was rejected because it would add a
+    // billed index write to every probe bucket.
     await env.DB.batch([
       env.DB.prepare(`DELETE FROM check_buckets WHERE day < ?`).bind(cutoffDay),
-      env.DB.prepare(`DELETE FROM check_buckets WHERE day = ? AND bucket_at < ?`).bind(cutoffDay, cutoff),
+      env.DB.prepare(`DELETE FROM check_buckets
+        WHERE target_id IN (SELECT id FROM targets) AND day = ? AND bucket_at < ?`).bind(cutoffDay, cutoff),
     ]);
   } catch (_) { console.error('cleanupOldCheckBuckets failed'); }
 }

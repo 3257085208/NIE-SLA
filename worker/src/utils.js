@@ -304,6 +304,12 @@ export function sanitizeAgentId(value) {
   return out || '';
 }
 
+// Explicit runtime column list for the per-minute schedule and alert scans.
+// The large JSON blobs (nq_report, nq_unlock_data, unlock_data, backroute_data)
+// are only needed by the status snapshot and admin detail views; selecting
+// them on every scheduled run made D1 read the whole payload on each pass.
+export const TARGET_RUNTIME_COLUMNS = 'id, name, group_name, type, target_host, target_port, url, method, expected_status, timeout_ms, interval_sec, probe_region, enabled, no_public_ip, sort_order, created_at, updated_at, last_checked_at, next_probe_at, expires_at, price, currency, billing_cycle, tags, location, city, location_source, location_updated_at, provider, line_type, traffic_enabled, traffic_quota_gb, traffic_mode, traffic_reset_day, alert_enabled, alert_expiry_days, alert_traffic_remaining_percent, alert_traffic_remaining_gb, ipv4, ipv6, nq_updated_at, nq_unlock_updated_at, unlock_updated_at, backroute_updated_at';
+
 export async function findEnabledAgentTarget(env, agentIdValue) {
   const raw = String(agentIdValue || '').trim();
   const canonical = sanitizeAgentId(raw);
