@@ -153,8 +153,10 @@ export function debugSummary(path, method) {
 
 export function debugClientIp(request) {
   if (!request) return 'unknown';
-  const ip = request.headers?.get?.('cf-connecting-ip')
-    || request.headers?.get?.('x-real-ip');
+  // Only the Cloudflare-injected header is trustworthy; x-real-ip is
+  // client-controllable on non-Cloudflare deployments and was usable to
+  // rotate rate-limit keys.
+  const ip = request.headers?.get?.('cf-connecting-ip');
   return cleanText(ip, 80, 'unknown');
 }
 

@@ -1,6 +1,6 @@
-import { nowSec, sanitizeAgentId } from './utils.js';
+import { nowSec, sanitizeAgentId, clamp } from './utils.js';
 import { recordAgentAvailability } from './agent-availability.js';
-import { agentStateTimestamp } from './agent-state.js';
+import { agentStateTimestamp, bufferedAgentStateEnabled } from './agent-state.js';
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
 import { withS3Archive } from './r2s3.js';
 import { persistAgentMetricsStateFallback, persistAgentTraffic, processAgentMetricsPayload } from './metrics.js';
@@ -45,6 +45,27 @@ export class TelemetryBuffer {
     this.memLatest = new Map();
     this.memReports = [];
     this.latestPersistAt = new Map();
+    this.msgWindows = new Map();
+  }
+
+  // One shared DO serves every Agent's WSS reports; bound each agent's message
+  // rate so one misbehaving node cannot exhaust the instance.
+  allowAgentMessage(agentId) {
+    const now = nowSec();
+    const windowSec = clamp(Number(this.env.AGENT_WS_BURST_WINDOW_SEC || 300), 30, 3600);
+    const limit = clamp(Number(this.env.AGENT_WS_BURST_LIMIT || 20), 2, 1000);
+    let entry = this.msgWindows.get(agentId);
+    if (!entry || now - entry.start >= windowSec) {
+      entry = { start: now, count: 0 };
+      this.msgWindows.set(agentId, entry);
+      if (this.msgWindows.size > 5000) {
+        for (const [key, value] of this.msgWindows) {
+          if (now - value.start >= windowSec) this.msgWindows.delete(key);
+        }
+      }
+    }
+    entry.count += 1;
+    return entry.count <= limit;
   }
 
   async fetch(request) {
@@ -122,6 +143,15 @@ export class TelemetryBuffer {
       const attachment = socket.deserializeAttachment() || {};
       const payload = body?.type === 'metrics' ? body.payload : body;
       const agentId = sanitizeAgentId(attachment.agent_id || '');
+      // The singleton stream instance is shared by the whole fleet: a single
+      // misbehaving agent must not be able to flood it. Legitimate agents send
+      // one report per report interval plus retries, so allow a bounded burst
+      // per window and acknowledge (and drop) anything beyond it instead of
+      // wedging the agent with an error.
+      if (agentId && !this.allowAgentMessage(agentId)) {
+        socket.send(JSON.stringify({ ok: true, type: 'metrics_ack', dropped: true }));
+        return;
+      }
       const lifecycleEpoch = await this.currentAgentLifecycleEpoch(agentId, attachment.lifecycle_epoch);
       if (lifecycleEpoch == null) {
         socket.close?.(1000, 'agent deleted or superseded');
@@ -167,6 +197,11 @@ export class TelemetryBuffer {
         proxy_checks: result?.mapped_proxy_checks || [],
         net: result?.net || null,
       });
+      if (this.memReports.length > MAX_MEM_REPORTS) {
+        const dropped = this.memReports.length - MAX_MEM_REPORTS;
+        this.memReports.splice(0, dropped);
+        console.error(JSON.stringify({ diag: 'mem_reports_cap', dropped, agent_id: agentId }));
+      }
       await this.scheduleReportDrain();
       const { latest_state: _latestState, mapped_points: _p, mapped_pings: _q, mapped_proxy_checks: _r, net: _n, ...ack } = result || {};
       const control = await this.readControlSnapshot(agentId);
@@ -319,7 +354,14 @@ export class TelemetryBuffer {
     if (now - Number(this.latestPersistAt.get(agentId) || 0) < LATEST_PERSIST_THROTTLE_SEC) return;
     this.latestPersistAt.set(agentId, now);
     await this.state.storage.put(latestStateKey(agentId), state);
-    await persistAgentMetricsStateFallback(this.env, { ...state, updated_at: new Date(now * 1000).toISOString() });
+    // When the buffered-state architecture is active the DO storage is the
+    // authoritative copy and read paths merge it in; the D1 mirror only exists
+    // for deployments that keep AGENT_METRICS_STATE_TO_D1 enabled (or when no
+    // TelemetryBuffer is bound). Writing it unconditionally was the second
+    // largest D1 write source at scale.
+    if (!bufferedAgentStateEnabled(this.env)) {
+      await persistAgentMetricsStateFallback(this.env, { ...state, updated_at: new Date(now * 1000).toISOString() });
+    }
   }
 
   async openAgentLifecycle(agentId) {

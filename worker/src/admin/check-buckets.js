@@ -499,9 +499,14 @@ export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrite
       console.error('append buffered probe history failed, falling back to D1:', String(error?.message || error));
     }
   }
-  for (const item of bucketWrites || []) {
-    if (!item?.point || !item.day) continue;
-    stmts.push(checkBucketStatement(env, targetId, item.day, item.point));
+  // Probe buckets live in the ProbeHistory DO/R2 archive; D1 keeps a mirror
+  // only when the buffer is unavailable (disabled or append failed), which
+  // also removes the per-bucket index-row write cost at fleet scale.
+  if (!bufferSucceeded) {
+    for (const item of bucketWrites || []) {
+      if (!item?.point || !item.day) continue;
+      stmts.push(checkBucketStatement(env, targetId, item.day, item.point));
+    }
   }
   if (latestStatus && latestStatusToD1Enabled(env)) stmts.push(latestStatusStatement(env, latestStatus));
   if (incidentWrite) {

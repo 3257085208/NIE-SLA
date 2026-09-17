@@ -84,7 +84,13 @@ function prometheusPayload(agentId, pings) {
 }
 
 function escapeInflux(value) {
-  return String(value).replaceAll('\\', '\\\\').replaceAll(',', '\\,').replaceAll(' ', '\\ ').replaceAll('=', '\\=');
+  return String(value)
+    .replaceAll('\\', '\\\\')
+    .replaceAll(',', '\\,')
+    .replaceAll(' ', '\\ ')
+    .replaceAll('=', '\\=')
+    .replaceAll('\n', '\\n')
+    .replaceAll('\r', '\\r');
 }
 
 function escapeProm(value) {

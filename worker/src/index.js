@@ -1,4 +1,4 @@
-import { enrichCfContext, probeTarget, saveCheck, runDueTargets, runFastStatusTargets } from './probe.js';
+import { enrichCfContext, probeTarget, saveCheck, runDueTargets, runFastStatusTargets, loadProbeTargetRows } from './probe.js';
 import { writeStatusSnapshot } from './status.js';
 import { archiveYesterdayOncePerLocalDay, cleanupDebugLogs, cleanupFinishedAgentTasks, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates, refreshCheckBucketDays, reconcileOpenIncidents } from './admin.js';
 import { cleanupRateLimitsD1 } from './ratelimit.js';
@@ -111,6 +111,13 @@ export default {
     try {
       env = withS3Archive(env);
       const url = new URL(request.url);
+      // The workers.dev hostname is a parallel entry point that bypasses the
+      // custom-domain WAF/rate-limit rules. Keep it disabled unless the
+      // deployment explicitly opts back in.
+      const host = String(url.hostname || '').toLowerCase();
+      if (host.endsWith('.workers.dev') && String(env.ALLOW_WORKERS_DEV || '').trim() !== 'true') {
+        return new Response('Not Found', { status: 404 });
+      }
       if (url.pathname === INTERNAL_SCHEDULE_PATH) return handleInternalScheduledRequest(request, env);
       if (!url.pathname.startsWith('/api/') && url.pathname !== '/api') {
         const assetResponse = await routeStaticAssets(request, env);
@@ -141,12 +148,16 @@ export async function runScheduledTasks(env, cron, options = {}) {
   try { await ensureV6Schema(env); } catch (err) { results.schema_error = String(err?.message || err); }
 
 
-  try { results.probe = await measure('probe', () => runDueTargets(env, { skipLease: options.serialized === true })); } catch (err) { results.probe_error = String(err?.message || err); }
+  // One target scan per scheduled run shared by both per-minute schedulers.
+  let scheduledTargetRows = null;
+  try { scheduledTargetRows = await loadProbeTargetRows(env); } catch (err) { results.target_scan_error = String(err?.message || err); }
+  const targetOptions = scheduledTargetRows ? { targetRows: scheduledTargetRows } : {};
+  try { results.probe = await measure('probe', () => runDueTargets(env, { skipLease: options.serialized === true, ...targetOptions })); } catch (err) { results.probe_error = String(err?.message || err); }
   if (results.probe_error || shouldRunScheduledFollowups(results.probe)) {
     try { await recordProbeResult(env, cron, results.probe, results.probe_error, timings.probe); } catch (_) {}
   }
   const historyProbeCount = Number(results.probe?.count || 0);
-  try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env, { skipLease: options.serialized === true })); } catch (err) { results.fast_status_error = String(err?.message || err); }
+  try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env, { skipLease: options.serialized === true, ...targetOptions })); } catch (err) { results.fast_status_error = String(err?.message || err); }
   const statusEvents = [...(results.probe?.events || []), ...(results.fast_status?.events || [])];
   if (statusEvents.length) {
     try { results.status_stream = await measure('status_stream', () => publishStatusEvents(env, statusEvents)); } catch (err) {

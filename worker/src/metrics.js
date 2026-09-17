@@ -244,14 +244,16 @@ export function normalizeAgentCapabilities(value, observedAt = nowSec()) {
 }
 
 export async function submitAgentMetrics(request, env, ctx = null) {
+  // Rate limit before authentication: an unauthenticated caller must not be
+  // able to trigger credential lookups and full target scans on every call.
+  if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) {
+    return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429, env);
+  }
   const identity = await requireAnyAgent(request, env);
   const body = await safeJson(request);
   const agentId = sanitizeAgentId(body?.agent_id || env.DEFAULT_AGENT_ID || 'vps');
   if (identity?.type !== 'scoped' || sanitizeAgentId(identity.agent_id) !== agentId) {
     await requireAgentForId(request, env, agentId);
-  }
-  if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) {
-    return json({ ok: false, error: '请求过于频繁，请稍后重试。' }, 429, env);
   }
   try {
     return json(await processAgentMetricsPayload(env, body, ctx, agentId), 200, env, { 'cache-control': 'no-store' });
@@ -381,6 +383,15 @@ export async function getAgentMetrics(env, url, ctx = null) {
   const includeHistory = url.searchParams.get('history') !== '0';
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
   const fields = metricFieldsForRequest(url.searchParams.get('metric') || url.searchParams.get('fields') || '');
+  // Random agent_id values used to trigger a per-hour R2 scan and instantiate a
+  // fresh DO for every guess. Unknown agents short-circuit before any of that.
+  if (includeHistory) {
+    const known = await env.DB.prepare(`SELECT 1 AS ok FROM targets WHERE id = ? UNION SELECT 1 AS ok FROM agent_metrics_state WHERE agent_id = ? LIMIT 1`)
+      .bind(agentId, agentId).first().catch(() => ({ ok: 1 }));
+    if (!known) {
+      return json({ ok: true, agent_id: agentId, latest: null, history: [], source: 'unknown-agent', hours, max_points: maxPoints }, 200, env, { 'cache-control': 'public, max-age=20' });
+    }
+  }
 
   let latest = null;
   let latestTs = 0;
@@ -1098,6 +1109,13 @@ export async function cleanupAgentMetricsR2(env, options = {}) {
     for (const row of rows.results || []) if (row.agent_id) agentIds.add(sanitizeAgentId(row.agent_id));
   } catch (_) {}
 
+  // With buffered state enabled the D1 mirror no longer gains rows for every
+  // agent, so R2 cleanup must also consider the enabled TCP targets.
+  try {
+    const rows = await env.DB.prepare(`SELECT id FROM targets WHERE enabled = 1 AND type = 'tcp'`).all();
+    for (const row of rows.results || []) if (row.id) agentIds.add(sanitizeAgentId(row.id));
+  } catch (_) {}
+
   let deleted = 0;
   const errors = [];
   for (const agentId of [...agentIds].filter(Boolean)) {
@@ -1411,7 +1429,9 @@ function normalizePingPoint(point, fallbackTs = 0) {
   const rawLatency = point?.latency_ms == null ? null : Math.round(Number(point.latency_ms));
   const latency = Number.isFinite(rawLatency) && rawLatency >= 0 && rawLatency <= 1000 ? rawLatency : null;
   return {
-    target_id: String(point?.target_id || '').trim().slice(0, 128),
+    // Bound the id surface: control characters (newline injection into line
+    // protocols / R2 keys) are stripped and the length is capped.
+    target_id: String(point?.target_id || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 64),
     ts: Math.floor(Number(point?.ts || fallbackTs || 0)),
     latency_ms: Number.isFinite(latency) && latency >= 0 ? latency : null,
     ok: normalizeOkInt(latency == null ? false : (point?.ok === undefined ? true : point.ok)),
@@ -1900,11 +1920,21 @@ async function writePingHistory(env, agentId, pings, fallbackTs) {
   try { await env.DB.prepare(`DELETE FROM ping_history WHERE agent_id = ? AND ts < ?`).bind(agentId, fallbackTs - retentionSeconds(env, 'PING_HISTORY_RETENTION_HOURS', 6, 1, 72)).run(); } catch (_) {}
 }
 
+const MAX_REPORT_PING_TARGETS = 64;
+
 function mapPings(pings, fallbackTs) {
   const byKey = new Map();
+  const targets = new Set();
   for (const ping of pings || []) {
     const normalized = normalizePingPoint(ping, fallbackTs);
-    if (normalized.target_id && normalized.ts > 0) byKey.set(pingKey(normalized), normalized);
+    if (!normalized.target_id || normalized.ts <= 0) continue;
+    if (!targets.has(normalized.target_id)) {
+      // Bound per-report cardinality: a misbehaving agent must not be able to
+      // grow D1/R2 key space (and cost) with thousands of random target ids.
+      if (targets.size >= MAX_REPORT_PING_TARGETS) continue;
+      targets.add(normalized.target_id);
+    }
+    byKey.set(pingKey(normalized), normalized);
   }
   return [...byKey.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
 }

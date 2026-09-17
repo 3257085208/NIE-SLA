@@ -1,5 +1,5 @@
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
-import { nowSec, sanitizeId } from './utils.js';
+import { nowSec, sanitizeId, publicError } from './utils.js';
 
 const MAX_EVENTS = 100;
 const MAX_MESSAGE_BYTES = 180_000;
@@ -165,7 +165,7 @@ export function compactStatusEvents(items) {
       ok: Number(source.ok ?? item?.ok) === 1 ? 1 : 0,
       latency_ms: source.latency_ms == null ? null : Number(source.latency_ms),
       status_code: source.status_code == null ? null : Number(source.status_code),
-      error: source.error == null ? null : String(source.error).slice(0, 500),
+      error: publicError(source.error, source.status_code),
       probe_region: String(source.probe_region || item?.probe_region || 'auto').slice(0, 32),
       uptime_24h: source.uptime_24h == null ? null : Number(source.uptime_24h),
       uptime_7d: source.uptime_7d == null ? null : Number(source.uptime_7d),

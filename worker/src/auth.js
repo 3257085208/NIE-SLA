@@ -58,12 +58,33 @@ export async function requireAnyAgent(request, env) {
       if (target) return { type: 'scoped', agent_id: legacyCredential.agent_id };
     }
   }
-  const rows = await env.DB.prepare(`SELECT id FROM targets WHERE enabled = 1`).all().catch(() => ({ results: [] }));
-  for (const row of rows.results || []) {
-    const scoped = await agentScopedToken(env, row.id);
-    if (scoped && constantTimeEqual(token, scoped)) return { type: 'scoped', agent_id: String(row.id || '') };
+  // Legacy scoped-token fallback. Deriving one HMAC per target on every
+  // unauthenticated call was a cheap D1-read+CPU amplifier, so the derived
+  // tokens are cached briefly and matched against the (still constant-time)
+  // comparison loop.
+  const entries = await scopedTokenEntries(env);
+  for (const entry of entries) {
+    if (constantTimeEqual(token, entry.token)) return { type: 'scoped', agent_id: entry.agent_id };
   }
   throw new ApiError(401, '未授权');
+}
+
+const scopedTokenCaches = new WeakMap();
+
+async function scopedTokenEntries(env) {
+  const key = env?.DB;
+  const cacheable = key && (typeof key === 'object' || typeof key === 'function');
+  const now = Date.now();
+  const cached = cacheable ? scopedTokenCaches.get(key) : null;
+  if (cached && cached.expires_at > now) return cached.entries;
+  const rows = await env.DB.prepare(`SELECT id FROM targets WHERE enabled = 1`).all().catch(() => ({ results: [] }));
+  const entries = [];
+  for (const row of (rows.results || []).slice(0, 500)) {
+    const token = await agentScopedToken(env, row.id);
+    if (token) entries.push({ agent_id: String(row.id || ''), token });
+  }
+  if (cacheable) scopedTokenCaches.set(key, { expires_at: now + 30_000, entries });
+  return entries;
 }
 
 export async function requireAgentIdentity(request, env, agentId) {

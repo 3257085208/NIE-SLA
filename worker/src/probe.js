@@ -283,12 +283,7 @@ function buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous) 
 
 
 
-export async function runDueTargets(env, options = {}) {
-  const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 20), 1, 200);
-  const now = nowSec();
-  // Schedule bookkeeping lives in the R2 status state's history_checked_at
-  // marker (lastCheckedAt gate below); fast-status writes never touch that
-  // marker, and next_probe_at in D1 is only a coarse crash-recovery mirror.
+export async function loadProbeTargetRows(env) {
   const rows = await env.DB.prepare(
      `SELECT ${TARGET_RUNTIME_COLUMNS}
       FROM targets t
@@ -296,7 +291,17 @@ export async function runDueTargets(env, options = {}) {
         AND COALESCE(t.no_public_ip, 0) = 0
       ORDER BY t.group_name, t.name`
   ).all();
-  const allTargets = rows.results || [];
+  return rows.results || [];
+}
+
+export async function runDueTargets(env, options = {}) {
+  const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 20), 1, 200);
+  const now = nowSec();
+  // Schedule bookkeeping lives in the R2 status state's history_checked_at
+  // marker (lastCheckedAt gate below); fast-status writes never touch that
+  // marker, and next_probe_at in D1 is only a coarse crash-recovery mirror.
+  // The per-minute schedulers share one target scan per invocation.
+  const allTargets = Array.isArray(options.targetRows) ? options.targetRows : await loadProbeTargetRows(env);
   if (!allTargets.length) return { ok: true, count: 0, results: [] };
   const lease = options.skipLease ? null : await acquireProbeRunLease(env);
   if (!options.skipLease && !lease) return { ok: true, count: 0, results: [], skipped: true, reason: 'probe_run_in_progress' };
@@ -365,11 +370,11 @@ export async function runFastStatusTargets(env, options = {}) {
   // truncated.
   const maxTargets = clamp(Number(env.FAST_STATUS_MAX_TARGETS || 100), 1, 200);
   const now = nowSec();
-  const rows = await env.DB.prepare(`SELECT ${TARGET_RUNTIME_COLUMNS} FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0 ORDER BY group_name, name`).all();
+  const targetRows = Array.isArray(options.targetRows) ? options.targetRows : await loadProbeTargetRows(env);
   const state = await readR2State(env);
-  const d1Latest = await readLatestStatusMap(env, (rows.results || []).map((target) => target.id));
-  const previousById = buildPreviousStateMap(rows.results || [], state, d1Latest);
-  const targets = (rows.results || [])
+  const d1Latest = await readLatestStatusMap(env, targetRows.map((target) => target.id));
+  const previousById = buildPreviousStateMap(targetRows, state, d1Latest);
+  const targets = targetRows
     .filter((target) => {
       const previous = previousById.get(target.id);
       const dueSec = fastStatusDueInterval(target, previous, now, intervalSec, env);

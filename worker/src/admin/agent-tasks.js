@@ -266,7 +266,10 @@ export async function completeAgentTask(request, env, taskId, agentIdValue) {
     }
   }
   const error = String(body?.error || '').trim().slice(0, 2000) || null;
-  const excerpt = String(body?.output_excerpt || '').slice(0, MAX_EXCERPT_CHARS) || null;
+  // Agent-provided task output is stored for later admin display, so it must
+  // pass the same ANSI/control-character cleaning as NodeQuality content.
+  const rawExcerpt = String(body?.output_excerpt || '').slice(0, MAX_EXCERPT_CHARS);
+  const excerpt = rawExcerpt ? sanitizeAnsiContent(rawExcerpt) : null;
   const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
   const finishedAt = nowSec();
   let normalizedNq = null;

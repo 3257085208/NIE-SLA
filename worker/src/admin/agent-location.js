@@ -1,5 +1,5 @@
 import { ApiError, safeJson } from '../auth.js';
-import { findEnabledAgentTarget, nowSec, sanitizeAgentId } from '../utils.js';
+import { findEnabledAgentTarget, isPrivateHost, nowSec, sanitizeAgentId } from '../utils.js';
 import { getMeta, setMeta } from './settings.js';
 
 export const GEOIP_PROVIDERS = Object.freeze([
@@ -71,23 +71,11 @@ export function validateCustomGeoIpUrl(value) {
   try { url = new URL(value); } catch (_) { throw new ApiError(400, '自定义定位接口必须是有效的 HTTPS URL'); }
   if (url.protocol !== 'https:' || url.username || url.password) throw new ApiError(400, '自定义定位接口必须使用不含账号密码的 HTTPS URL');
   const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (!hostname || isPrivateHostname(hostname)) throw new ApiError(400, '自定义定位接口不能指向本机、内网或云元数据地址');
+  // Reuse the shared classifier so decimal/hex IPv4, IPv4-mapped IPv6,
+  // 0.0.0.0, metadata hosts and the reserved ranges all stay blocked.
+  if (!hostname || isPrivateHost(hostname)) throw new ApiError(400, '自定义定位接口不能指向本机、内网或云元数据地址');
   url.hash = '';
   return url.toString().slice(0, 2000);
-}
-
-function isPrivateHostname(hostname) {
-  if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname.endsWith('.local') || hostname === 'metadata.google.internal') return true;
-  if (hostname === '::1' || hostname.startsWith('fc') || hostname.startsWith('fd') || hostname.startsWith('fe8') || hostname.startsWith('fe9') || hostname.startsWith('fea') || hostname.startsWith('feb')) return true;
-  const parts = hostname.split('.').map(Number);
-  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  return parts[0] === 10
-    || parts[0] === 127
-    || parts[0] === 0
-    || (parts[0] === 169 && parts[1] === 254)
-    || (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31)
-    || (parts[0] === 192 && parts[1] === 168)
-    || (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127);
 }
 
 function normalizeIp(value, family) {

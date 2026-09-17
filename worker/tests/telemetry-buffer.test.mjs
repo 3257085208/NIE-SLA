@@ -172,6 +172,19 @@ const fleetStatesAfterWs = (await fleetAfterWs.json()).states;
 assert.equal(fleetStatesAfterWs['vps-a']?.cpu_percent, 12, 'fleet latest must include the in-memory state before the throttled storage persist runs');
 assert.equal(fleetStatesAfterWs['vps-b']?.cpu_percent, 22, 'fleet latest must include every Agent held in memory');
 
+// One shared DO serves every Agent's WSS stream: a single flooding agent must
+// be rate limited and acknowledged as dropped instead of exhausting the instance.
+const floodSocket = await openAgentSocket(wssBuffer, 'vps-flood');
+for (let index = 0; index < 25; index += 1) {
+  await sendAgentMetrics(wssBuffer, floodSocket, {
+    agent_id: 'vps-flood',
+    metrics: { cpu_percent: index, memory: { used_mb: 1, total_mb: 2 }, disk: { used_gb: 1, total_gb: 2 }, net: { rx_bytes: 1, tx_bytes: 1 } },
+  });
+}
+const floodAcks = floodSocket.sent.filter((message) => message.type === 'metrics_ack');
+assert.equal(floodAcks.length, 25, 'every flooding message must still receive an ack');
+assert.equal(floodAcks.filter((message) => message.dropped === true).length, 5, 'messages beyond the burst allowance must be dropped with an ack');
+
 // Deleting a target must invalidate reports already queued in the shared WSS
 // instance, and an old socket must not write again after the target is
 // recreated. This reproduces the former memLatest=false/pendingReports=1 race.

@@ -437,7 +437,21 @@ export function publicNodeQualitySummary(target = {}) {
   };
 }
 
-export function publicNodeQualityReport(target = {}) {
+function maskReportTextIps(text) {
+  return String(text || '')
+    .replace(/\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b/g, (match, a, b) => `${a}.${b}.*.*`)
+    .replace(/\b((?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{0,4})\b/gi, (match) => {
+      const parts = match.split(':');
+      return parts.length < 3 ? match : `${parts[0]}:${parts[1]}::*`;
+    });
+}
+
+function reportTabContent(content, maskIps) {
+  const cleaned = sanitizeAnsiContent(content || '');
+  return maskIps ? maskReportTextIps(cleaned) : cleaned;
+}
+
+export function publicNodeQualityReport(target = {}, { maskIps = true } = {}) {
   const raw = target?.nq_report;
   if (!raw) return null;
   try {
@@ -456,7 +470,7 @@ export function publicNodeQualityReport(target = {}) {
         id: String(tab.id || ''),
         title: String(tab.title || defaultTabTitle(tab.id) || ''),
         kind: tab.kind === 'image' ? 'image' : 'ansi',
-        content: tab.content ? sanitizeAnsiContent(tab.content || '') : undefined,
+        content: tab.content ? reportTabContent(tab.content, maskIps) : undefined,
         image: tab.kind === 'image' && isSafeImageUrl(tab.image) && imageProxyBase
           ? `${imageProxyBase}/${encodeURIComponent(String(tab.id || ''))}`
           : undefined,
@@ -472,7 +486,7 @@ export function publicNodeQualityReport(target = {}) {
       updated_at: target?.nq_updated_at ? Number(target.nq_updated_at) : null,
       link: safeReportLink(extractNodeQualityLink(text)) || null,
       image_proxy_base: target.id ? `/api/nq/${encodeURIComponent(String(target.id))}/image` : null,
-      tabs: [{ id: 'basic', title: '基本信息', kind: 'ansi', content: sanitizeAnsiContent(text) }],
+      tabs: [{ id: 'basic', title: '基本信息', kind: 'ansi', content: reportTabContent(text, maskIps) }],
     };
   }
 }

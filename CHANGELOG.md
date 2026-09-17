@@ -1,6 +1,11 @@
 # 更新日志
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
+## 1.1.62 - 2026-09-17
+
+- 安全与资源加固：共享遥测 WSS 每 Agent 消息上限与内存硬上限；Ping 目标 ID 字符集/长度/基数限制；Influx 转义补换行；Agent 接口限流前置与派生凭据缓存；未知 Agent 读取短路；6 个 Agent 端点与 3 个管理端点补限流；状态流错误脱敏；NodeQuality 公开发布报告打码；GeoIP 私网校验统一；任务摘要清洗；调试 IP 头收敛；Turnstile CSP；workers.dev 入口默认拒绝。
+- 降低 D1 用量：探针桶仅在缓冲失败时回退写 D1；状态回退仅在不使用缓冲态时写 D1；每分钟两个调度共享一次目标扫描。
+
 ## 1.1.61 - 2026-09-17
 
 - 修正开发门禁的 ESLint globals 声明（CompressionStream/DecompressionStream），使包含 gzip 归档模块的快照可以通过完整本地门禁；无运行时行为变化。

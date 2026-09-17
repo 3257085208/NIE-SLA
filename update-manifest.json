@@ -1,10 +1,10 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.61",
-  "agent_version": "v1.1.61",
-  "source_ref": "app-v1.1.61",
-  "published_at": "2026-09-17T04:44:20Z",
-  "title": "NIE-SLA 1.1.61",
+  "version": "1.1.62",
+  "agent_version": "v1.1.62",
+  "source_ref": "app-v1.1.62",
+  "published_at": "2026-09-17T05:23:12Z",
+  "title": "NIE-SLA 1.1.62",
   "changelog": [
     "修复 Agent Protobuf 遥测上报遗漏 handshake_ms、first_byte_ms 与 total_ms；启用 Protobuf 的 Agent 会保留真实代理阶段耗时。",
     "修复 Linux 自动更新确认标记放在 root-only 二进制目录导致非 root Agent 反复报告 update_confirmation_error；标记改放到 Agent 可写状态目录。",
@@ -49,7 +49,10 @@
     "归档对象默认启用 gzip 压缩：R2 中的遥测、探针历史、代理历史与状态快照 JSON 对象以 gzip 存储，读取自动识别并兼容旧对象，相同数据的存储占用约降低 4-8 倍。",
     "后台新增“数据保留”设置：默认 72 小时（3 天），最长可调到 720 小时（30 天），作用于 Agent 指标、Ping 与代理历史的读取与清理。",
     "把数据保留调高到 72 小时以上时会弹出提示，建议为长期归档启用 S3 兼容的外部存储，避免接近 Cloudflare R2 免费存储额度。",
-    "修正开发门禁的 ESLint globals 声明（CompressionStream/DecompressionStream），使包含 gzip 归档模块的快照可以通过完整本地门禁；无运行时行为变化。"
+    "修正开发门禁的 ESLint globals 声明（CompressionStream/DecompressionStream），使包含 gzip 归档模块的快照可以通过完整本地门禁；无运行时行为变化。",
+    "安全与资源加固：共享遥测 WSS 增加每 Agent 消息上限与内存报告硬上限；Ping 目标 ID 限制字符集、长度与单报告基数；Influx 行协议转义补换行；Agent 接口限流前置并缓存派生凭据；公开指标接口对未知 Agent 直接短路；6 个 Agent 端点与 3 个管理端点补限流；状态流广播错误改为公开脱敏文本；NodeQuality 公开发布报告按开关打码；自定义 GeoIP 校验复用统一私网判定；任务输出摘要清洗控制字符；调试日志不再信任可伪造的 x-real-ip；Turnstile 脚本域加入 CSP；workers.dev 平行入口默认拒绝。",
+    "降低 D1 用量：探针桶仅在归档缓冲不可用时回退写入 D1；Agent 最新状态仅在未启用缓冲态时回写 D1；每分钟两个调度器共享一次目标扫描。",
+    "公开导出脱敏补充 R2 S3 账户 ID 占位。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
