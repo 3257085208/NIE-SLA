@@ -75,19 +75,36 @@ for arch in amd64 arm64 arm armv6 386; do
   legacy_outputs+=("$legacy")
 done
 
+hash_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
 for index in "${!jq_assets[@]}"; do
   asset="${jq_assets[$index]}"
   expected="${jq_hashes[$index]}"
-  echo "==> Fetching pinned $asset"
-  curl -fsSL --retry 3 --retry-all-errors \
-    "https://github.com/jqlang/jq/releases/download/jq-1.8.1/$asset" \
-    -o "$staging/$asset"
-  if command -v sha256sum >/dev/null 2>&1; then
-    actual="$(sha256sum "$staging/$asset" | awk '{print $1}')"
+  # The pinned hash is the verification boundary; a previously downloaded copy
+  # that already matches it is reusable when GitHub is unreachable.
+  reuse_from=""
+  for candidate in "$staging/$asset" "$OUT_DIR/$asset"; do
+    if [[ -f "$candidate" ]] && [[ "$(hash_of "$candidate")" == "$expected" ]]; then
+      reuse_from="$candidate"
+      break
+    fi
+  done
+  if [[ -n "$reuse_from" ]]; then
+    [[ "$reuse_from" == "$staging/$asset" ]] || cp "$reuse_from" "$staging/$asset"
+    echo "==> Reusing verified $asset from the previous build"
   else
-    actual="$(shasum -a 256 "$staging/$asset" | awk '{print $1}')"
+    echo "==> Fetching pinned $asset"
+    curl -fsSL --retry 3 --retry-all-errors \
+      "https://github.com/jqlang/jq/releases/download/jq-1.8.1/$asset" \
+      -o "$staging/$asset"
+    [[ "$(hash_of "$staging/$asset")" == "$expected" ]] || { echo "jq checksum mismatch: $asset" >&2; exit 1; }
   fi
-  [[ "$actual" == "$expected" ]] || { echo "jq checksum mismatch: $asset" >&2; exit 1; }
   chmod 755 "$staging/$asset"
 done
 

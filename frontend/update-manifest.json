@@ -1,10 +1,10 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.65",
-  "agent_version": "v1.1.65",
-  "source_ref": "app-v1.1.65",
-  "published_at": "2026-09-17T09:55:00Z",
-  "title": "NIE-SLA 1.1.65",
+  "version": "1.1.66",
+  "agent_version": "v1.1.66",
+  "source_ref": "app-v1.1.66",
+  "published_at": "2026-09-17T13:28:50Z",
+  "title": "NIE-SLA 1.1.66",
   "changelog": [
     "修复 Agent Protobuf 遥测上报遗漏 handshake_ms、first_byte_ms 与 total_ms；启用 Protobuf 的 Agent 会保留真实代理阶段耗时。",
     "修复 Linux 自动更新确认标记放在 root-only 二进制目录导致非 root Agent 反复报告 update_confirmation_error；标记改放到 Agent 可写状态目录。",
@@ -57,7 +57,9 @@
     "缓存隔离：/api/status 的 fresh=1 与 cache=0 请求使用独立缓存键，不再覆写共享缓存条目。",
     "降低 Durable Object 请求：共享遥测实例直接持有全部 Agent 的活动缓冲（按 Agent 隔离存储），WSS  drains 不再为每台 Agent 额外调用一次 DO；旧版每 Agent 缓冲在首次使用时会自动迁移合并，读数不中断。",
     "Agent 安全加固：公共下载（更新包、GeoIP、脚本镜像等）在解析阶段即过滤并固定公网地址，连接不再二次解析，消除 DNS 重绑定的检查/使用间隙（T-9）。",
-    "安装脚本弃用 --token 命令行参数：密钥不再经 argv 传入（避免出现在 ps 与 shell 历史），请改用 NIE_SLA_AGENT_TOKEN=... 环境变量或交互输入；quick-install.sh 会提前拒绝该参数。"
+    "安装脚本弃用 --token 命令行参数：密钥不再经 argv 传入（避免出现在 ps 与 shell 历史），请改用 NIE_SLA_AGENT_TOKEN=... 环境变量或交互输入；quick-install.sh 会提前拒绝该参数。",
+    "后台新增一级「代理」页面：代理检测目标从 Ping 页独立出来，列表新增最近结果（阶段/错误/耗时）与近 24 小时成功率。",
+    "公开状态页代理详情新增「出站验证（握手→首字节）」指标与统计卡，用于区分代理转发质量。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

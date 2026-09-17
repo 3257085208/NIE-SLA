@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260916-proxy14";
-import { createAdminClient } from "./admin/api.js?v=20260916-proxy14";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260916-proxy14";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260916-proxy14";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260916-proxy14";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260916-proxy14";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260917-proxy15";
+import { createAdminClient } from "./admin/api.js?v=20260917-proxy15";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260917-proxy15";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260917-proxy15";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260917-proxy15";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260917-proxy15";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260916-proxy14";
+} from "./shared/target-catalogs.js?v=20260917-proxy15";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260916-proxy14";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260916-proxy14";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260916-proxy14";
-import { fmtBytes } from "./shared/format.js?v=20260916-proxy14";
+} from "./shared/grouping.js?v=20260917-proxy15";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260917-proxy15";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260917-proxy15";
+import { fmtBytes } from "./shared/format.js?v=20260917-proxy15";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -256,6 +256,7 @@ let modalCancelHandler = null;
 let proxyLinkPreviews = [];
 let proxyLinkIndex = 0;
 let proxyLinkParsedValue = "";
+let proxyCheckStats = new Map();
 function toast(m, t = "info") {
   const e = byId("toast");
   clearTimeout(toastTimer);
@@ -424,6 +425,7 @@ function nav(p) {
   if (p === "targets") loadTargets();
   if (p === "latency") loadLatencyNodes();
   if (p === "pings") loadPings();
+  if (p === "proxies") loadProxyTargets();
   if (p === "themes") loadThemes();
   if (p === "settings") loadSettings();
 }
@@ -2306,13 +2308,9 @@ async function loadPings() {
     "pTable",
     "\u52a0\u8f7d Ping \u76ee\u6807\u4e2d\uff0c\u5148\u5c1d\u8bd5\u663e\u793a\u5df2\u91c7\u96c6\u6570\u636e...",
   );
-  loading("proxyTable", "加载代理检测目标...");
   pingTargets = [];
-  proxyTargets = [];
   pingAdminLoaded = false;
   pingAdminFailed = false;
-  proxyAdminLoaded = false;
-  proxyAdminFailed = false;
   let shown = false;
   try {
     const pd = await apiPublic("/api/agent/pings?hours=1", 15000);
@@ -2339,6 +2337,14 @@ async function loadPings() {
       );
     }
   }
+}
+
+async function loadProxyTargets() {
+  loading("proxyTable", "加载代理检测目标...");
+  proxyTargets = [];
+  proxyCheckStats = new Map();
+  proxyAdminLoaded = false;
+  proxyAdminFailed = false;
   if (!targets.some((target) => String(target?.type || "").toLowerCase() === "tcp")) {
     try {
       await ensureProxyAgents();
@@ -2349,10 +2355,36 @@ async function loadPings() {
     proxyTargets = Array.isArray(d.targets) ? d.targets : [];
     proxyAdminLoaded = true;
     renderProxyTargets();
+    loadProxyCheckStats();
   } catch (e) {
     proxyAdminFailed = true;
     errBox("proxyTable", e);
   }
+}
+
+// 每个代理目标补拉一次近 24 小时真实握手样本，用于列表里的最近结果与成功率。
+async function loadProxyCheckStats() {
+  const list = proxyTargets.slice(0, 12);
+  const settled = await Promise.allSettled(list.map(async (proxy) => {
+    const data = await apiPublic("/api/proxy-checks?target_id=" + encodeURIComponent(proxy.id) + "&hours=24", 20000);
+    return { id: proxy.id, data };
+  }));
+  const next = new Map();
+  for (const item of settled) {
+    if (item.status !== "fulfilled") continue;
+    const { id, data } = item.value;
+    if (!data || data.ok !== true) continue;
+    const checks = Array.isArray(data.checks) ? data.checks : [];
+    const okCount = checks.filter((check) => Number(check.ok) === 1).length;
+    next.set(id, {
+      latest: data.latest || checks[checks.length - 1] || null,
+      total: checks.length,
+      okCount,
+      rate: checks.length ? okCount / checks.length : null,
+    });
+  }
+  proxyCheckStats = next;
+  renderProxyTargets();
 }
 
 async function savePingInterval() {
@@ -2451,6 +2483,64 @@ function proxyActionsHtml(proxy) {
   ].join("");
 }
 
+const PROXY_STAGE_LABELS = {
+  config: "\u914d\u7f6e",
+  connect: "\u8fde\u63a5",
+  handshake: "\u534f\u8bae\u63e1\u624b",
+  canary: "\u51fa\u7ad9\u9a8c\u8bc1",
+  runtime: "\u8fd0\u884c\u65f6",
+  failed: "\u5931\u8d25",
+};
+
+const PROXY_ERROR_LABELS = {
+  timeout: "\u68c0\u6d4b\u8d85\u65f6",
+  auth_failed: "\u4ee3\u7406\u8ba4\u8bc1\u5931\u8d25",
+  unsupported: "\u914d\u7f6e\u4e0d\u5b8c\u6574\u6216\u5f53\u524d Agent \u4e0d\u652f\u6301\u6b64\u7ec4\u5408",
+  handshake_failed: "\u534f\u8bae\u63e1\u624b\u5931\u8d25",
+  canary_failed: "\u4ee3\u7406\u51fa\u7ad9\u9a8c\u8bc1\u5931\u8d25",
+  invalid_config: "\u4ee3\u7406\u914d\u7f6e\u65e0\u6548",
+  runtime_failed: "Agent \u8fd0\u884c\u65f6\u5931\u8d25",
+};
+
+function proxyStageLabelText(value) {
+  const raw = String(value || "").trim();
+  return raw && PROXY_STAGE_LABELS[raw] ? PROXY_STAGE_LABELS[raw] + "\uff08" + raw + "\uff09" : raw;
+}
+
+function proxyErrorLabelText(value) {
+  const raw = String(value || "").trim();
+  return raw && PROXY_ERROR_LABELS[raw] ? PROXY_ERROR_LABELS[raw] + "\uff08" + raw + "\uff09" : raw;
+}
+
+function proxyCheckTimeText(ts) {
+  const sec = Number(ts) || 0;
+  if (!sec) return "-";
+  const date = new Date(sec * 1000);
+  const pad = (value) => String(value).padStart(2, "0");
+  return pad(date.getHours()) + ":" + pad(date.getMinutes());
+}
+
+function proxyLatestHtml(proxy) {
+  const info = proxyCheckStats.get(String(proxy.id));
+  if (!info) return '<span class="table-note">\u6682\u65e0\u6837\u672c</span>';
+  const latest = info.latest;
+  if (!latest) return statusTag("\u5f85\u68c0\u6d4b", "tag-warn");
+  const ok = Number(latest.ok) === 1;
+  const total = Number(latest.total_ms);
+  const detail = ok
+    ? ("\u6210\u529f " + (Number.isFinite(total) && total > 0 ? Math.round(total) + " ms" : "\u65e0\u6548\u65f6\u957f"))
+    : ([proxyStageLabelText(latest.stage), proxyErrorLabelText(latest.error)].filter(Boolean).join(" \u00b7 ") || "\u5931\u8d25");
+  return (ok ? statusTag("\u5728\u7ebf", "tag-on") : statusTag("\u79bb\u7ebf", "tag-off")) +
+    '<small class="table-note">' + escapeHtml(detail + " \u00b7 " + proxyCheckTimeText(latest.ts)) + "</small>";
+}
+
+function proxyRateHtml(proxy) {
+  const info = proxyCheckStats.get(String(proxy.id));
+  if (!info || !info.total) return '<span class="table-note">-</span>';
+  return escapeHtml(((info.rate || 0) * 100).toFixed(1) + "%") +
+    '<small class="table-note">' + escapeHtml("\u6210\u529f " + info.okCount + " \u00b7 \u5931\u8d25 " + (info.total - info.okCount) + " \u00b7 " + info.total + " \u4e2a\u6837\u672c") + "</small>";
+}
+
 function proxyRowHtml(proxy, index) {
   const enabled = Number(proxy.enabled) === 1
     ? statusTag("已启用", "tag-on")
@@ -2467,6 +2557,8 @@ function proxyRowHtml(proxy, index) {
     '<td><code>' + escapeHtml(proxy.server || "-") + ':' + escapeHtml(String(proxy.port || "-")) + '</code><small class="table-note">' + escapeHtml(proxy.sni || "") + ' · ' + escapeHtml(proxyTransportLabel(proxy.transport)) + '</small></td>',
     '<td>' + configured + '</td>',
     '<td>' + enabled + '</td>',
+    '<td>' + proxyLatestHtml(proxy) + '</td>',
+    '<td>' + proxyRateHtml(proxy) + '</td>',
     '<td><div class="actions">' + proxyActionsHtml(proxy) + '</div></td>',
     '</tr>',
   ].join("");
@@ -2480,7 +2572,7 @@ function renderProxyTargets() {
   const rows = proxyTargets.map((proxy, index) => proxyRowHtml(proxy, index)).join("");
   byId("proxyTable").innerHTML = [
     '<div class="table-scroll"><table class="pings-table proxy-table">',
-    '<thead><tr><th>#</th><th>名称 / ID</th><th>执行 Agent</th><th>协议</th><th>代理地址</th><th>凭据</th><th>状态</th><th>操作</th></tr></thead>',
+    '<thead><tr><th>#</th><th>名称 / ID</th><th>执行 Agent</th><th>协议</th><th>代理地址</th><th>凭据</th><th>启用</th><th>最近结果（24h）</th><th>成功率（24h）</th><th>操作</th></tr></thead>',
     '<tbody>', rows, '</tbody></table></div>',
   ].join("");
 }
@@ -2730,7 +2822,7 @@ async function saveProxyTarget(existing = null) {
     }, 30000);
     toast("代理检测目标已保存", "ok");
     closeModal();
-    await loadPings();
+    await loadProxyTargets();
   } catch (error) {
     if (saveStatus) saveStatus.textContent = `保存失败：${error?.message || "未知错误"}`;
     toast(error.message, "err");
@@ -2769,7 +2861,7 @@ async function toggleProxyTarget(proxy) {
       body: JSON.stringify({ enabled: Number(proxy.enabled) !== 1 }),
     });
     toast("代理检测状态已更新", "ok");
-    await loadPings();
+    await loadProxyTargets();
   } catch (error) {
     toast(error.message, "err");
   }
@@ -2780,7 +2872,7 @@ async function deleteProxyTarget(proxy) {
   try {
     await apiAdmin("/api/proxy-targets/" + encodeURIComponent(proxy.id), { method: "DELETE" });
     toast("代理检测目标已删除", "ok");
-    await loadPings();
+    await loadProxyTargets();
   } catch (error) {
     toast(error.message, "err");
   }
