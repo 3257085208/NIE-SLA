@@ -7,6 +7,7 @@ import { getPingIntervalSec, pingConfigPayload } from '../ping-config.js';
 import { normalizePingTarget, normalizeProbeProtocols, pingTargetProtocol } from '../ping-target-protocol.js';
 import { bufferedAgentStateEnabled, newerAgentMetricRow } from '../agent-state.js';
 import { readBufferedAgentLatestState } from '../telemetry-buffer.js';
+import { getRetentionHours } from './retention.js';
 
 function normalizeOkInt(value) {
   if (value === true || value === 1) return 1;
@@ -141,6 +142,7 @@ export async function submitAgentPings(request, env) {
 
 export async function getAgentPings(env, url, ctx = null) {
   if (!env.DB) return { ok: true, targets: [], pings: [] };
+  env = { ...env, AGENT_PINGS_PUBLIC_MAX_HOURS: String(await getRetentionHours(env)) };
   const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
   const { hours } = resolvePublicPingQuery(url, env);
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
@@ -200,6 +202,7 @@ export async function getAgentPings(env, url, ctx = null) {
 
 export async function getAgentPingsBatch(env, url, ctx = null) {
   if (!env.DB) return { ok: true, targets: [], agents: {} };
+  env = { ...env, AGENT_PINGS_PUBLIC_MAX_HOURS: String(await getRetentionHours(env)) };
   const { hours } = resolvePublicPingQuery(url, env);
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
   const includeLoss = parseBoolean(url.searchParams.get('include_loss'), false);

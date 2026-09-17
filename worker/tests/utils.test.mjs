@@ -8,6 +8,7 @@ import { runAlertChecks } from '../src/alerts.js';
 import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeAgentPublicBase, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
 import { cachedDailySummaryBefore, dailySummaryFromPoints, mergeR2StateUpdates, readR2JsonResult, readR2JsonStrict } from '../src/storage.js';
+import { parseJsonBytes } from '../src/r2-body.js';
 import { buildSummaryFallbackOptions, checkBucketSummaryQueryPlan } from '../src/admin/check-buckets.js';
 import { isAgentApiPath } from '../src/route-policy.js';
 import { compactStatusPayload, refreshLatencySources } from '../src/status-payload.js';
@@ -925,7 +926,8 @@ function fakeR2Env() {
       },
       async put(key, body) {
         puts++;
-        objects.set(key, { key, value: JSON.parse(body) });
+        const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : new Uint8Array(body);
+        objects.set(key, { key, value: await parseJsonBytes(bytes) });
       },
     },
     _objects: objects,

@@ -1,4 +1,5 @@
 import { clamp } from './utils.js';
+import { parseJsonBytes } from './r2-body.js';
 
 const cache = new WeakMap();
 const ALGO = 'AWS4-HMAC-SHA256';
@@ -146,8 +147,13 @@ export function createS3ArchiveFacade(env) {
       const res = await request('GET', key);
       if (res.status === 404) return null;
       if (!res.ok) throw await responseError('get', res);
-      const text = await res.text();
-      return { json: async () => JSON.parse(text), size: byteLength(text, encoder) };
+      const buffer = await res.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      return {
+        arrayBuffer: async () => buffer,
+        json: async () => parseJsonBytes(bytes),
+        size: bytes.byteLength,
+      };
     },
     async head(key) {
       const res = await request('HEAD', key);

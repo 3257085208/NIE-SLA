@@ -2,6 +2,7 @@ import { ApiError, safeJson } from '../auth.js';
 import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { clamp, nowSec, parseBoolean, sanitizeAgentId, sha256Hex } from '../utils.js';
 import { readR2JsonResult, writeR2Json } from '../storage.js';
+import { decodeJsonBody } from '../r2-body.js';
 import { agentApiBase, agentInstallBase, shellQuote } from './install-command.js';
 import { getMeta, getPublicSettings, setMeta } from './settings.js';
 
@@ -392,8 +393,7 @@ async function readArchiveObject(bucket, key) {
   const object = await bucket.get(key);
   if (!object) return null;
   try {
-    if (typeof object.json === 'function') return await object.json();
-    return JSON.parse(await object.text());
+    return await decodeJsonBody(object);
   } catch (_) {
     return null;
   }

@@ -20,6 +20,7 @@ export { submitAgentResults } from './admin/agent-results.js';
 
 export { getPingTargets, createPingTarget, updatePingTarget, deletePingTarget, submitAgentPings, getAgentPings, getAgentPingsBatch } from './admin/ping-targets.js';
 export { updatePingConfig } from './ping-config.js';
+export { getRetentionHours, updateRetentionConfig, normalizeRetentionHours, RETENTION_MIN_HOURS, RETENTION_MAX_HOURS } from './admin/retention.js';
 export { listProxyTargets, createProxyTarget, updateProxyTarget, deleteProxyTarget, previewProxyLinks, getAgentProxyTargets, getProxyControlRows, getCachedProxyControl, normalizePublicProxyChecks, normalizePublicProxyTargets } from './admin/proxy-targets.js';
 
 

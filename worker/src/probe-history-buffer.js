@@ -1,6 +1,7 @@
 import { clamp, dayFromSec, dayStartSec, isMissedMonitorPoint, nowSec, parseBoolean, sanitizeId } from './utils.js';
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
 import { readR2JsonResult, verifyR2Json } from './storage.js';
+import { encodeJsonBody, httpMetadataFor } from './r2-body.js';
 import { withS3Archive } from './r2s3.js';
 
 const DAY_PREFIX = 'day:';
@@ -381,22 +382,21 @@ export class ProbeHistoryBuffer {
     const key = probeHistoryKey(this.env, resolvedTargetId, day);
     const existing = await this.readArchiveDay(day, resolvedTargetId);
     const merged = mergeDay(existing, resolvedTargetId, day, points, this.env);
-    const body = JSON.stringify({
+    const { body, bytes, encoding } = await encodeJsonBody({
       schema: SCHEMA,
       target_id: merged.target_id,
       day,
       updated_at: new Date().toISOString(),
       points: merged.points,
     });
-    const bodyBytes = new TextEncoder().encode(body).byteLength;
     await this.env.ARCHIVE.put(key, body, {
-      httpMetadata: { contentType: 'application/json; charset=utf-8' },
-      customMetadata: { schema: SCHEMA, target_id: merged.target_id, day },
+      httpMetadata: httpMetadataFor(encoding),
+      customMetadata: { schema: SCHEMA, target_id: merged.target_id, day, encoding: encoding || 'none' },
     });
     if (typeof this.env.ARCHIVE.head === 'function') {
       const verify = await this.env.ARCHIVE.head(key);
       if (!verify) throw new Error(`R2 probe history write did not persist (${resolvedTargetId} ${day})`);
-      if (Number.isFinite(Number(verify.size)) && Number(verify.size) !== bodyBytes) throw new Error(`R2 probe history size mismatch (${resolvedTargetId} ${day} expected ${bodyBytes}, got ${verify.size})`);
+      if (Number.isFinite(Number(verify.size)) && Number(verify.size) !== bytes) throw new Error(`R2 probe history size mismatch (${resolvedTargetId} ${day} expected ${bytes}, got ${verify.size})`);
     }
     await verifyR2Json(this.env, key, (value) => value?.schema === SCHEMA
       && String(value.target_id || '') === resolvedTargetId

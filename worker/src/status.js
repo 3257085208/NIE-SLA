@@ -2,6 +2,7 @@ import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFro
 import { json } from './auth.js';
 import { validateAdminSession } from './totp.js';
 import { readR2JsonResult, readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks, verifyR2Json } from './storage.js';
+import { encodeJsonBody, decodeJsonBody, httpMetadataFor } from './r2-body.js';
 import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBuckets, getCheckBucketSummaries, buildSummaryFallbackOptions, getExchangeRates, convertPriceToCny, getMeta, getPublicSettings, getLatestExternalLatencyByTarget, normalizePublicProxyChecks, normalizePublicProxyTargets } from './admin.js';
 import { summarizeTrafficWithPending, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 import { compactStatusPayload, refreshLatencySources } from './status-payload.js';
@@ -459,7 +460,7 @@ export async function getStatusSnapshot(env, url) {
   try {
     const object = await env.ARCHIVE.get(key);
     if (!object) return null;
-    let payload = await object.json();
+    let payload = await decodeJsonBody(object);
     const generatedAt = Math.floor(new Date(payload?.generated_at || payload?.now || 0).getTime() / 1000);
     if (!payload?.ok || ![STATUS_SNAPSHOT_SCHEMA, LEGACY_STATUS_SNAPSHOT_SCHEMA].includes(payload?.schema) || !Number.isFinite(generatedAt) || !generatedAt || generatedAt < nowSec() - clamp(Number(env.STATUS_SNAPSHOT_MAX_AGE_SEC || 150), 60, 86400)) return null;
     // Quota guard: a snapshot younger than the live window already contains
@@ -559,15 +560,14 @@ export async function writeStatusSnapshot(env) {
   payload.schema = STATUS_SNAPSHOT_SCHEMA;
   payload.generated_at = new Date().toISOString();
   payload.storage = { ...(payload.storage || {}), status_snapshot_in_r2: true, status_snapshot_key: key };
-  const body = JSON.stringify(payload);
-  const bodyBytes = new TextEncoder().encode(body).byteLength;
-  const result = await env.ARCHIVE.put(key, body, { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: { schema: STATUS_SNAPSHOT_SCHEMA, generated_at: payload.generated_at } });
+  const { body, bytes, encoding } = await encodeJsonBody(payload);
+  const result = await env.ARCHIVE.put(key, body, { httpMetadata: httpMetadataFor(encoding), customMetadata: { schema: STATUS_SNAPSHOT_SCHEMA, generated_at: payload.generated_at } });
   const verify = typeof env.ARCHIVE.head === 'function' ? await env.ARCHIVE.head(key) : null;
   if (typeof env.ARCHIVE.head === 'function' && !verify) throw new Error(`R2 snapshot write did not persist (${key})`);
-  if (verify && Number.isFinite(Number(verify.size)) && Number(verify.size) !== bodyBytes) throw new Error(`R2 snapshot size mismatch (${key} expected ${bodyBytes}, got ${verify.size})`);
+  if (verify && Number.isFinite(Number(verify.size)) && Number(verify.size) !== bytes) throw new Error(`R2 snapshot size mismatch (${key} expected ${bytes}, got ${verify.size})`);
   await verifyR2Json(env, key, (readback) => readback?.schema === STATUS_SNAPSHOT_SCHEMA && readback?.generated_at === payload.generated_at);
   const verdict = verify ? verify.size : 'no-head';
-  console.log(`r2-snapshot: key=${key} bodyBytes=${bodyBytes} putSize=${result?.size ?? 'none'} verify=${verdict} readback=ok`);
+  console.log(`r2-snapshot: key=${key} bodyBytes=${bytes} encoding=${encoding || 'none'} putSize=${result?.size ?? 'none'} verify=${verdict} readback=ok`);
   return { ok: true, key, targets: payload.targets?.length || 0, summaries: payload.summaries?.length || 0, verify: verdict, readback: true };
 }
 

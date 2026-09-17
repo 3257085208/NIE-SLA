@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260916-proxy13";
-import { createAdminClient } from "./admin/api.js?v=20260916-proxy13";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260916-proxy13";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260916-proxy13";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260916-proxy13";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260916-proxy13";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260916-proxy14";
+import { createAdminClient } from "./admin/api.js?v=20260916-proxy14";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260916-proxy14";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260916-proxy14";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260916-proxy14";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260916-proxy14";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260916-proxy13";
+} from "./shared/target-catalogs.js?v=20260916-proxy14";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260916-proxy13";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260916-proxy13";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260916-proxy13";
-import { fmtBytes } from "./shared/format.js?v=20260916-proxy13";
+} from "./shared/grouping.js?v=20260916-proxy14";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260916-proxy14";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260916-proxy14";
+import { fmtBytes } from "./shared/format.js?v=20260916-proxy14";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -131,6 +131,71 @@ async function loadUsageEstimate() {
     box.innerHTML = `<div class="usage-model-box"><small>模型 ${escapeHtml(data.model_version)} · 24h 窗口 · 当前规模估算</small><div class="usage-rows">${rows}</div>${notes}</div>`;
   } catch (error) {
     box.innerHTML = `<div class="error">加载失败：${escapeHtml(error?.message || "未知错误")}</div>`;
+  }
+}
+
+function retentionLabel(hours) {
+  const value = Math.max(72, Math.min(720, Math.round(Number(hours) || 72)));
+  const days = value % 24 === 0 ? String(value / 24) : (value / 24).toFixed(1);
+  return `${value} 小时（${days} 天）`;
+}
+
+async function loadRetention() {
+  const slider = byId("retentionHours");
+  const value = byId("retentionValue");
+  const status = byId("retentionStatus");
+  if (!slider) return;
+  slider.oninput = () => {
+    if (value) value.textContent = retentionLabel(slider.value);
+  };
+  try {
+    const result = await apiAdmin("/api/retention-config", {}, 20_000);
+    const hours = Math.max(72, Math.min(720, Math.round(Number(result?.retention_hours) || 72)));
+    slider.value = String(hours);
+    if (value) value.textContent = retentionLabel(hours);
+    if (status) status.textContent = "";
+  } catch (error) {
+    if (status) status.textContent = `读取失败：${error?.message || "未知错误"}`;
+  }
+}
+
+function showRetentionStorageAdvice(hours) {
+  const modal = byId("modal");
+  if (!modal) return;
+  modal.innerHTML = `<h3>建议使用外部存储</h3>
+    <p class="hint">已把数据保留设为 ${escapeHtml(retentionLabel(hours))}。Cloudflare R2 免费额度为 10 GB-month；归档对象已启用 gzip 压缩，但在较大舰队规模与 30 天保留下仍可能接近上限。</p>
+    <p class="hint">如需长期保留，建议为归档启用 S3 兼容的外部存储：配置 R2 S3 凭据后，归档读写会自动走外部存储平面；也可以在接近额度时下调保留时长。</p>
+    <div class="ma"><button class="btn btn-primary" type="button" data-close>知道了</button></div>`;
+  openModal();
+}
+
+async function saveRetention() {
+  const slider = byId("retentionHours");
+  const status = byId("retentionStatus");
+  const button = byId("saveRetention");
+  if (!slider) return;
+  const hours = Math.max(72, Math.min(720, Math.round(Number(slider.value) || 72)));
+  if (button) {
+    button.disabled = true;
+    button.textContent = "保存中...";
+  }
+  try {
+    const result = await apiAdmin("/api/retention-config", {
+      method: "PATCH",
+      body: JSON.stringify({ retention_hours: hours }),
+    }, 30_000);
+    const saved = Math.max(72, Math.min(720, Math.round(Number(result?.retention_hours) || hours)));
+    if (status) status.textContent = `已保存：保留 ${retentionLabel(saved)}`;
+    toast(`数据保留已设为 ${retentionLabel(saved)}`);
+    if (result?.external_storage_recommended || saved > 72) showRetentionStorageAdvice(saved);
+  } catch (error) {
+    if (status) status.textContent = `保存失败：${error?.message || "未知错误"}`;
+    toast(error?.message || "保存失败", "err");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "保存";
+    }
   }
 }
 
@@ -2789,6 +2854,7 @@ async function loadSettings() {
   loadAppUpdate();
   loadUsageEstimate();
   loadUsageActual();
+  loadRetention();
   loadTotp();
   loadEncryption();
   loadUsageSummaryAccess();
@@ -4057,6 +4123,7 @@ byId("proxyTable").onclick = (e) => {
   if (b.dataset.a === "proxy-delete") deleteProxyTarget(proxy);
 };
 byId("savePingInterval").onclick = savePingInterval;
+if (byId("saveRetention")) byId("saveRetention").onclick = saveRetention;
 byId("latencyTable").onclick = (e) => {
   const button = e.target.closest("button[data-a]");
   if (!button) return;

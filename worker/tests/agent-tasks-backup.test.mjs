@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { webcrypto } from 'node:crypto';
 import { ensureV6Schema } from '../src/admin/schema.js';
+import { parseJsonBytes } from '../src/r2-body.js';
 import { cleanupFinishedAgentTasks, createAgentTask, createAgentTasks, claimAgentTask, completeAgentTask, listAgentTasks, cancelAgentTask, agentTaskCancelStatus, normalizeRunnerInstanceId, normalizeTaskResult } from '../src/admin/agent-tasks.js';
 import { getGeoIpSettings, submitAgentLocation, updateGeoIpSettings, validateCustomGeoIpUrl } from '../src/admin/agent-location.js';
 import { exportBackup, previewBackup, restoreBackup } from '../src/admin/backup.js';
@@ -85,11 +86,13 @@ const env = {
     async get(key) {
       const value = this.objects.get(key);
       if (value == null) return null;
-      return { json: async () => JSON.parse(value), size: new TextEncoder().encode(value).byteLength };
+      const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : new Uint8Array(value);
+      return { arrayBuffer: async () => bytes, json: async () => parseJsonBytes(bytes), size: bytes.byteLength };
     },
     async head(key) {
       const value = this.objects.get(key);
-      return value == null ? null : { size: new TextEncoder().encode(value).byteLength };
+      if (value == null) return null;
+      return { size: typeof value === 'string' ? new TextEncoder().encode(value).byteLength : value.byteLength };
     },
     async list({ prefix = '', cursor, limit = 1000 } = {}) {
       const keys = [...this.objects.keys()].filter(key => key.startsWith(prefix));
@@ -574,7 +577,9 @@ assert.equal(await getOrCreateAgentToken(restoredEnv, 'agent', 'vps-a'), origina
 assert.equal(await verifyAgentCredential(restoredEnv, 'agent', 'vps-a', originalAgentToken), true);
 assert.equal(restored.restore_snapshot.stored, true);
 assert.equal(env.ARCHIVE.objects.size, 1);
-const internalSnapshot = JSON.parse([...env.ARCHIVE.objects.values()][0]);
+const storedSnapshot = [...env.ARCHIVE.objects.values()][0];
+const storedSnapshotBytes = typeof storedSnapshot === 'string' ? new TextEncoder().encode(storedSnapshot) : new Uint8Array(storedSnapshot);
+const internalSnapshot = await parseJsonBytes(storedSnapshotBytes);
 assert.equal(internalSnapshot.schema, 'nie-sla-internal-snapshot-v2');
 assert.equal(typeof internalSnapshot.encrypted?.ciphertext, 'string');
 assert.equal(JSON.stringify(internalSnapshot).includes('test-key-that-is-long-enough-for-encryption'), false);

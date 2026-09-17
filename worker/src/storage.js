@@ -1,4 +1,5 @@
 import { clamp, nowSec, sanitizeId, sanitizeAgentId, dayFromSec, dayStartSec, normalizeHistoryPoint, publicCheckPoint, configuredAgents, agentSeriesEnabled, R2_STATE_SCHEMA, R2_HISTORY_SCHEMA, isMissedMonitorPoint } from './utils.js';
+import { encodeJsonBody, decodeJsonBody, httpMetadataFor } from './r2-body.js';
 
 
 
@@ -15,7 +16,7 @@ export async function readR2JsonResult(env, key) {
   }
   if (!object) return { ok: true, found: false, value: null, key };
   try {
-    const value = await object.json();
+    const value = await decodeJsonBody(object);
     return { ok: true, found: true, value: value || null, key };
   } catch (error) {
     return { ok: false, error: String(error?.message || error), key };
@@ -38,20 +39,19 @@ export async function verifyR2Json(env, key, validator = null) {
 
 export async function writeR2Json(env, key, value, metadata = {}) {
   if (!env.ARCHIVE) throw new Error('缺少 R2 的 ARCHIVE 绑定');
-  const body = JSON.stringify(value);
-  const bodyBytes = new TextEncoder().encode(body).byteLength;
+  const { body, bytes, encoding } = await encodeJsonBody(value);
   try {
-    const result = await env.ARCHIVE.put(key, body, { httpMetadata: { contentType: 'application/json; charset=utf-8' }, customMetadata: metadata });
+    const result = await env.ARCHIVE.put(key, body, { httpMetadata: httpMetadataFor(encoding), customMetadata: metadata });
     const verify = typeof env.ARCHIVE.head === 'function' ? await env.ARCHIVE.head(key) : null;
     if (typeof env.ARCHIVE.head === 'function' && !verify) throw new Error(`R2 write did not persist (${key})`);
-    if (verify && Number.isFinite(Number(verify.size)) && Number(verify.size) !== bodyBytes) {
-      throw new Error(`R2 write size mismatch (${key} expected ${bodyBytes}, got ${verify.size})`);
+    if (verify && Number.isFinite(Number(verify.size)) && Number(verify.size) !== bytes) {
+      throw new Error(`R2 write size mismatch (${key} expected ${bytes}, got ${verify.size})`);
     }
     await verifyR2Json(env, key);
     const verdict = verify ? verify.size : 'no-head';
-    console.log(`r2-put: key=${key} bodyBytes=${bodyBytes} putSize=${result?.size ?? 'none'} verify=${verdict} readback=ok`);
+    console.log(`r2-put: key=${key} bodyBytes=${bytes} encoding=${encoding || 'none'} putSize=${result?.size ?? 'none'} verify=${verdict} readback=ok`);
   } catch (error) {
-    console.error(`r2-put-failed: key=${key} bodyBytes=${bodyBytes}:`, String(error?.message || error));
+    console.error(`r2-put-failed: key=${key} bodyBytes=${bytes}:`, String(error?.message || error));
     throw error;
   }
 }
@@ -317,7 +317,7 @@ export async function deleteTargetR2Data(env, targetId) {
 }
 
 export async function getStatusSnapshotGeneratedAt(env, key) {
-  try { const object = await env.ARCHIVE.get(key); if (!object) return 0; const payload = await object.json(); const generatedAt = Math.floor(new Date(payload?.generated_at || payload?.now || 0).getTime() / 1000); return Number.isFinite(generatedAt) ? generatedAt : 0; } catch (_) { return 0; }
+  try { const object = await env.ARCHIVE.get(key); if (!object) return 0; const payload = await decodeJsonBody(object); const generatedAt = Math.floor(new Date(payload?.generated_at || payload?.now || 0).getTime() / 1000); return Number.isFinite(generatedAt) ? generatedAt : 0; } catch (_) { return 0; }
 }
 
 

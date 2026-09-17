@@ -9,6 +9,7 @@ import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBuffere
 import { bufferedAgentStateEnabled, newerAgentMetricRow } from './agent-state.js';
 import { getPingIntervalSec } from './ping-config.js';
 import { getAgentReportInterval } from './admin/settings.js';
+import { getRetentionHours } from './admin/retention.js';
 import { getTrafficCorrection } from './admin/traffic-corrections.js';
 import { normalizePublicProxyChecks } from './admin/proxy-targets.js';
 
@@ -373,6 +374,7 @@ export function pingSeriesToPoints(seriesList) {
 
 export async function getAgentMetrics(env, url, ctx = null) {
   if (!env.DB) return json({ ok: true, latest: null, history: [] }, 200, env);
+  env = await metricsEnvWithRetention(env);
 
   const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || env.DEFAULT_AGENT_ID || 'vps');
   const { hours, maxPoints } = resolvePublicMetricsQuery(url, env);
@@ -451,13 +453,19 @@ export async function getAgentMetrics(env, url, ctx = null) {
   return json(payload, 200, env, { 'cache-control': 'public, max-age=15' });
 }
 
+async function metricsEnvWithRetention(env) {
+  const retention = await getRetentionHours(env);
+  return { ...env, AGENT_METRICS_PUBLIC_MAX_HOURS: String(retention) };
+}
+
 export async function getAgentMetricsCached(request, env, url, ctx = null) {
   if (!globalThis.caches?.default || request.method !== 'GET') return getAgentMetrics(env, url, ctx);
-  const cacheUrl = normalizedMetricsCacheUrl(url, env);
+  const effectiveEnv = await metricsEnvWithRetention(env);
+  const cacheUrl = normalizedMetricsCacheUrl(url, effectiveEnv);
   const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
   const cached = await caches.default.match(cacheKey);
   if (cached) return cached;
-  const response = await getAgentMetrics(env, url, ctx);
+  const response = await getAgentMetrics(effectiveEnv, url, ctx);
   if (response.ok) {
     const task = caches.default.put(cacheKey, response.clone());
     if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(task);
@@ -1076,7 +1084,7 @@ export async function deleteAgentTelemetry(env, agentId) {
 export async function cleanupAgentMetricsR2(env, options = {}) {
   if (!env.ARCHIVE || !env.DB) return { ok: true, skipped: true };
   const configuredRetention = Math.max(
-    Number(env.AGENT_METRICS_R2_RETENTION_HOURS || 72),
+    await getRetentionHours(env),
     Number(env.PROXY_CHECK_R2_RETENTION_HOURS || MAX_AGENT_PROXY_HISTORY_HOURS),
   );
   const retentionHours = options.hours == null ? configuredRetention : Number(options.hours);

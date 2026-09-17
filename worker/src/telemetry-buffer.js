@@ -5,6 +5,7 @@ import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
 import { withS3Archive } from './r2s3.js';
 import { persistAgentMetricsStateFallback, persistAgentTraffic, processAgentMetricsPayload } from './metrics.js';
 import { readR2JsonResult } from './storage.js';
+import { encodeJsonBody, httpMetadataFor } from './r2-body.js';
 import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
 import { getPingIntervalSec } from './ping-config.js';
 import { getAgentReportInterval } from './admin/settings.js';
@@ -768,7 +769,7 @@ async function flushHour(env, buffered) {
     proxy_checks: proxyChecksFromPayload(existing?.proxy_checks),
   }, buffered, agentId, hour, HOUR_SEC);
   const dayHour = utcDayHour(hour);
-  const body = JSON.stringify({
+  const { body, bytes, encoding } = await encodeJsonBody({
     schema: 'nie-sla-agent-telemetry-hour-v1',
     agent_id: agentId,
     day: dayHour.day,
@@ -778,15 +779,14 @@ async function flushHour(env, buffered) {
     pings: { schema: 'nie-sla-agent-pings-hour-v2', series: pingPointsToSeries(merged.pings) },
     proxy_checks: { schema: 'nie-sla-proxy-checks-hour-v1', series: proxyChecksToSeries(merged.proxy_checks) },
   });
-  const bodyBytes = new TextEncoder().encode(body).byteLength;
   await env.ARCHIVE.put(key, body, {
-    httpMetadata: { contentType: 'application/json; charset=utf-8' },
-    customMetadata: { schema: 'nie-sla-agent-telemetry-hour-v1', agent_id: agentId, day: dayHour.day, hour: dayHour.hour },
+    httpMetadata: httpMetadataFor(encoding),
+    customMetadata: { schema: 'nie-sla-agent-telemetry-hour-v1', agent_id: agentId, day: dayHour.day, hour: dayHour.hour, encoding: encoding || 'none' },
   });
   if (typeof env.ARCHIVE.head === 'function') {
     const verify = await env.ARCHIVE.head(key);
     if (!verify) throw new Error(`R2 telemetry hour write did not persist (${agentId} ${dayHour.day}/${dayHour.hour})`);
-    if (Number.isFinite(Number(verify.size)) && Number(verify.size) !== bodyBytes) throw new Error(`R2 telemetry hour size mismatch (${agentId} ${dayHour.day}/${dayHour.hour} expected ${bodyBytes}, got ${verify.size})`);
+    if (Number.isFinite(Number(verify.size)) && Number(verify.size) !== bytes) throw new Error(`R2 telemetry hour size mismatch (${agentId} ${dayHour.day}/${dayHour.hour} expected ${bytes}, got ${verify.size})`);
   }
   const persisted = await readR2Object(env.ARCHIVE, key);
   if (persisted?.schema !== 'nie-sla-agent-telemetry-hour-v1'
