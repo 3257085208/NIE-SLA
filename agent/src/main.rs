@@ -15,7 +15,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use sysinfo::{Disks, System};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::Message;
-use ureq::{config::IpFamily, http::Uri, ResponseExt};
+use ureq::unversioned::resolver::{ResolvedSocketAddrs, Resolver};
+use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
+use ureq::{config::Config as UreqConfig, config::IpFamily, http::Uri, ResponseExt};
 
 mod asn_lookup;
 mod dns_compat;
@@ -2210,7 +2212,57 @@ fn build_public_http_agent(ip_family: IpFamily) -> ureq::Agent {
         .timeout_recv_response(Some(Duration::from_secs(30)))
         .timeout_recv_body(Some(Duration::from_secs(30)))
         .build();
-    ureq::Agent::new_with_config(config)
+    ureq::Agent::with_parts(config, DefaultConnector::default(), PublicDownloadResolver)
+}
+
+/// Public downloads must connect to the exact address that was checked to be
+/// public. The default resolver would resolve the hostname a second time at
+/// connection time, leaving a DNS-rebinding window between the URL check in
+/// [`validate_public_download_url`] and the actual connection. This resolver
+/// filters every resolved address and hands the surviving addresses straight
+/// to the connector, so a swapped-in private address can never be dialed.
+#[derive(Debug)]
+struct PublicDownloadResolver;
+
+impl Resolver for PublicDownloadResolver {
+    fn resolve(
+        &self,
+        uri: &Uri,
+        config: &UreqConfig,
+        _timeout: NextTimeout,
+    ) -> std::result::Result<ResolvedSocketAddrs, ureq::Error> {
+        let host = uri
+            .host()
+            .ok_or(ureq::Error::HostNotFound)?
+            .trim_matches(['[', ']']);
+        let port = uri.port_u16().unwrap_or(443);
+        let mut resolved = self.empty();
+        for address in public_download_addresses(host, port, config.ip_family())? {
+            if resolved.len() >= 16 {
+                break;
+            }
+            resolved.push(address);
+        }
+        if resolved.is_empty() {
+            Err(ureq::Error::HostNotFound)
+        } else {
+            Ok(resolved)
+        }
+    }
+}
+
+fn public_download_addresses(
+    host: &str,
+    port: u16,
+    family: IpFamily,
+) -> std::result::Result<Vec<SocketAddr>, ureq::Error> {
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .map_err(|_| ureq::Error::HostNotFound)?;
+    Ok(family
+        .keep_wanted(addresses)
+        .filter(|address| !is_restricted_ip(address.ip()))
+        .collect())
 }
 
 fn build_probe_http_agent(ip_family: IpFamily) -> ureq::Agent {
@@ -2578,6 +2630,59 @@ fn upload_report_due(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_download_addresses_keep_only_public_literals() {
+        let keep = public_download_addresses("1.1.1.1", 443, IpFamily::Any).unwrap();
+        assert_eq!(keep, vec!["1.1.1.1:443".parse::<SocketAddr>().unwrap()]);
+        assert!(public_download_addresses("127.0.0.1", 443, IpFamily::Any)
+            .unwrap()
+            .is_empty());
+        assert!(
+            public_download_addresses("169.254.169.254", 80, IpFamily::Any)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(public_download_addresses("::1", 443, IpFamily::Any)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn public_download_addresses_honor_the_ip_family() {
+        assert!(
+            public_download_addresses("1.1.1.1", 443, IpFamily::Ipv6Only)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            public_download_addresses("2606:4700:4700::1111", 443, IpFamily::Ipv4Only)
+                .unwrap()
+                .is_empty()
+        );
+        let v6 =
+            public_download_addresses("2606:4700:4700::1111", 443, IpFamily::Ipv6Only).unwrap();
+        assert_eq!(v6.len(), 1);
+        assert!(v6[0].is_ipv6());
+    }
+
+    #[test]
+    fn public_download_resolver_refuses_private_literals() {
+        let config = ureq::Agent::config_builder().build();
+        let timeout = NextTimeout {
+            after: ureq::unversioned::transport::time::Duration::from_secs(30),
+            reason: ureq::Timeout::Resolve,
+        };
+        let resolver = PublicDownloadResolver;
+        let private: Uri = "https://127.0.0.1/".parse().unwrap();
+        assert!(resolver
+            .resolve(&private, &config, timeout.clone())
+            .is_err());
+        let public: Uri = "https://1.1.1.1/".parse().unwrap();
+        let resolved = resolver.resolve(&public, &config, timeout).unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].ip().to_string(), "1.1.1.1");
+    }
 
     #[test]
     fn disk_rows_dedupe_bind_mounts_and_exclude_pseudo_devices() {

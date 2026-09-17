@@ -643,7 +643,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     uninstall) do_uninstall; exit 0 ;;
     --api) NIE_SLA_API_BASE="$2"; shift 2 ;;
-    --token) NIE_SLA_AGENT_TOKEN="$2"; shift 2 ;;
+    --token|--token=*)
+      err "--token 已停用：命令行密钥会留在 ps 与 shell 历史中；请改用 NIE_SLA_AGENT_TOKEN=... 环境变量或交互输入"
+      exit 2
+      ;;
     --target) NIE_SLA_AGENT_ID="$2"; shift 2 ;;
     --label) NIE_SLA_AGENT_LABEL="$2"; shift 2 ;;
     --interval) NIE_SLA_INTERVAL_SEC="$2"; shift 2 ;;
@@ -675,7 +678,7 @@ if [[ "$NON_INTERACTIVE" != "true" ]]; then
 fi
 
 if [[ -z "$API_BASE" ]]; then err "missing NIE_SLA_API_BASE or --api"; exit 2; fi
-if [[ -z "$TOKEN" ]]; then err "missing NIE_SLA_AGENT_TOKEN or --token"; exit 2; fi
+if [[ -z "$TOKEN" ]]; then err "missing NIE_SLA_AGENT_TOKEN"; exit 2; fi
 if [[ -z "$AGENT_ID" ]]; then AGENT_ID="$(hostname 2>/dev/null || echo vps)"; fi
 if [[ -z "$AGENT_LABEL" ]]; then AGENT_LABEL="$AGENT_ID"; fi
 

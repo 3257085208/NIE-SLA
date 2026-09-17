@@ -10,8 +10,16 @@ set -euo pipefail
 
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 SETUP_URL="${DOWNLOAD_BASE%/}/setup.sh"
-DEFAULT_SETUP_SHA256="1cf7d2964367471523dbcff0aa1019dbe8d1c70180d410323a272cbed2df0125"
+DEFAULT_SETUP_SHA256="5843bd73fb085e39a4f1f2dbbeb156cf344a97952c03eb0fe9581cf4bc617ef0"
 
+for arg in "$@"; do
+  case "$arg" in
+    --token|--token=*)
+      echo "--token 已停用：命令行密钥会留在 ps 与 shell 历史中；请改用 NIE_SLA_AGENT_TOKEN=... 环境变量。" >&2
+      exit 2
+      ;;
+  esac
+done
 if [[ -z "${NIE_SLA_API_BASE:-${NSTATUS_API_BASE:-${NSTATUS_API:-}}}" ]]; then
   echo "缺少 NIE_SLA_API_BASE，请从管理后台的部署按钮复制完整命令。" >&2
   exit 2

@@ -32,7 +32,10 @@ NON_INTERACTIVE=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --api) NIE_SLA_API_BASE="$2"; shift 2 ;;
-    --token) NIE_SLA_AGENT_TOKEN="$2"; shift 2 ;;
+    --token|--token=*)
+      err "--token 已停用：命令行密钥会留在 ps 与 shell 历史中；请改用 NIE_SLA_AGENT_TOKEN=... 环境变量或交互输入"
+      exit 2
+      ;;
     --target) NIE_SLA_AGENT_ID="$2"; shift 2 ;;
     --label) NIE_SLA_AGENT_LABEL="$2"; shift 2 ;;
     --non-interactive|-y) NON_INTERACTIVE=true; shift ;;
