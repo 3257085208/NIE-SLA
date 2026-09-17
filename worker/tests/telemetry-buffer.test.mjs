@@ -423,6 +423,75 @@ assert.equal(Object.keys(pagedStates).length, 1100, 'fleet aggregation must page
 assert.equal(pagedStates['agent-0000']?.cpu_percent, 0);
 assert.equal(pagedStates['agent-1099']?.cpu_percent, 1099);
 
+// One shared stream instance owns every Agent's live buffer: chunks are keyed
+// per Agent, reads filter by Agent, hour flushes stay per-Agent R2 objects,
+// and deleting one Agent never touches another Agent's buffered points.
+const scopedStorage = memoryStorage();
+const scopedArchive = memoryR2();
+const scopedBuffer = new TelemetryBuffer({ storage: scopedStorage }, testEnv({ ARCHIVE: scopedArchive }));
+await append(scopedBuffer, {
+  agent_id: 'vps-one',
+  points: [{ ts: currentHour + 10, cpu: 1 }],
+  pings: [{ target_id: 't1', ts: currentHour + 10, latency_ms: 5, ok: 1 }],
+});
+await append(scopedBuffer, {
+  agent_id: 'vps-two',
+  points: [{ ts: currentHour + 10, cpu: 2 }],
+  pings: [{ target_id: 't2', ts: currentHour + 10, latency_ms: 6, ok: 1 }],
+});
+assert.equal((await scopedStorage.list({ prefix: 'chunk:' })).size, 2, 'shared stream buffers key chunks per Agent');
+const scopedOne = await scopedBuffer.read(currentHour, currentHour + 3599, 'vps-one');
+assert.deepEqual(scopedOne.points.map(point => point.cpu), [1], 'an Agent read must not see another Agent\'s points');
+assert.deepEqual(scopedOne.pings.map(ping => ping.target_id), ['t1']);
+const scopedTwo = await scopedBuffer.read(currentHour, currentHour + 3599, 'vps-two');
+assert.deepEqual(scopedTwo.points.map(point => point.cpu), [2]);
+const deleteOneResponse = await scopedBuffer.fetch(new Request('https://nie-sla.internal/delete-agent?agent_id=vps-one', {
+  method: 'POST',
+  headers: { 'x-nie-sla-internal-secret': 'telemetry-test-secret' },
+}));
+assert.equal(deleteOneResponse.ok, true);
+assert.equal((await scopedStorage.list({ prefix: 'chunk:' })).size, 1, 'deleting one Agent keeps other buffered chunks');
+assert.equal((await scopedBuffer.read(currentHour, currentHour + 3599, 'vps-one')).points.length, 0);
+await scopedBuffer.flushCompletedHours(currentHour + 4600);
+assert.equal(scopedArchive.puts, 1, 'only the surviving Agent hour is archived');
+assert.match([...scopedArchive.objects.keys()][0], /agent-metrics-v1\/vps-two\//);
+
+// Transitional migration: the shared stream instance pulls the former
+// per-Agent buffer once and merges it locally before first use.
+const migrationStorage = memoryStorage();
+const migrationArchive = memoryR2();
+const legacyReadRequests = [];
+const migrationHits = [];
+const migrationBuffer = new TelemetryBuffer(
+  { storage: migrationStorage, id: { name: 'agent-metrics-stream' } },
+  testEnv({
+    ARCHIVE: migrationArchive,
+    TELEMETRY_BUFFER: {
+      idFromName(name) { return { name }; },
+      get(id) {
+        migrationHits.push(id.name);
+        return {
+          async fetch(url, init = {}) {
+            if (String(url).includes('/read')) {
+              legacyReadRequests.push(String(url));
+              return Response.json({ points: [{ ts: currentHour + 5, cpu: 55 }], pings: [], proxy_checks: [] });
+            }
+            if (String(url).includes('/delete') && init.method === 'POST') return Response.json({ ok: true });
+            return Response.json({ ok: false }, { status: 404 });
+          },
+        };
+      },
+    },
+  }),
+);
+await append(migrationBuffer, { agent_id: 'vps-migrate', points: [{ ts: currentHour + 40, cpu: 44 }], pings: [] });
+const migrated = await migrationBuffer.read(currentHour, currentHour + 3599, 'vps-migrate');
+assert.deepEqual(migrated.points.map(point => point.cpu), [55, 44], 'legacy per-Agent points migrate into the shared buffer');
+assert.equal(migrationHits.filter(name => name === 'agent:vps-migrate').length, 1, 'migration deletes the former per-Agent buffer');
+assert.equal(legacyReadRequests.length, 1);
+await append(migrationBuffer, { agent_id: 'vps-migrate', points: [{ ts: currentHour + 50, cpu: 45 }], pings: [] });
+assert.equal(legacyReadRequests.length, 1, 'migration runs once per Agent');
+
 console.log('durable telemetry buffer tests passed');
 
 function testEnv(extra = {}) {

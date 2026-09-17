@@ -1,6 +1,10 @@
 # 更新日志
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
+## 1.1.64 - 2026-09-17
+
+- 降低 Durable Object 请求：共享遥测实例直接持有全部 Agent 的活动缓冲（按 Agent 隔离），WSS 处理不再逐台 Agent 额外调用 DO；旧版每 Agent 缓冲首次使用时自动迁移合并。
+
 ## 1.1.63 - 2026-09-17
 
 - Rust Agent 硬化：root manager 工作目录改为 /；原子写入使用 create_new 拒绝跟随符号链接；任务输出 JSON 扫描尝试上限。

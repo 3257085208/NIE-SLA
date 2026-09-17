@@ -46,6 +46,7 @@ export class TelemetryBuffer {
     this.memReports = [];
     this.latestPersistAt = new Map();
     this.msgWindows = new Map();
+    this.migratedAgents = new Set();
   }
 
   // One shared DO serves every Agent's WSS reports; bound each agent's message
@@ -108,7 +109,13 @@ export class TelemetryBuffer {
       return Response.json(await this.read(
         Number(url.searchParams.get('since') || 0),
         Number(url.searchParams.get('until') || nowSec()),
+        sanitizeAgentId(url.searchParams.get('agent_id') || '') || null,
       ));
+    }
+    if (request.method === 'POST' && url.pathname === '/delete-agent') {
+      const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
+      if (!agentId) return Response.json({ ok: false, error: 'Agent ID 无效' }, { status: 400 });
+      return Response.json(await this.deleteAgentBuffer(agentId));
     }
     if (request.method === 'POST' && url.pathname === '/delete') {
       await this.state.storage.deleteAll();
@@ -289,7 +296,8 @@ export class TelemetryBuffer {
         const pings = group.flatMap(item => item.pings || []);
         const proxyChecks = group.flatMap(item => item.proxy_checks || []);
         if ((points.length || pings.length || proxyChecks.length) && !group.every(item => drainState(item).telemetryAppended)) {
-          await appendBufferedAgentTelemetry(this.env, agentId, points, pings, proxyChecks);
+          await this.ensureLegacyBufferMigrated(agentId);
+          await this.appendLocal({ agent_id: agentId, points, pings, proxy_checks: proxyChecks });
           for (const item of group) drainState(item).telemetryAppended = true;
         }
       } catch (error) {
@@ -417,20 +425,87 @@ export class TelemetryBuffer {
   async append(body) {
     const agentId = sanitizeAgentId(body?.agent_id);
     if (!agentId) throw new Error('Agent ID 无效');
+    await this.ensureLegacyBufferMigrated(agentId);
+    const result = await this.appendLocal(body);
+    if (result?.skipped) return result;
+    await this.scheduleFlush();
+    await this.flushCompletedHours(nowSec());
+    return result;
+  }
+
+  // One shared stream instance owns every Agent's live buffer so WSS drains do
+  // not cost an extra Durable Object request per Agent report. Chunks are keyed
+  // by Agent, so this local write replaces the former per-Agent DO fetch while
+  // keeping the same five-minute merge semantics.
+  async appendLocal(body) {
+    const agentId = sanitizeAgentId(body?.agent_id);
+    if (!agentId) throw new Error('Agent ID 无效');
     const grouped = groupByChunk(body?.points, body?.pings, body?.proxy_checks);
-    if (!grouped.size) return { ok: true, skipped: true };
+    if (!grouped.size) return { ok: true, skipped: true, chunks: 0 };
 
     await this.state.storage.transaction(async (txn) => {
       for (const [chunk, incoming] of grouped) {
-        const key = chunkKey(chunk);
+        const key = chunkKey(agentId, chunk);
         const existing = await txn.get(key) || emptyBuffer(agentId, chunk);
         await txn.put(key, compactBuffer(mergeBuffer(existing, incoming, agentId, chunk, CHUNK_SEC)));
       }
     });
+    return { ok: true, agent_id: agentId, chunks: grouped.size };
+  }
 
-    await this.scheduleFlush();
-    await this.flushCompletedHours(nowSec());
-    return { ok: true, chunks: grouped.size };
+  // Existing installs still hold the current hour of points in their former
+  // per-Agent buffer DO. Migrate that data once per Agent on first use so live
+  // reads never lose the transition window.
+  async ensureLegacyBufferMigrated(rawAgentId) {
+    const agentId = sanitizeAgentId(rawAgentId);
+    if (!agentId || !this.env.TELEMETRY_BUFFER) return;
+    if (String(this.state?.id?.name || '') !== AGENT_METRICS_STREAM_INSTANCE) return;
+    if (this.migratedAgents.has(agentId)) return;
+    const flagKey = `migrated:${agentId}`;
+    try {
+      if (await this.state.storage.get(flagKey)) {
+        this.migratedAgents.add(agentId);
+        return;
+      }
+    } catch (_) {}
+    try {
+      const legacy = this.env.TELEMETRY_BUFFER.get(this.env.TELEMETRY_BUFFER.idFromName(`agent:${agentId}`));
+      const response = await legacy.fetch('https://nie-sla.internal/read?since=0', { headers: internalRequestHeaders(this.env) });
+      if (response.ok) {
+        const body = await response.json().catch(() => null);
+        const points = Array.isArray(body?.points) ? body.points : [];
+        const pings = Array.isArray(body?.pings) ? body.pings : [];
+        const proxyChecks = Array.isArray(body?.proxy_checks) ? body.proxy_checks : [];
+        if (points.length || pings.length || proxyChecks.length) {
+          await this.appendLocal({ agent_id: agentId, points, pings, proxy_checks: proxyChecks });
+        }
+        await legacy.fetch('https://nie-sla.internal/delete', { method: 'POST', headers: internalRequestHeaders(this.env) }).catch(() => {});
+      }
+    } catch (error) {
+      console.error('telemetry buffer migration deferred:', String(error?.message || error));
+      return;
+    }
+    await this.state.storage.put(flagKey, nowSec()).catch(() => {});
+    this.migratedAgents.add(agentId);
+  }
+
+  async deleteAgentBuffer(rawAgentId) {
+    const agentId = sanitizeAgentId(rawAgentId);
+    if (!agentId) return { ok: false, error: 'Agent ID 无效' };
+    let deleted = 0;
+    const prefix = `${CHUNK_PREFIX}${agentId}:`;
+    for (const [key] of await this.listStorageEntries(prefix)) {
+      await this.state.storage.delete(key);
+      deleted += 1;
+    }
+    for (const [key, value] of await this.listStorageEntries(EXPORT_PREFIX)) {
+      if (sanitizeAgentId(value?.agent_id) !== agentId) continue;
+      await this.state.storage.delete(key);
+      deleted += 1;
+    }
+    await this.state.storage.delete(`migrated:${agentId}`).catch(() => {});
+    this.migratedAgents.delete(agentId);
+    return { ok: true, agent_id: agentId, deleted };
   }
 
   async readFleetLatestStates() {
@@ -512,14 +587,17 @@ export class TelemetryBuffer {
     }
   }
 
-  async read(since, until) {
+  async read(since, until, rawAgentId = null) {
     const start = Number.isFinite(since) ? Math.floor(since) : 0;
     const end = Number.isFinite(until) ? Math.floor(until) : nowSec();
+    const scopedAgentId = rawAgentId ? sanitizeAgentId(rawAgentId) : null;
+    if (scopedAgentId) await this.ensureLegacyBufferMigrated(scopedAgentId).catch(() => {});
     const rows = await this.bufferRows();
     const points = [];
     const pings = [];
     const proxyChecks = [];
     for (const value of rows.values()) {
+      if (scopedAgentId && sanitizeAgentId(value?.agent_id) !== scopedAgentId) continue;
       for (const point of bufferPoints(value)) {
         const ts = Number(point?.ts || 0);
         if (ts >= start && ts <= end) points.push(point);
@@ -547,19 +625,21 @@ export class TelemetryBuffer {
     for (const [key, value] of rows) {
       const start = bufferedStart(key);
       const hour = hourStart(start);
-      if (!Number.isFinite(start) || hour + flushInterval > flushBefore) continue;
-      const item = completed.get(hour) || { keys: [], buffers: [] };
+      const agentId = sanitizeAgentId(value?.agent_id);
+      if (!agentId || !Number.isFinite(start) || hour + flushInterval > flushBefore) continue;
+      const groupKey = `${agentId}|${hour}`;
+      const item = completed.get(groupKey) || { agentId, hour, keys: [], buffers: [] };
       item.keys.push(key);
       item.buffers.push(value);
-      completed.set(hour, item);
+      completed.set(groupKey, item);
     }
     let retry = false;
-    for (const [hour, item] of completed) {
+    for (const item of completed.values()) {
       try {
-        let merged = emptyBuffer(item.buffers[0]?.agent_id, hour);
-        for (const value of item.buffers) merged = mergeBuffer(merged, value, value?.agent_id, hour, HOUR_SEC);
+        let merged = emptyBuffer(item.agentId, item.hour);
+        for (const value of item.buffers) merged = mergeBuffer(merged, value, item.agentId, item.hour, HOUR_SEC);
         await flushHour(this.env, merged);
-        await this.queueExport(merged.agent_id, hour);
+        await this.queueExport(item.agentId, item.hour);
         for (const key of item.keys) await this.state.storage.delete(key);
       } catch (error) {
         retry = true;
@@ -571,11 +651,12 @@ export class TelemetryBuffer {
     else if ((await this.bufferRows(1)).size) await this.scheduleFlush();
   }
 
-  async queueExport(agentId, hour) {
+  async queueExport(rawAgentId, hour) {
     if (!timeseriesExportEnabled(this.env)) return;
-    const key = `${EXPORT_PREFIX}${hourStart(hour)}`;
+    const agentId = sanitizeAgentId(rawAgentId);
+    const key = `${EXPORT_PREFIX}${agentId}:${hourStart(hour)}`;
     const current = normalizeExportAttempt(await this.state.storage.get(key));
-    await this.state.storage.put(key, { agent_id: sanitizeAgentId(agentId), hour: hourStart(hour), ...current });
+    await this.state.storage.put(key, { agent_id: agentId, hour: hourStart(hour), ...current });
   }
 
   async flushPendingExports(currentAt) {
@@ -583,7 +664,7 @@ export class TelemetryBuffer {
     const rows = await this.listStorageEntries(EXPORT_PREFIX);
     let retry = false;
     for (const [key, value] of rows) {
-      const hour = hourStart(value?.hour || String(key).slice(EXPORT_PREFIX.length));
+      const hour = hourStart(value?.hour || String(key).slice(String(key).lastIndexOf(':') + 1));
       const nextAt = Number(value?.next_at || 0);
       if (nextAt > currentAt) { retry = true; continue; }
       try {
@@ -675,7 +756,7 @@ function parseBinaryMessage(message) {
 export async function appendBufferedAgentTelemetry(env, agentId, points, pings, proxyChecks = []) {
   if (!env.TELEMETRY_BUFFER) return null;
   const id = sanitizeAgentId(agentId);
-  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(`agent:${id}`));
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
   const response = await stub.fetch('https://nie-sla.internal/append', {
     method: 'POST',
     headers: internalRequestHeaders(env),
@@ -688,8 +769,9 @@ export async function appendBufferedAgentTelemetry(env, agentId, points, pings, 
 export async function readBufferedAgentTelemetry(env, agentId, since, until) {
   if (!env.TELEMETRY_BUFFER) return { points: [], pings: [], proxy_checks: [] };
   const id = sanitizeAgentId(agentId);
-  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(`agent:${id}`));
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
   const url = new URL('https://nie-sla.internal/read');
+  url.searchParams.set('agent_id', id);
   url.searchParams.set('since', String(Math.floor(Number(since) || 0)));
   url.searchParams.set('until', String(Math.floor(Number(until) || nowSec())));
   const response = await stub.fetch(url.toString(), { headers: internalRequestHeaders(env) });
@@ -741,8 +823,10 @@ export async function deleteBufferedAgentTelemetry(env, agentId) {
   const id = sanitizeAgentId(agentId);
   if (!id) return { ok: true, skipped: true };
   await deleteBufferedAgentLatestState(env, id);
-  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(`agent:${id}`));
-  const response = await stub.fetch('https://nie-sla.internal/delete', { method: 'POST', headers: internalRequestHeaders(env) });
+  const url = new URL('https://nie-sla.internal/delete-agent');
+  url.searchParams.set('agent_id', id);
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const response = await stub.fetch(url.toString(), { method: 'POST', headers: internalRequestHeaders(env) });
   if (!response.ok) throw new Error(`遥测缓冲删除失败：HTTP ${response.status}`);
   return response.json();
 }
@@ -922,15 +1006,14 @@ function bufferProxyChecks(value) {
   return proxyChecksFromPayload({ series: value?.proxy_check_series });
 }
 
-function chunkKey(chunk) {
-  return `${CHUNK_PREFIX}${chunkStart(chunk)}`;
+function chunkKey(agentId, chunk) {
+  return `${CHUNK_PREFIX}${sanitizeAgentId(agentId)}:${chunkStart(chunk)}`;
 }
 
 function bufferedStart(key) {
   const text = String(key);
-  if (text.startsWith(CHUNK_PREFIX)) return Number(text.slice(CHUNK_PREFIX.length));
-  if (text.startsWith(LEGACY_BUFFER_PREFIX)) return Number(text.slice(LEGACY_BUFFER_PREFIX.length));
-  return NaN;
+  if (!text.startsWith(CHUNK_PREFIX) && !text.startsWith(LEGACY_BUFFER_PREFIX)) return NaN;
+  return Number(text.slice(text.lastIndexOf(':') + 1));
 }
 
 function telemetryFlushIntervalSec(env) {
