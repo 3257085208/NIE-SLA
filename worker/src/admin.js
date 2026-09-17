@@ -30,7 +30,7 @@ export { syncEnvTargets, syncEnvTargetsMaybe } from './admin/sync.js';
 export { archiveDay, archiveYesterdayOncePerLocalDay, getRecentIncidents, getStats } from './admin/archive.js';
 
 
-export { upsertLatestStatus, latestStatusToD1Enabled, writeIncidentEvent, touchActiveIncident, upsertTargetLastCheckedAt, upsertCheckBucket, readCheckBuckets, readCheckBucketDaySummary, getCheckBucketSummaries, checkBucketSummaryQueryPlan, buildSummaryFallbackOptions, applyProbeWriteBatch, cleanupOldCheckBuckets, cleanupVolatileHistory, reconcileOpenIncidents } from './admin/check-buckets.js';
+export { upsertLatestStatus, latestStatusToD1Enabled, writeIncidentEvent, touchActiveIncident, upsertTargetLastCheckedAt, upsertCheckBucket, readCheckBuckets, readCheckBucketDaySummary, getCheckBucketSummaries, checkBucketSummaryQueryPlan, buildSummaryFallbackOptions, applyProbeWriteBatch, writeProbeBucketsToD1, cleanupOldCheckBuckets, cleanupVolatileHistory, reconcileOpenIncidents } from './admin/check-buckets.js';
 
 
 export { cleanupDebugLogs, debugClientIp, debugSummary, getDebugLogSummary, listDebugLogs, recordDebugLog, sanitizeDebugLogEntry, shouldLogDebugOperation } from './admin/debug-logs.js';

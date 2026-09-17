@@ -8,25 +8,28 @@ const minutesPerDay = 24 * 60;
 const daysPerMonth = 30;
 
 // Phase-2 transport/storage model: metrics and probe buckets are no longer
-// one HTTP/D1 write per sample.  WSS messages are handled by the existing
-// TelemetryBuffer DO, while SLA buckets use one per-target ProbeHistory DO and
-// one R2 object per completed local day. The public status stream adds one
+// one HTTP/D1 write per sample. WSS messages are handled by the existing
+// TelemetryBuffer DO; SLA buckets are appended to the shared ProbeHistory hub
+// (one batched request per scheduled probe run) and archived as one R2 object
+// per completed local day and target. The public status stream adds one
 // bounded publish request per scheduler minute in this conservative model;
 // viewer connection churn is access-volume dependent and must be monitored
-// separately.
+// separately. Detailed capacity math lives in usage-model v1.3.4.
 const scaleNodes = 80;
 const wssReportsPerDay = scaleNodes * reportsPerDay;
-const regionProbeDoRequests = scaleNodes * reportsPerDay;
+// One shared-hub append per probe run replaces one DO request per target.
+const probeHistoryHubAppends = minutesPerDay;
 const statusStreamPublishRequests = minutesPerDay;
 const controlHttpRequests = scaleNodes * (4 + (24 * 60 / 10) + 2 + 1); // reconnects + task poll + GeoIP + update policy
 const publicStatusFallbackRequests = minutesPerDay * 6; // one visitor polling the cached public status every ten seconds
 const publicAndCronRequests = minutesPerDay + minutesPerDay + (minutesPerDay / 5) + 144 + publicStatusFallbackRequests;
 const phase2WorkerRequests = controlHttpRequests + publicAndCronRequests + latencyAgents * (minutesPerDay + minutesPerDay + 24);
-const phase2DurableObjectRequests = wssReportsPerDay + regionProbeDoRequests + statusStreamPublishRequests;
+const phase2DurableObjectRequests = wssReportsPerDay + probeHistoryHubAppends + statusStreamPublishRequests;
 const phase2ProbeHistoryD1Writes = 0;
 
 assert.ok(phase2WorkerRequests < 100_000, `phase-2 80-node Worker request budget exceeded: ${phase2WorkerRequests}`);
 assert.ok(phase2DurableObjectRequests < 100_000, `phase-2 80-node Durable Object request budget exceeded: ${phase2DurableObjectRequests}`);
+assert.ok(probeHistoryHubAppends < scaleNodes * reportsPerDay, 'the shared hub must keep probe-history appends off per-target requests');
 assert.equal(phase2ProbeHistoryD1Writes, 0, 'phase-2 probe buckets must stay out of D1');
 
 const workerRequests = nodes * (

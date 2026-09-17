@@ -1,5 +1,6 @@
 import { ApiError, internalRequestHeaders, safeJson } from '../auth.js';
 import { clamp, sanitizeId } from '../utils.js';
+import { PROBE_HISTORY_HUB_INSTANCE } from '../probe-history-buffer.js';
 
 const DEFAULT_TARGET_SCAN_LIMIT = 200;
 const DEFAULT_DEAD_LETTER_LIMIT = 50;
@@ -47,10 +48,10 @@ export async function replayProbeHistoryDeadLetter(request, env) {
   const day = String(body?.day || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new ApiError(400, 'day 必须是 YYYY-MM-DD');
 
-  const response = await env.PROBE_HISTORY.get(probeHistoryId(env, targetId)).fetch('https://nie-sla.internal/dead-letter/replay', {
+  const response = await env.PROBE_HISTORY.get(probeHistoryId(env)).fetch('https://nie-sla.internal/dead-letter/replay', {
     method: 'POST',
     headers: internalRequestHeaders(env),
-    body: JSON.stringify({ day }),
+    body: JSON.stringify({ target_id: targetId, day }),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || result?.ok === false) {
@@ -99,26 +100,27 @@ async function listTargetsForDeadLetters(env, targetId) {
 
 async function fetchDeadLetterList(env, targetId, limit) {
   const url = new URL('https://nie-sla.internal/dead-letter');
+  url.searchParams.set('target_id', String(targetId));
   url.searchParams.set('limit', String(limit));
-  const response = await env.PROBE_HISTORY.get(probeHistoryId(env, targetId)).fetch(url.toString(), { headers: internalRequestHeaders(env) });
+  const response = await env.PROBE_HISTORY.get(probeHistoryId(env)).fetch(url.toString(), { headers: internalRequestHeaders(env) });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body?.ok === false) throw new Error(`HTTP ${response.status}`);
   return body;
 }
 
 async function fetchDeadLetterDrain(env, targetId, limit) {
-  const response = await env.PROBE_HISTORY.get(probeHistoryId(env, targetId)).fetch('https://nie-sla.internal/dead-letter/drain', {
+  const response = await env.PROBE_HISTORY.get(probeHistoryId(env)).fetch('https://nie-sla.internal/dead-letter/drain', {
     method: 'POST',
     headers: internalRequestHeaders(env),
-    body: JSON.stringify({ limit }),
+    body: JSON.stringify({ target_id: targetId, limit }),
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || body?.ok === false) throw new Error(`HTTP ${response.status}`);
   return body;
 }
 
-function probeHistoryId(env, targetId) {
-  return env.PROBE_HISTORY.idFromName(`probe:${sanitizeId(targetId)}`);
+function probeHistoryId(env) {
+  return env.PROBE_HISTORY.idFromName(PROBE_HISTORY_HUB_INSTANCE);
 }
 
 function normalizeTargetId(value) {

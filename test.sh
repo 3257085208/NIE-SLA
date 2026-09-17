@@ -91,6 +91,7 @@ run_check "proxy target storage and credential boundary tests" node "$ROOT/worke
 run_check "proxy link parser and credential redaction tests" node "$ROOT/worker/tests/proxy-links.test.mjs"
 run_check "durable probe history buffer tests" node "$ROOT/worker/tests/probe-history-buffer.test.mjs"
 run_check "probe history dead-letter maintenance tests" node "$ROOT/worker/tests/probe-history-dead-letter.test.mjs"
+run_check "probe history shared-hub tests" node "$ROOT/worker/tests/probe-history-hub.test.mjs"
 run_check "public status stream tests" node "$ROOT/worker/tests/status-stream.test.mjs"
 run_check "Cloudflare free-tier budget tests" node "$ROOT/worker/tests/free-tier-budget.test.mjs"
 run_check "bulk VPS target update tests" node "$ROOT/worker/tests/target-bulk.test.mjs"

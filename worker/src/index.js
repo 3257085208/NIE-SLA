@@ -1,6 +1,7 @@
 import { enrichCfContext, probeTarget, saveCheck, runDueTargets, runFastStatusTargets, loadProbeTargetRows } from './probe.js';
 import { writeStatusSnapshot } from './status.js';
-import { archiveYesterdayOncePerLocalDay, cleanupDebugLogs, cleanupFinishedAgentTasks, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates, refreshCheckBucketDays, reconcileOpenIncidents } from './admin.js';
+import { archiveYesterdayOncePerLocalDay, cleanupDebugLogs, cleanupFinishedAgentTasks, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates, refreshCheckBucketDays, reconcileOpenIncidents, writeProbeBucketsToD1 } from './admin.js';
+import { appendBufferedProbeHistoryBatch } from './probe-history-buffer.js';
 import { cleanupRateLimitsD1 } from './ratelimit.js';
 import { cleanupAgentMetricsR2 } from './metrics.js';
 import { runAlertChecks } from './alerts.js';
@@ -59,17 +60,29 @@ export class ProbeRegion {
     const checkedAt = Number(body?.checked_at || Math.floor(Date.now() / 1000));
     const concurrency = clamp(Number(this.env.CONCURRENCY || 20), 1, 40);
     const results = [];
+    // Collect every due target's probe buckets during the batch and append them
+    // to the shared history hub with one DO request instead of one per target.
+    const historyEntries = [];
+    const historyAppend = async (targetId, writes) => { historyEntries.push({ target_id: targetId, writes }); };
     for (let i = 0; i < targets.length; i += concurrency) {
       const chunk = targets.slice(i, i + concurrency);
       const settled = await Promise.allSettled(chunk.map(async (target) => {
         const result = await probeTarget(target, await enrichCfContext(cf, this.env));
-        const saved = await saveCheck(this.env, target, checkedAt, result, previous[target.id] || null);
+        const saved = await saveCheck(this.env, target, checkedAt, result, previous[target.id] || null, { historyAppend });
         return { target_id: target.id, name: target.name, ...result, saved, state_update: saved.state_update };
       }));
       for (let index = 0; index < settled.length; index += 1) {
         const item = settled[index];
         if (item.status === 'fulfilled') results.push(item.value);
         else results.push(batchFailure(chunk[index], item.reason));
+      }
+    }
+    if (historyEntries.length) {
+      try {
+        await appendBufferedProbeHistoryBatch(this.env, historyEntries);
+      } catch (error) {
+        console.error('probe history batch append failed, falling back to D1:', String(error?.message || error));
+        await writeProbeBucketsToD1(this.env, historyEntries);
       }
     }
     return { ok: true, count: results.length, results };

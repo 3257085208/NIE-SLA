@@ -2453,10 +2453,13 @@ function renderProxyDetails(checks) {
       ? { value: latest.stale ? '数据过期' : '在线', className: latest.stale ? 'warn' : 'ok', note: `最近 ${fmtTime(latest.ts)}` }
       : { value: '离线', className: 'down', note: `最近 ${fmtTime(latest.ts)}${latest.stage ? ` · 阶段 ${proxyStageLabel(latest.stage)}` : ''}` };
   const rawCount = Math.max(rows.length, Number(state.proxyHistoryRawCount || 0));
-  const totalStats = proxyDurationSummary(proxyDurationStats(rows, 'total_ms'));
-  const handshakeStats = proxyDurationSummary(proxyDurationStats(rows, 'handshake_ms'));
-  const firstByteStats = proxyDurationSummary(proxyDurationStats(rows, 'first_byte_ms'));
-  const outboundStats = proxyDurationSummary(proxyDurationStatsFrom(rows, proxyOutboundDuration));
+  // Stage statistics describe completed real handshakes only; failure counts
+  // stay visible through the success-rate card and the latest-result card.
+  const okRows = rows.filter(check => Number(check.ok) === 1);
+  const totalStats = proxyDurationSummary(proxyDurationStats(okRows, 'total_ms'));
+  const handshakeStats = proxyDurationSummary(proxyDurationStats(okRows, 'handshake_ms'));
+  const firstByteStats = proxyDurationSummary(proxyDurationStats(okRows, 'first_byte_ms'));
+  const outboundStats = proxyDurationSummary(proxyDurationStatsFrom(okRows, proxyOutboundDuration));
   const successRate = rows.length ? `${((okCount / rows.length) * 100).toFixed(2)}%` : '-';
   const latestResult = latest
     ? (Number(latest.ok) === 1 ? '真实握手成功' : [proxyStageLabel(latest.stage), proxyErrorLabel(latest.error)].filter(Boolean).join(' · ') || '真实握手失败')
@@ -2737,13 +2740,18 @@ function updateProxyChart() {
     ? definition.accessor
     : (check) => proxyDisplayDuration(check, definition.field);
   const checks = filterProxyChecksByRange(state.proxyChecks, state.selectedRange);
-  const values = checks.map(valueFor).filter(value => value != null);
-  const points = checks.map(check => ({
+  // Stage timings only exist for successful real handshakes; plotting failure
+  // timeouts (e.g. the 5s ceiling) would flatten every successful sample into
+  // an unreadable line, so the series and stats use successful samples only
+  // and the meta line keeps the failure count explicit.
+  const okChecks = checks.filter(check => Number(check.ok) === 1);
+  const values = okChecks.map(valueFor).filter(value => value != null);
+  const points = okChecks.map(check => ({
     x: Number(check.ts),
     y: valueFor(check),
     proxyCheck: check,
   }));
-  const okCount = checks.filter(check => Number(check.ok) === 1).length;
+  const okCount = okChecks.length;
   const failCount = checks.length - okCount;
   const suffix = state.proxyHistoryTruncated ? ' · 已达到返回上限，未降采样' : '';
   els.chartTitle.textContent = definition.label;
@@ -2760,9 +2768,10 @@ function updateProxyChart() {
   }
 
   const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const stats = definition.accessor ? proxyDurationStatsFrom(checks, valueFor) : proxyDurationStats(checks, definition.field);
-  const latest = valueFor(checks[checks.length - 1]);
-  els.chartMeta.textContent = `${rangeLabel(state.selectedRange)} · ${checks.length} 个原始样本 · 成功 ${okCount} · 失败 ${failCount} · 真握手${suffix}`;
+  const stats = definition.accessor ? proxyDurationStatsFrom(okChecks, valueFor) : proxyDurationStats(okChecks, definition.field);
+  const latest = valueFor(okChecks[okChecks.length - 1]);
+  const chartNote = failCount && okCount ? '（曲线仅成功样本）' : '';
+  els.chartMeta.textContent = `${rangeLabel(state.selectedRange)} · ${checks.length} 个原始样本 · 成功 ${okCount} · 失败 ${failCount} · 真握手${chartNote}${suffix}`;
   els.chartAvg.textContent = `平均 ${average.toFixed(0)} ms · P50 ${Math.round(stats.p50)} ms · P95 ${Math.round(stats.p95)} ms · 最近 ${latest == null ? '-' : `${latest} ms`}`;
   if (!state.chart) return;
   delete state.chart.options.scales.y.title;

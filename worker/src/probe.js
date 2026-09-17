@@ -212,7 +212,7 @@ export async function getRuntimeColo(env) {
 
 
 
-export async function saveCheck(env, target, checkedAt, result, previous = null) {
+export async function saveCheck(env, target, checkedAt, result, previous = null, options = {}) {
   const bucketAt = Math.floor(checkedAt / BUCKET_SEC) * BUCKET_SEC;
   const day = dayFromSec(bucketAt, env);
   const okInt = result.ok ? 1 : 0;
@@ -225,7 +225,7 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
 
   const scheduleFlush = scheduleFlushDue(target, checkedAt, env);
   if (result.skipped) {
-    await applyProbeWriteBatch(env, target.id, bucketAt, [], null, null, bucketAt + historyDueIntervalSec(target, env, previous), scheduleFlush);
+    await applyProbeWriteBatch(env, target.id, bucketAt, [], null, null, bucketAt + historyDueIntervalSec(target, env, previous), scheduleFlush, options);
     return { history_points: 0, uptime_24h: previous?.uptime_24h ?? null, uptime_7d: previous?.uptime_7d ?? null, incident: null, storage: 'skipped', state_update: null };
   }
 
@@ -257,7 +257,7 @@ export async function saveCheck(env, target, checkedAt, result, previous = null)
   const statusChangedAt = previous && Number(previous.ok) === okInt ? (previous.status_changed_at || checkedAt) : checkedAt;
   const outage = buildIncidentUpdate(target, checkedAt, okInt, error, cfColo, previous);
   const stateUpdate = { target_id: target.id, checked_at: checkedAt, history_checked_at: checkedAt, ok: okInt, latency_ms: latency, status_code: statusCode, error, probe_region: probeRegion, cf_colo: cfColo, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, avg_latency_24h: stats24.avgLatency, last_fail_at: okInt ? (previous?.last_fail_at || null) : checkedAt, current_outage_started_at: outage.currentOutageStartedAt, last_recover_at: outage.lastRecoverAt, status_changed_at: statusChangedAt, daily };
-  const writeResult = await applyProbeWriteBatch(env, target.id, checkedAt, bucketWrites, stateUpdate, outage.write, checkedAt + historyDueIntervalSec(target, env, { ...previous, ok: okInt }), scheduleFlush);
+  const writeResult = await applyProbeWriteBatch(env, target.id, checkedAt, bucketWrites, stateUpdate, outage.write, checkedAt + historyDueIntervalSec(target, env, { ...previous, ok: okInt }), scheduleFlush, options);
   return { history_points: Number(daily[day]?.total || 0), missed_points: missedPoints.length, uptime_24h: stats24.uptime, uptime_7d: stats7.uptime, incident: outage.action, storage: writeResult.bucket_storage || 'd1', state_update: stateUpdate };
 }
 

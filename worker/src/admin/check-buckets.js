@@ -485,14 +485,17 @@ export async function getCheckBucketSummaries(env, startDay, options = {}) {
   } catch (_) { return []; }
 }
 
-export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrites, latestStatus, incidentWrite = null, nextProbeAt = null, scheduleFlush = true) {
+export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrites, latestStatus, incidentWrite = null, nextProbeAt = null, scheduleFlush = true, options = {}) {
   if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
   const stmts = [];
   let bucketStorage = 'd1';
   let bufferSucceeded = false;
   if (probeHistoryEnabled(env) && (bucketWrites || []).length) {
     try {
-      await appendBufferedProbeHistory(env, targetId, bucketWrites);
+      // Region batches collect the writes and flush one shared-hub request for
+      // the whole batch; every other caller appends through the hub directly.
+      if (typeof options?.historyAppend === 'function') await options.historyAppend(targetId, bucketWrites);
+      else await appendBufferedProbeHistory(env, targetId, bucketWrites);
       bucketStorage = 'probe_history';
       bufferSucceeded = true;
     } catch (error) {
@@ -524,6 +527,28 @@ export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrite
     return { ok: false, error: String(error?.message || error), bucket_storage: bucketStorage };
   }
   return { ok: true, writes: stmts.length, bucket_storage: bucketStorage };
+}
+
+// Durability fallback for a failed shared-hub batch flush: write the collected
+// buckets back into the legacy D1 mirror so probe points are never lost.
+export async function writeProbeBucketsToD1(env, entries) {
+  if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
+  const stmts = [];
+  for (const entry of entries || []) {
+    const targetId = String(entry?.target_id || '');
+    for (const item of entry?.writes || []) {
+      if (!item?.point || !item.day) continue;
+      stmts.push(checkBucketStatement(env, targetId, item.day, item.point));
+    }
+  }
+  if (!stmts.length) return { ok: true, writes: 0 };
+  try {
+    await env.DB.batch(stmts);
+  } catch (error) {
+    console.error('probe bucket fallback D1 batch failed:', String(error?.message || error));
+    return { ok: false, error: String(error?.message || error) };
+  }
+  return { ok: true, writes: stmts.length };
 }
 
 // Rebuild per-day summaries for the live window only (today + yesterday).
