@@ -1,10 +1,10 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.67",
-  "agent_version": "v1.1.67",
-  "source_ref": "app-v1.1.67",
-  "published_at": "2026-09-17T23:42:24Z",
-  "title": "NIE-SLA 1.1.67",
+  "version": "1.1.68",
+  "agent_version": "v1.1.68",
+  "source_ref": "app-v1.1.68",
+  "published_at": "2026-09-18T04:17:56Z",
+  "title": "NIE-SLA 1.1.68",
   "changelog": [
     "修复 Agent Protobuf 遥测上报遗漏 handshake_ms、first_byte_ms 与 total_ms；启用 Protobuf 的 Agent 会保留真实代理阶段耗时。",
     "修复 Linux 自动更新确认标记放在 root-only 二进制目录导致非 root Agent 反复报告 update_confirmation_error；标记改放到 Agent 可写状态目录。",
@@ -61,7 +61,8 @@
     "后台新增一级「代理」页面：代理检测目标从 Ping 页独立出来，列表新增最近结果（阶段/错误/耗时）与近 24 小时成功率。",
     "公开状态页代理详情新增「出站验证（握手→首字节）」指标与统计卡，用于区分代理转发质量。",
     "探测历史缓冲改为单一共享 hub：一次区域探测批次内所有目标的追加合并为一次 Durable Object 请求（原先每目标一次），旧版每目标实例会在首次使用时自动迁移合并。",
-    "代理图表与阶段统计仅绘制成功样本，失败样本不再把 Y 轴压平；失败数量仍保留在统计行与成功率卡片中。"
+    "代理图表与阶段统计仅绘制成功样本，失败样本不再把 Y 轴压平；失败数量仍保留在统计行与成功率卡片中。",
+    "修复 v1.1.67 前端资源缓存键未随 app.js 变更升级的问题：缓存键升至 20260918-proxy16，浏览器会立即获取仅绘制成功样本的代理曲线。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
