@@ -6,6 +6,27 @@ NIE-SLA is a status page and VPS telemetry platform that runs on Cloudflare. The
 
 New deployments use a single Worker application for Static Assets, API, D1, R2, Durable Objects, and one-minute cron scheduling. A separate Pages project is not required.
 
+## Architecture
+
+```mermaid
+flowchart LR
+  VPS["VPS · Rust Agent<br/>system metrics / TCP·HTTP probes / proxy handshakes"] -->|WSS / HTTPS| W["Cloudflare Worker<br/>API · tasks · status page · per-minute cron"]
+  W --> D1[("D1<br/>config / current state / SLA")]
+  W --> R2[("R2<br/>high-frequency history / archive")]
+  W <--> DO["Durable Objects<br/>telemetry buffer / probe history / live stream"]
+  WEB["Browser / mobile"] <-->|public status page + /api/v1| W
+  LAT["External Latency agents"] -->|periodic reports| W
+```
+
+## Deployment options
+
+| Option | Best for | Entry point |
+| --- | --- | --- |
+| One-click (recommended) | Fast trial, personal self-hosting | **Deploy to Cloudflare** above |
+| Command line | Custom domain, CI, or local preview | [Quick start](https://nie-sla.pages.dev/en/quickstart/) · Option B |
+
+Both options deploy one Worker only: static frontend, admin panel, API, D1, R2, Durable Objects, and the per-minute cron ship together; no separate Pages project is required.
+
 ## Quick start
 
 1. Click **Deploy to Cloudflare**.

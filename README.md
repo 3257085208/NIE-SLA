@@ -21,6 +21,27 @@ Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
 NIE-SLA 把 Cloudflare 的公网探测、公开状态页和 VPS 系统数据放在一起。控制面运行在 Cloudflare，VPS 上安装主动上报的 Rust Agent，不需要中心服务器，也不需要给 Agent 开放管理端口。项目使用正式稳定版本，适合个人与小型团队自托管。
 
+## 架构
+
+```mermaid
+flowchart LR
+  VPS["VPS · Rust Agent<br/>系统指标 / TCP·HTTP 探测 / 代理真实握手"] -->|WSS / HTTPS 上报| W["Cloudflare Worker<br/>API · 任务 · 状态页 · 每分钟调度"]
+  W --> D1[("D1<br/>配置 / 当前状态 / SLA 聚合")]
+  W --> R2[("R2<br/>高频历史 / 归档")]
+  W <--> DO["Durable Objects<br/>遥测缓冲 / 探测历史 / 实时流"]
+  WEB["浏览器 / 移动端"] <-->|公开状态页 + /api/v1| W
+  LAT["外部 Latency 节点"] -->|周期上报| W
+```
+
+## 部署方式
+
+| 方式 | 适合场景 | 入口 |
+| --- | --- | --- |
+| 一键部署（推荐） | 快速体验、个人自托管 | 上方 **Deploy to Cloudflare** |
+| 命令行部署 | 自定义域名、CI 或本地预览 | [快速上手](https://nie-sla.pages.dev/quickstart/)的方式 B |
+
+两种方式都只需要一个 Worker：静态前端、管理后台、API、D1、R2、Durable Objects 与每分钟 Cron 一起发布，不需要单独创建 Pages。部署完成后在后台为每台 VPS 生成一次性安装命令。
+
 ## 一键部署
 
 1. 点击上方 **Deploy to Cloudflare**。
