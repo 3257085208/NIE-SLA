@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Varela+Round&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/admin.css?v=20260918-proxy16" />
+    <link rel="stylesheet" href="/admin.css?v=20260918-proxy17" />
   </head>
   <body>
     <div class="login-bg" id="loginPage">
@@ -70,13 +70,15 @@
       </div>
     </div>
     <div id="app" style="display: none">
-      <header class="topbar">
-        <div class="wrap">
-          <a class="brand" href="./" aria-label="返回 NIE-SLA 前台">
-            <span class="brand-mark">N</span>
-            <span class="brand-copy"><strong>NIE-SLA</strong><small>CONTROL ROOM</small></span>
-          </a>
-          <div class="nav" id="nav">
+      <div class="admin-shell" id="adminShell">
+        <aside class="sidebar" id="sidebar">
+          <div class="sidebar-head">
+            <a class="brand" href="./" aria-label="返回 NIE-SLA 前台">
+              <span class="brand-mark">N</span>
+              <span class="brand-copy"><strong>NIE-SLA</strong><small>CONTROL ROOM</small></span>
+            </a>
+          </div>
+          <nav class="nav" id="nav" aria-label="后台导航">
             <a href="#" class="on" data-p="dash">仪表盘</a
             ><a href="#" data-p="targets">探针</a
             ><a href="#" data-p="latency">Latency</a
@@ -84,15 +86,20 @@
             ><a href="#" data-p="proxies">代理</a
             ><a href="#" data-p="themes">主题</a
             ><a href="#" data-p="settings">设置</a>
-          </div>
-          <div class="right">
+          </nav>
+          <div class="sidebar-foot">
             <span class="system-live"><i></i>系统在线</span>
             <button class="btn btn-sm btn-danger" id="logoutBtn">退出</button>
           </div>
-        </div>
-      </header>
-      <main class="wrap">
-        <section class="page on" id="pg-dash">
+        </aside>
+        <div class="content">
+          <header class="content-topbar">
+            <button class="btn btn-sm sidebar-toggle" id="sidebarToggle" type="button" aria-label="切换导航" aria-expanded="false">菜单</button>
+            <span class="content-title" id="contentTitle">运行概览</span>
+            <span class="content-kicker">NIE-SLA ADMIN</span>
+          </header>
+          <main class="wrap">
+            <section class="page on" id="pg-dash">
           <div class="page-intro">
             <span class="page-kicker">OVERVIEW / 01</span>
             <h2>运行概览</h2>
@@ -235,17 +242,20 @@
             </section>
           </div>
         </section>
-      </main>
+          </main>
+        </div>
+        <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+      </div>
     </div>
     <div class="overlay" id="overlay" aria-hidden="true"><div class="modal" id="modal"></div></div>
     <div class="toast" id="toast"></div>
-    <script src="/config.js?v=20260918-proxy16"></script>
+    <script src="/config.js?v=20260918-proxy17"></script>
     <script src="/vendor/chart.umd.min.js?v=4.4.9"></script>
-    <script src="/js/admin-bootstrap.js?v=20260918-proxy16"></script>
+    <script src="/js/admin-bootstrap.js?v=20260918-proxy17"></script>
 
     <script
       type="module"
-      src="/js/admin.js?v=20260918-proxy16"
+      src="/js/admin.js?v=20260918-proxy17"
     ></script>
   </body>
 </html>

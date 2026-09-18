@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260918-proxy16";
-import { createAdminClient } from "./admin/api.js?v=20260918-proxy16";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260918-proxy16";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260918-proxy16";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260918-proxy16";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260918-proxy16";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260918-proxy17";
+import { createAdminClient } from "./admin/api.js?v=20260918-proxy17";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260918-proxy17";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260918-proxy17";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260918-proxy17";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260918-proxy17";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260918-proxy16";
+} from "./shared/target-catalogs.js?v=20260918-proxy17";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260918-proxy16";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260918-proxy16";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260918-proxy16";
-import { fmtBytes } from "./shared/format.js?v=20260918-proxy16";
+} from "./shared/grouping.js?v=20260918-proxy17";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260918-proxy17";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260918-proxy17";
+import { fmtBytes } from "./shared/format.js?v=20260918-proxy17";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -421,6 +421,16 @@ function nav(p) {
   document
     .querySelectorAll(".nav a")
     .forEach((x) => x.classList.toggle("on", x.dataset.p === p));
+  const activeLink = document.querySelector('.nav a[data-p="' + p + '"]');
+  if (activeLink && byId("contentTitle")) {
+    byId("contentTitle").textContent = activeLink.textContent.trim();
+  }
+  const shell = byId("adminShell");
+  if (shell) shell.classList.remove("sidebar-open");
+  const toggle = byId("sidebarToggle");
+  if (toggle) toggle.setAttribute("aria-expanded", "false");
+  const backdrop = byId("sidebarBackdrop");
+  if (backdrop) backdrop.hidden = true;
   if (p === "dash") loadDash();
   if (p === "targets") loadTargets();
   if (p === "latency") loadLatencyNodes();
@@ -4107,6 +4117,24 @@ byId("nav").onclick = (e) => {
     nav(a.dataset.p);
   }
 };
+const sidebarToggle = byId("sidebarToggle");
+const sidebarBackdrop = byId("sidebarBackdrop");
+if (sidebarToggle) {
+  sidebarToggle.onclick = () => {
+    const shell = byId("adminShell");
+    if (!shell) return;
+    const open = shell.classList.toggle("sidebar-open");
+    sidebarToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (sidebarBackdrop) sidebarBackdrop.hidden = !open;
+  };
+}
+if (sidebarBackdrop) {
+  sidebarBackdrop.onclick = () => {
+    byId("adminShell")?.classList.remove("sidebar-open");
+    sidebarBackdrop.hidden = true;
+    sidebarToggle?.setAttribute("aria-expanded", "false");
+  };
+}
 byId("addTargetBtn").onclick = () => targetModal();
 byId("addLatencyBtn").onclick = () => latencyNodeModal();
 byId("probeBtn").onclick = async () => {

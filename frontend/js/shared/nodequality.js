@@ -1,4 +1,4 @@
-import { escapeHtml } from './html.js?v=20260918-proxy16';
+import { escapeHtml } from './html.js?v=20260918-proxy17';
 export { escapeHtml };
 
 export function targetHasNodeQuality(target = {}) {
