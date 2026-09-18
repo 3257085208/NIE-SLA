@@ -2291,3 +2291,12 @@ body.has-custom-bg {
   body.has-custom-bg { background-image: var(--appearance-custom-bg); }
 }
 body.has-custom-bg > .not-found-shell, body.has-custom-bg .wrap { position: relative; }
+
+.latency-stale {
+  color: var(--danger);
+  font-weight: 700;
+}
+.latency-stale .table-note {
+  color: inherit;
+  opacity: 0.78;
+}

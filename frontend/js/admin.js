@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260918-proxy18";
-import { createAdminClient } from "./admin/api.js?v=20260918-proxy18";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260918-proxy18";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260918-proxy18";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260918-proxy18";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260918-proxy18";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260918-proxy19";
+import { createAdminClient } from "./admin/api.js?v=20260918-proxy19";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260918-proxy19";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260918-proxy19";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260918-proxy19";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260918-proxy19";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260918-proxy18";
+} from "./shared/target-catalogs.js?v=20260918-proxy19";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260918-proxy18";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260918-proxy18";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260918-proxy18";
-import { fmtBytes } from "./shared/format.js?v=20260918-proxy18";
+} from "./shared/grouping.js?v=20260918-proxy19";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260918-proxy19";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260918-proxy19";
+import { fmtBytes } from "./shared/format.js?v=20260918-proxy19";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -215,6 +215,8 @@ const {
 } = adminClient;
 let githubTicket = "";
 let appUpdateInfo = null;
+// 外部 Latency 节点超过该时长未上报即在后台标注为离线（与 Worker 默认 stale 窗口一致）。
+const LATENCY_STALE_SEC = 900;
 let targets = [],
   adminGroupBy = normalizeGroupByMode(readMigratedStorage("localStorage", "nie-sla.adminGroupBy", "nstatus.adminGroupBy", "group")),
   statusMap = new Map(),
@@ -2207,19 +2209,35 @@ function renderLatencyNodes() {
       <td>全球边缘网络</td>
       <td><div class="actions"><span class="muted">固定保留，不可删除</span><button class="btn btn-xs" data-a="latency-edit">编辑颜色</button></div></td>
     </tr>`;
-  const external = latencyNodes.map((node, index) => `
+  const nowSec = Math.floor(Date.now() / 1000);
+  const staleSec = LATENCY_STALE_SEC;
+  const relativeSeen = (lastSeen) => {
+    if (!lastSeen) return { text: "尚未上报", stale: true };
+    const age = nowSec - lastSeen;
+    if (age <= 90) return { text: "刚刚", stale: false };
+    if (age < 3600) return { text: `${Math.max(1, Math.round(age / 60))} 分钟前`, stale: age > staleSec };
+    if (age < 86400) return { text: `${Math.round(age / 3600)} 小时前`, stale: age > staleSec };
+    return { text: `${Math.round(age / 86400)} 天前`, stale: age > staleSec };
+  };
+  const external = latencyNodes.map((node, index) => {
+    const lastSeen = Number(node.last_seen_at || 0);
+    const seen = relativeSeen(lastSeen);
+    const staleTag = Number(node.enabled) && seen.stale ? statusTag("离线", "tag-off") : "";
+    const seenCell = `${escapeHtml(seen.text)}<small class="table-note">${lastSeen ? escapeHtml(new Date(lastSeen * 1000).toLocaleString("zh-CN")) : "-"}</small>`;
+    return `
     <tr data-i="${index}">
       <td><code>${escapeHtml(node.id)}</code></td>
       <td><span class="chart-color-swatch" style="--chart-color:${configuredChartColor(node.color, '#2e7dd7')}"></span>${escapeHtml(node.name)}</td>
-      <td><span class="tag ${Number(node.enabled) ? "tag-on" : "tag-off"}">${Number(node.enabled) ? "启用" : "停用"}</span></td>
-      <td>${node.last_seen_at ? escapeHtml(new Date(Number(node.last_seen_at) * 1000).toLocaleString("zh-CN")) : "尚未上报"}</td>
+      <td><span class="tag ${Number(node.enabled) ? "tag-on" : "tag-off"}">${Number(node.enabled) ? "启用" : "停用"}</span>${staleTag}</td>
+      <td class="${seen.stale && Number(node.enabled) ? "latency-stale" : ""}">${seenCell}</td>
       <td><div class="actions">
         <button class="btn btn-xs btn-deploy" data-a="latency-deploy">部署</button>
         <button class="btn btn-xs" data-a="latency-edit">编辑</button>
         <button class="btn btn-xs" data-a="latency-toggle">${Number(node.enabled) ? "停用" : "启用"}</button>
         <button class="btn btn-xs btn-danger" data-a="latency-delete">删除</button>
       </div></td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
   byId("latencyTable").innerHTML = `
     <div class="table-scroll">
       <table class="pings-table latency-nodes-table">

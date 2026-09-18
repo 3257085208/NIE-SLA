@@ -1,6 +1,6 @@
 ﻿
 
-import { escapeAttr, escapeHtml } from './html.js?v=20260918-proxy18';
+import { escapeAttr, escapeHtml } from './html.js?v=20260918-proxy19';
 
 export const GROUP_BY_OPTIONS = [
   { id: 'group', label: 'VPS / Web' },
