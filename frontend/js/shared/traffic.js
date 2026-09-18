@@ -1,5 +1,5 @@
-import { escapeAttr, escapeHtml } from './html.js?v=20260918-proxy17';
-import { clampNumber, fmtBytes } from './format.js?v=20260918-proxy17';
+import { escapeAttr, escapeHtml } from './html.js?v=20260918-proxy18';
+import { clampNumber, fmtBytes } from './format.js?v=20260918-proxy18';
 
 export function trafficForTarget(target = {}) {
   return target?.agent_metrics?.traffic || target?.traffic || {};
