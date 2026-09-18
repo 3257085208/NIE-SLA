@@ -98,8 +98,12 @@ assert.match(wrangler, /name = "PROBE_HISTORY"/);
 assert.match(wrangler, /PROBE_HISTORY_BUFFER = "true"/);
 assert.match(wrangler, /STATUS_CACHE_TTL = "60"/);
 assert.match(wrangler, /name = "STATUS_STREAM"/);
-assert.match(wrangler, /STATUS_SNAPSHOT_EVERY_SEC = "60"/);
-assert.match(wrangler, /STATUS_SNAPSHOT_LIVE_WINDOW_SEC = "150"/);
+// Snapshot rebuilds are the largest steady D1 read source (30-day summary and
+// availability scans); the serve window stays 420s and the live window is kept
+// above the rebuild interval so cached serves never pay the overlay path.
+assert.match(wrangler, /STATUS_SNAPSHOT_EVERY_SEC = "180"/);
+assert.match(wrangler, /STATUS_SNAPSHOT_LIVE_WINDOW_SEC = "240"/);
+assert.match(wrangler, /STATUS_SNAPSHOT_MAX_AGE_SEC = "420"/);
 assert.match(wrangler, /AGENT_UPDATE_CHECK_SEC = "900"/);
 // The public snapshot is domain-sanitized, so only the private workspace can
 // assert the production hostnames; both layouts must keep the variables set.

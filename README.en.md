@@ -27,6 +27,8 @@ flowchart LR
 
 Both options deploy one Worker only: static frontend, admin panel, API, D1, R2, Durable Objects, and the per-minute cron ship together; no separate Pages project is required.
 
+> Enable R2 in the Cloudflare dashboard before the one-click deploy (free tier: 10 GB storage, 1M Class A and 10M Class B operations per month; R2 still requires an R2 subscription with a payment method even for the free tier), otherwise the deploy stops at "uses R2, which is available with an R2 subscription". D1 and the R2 bucket are created and bound automatically.
+
 ## Quick start
 
 1. Click **Deploy to Cloudflare**.

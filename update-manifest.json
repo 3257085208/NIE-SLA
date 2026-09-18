@@ -1,11 +1,12 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.72",
-  "agent_version": "v1.1.72",
-  "source_ref": "app-v1.1.72",
-  "published_at": "2026-09-18T10:39:35Z",
-  "title": "NIE-SLA 1.1.72",
+  "version": "1.1.73",
+  "agent_version": "v1.1.73",
+  "source_ref": "app-v1.1.73",
+  "published_at": "2026-09-18T17:20:00Z",
+  "title": "NIE-SLA 1.1.73",
   "changelog": [
+    "降低 D1 读取：状态快照重建周期从 60 秒放宽到 180 秒（服务窗口与 WebSocket 实时覆盖不变）；探针日汇总只聚合已完成的昨天，不再每小时重复扫描当天数据。",
     "修复 Agent Protobuf 遥测上报遗漏 handshake_ms、first_byte_ms 与 total_ms；启用 Protobuf 的 Agent 会保留真实代理阶段耗时。",
     "修复 Linux 自动更新确认标记放在 root-only 二进制目录导致非 root Agent 反复报告 update_confirmation_error；标记改放到 Agent 可写状态目录。",
     "兼容小火箭（Shadowrocket）导出的单节点 JSON：识别 host、port、title、password、peer、tls、xtls、publicKey 与 shortId，正确还原 VLESS Reality + Vision 配置。",

@@ -557,17 +557,19 @@ export async function writeProbeBucketsToD1(env, entries) {
 export async function refreshCheckBucketDays(env) {
   if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
   try {
-    const today = dayFromSec(nowSec(), env);
+    // Only completed days are ever read back from check_bucket_days
+    // (getCheckBucketSummaries filters day < today), so aggregating today's
+    // still-growing bucket set on every maintenance run only burned D1 reads.
     const yesterday = dayFromSec(nowSec() - 86400, env);
     await env.DB.batch([
-      env.DB.prepare(`DELETE FROM check_bucket_days WHERE day IN (?, ?)`).bind(today, yesterday),
+      env.DB.prepare(`DELETE FROM check_bucket_days WHERE day = ?`).bind(yesterday),
       env.DB.prepare(`INSERT INTO check_bucket_days (day, target_id, total, ok_count, sum_latency_ms, updated_at)
         SELECT day, target_id,
                SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE total END),
                SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE ok_count END),
                SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE sum_latency_ms END),
                strftime('%s','now')
-        FROM check_buckets WHERE day IN (?, ?) GROUP BY day, target_id`).bind(today, yesterday, today, yesterday),
+        FROM check_buckets WHERE day = ? GROUP BY day, target_id`).bind(yesterday, yesterday),
     ]);
     return { ok: true };
   } catch (error) {

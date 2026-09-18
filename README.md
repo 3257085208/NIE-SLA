@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.1.72**
+**Stable · 1.1.73**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -41,6 +41,8 @@ flowchart LR
 | 命令行部署 | 自定义域名、CI 或本地预览 | [快速上手](https://nie-sla.pages.dev/quickstart/)的方式 B |
 
 两种方式都只需要一个 Worker：静态前端、管理后台、API、D1、R2、Durable Objects 与每分钟 Cron 一起发布，不需要单独创建 Pages。部署完成后在后台为每台 VPS 生成一次性安装命令。
+
+> 一键部署前请先在 Cloudflare 控制台开通 R2（免费额度：10 GB 存储、每月 100 万 A 类与 1000 万 B 类操作；即使只用免费额度也需要订阅 R2 并绑定付款方式），否则部署流程会停在「使用仅 R2 订阅提供的 R2，立即升级」。D1 与 R2 桶由部署流程自动创建并绑定，无需手动建库。
 
 ## 一键部署
 
