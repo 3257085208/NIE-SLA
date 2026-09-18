@@ -1,10 +1,10 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.71",
-  "agent_version": "v1.1.71",
-  "source_ref": "app-v1.1.71",
-  "published_at": "2026-09-18T10:17:19Z",
-  "title": "NIE-SLA 1.1.71",
+  "version": "1.1.72",
+  "agent_version": "v1.1.72",
+  "source_ref": "app-v1.1.72",
+  "published_at": "2026-09-18T10:39:35Z",
+  "title": "NIE-SLA 1.1.72",
   "changelog": [
     "修复 Agent Protobuf 遥测上报遗漏 handshake_ms、first_byte_ms 与 total_ms；启用 Protobuf 的 Agent 会保留真实代理阶段耗时。",
     "修复 Linux 自动更新确认标记放在 root-only 二进制目录导致非 root Agent 反复报告 update_confirmation_error；标记改放到 Agent 可写状态目录。",
@@ -65,7 +65,8 @@
     "修复 v1.1.67 前端资源缓存键未随 app.js 变更升级的问题：缓存键升至 20260918-proxy16，浏览器会立即获取仅绘制成功样本的代理曲线。",
     "后台改为左侧边栏布局：品牌与纵向导航在左侧、内容区加宽（最高 1240px）；≤900px 自动切换为抽屉式菜单（遮罩点击或选择菜单后收起），并清理旧顶栏遗留的移动端规则。",
     "后台设置页「系统」标签左右栏重新配平：左栏保留用量估算/实际消耗/系统更新，右栏收纳系统信息、数据保留、历史死信与备份/归档/同步，消除底部大片空白。",
-    "后台 Latency 页显示外部节点的相对上报时间与红色\"离线\"标注（超过 15 分钟未上报），便于发现节点停报。"
+    "后台 Latency 页显示外部节点的相对上报时间与红色\"离线\"标注（超过 15 分钟未上报），便于发现节点停报。",
+    "外部 Latency 安装器新增 OpenRC 支持（Alpine 等无 systemd 系统）：自动识别 init、写入 OpenRC 服务与 15 分钟看护任务（无 supervise-daemon 时兜底），保留 systemd 路径；安装器版本升至 7。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
