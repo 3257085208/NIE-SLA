@@ -38,6 +38,7 @@ assert.match(workflow, /git archive "refs\/tags\/\$SOURCE_REF"/);
 assert.match(workflow, /--exclude='\.github\/'/, 'repository CI configuration must not gate the deployment baseline');
 assert.match(workflow, /rsync -rlpc --delete[\s\S]{0,220}--exclude='\.github\/'/, 'online updates must never rewrite workflow files');
 assert.match(workflow, /rsync -rlpcni --delete[\s\S]{0,400}grep -vE/, 'the baseline comparison must ignore modification-time-only differences');
+assert.match(workflow, /adopting the official \$SOURCE_REF snapshot because this is a manual bootstrap run/, 'manual runs must be able to bootstrap partial deployment copies');
 assert.match(workflow, /rsync -rlpcni --delete/);
 assert.match(workflow, /Only wrangler\.jsonc and \.github may differ/);
 assert.match(workflow, /pnpm run build/);
