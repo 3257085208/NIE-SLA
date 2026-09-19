@@ -184,6 +184,49 @@ jobs:
           if (version !== process.env.EXPECTED_VERSION) throw new Error(`Worker version mismatch: ${version || 'missing'}`);
           NODE
 
+      - name: Merge official Durable Object bindings into the deployment config
+        if: env.UPDATE_AVAILABLE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+
+          const deploymentPath = 'wrangler.jsonc';
+          let deployment;
+          try {
+            deployment = JSON.parse(readFileSync(deploymentPath, 'utf8'));
+          } catch (error) {
+            console.error(`Deployment wrangler.jsonc is not plain JSON (${error.message}); cannot merge bindings.`);
+            process.exit(1);
+          }
+          const template = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/target-source/wrangler.jsonc`, 'utf8'));
+          let changed = false;
+          const bindings = deployment.durable_objects?.bindings ?? [];
+          for (const binding of template.durable_objects?.bindings || []) {
+            if (!bindings.some((existing) => existing.name === binding.name)) {
+              bindings.push(binding);
+              changed = true;
+            }
+          }
+          deployment.durable_objects = { ...(deployment.durable_objects || {}), bindings };
+          const migrations = deployment.migrations ?? [];
+          const tags = new Set(migrations.map((migration) => migration.tag));
+          for (const migration of template.migrations || []) {
+            if (!tags.has(migration.tag)) {
+              migrations.push(migration);
+              changed = true;
+            }
+          }
+          deployment.migrations = migrations;
+          if (changed) {
+            writeFileSync(deploymentPath, `${JSON.stringify(deployment, null, 2)}\n`);
+            console.log('Merged official Durable Object bindings and migrations into wrangler.jsonc');
+          } else {
+            console.log('Deployment wrangler.jsonc already declares every official Durable Object binding');
+          }
+          NODE
+
       - name: Set up pnpm
         if: env.UPDATE_AVAILABLE == 'true'
         uses: pnpm/action-setup@v4
