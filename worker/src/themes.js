@@ -2,9 +2,12 @@ import { Unzip, UnzipInflate } from 'fflate';
 import { ApiError, resolveCorsOrigin, safeJson } from './auth.js';
 import { getMeta, setMeta } from './admin/settings.js';
 import { nowSec, parseBoolean } from './utils.js';
+import { BUILTIN_THEMES, BUILTIN_CLASSIC_THEME_ID, builtinTheme } from './builtin-themes.js';
 
 const REGISTRY_KEY = 'themes:registry:v1';
 const LEGACY_REGISTRY_KEY = 'extensions:registry:v1';
+const BUILTIN_STATE_KEY = 'themes:builtin-state:v1';
+const BUILTIN_ASSET_PREFIX = 'themes';
 const ZIP_MAX_BYTES = 8 * 1024 * 1024;
 const EXPANDED_MAX_BYTES = 16 * 1024 * 1024;
 const FILE_MAX_BYTES = 4 * 1024 * 1024;
@@ -27,7 +30,17 @@ export async function getPublicTheme(env) {
       if (!/no such table:\s*app_meta/i.test(String(error?.message || error))) throw error;
     }
   }
-  const activeTheme = themes.find(theme => theme.enabled) || null;
+  // Builtin official themes are merged at read time: the classic default keeps
+  // the original page (active_theme stays null for it) and the bundled canvas
+  // theme behaves exactly like an uploaded package once enabled.
+  let activeTheme = themes.find(theme => theme.enabled) || null;
+  if (!activeTheme && env?.DB) {
+    const builtinActive = (await builtinEntries(env)).find(entry => entry.enabled) || null;
+    if (builtinActive) {
+      if (builtinActive.mode === 'default') return { ok: true, schema: 'nie-sla-themes-v1', active_theme: null };
+      activeTheme = builtinActive;
+    }
+  }
   if (!activeTheme) return { ok: true, schema: 'nie-sla-themes-v1', active_theme: null };
   let config = {};
   try {
@@ -51,10 +64,12 @@ export async function getPublicTheme(env) {
 }
 
 export async function listManagedThemes(env) {
+  const uploaded = await loadRegistry(env);
+  const builtins = await builtinEntries(env);
   return {
     ok: true,
     schema: 'nie-sla-themes-v1',
-    themes: await loadRegistry(env),
+    themes: [...builtins, ...uploaded],
   };
 }
 
@@ -63,10 +78,9 @@ function configKey(id) {
 }
 
 export async function getThemeConfig(id, env) {
-  const themeId = cleanThemeId(id);
-  const registry = await loadRegistry(env);
-  const theme = registry.find(item => item.id === themeId);
+  const theme = await resolveTheme(env, id);
   if (!theme) throw new ApiError(404, '主题不存在');
+  const themeId = theme.id;
   const raw = await getMeta(env, configKey(themeId));
   let values = {};
   if (raw) {
@@ -79,10 +93,9 @@ export async function getThemeConfig(id, env) {
 }
 
 export async function updateThemeConfig(id, request, env) {
-  const themeId = cleanThemeId(id);
-  const registry = await loadRegistry(env);
-  const theme = registry.find(item => item.id === themeId);
+  const theme = await resolveTheme(env, id);
   if (!theme) throw new ApiError(404, '主题不存在');
+  const themeId = theme.id;
   const body = await safeJson(request, 64 * 1024);
   const input = body?.values && typeof body.values === 'object' ? body.values : body;
   const merged = { ...themeSettingsDefaults(theme), ...(input || {}) };
@@ -298,6 +311,7 @@ export async function uploadTheme(request, env) {
     throw new ApiError(400, 'manifest.json 必须是有效 UTF-8 JSON');
   }
   const theme = validateManifest(manifest, files);
+  if (builtinTheme(theme.id)) throw new ApiError(400, `主题 ID ${theme.id} 为内置官方主题保留，请修改 manifest.json 中的 id`);
   theme.package_sha256 = packageSha256;
   const registry = await loadRegistry(env);
   const previous = registry.find(item => item.id === theme.id);
@@ -338,8 +352,23 @@ export async function uploadTheme(request, env) {
 }
 
 export async function updateTheme(id, request, env) {
-  const cleanId = cleanThemeId(id);
   const body = await safeJson(request, 16_000);
+  const builtin = builtinTheme(String(id || '').trim().toLowerCase());
+  if (builtin) {
+    const enabled = parseBoolean(body.enabled, false);
+    const state = await loadBuiltinState(env);
+    const nextState = { ...state };
+    for (const theme of BUILTIN_THEMES) {
+      nextState[theme.id] = { ...(nextState[theme.id] || {}), enabled: theme.id === builtin.id ? enabled : false };
+    }
+    await saveBuiltinState(env, nextState);
+    if (enabled) {
+      const registry = await loadRegistry(env);
+      if (registry.some(item => item.enabled)) await saveRegistry(env, registry.map(item => ({ ...item, enabled: false })));
+    }
+    return { ok: true, theme: builtinEntry(builtin, enabled) };
+  }
+  const cleanId = cleanThemeId(id);
   const registry = await loadRegistry(env);
   const current = registry.find(item => item.id === cleanId);
   if (!current) throw new ApiError(404, '主题不存在');
@@ -349,10 +378,19 @@ export async function updateTheme(id, request, env) {
     enabled: item.id === cleanId ? enabled : (enabled ? false : item.enabled),
   }));
   await saveRegistry(env, next);
+  if (enabled) {
+    const state = await loadBuiltinState(env);
+    const cleared = { ...state };
+    for (const theme of BUILTIN_THEMES) cleared[theme.id] = { ...(cleared[theme.id] || {}), enabled: false };
+    await saveBuiltinState(env, cleared);
+  }
   return { ok: true, theme: next.find(item => item.id === cleanId) };
 }
 
 export async function deleteTheme(id, env) {
+  if (builtinTheme(String(id || '').trim().toLowerCase())) {
+    throw new ApiError(400, '内置主题不能删除，可在主题列表中停用或切换');
+  }
   const cleanId = cleanThemeId(id);
   const registry = await loadRegistry(env);
   const current = registry.find(item => item.id === cleanId);
@@ -362,19 +400,7 @@ export async function deleteTheme(id, env) {
   return { ok: true, id: cleanId };
 }
 
-export async function getThemeFile(env, id, path, revision = '') {
-  requireThemeStorage(env);
-  const cleanId = cleanThemeId(id);
-  const cleanPath = cleanPackagePath(path);
-  const registry = await loadRegistry(env);
-  const theme = registry.find(item => item.id === cleanId && item.enabled);
-  if (revision && theme?.revision !== revision) throw new ApiError(404, '主题版本不存在或已停用');
-  if (!theme || !theme.files.includes(cleanPath)) throw new ApiError(404, '主题文件不存在');
-  let object = await themeArchive(env).get(`${themePrefix(theme)}${cleanPath}`);
-  if (!object && theme.storage_root === 'themes/v1') {
-    object = await themeArchive(env).get(`extensions/v1/${theme.id}/${theme.revision}/${cleanPath}`);
-  }
-  if (!object) throw new ApiError(404, '主题文件不存在');
+function themeFileHeaders(cleanPath, revision, env) {
   const headers = new Headers({
     'content-type': contentType(cleanPath),
     'cache-control': revision ? 'public, max-age=31536000, immutable' : 'public, max-age=300',
@@ -393,6 +419,42 @@ export async function getThemeFile(env, id, path, revision = '') {
   } else if (cleanPath.endsWith('.svg')) {
     headers.set('content-security-policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
   }
+  return headers;
+}
+
+async function readBuiltinThemeFile(env, theme, cleanPath) {
+  if (!env.ASSETS?.fetch) throw new ApiError(503, '内置主题资源不可用');
+  const response = await env.ASSETS.fetch(new Request(`https://nie-sla.internal/${BUILTIN_ASSET_PREFIX}/${theme.id}/${cleanPath}`));
+  if (!response?.ok) throw new ApiError(404, '主题文件不存在');
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.byteLength) throw new ApiError(502, '主题文件读取为空，已拒绝返回');
+  return bytes;
+}
+
+export async function getThemeFile(env, id, path, revision = '') {
+  const cleanPath = cleanPackagePath(path);
+  const builtin = builtinTheme(String(id || '').trim().toLowerCase());
+  if (builtin) {
+    const entry = builtinEntry(builtin, false);
+    if (revision && entry.revision !== revision) throw new ApiError(404, '主题版本不存在或已停用');
+    if (!entry.files.includes(cleanPath)) throw new ApiError(404, '主题文件不存在');
+    const headers = themeFileHeaders(cleanPath, revision, env);
+    const bytes = await readBuiltinThemeFile(env, builtin, cleanPath);
+    headers.set('content-length', String(bytes.byteLength));
+    return new Response(bytes, { headers });
+  }
+  requireThemeStorage(env);
+  const cleanId = cleanThemeId(id);
+  const registry = await loadRegistry(env);
+  const theme = registry.find(item => item.id === cleanId && item.enabled);
+  if (revision && theme?.revision !== revision) throw new ApiError(404, '主题版本不存在或已停用');
+  if (!theme || !theme.files.includes(cleanPath)) throw new ApiError(404, '主题文件不存在');
+  let object = await themeArchive(env).get(`${themePrefix(theme)}${cleanPath}`);
+  if (!object && theme.storage_root === 'themes/v1') {
+    object = await themeArchive(env).get(`extensions/v1/${theme.id}/${theme.revision}/${cleanPath}`);
+  }
+  if (!object) throw new ApiError(404, '主题文件不存在');
+  const headers = themeFileHeaders(cleanPath, revision, env);
   // Reading the R2 body into an ArrayBuffer before constructing the Response
   // avoids a Workers/R2 edge case where forwarding the R2 stream directly
   // produced a 200 response with content-length 0 even though the object was
@@ -538,12 +600,76 @@ function publicTheme(theme) {
     styles: theme.styles || [],
     revision: theme.revision,
     settings: theme.settings || [],
+    ...(theme.builtin ? { builtin: true } : {}),
     ...(theme.mode === 'canvas' ? {
       entry: theme.entry,
       permissions: theme.permissions || [],
       height: theme.height,
     } : {}),
   };
+}
+
+async function loadBuiltinState(env) {
+  if (!env?.DB) return {};
+  try {
+    const raw = await getMeta(env, BUILTIN_STATE_KEY);
+    if (!raw) return {};
+    const value = JSON.parse(raw);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+async function saveBuiltinState(env, state) {
+  await setMeta(env, BUILTIN_STATE_KEY, JSON.stringify(state || {}));
+}
+
+function builtinEntry(theme, enabled) {
+  return {
+    id: theme.id,
+    name: theme.name,
+    version: theme.version,
+    description: theme.description || '',
+    author: theme.author || '',
+    repository: theme.repository || '',
+    homepage: theme.homepage || '',
+    license: theme.license || '',
+    preview: '',
+    package_sha256: '',
+    type: 'theme',
+    mode: theme.mode || 'css',
+    styles: [],
+    revision: `builtin-${theme.version}`,
+    settings: theme.settings || [],
+    builtin: true,
+    enabled: Boolean(enabled),
+    uploaded_at: 0,
+    storage_root: 'builtin',
+    files: theme.files || [],
+    ...(theme.mode === 'canvas' ? { entry: theme.entry, permissions: theme.permissions || ['status:read'], height: theme.height } : {}),
+  };
+}
+
+async function builtinEntries(env) {
+  const uploaded = env?.DB ? await loadRegistry(env).catch(() => []) : [];
+  const uploadedEnabled = uploaded.some(theme => theme.enabled);
+  const state = await loadBuiltinState(env);
+  const explicit = BUILTIN_THEMES.filter(theme => state?.[theme.id]?.enabled === true);
+  const activeId = uploadedEnabled ? '' : (explicit.length ? explicit[explicit.length - 1].id : BUILTIN_CLASSIC_THEME_ID);
+  return BUILTIN_THEMES.map(theme => builtinEntry(theme, !uploadedEnabled && theme.id === activeId));
+}
+
+async function resolveTheme(env, id) {
+  const raw = String(id || '').trim().toLowerCase();
+  const builtin = builtinTheme(raw);
+  if (builtin) {
+    const entries = await builtinEntries(env);
+    return entries.find(entry => entry.id === builtin.id) || builtinEntry(builtin, false);
+  }
+  const cleanId = cleanThemeId(raw);
+  const registry = await loadRegistry(env);
+  return registry.find(item => item.id === cleanId) || null;
 }
 
 async function loadRegistry(env) {

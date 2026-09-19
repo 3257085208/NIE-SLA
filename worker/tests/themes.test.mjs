@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { strToU8, zipSync } from 'fflate';
-import { deleteTheme, getPublicTheme, getThemeFile, listManagedThemes, updateTheme, uploadTheme } from '../src/themes.js';
+import { deleteTheme, getPublicTheme, getThemeConfig, getThemeFile, listManagedThemes, updateTheme, updateThemeConfig, uploadTheme } from '../src/themes.js';
 
 const env = { DB: d1(), ARCHIVE: r2(), PUBLIC_SITE_ORIGIN: 'https://status.example.test' };
 const cssZip = themeZip({
@@ -173,6 +173,43 @@ for (const [directory, expectedMode] of [['minimal-css', 'css'], ['minimal-canva
   assert.equal(uploaded.theme.mode, expectedMode, `${directory} example must remain a valid ${expectedMode} package`);
   assert.equal(uploaded.theme.enabled, false);
 }
+
+// --- builtin official themes -------------------------------------------------
+const builtinEnv = {
+  DB: d1(),
+  ARCHIVE: r2(),
+  PUBLIC_SITE_ORIGIN: 'https://status.example.test',
+  ASSETS: { async fetch() { return new Response('<!doctype html><html>nodeget-builtin</html>', { status: 200, headers: { 'content-type': 'text/html' } }); } },
+};
+const builtinList = await listManagedThemes(builtinEnv);
+assert.deepEqual(builtinList.themes.filter(theme => theme.builtin).map(theme => theme.id), ['classic', 'nodeget-nie-sla'], 'both official themes must be listed like third-party cards');
+assert.equal(builtinList.themes.find(theme => theme.id === 'classic').enabled, true, 'the original theme stays the default');
+assert.equal(builtinList.themes.find(theme => theme.id === 'nodeget-nie-sla').enabled, false, 'the canvas official theme ships disabled');
+assert.ok(builtinList.themes.find(theme => theme.id === 'nodeget-nie-sla').settings.length > 10, 'builtin canvas theme must expose its settings schema');
+assert.equal((await getPublicTheme(builtinEnv)).active_theme, null, 'the classic builtin keeps the original page');
+
+await updateTheme('nodeget-nie-sla', jsonRequest({ enabled: true }), builtinEnv);
+const activeBuiltin = (await getPublicTheme(builtinEnv)).active_theme;
+assert.equal(activeBuiltin.id, 'nodeget-nie-sla');
+assert.equal(activeBuiltin.builtin, true);
+assert.equal(activeBuiltin.mode, 'canvas');
+assert.equal((await listManagedThemes(builtinEnv)).themes.find(theme => theme.id === 'classic').enabled, false, 'enabling the canvas theme disables the classic entry');
+
+const builtinEntryFile = await getThemeFile(builtinEnv, 'nodeget-nie-sla', activeBuiltin.entry, activeBuiltin.revision);
+assert.match(builtinEntryFile.headers.get('content-type'), /text\/html/);
+assert.match(builtinEntryFile.headers.get('content-security-policy'), /sandbox allow-scripts/);
+assert.match(await builtinEntryFile.text(), /nodeget-builtin/);
+await assert.rejects(() => getThemeFile(builtinEnv, 'nodeget-nie-sla', 'assets/missing.js', activeBuiltin.revision), /文件不存在/);
+
+const builtinConfig = await getThemeConfig('nodeget-nie-sla', builtinEnv);
+assert.ok(builtinConfig.settings.length > 10, 'builtin theme config endpoint must resolve builtin settings');
+await updateThemeConfig('nodeget-nie-sla', jsonRequest({ values: { site_name: '内置主题' } }), builtinEnv);
+assert.equal((await getPublicTheme(builtinEnv)).active_theme.config.site_name, '内置主题', 'builtin theme settings must persist and reach the public payload');
+
+await updateTheme('classic', jsonRequest({ enabled: true }), builtinEnv);
+assert.equal((await getPublicTheme(builtinEnv)).active_theme, null, 're-enabling the classic theme restores the original page');
+assert.equal((await listManagedThemes(builtinEnv)).themes.find(theme => theme.id === 'nodeget-nie-sla').enabled, false);
+await assert.rejects(() => deleteTheme('classic', builtinEnv), /内置主题不能删除/);
 
 console.log('theme package tests passed');
 

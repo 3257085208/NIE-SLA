@@ -2133,6 +2133,9 @@ tr.group-sep td{background:rgba(127,127,127,.12);font-size:13px;padding:8px 10px
   box-shadow: 0 3px 12px rgba(31, 45, 61, .055);
 }
 .theme-card.active { border-color: #71b993; box-shadow: inset 3px 0 #2ea36d, 0 3px 12px rgba(31, 45, 61, .055); }
+.theme-card.builtin { border-style: dashed; }
+.theme-card.active.builtin { border-style: solid; }
+.theme-builtin-badge { display: inline-block; margin-left: 6px; padding: 2px 7px; border-radius: 999px; color: #1c6b46; background: #e3f6ec; border: 1px solid #b8dfc6; font: 700 10px/1.5 var(--mono); vertical-align: middle; }
 .theme-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .theme-card-head span { color: var(--muted); font: 700 10px/1.2 var(--mono); }
 .theme-card-head h3 { margin: 5px 0 0; font-size: 17px; }

@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260918-proxy19";
-import { createAdminClient } from "./admin/api.js?v=20260918-proxy19";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260918-proxy19";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260918-proxy19";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260918-proxy19";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260918-proxy19";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260919-themes20";
+import { createAdminClient } from "./admin/api.js?v=20260919-themes20";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260919-themes20";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260919-themes20";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260919-themes20";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260919-themes20";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260918-proxy19";
+} from "./shared/target-catalogs.js?v=20260919-themes20";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260918-proxy19";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260918-proxy19";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260918-proxy19";
-import { fmtBytes } from "./shared/format.js?v=20260918-proxy19";
+} from "./shared/grouping.js?v=20260919-themes20";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260919-themes20";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260919-themes20";
+import { fmtBytes } from "./shared/format.js?v=20260919-themes20";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -463,17 +463,25 @@ async function loadThemes() {
 }
 
 function themeCardHtml(theme) {
-  const mode = theme.mode === "canvas" ? "交互画布" : "CSS 样式";
+  const isClassic = theme.id === "classic";
+  const mode = isClassic ? "内置原版" : (theme.mode === "canvas" ? "交互画布" : "CSS 样式");
   const digest = String(theme.package_sha256 || "");
   const uploadedAt = Number(theme.uploaded_at || 0);
   const hasSettings = Array.isArray(theme.settings) && theme.settings.length > 0;
-  const settingsLabel = hasSettings ? `${theme.settings.length} 项` : "无可配置项";
-  const settingsButton = hasSettings
-    ? `<button class="btn btn-sm" type="button" data-theme-action="settings" data-theme-id="${escapeHtml(theme.id)}">设置 · ${theme.settings.length} 项</button>`
+  const hasSettingsEntry = isClassic || hasSettings;
+  const settingsLabel = isClassic ? "外观与文案" : (hasSettings ? `${theme.settings.length} 项` : "无可配置项");
+  const settingsButton = hasSettingsEntry
+    ? `<button class="btn btn-sm" type="button" data-theme-action="settings" data-theme-id="${escapeHtml(theme.id)}">设置 · ${escapeHtml(settingsLabel)}</button>`
     : `<button class="btn btn-sm" type="button" data-theme-action="settings" data-theme-id="${escapeHtml(theme.id)}" title="该主题未声明可配置项">设置</button>`;
-  return `<article class="theme-card${theme.enabled ? " active" : ""}">
+  const deleteButton = theme.builtin
+    ? ""
+    : `<button class="btn btn-sm btn-danger" type="button" data-theme-action="delete" data-theme-id="${escapeHtml(theme.id)}">删除</button>`;
+  const badge = theme.builtin ? `<span class="theme-builtin-badge">官方内置</span>` : "";
+  const uploadValue = theme.builtin ? "随版本内置" : (uploadedAt ? escapeHtml(formatDateTime(uploadedAt)) : "旧版导入");
+  const digestValue = theme.builtin ? "随版本内置" : `<code title="${escapeHtml(digest)}">${escapeHtml(digest ? `${digest.slice(0, 16)}...` : "未记录")}</code>`;
+  return `<article class="theme-card${theme.enabled ? " active" : ""}${theme.builtin ? " builtin" : ""}">
     <div class="theme-card-head">
-      <div><span>${escapeHtml(mode)}</span><h3>${escapeHtml(theme.name || theme.id)}</h3></div>
+      <div><span>${escapeHtml(mode)}</span><h3>${escapeHtml(theme.name || theme.id)} ${badge}</h3></div>
       <em>${theme.enabled ? "正在使用" : "未启用"}</em>
     </div>
     <p>${escapeHtml(theme.description || "作者未提供主题说明。")}</p>
@@ -482,14 +490,14 @@ function themeCardHtml(theme) {
       <div><dt>版本</dt><dd>${escapeHtml(theme.version || "-")}</dd></div>
       <div><dt>作者</dt><dd>${escapeHtml(theme.author || "未署名")}</dd></div>
       <div><dt>许可</dt><dd>${escapeHtml(theme.license || "未声明")}</dd></div>
-      <div><dt>上传</dt><dd>${uploadedAt ? escapeHtml(formatDateTime(uploadedAt)) : "旧版导入"}</dd></div>
-      <div><dt>SHA-256</dt><dd><code title="${escapeHtml(digest)}">${escapeHtml(digest ? `${digest.slice(0, 16)}...` : "未记录")}</code></dd></div>
+      <div><dt>来源</dt><dd>${uploadValue}</dd></div>
+      <div><dt>SHA-256</dt><dd>${digestValue}</dd></div>
       <div><dt>设置</dt><dd>${escapeHtml(settingsLabel)}</dd></div>
     </dl>
     <div class="theme-card-actions">
-      <button class="btn btn-sm ${theme.enabled ? "" : "btn-primary"}" type="button" data-theme-action="toggle" data-theme-id="${escapeHtml(theme.id)}">${theme.enabled ? "停用并恢复原版" : "启用主题"}</button>
+      <button class="btn btn-sm ${theme.enabled ? "" : "btn-primary"}" type="button" data-theme-action="toggle" data-theme-id="${escapeHtml(theme.id)}">${theme.enabled ? (isClassic ? "正在使用" : "停用并恢复原版") : (isClassic ? "启用原版主题" : "启用主题")}</button>
       ${settingsButton}
-      <button class="btn btn-sm btn-danger" type="button" data-theme-action="delete" data-theme-id="${escapeHtml(theme.id)}">删除</button>
+      ${deleteButton}
     </div>
   </article>`;
 }
@@ -534,14 +542,22 @@ async function uploadThemePackage(file) {
 function confirmThemeAction(theme, action) {
   const isDelete = action === "delete";
   const enabling = !isDelete && !theme.enabled;
-  const title = isDelete ? "删除第三方主题" : (enabling ? "启用第三方主题" : "恢复原版主题");
+  const isClassic = theme.id === "classic";
+  const title = isDelete
+    ? "删除第三方主题"
+    : (enabling ? (isClassic ? "启用原版主题" : (theme.builtin ? "启用官方内置主题" : "启用第三方主题")) : "恢复原版主题");
   const detail = isDelete
     ? "主题记录及其 R2 文件将被永久删除；如果它正在使用，公开页会恢复原版。"
     : enabling
-      ? "启用后会替换当前主题。第三方主题来自独立开发者，请确认来源和 SHA-256 后继续。"
+      ? (theme.builtin
+        ? (isClassic
+          ? "启用后公开状态页恢复 NIE-SLA 原版界面，配色、文案与页头由「设置 · 外观与文案」控制。"
+          : "启用后公开状态页切换到官方内置画布主题；其设置可在主题卡片上调整，停用后恢复原版。")
+        : "启用后会替换当前主题。第三方主题来自独立开发者，请确认来源和 SHA-256 后继续。")
       : "停用后公开状态页将在下次刷新时恢复 NIE-SLA 原版界面。";
+  const kicker = theme.builtin ? "OFFICIAL THEME" : "THIRD-PARTY THEME";
   byId("modal").className = "modal theme-confirm-modal";
-  byId("modal").innerHTML = `<div class="theme-confirm-head"><span>THIRD-PARTY THEME</span><h3>${title}</h3></div>
+  byId("modal").innerHTML = `<div class="theme-confirm-head"><span>${kicker}</span><h3>${title}</h3></div>
     <p class="theme-confirm-name">${escapeHtml(theme.name || theme.id)} <code>${escapeHtml(theme.version || "")}</code></p>
     <p class="hint">${detail}</p>
     <div class="ma"><button class="btn" type="button" data-close>取消</button><button class="btn ${isDelete ? "btn-danger" : "btn-primary"}" type="button" id="confirmThemeAction">${isDelete ? "确认删除" : "确认"}</button></div>`;
@@ -2990,7 +3006,6 @@ async function loadSettings() {
   loadAgentUpdate();
   loadTraffic();
   loadAlerts();
-  loadAppearance();
   loadDebugLogs();
   loadProbeHistoryDeadLetters();
 }
@@ -3485,16 +3500,24 @@ function appearanceFieldHtml(field, appearance) {
   return `<label><span>${escapeHtml(label)}</span><input data-appearance-key="${escapeHtml(key)}" value="${escapeHtml(value ?? '')}" type="${type}"></label>`;
 }
 
-async function loadAppearance() {
-  const box = byId('sAppearance');
-  if (!box) return;
+// The original theme's settings moved from the system settings page into the
+// theme center: the classic card opens this editor exactly like a third-party
+// theme card opens its own settings modal.
+async function openClassicThemeSettings() {
   try {
     const d = await api('/api/settings');
     const appearance = d.appearance || {};
-    box.innerHTML = `<div class="appearance-editor">${appearanceSections.map(section => `<fieldset><legend>${escapeHtml(section.title)}</legend><div class="appearance-form">${section.fields.map(field => appearanceFieldHtml(field, appearance)).join('')}</div></fieldset>`).join('')}</div><p class="hint">文案支持 <code>{count}</code>、<code>{value}</code> 和 <code>{site_name}</code> 占位符；图片与链接仅接受 HTTPS 或站内相对路径。</p><div class="appearance-actions"><button class="btn btn-primary" id="saveAppearance">保存外观</button><button class="btn" id="resetAppearance">恢复默认</button></div>`;
+    byId('modal').className = 'modal theme-settings-modal';
+    byId('modal').innerHTML = `<div class="theme-confirm-head"><span>ORIGINAL THEME</span><h3>NIE-SLA 原版 · 外观设置</h3></div>
+      <div class="theme-settings-body"><div class="appearance-editor">${appearanceSections.map(section => `<fieldset><legend>${escapeHtml(section.title)}</legend><div class="appearance-form">${section.fields.map(field => appearanceFieldHtml(field, appearance)).join('')}</div></fieldset>`).join('')}</div></div>
+      <p class="hint">文案支持 <code>{count}</code>、<code>{value}</code> 和 <code>{site_name}</code> 占位符；图片与链接仅接受 HTTPS 或站内相对路径。</p>
+      <div class="ma"><button class="btn" type="button" data-close>取消</button><button class="btn btn-primary" id="saveAppearance">保存外观</button><button class="btn" id="resetAppearance">恢复默认</button></div>`;
+    openModal();
     byId('saveAppearance').onclick = () => saveAppearance(false);
     byId('resetAppearance').onclick = () => saveAppearance(true);
-  } catch (e) { errBox('sAppearance', e); }
+  } catch (e) {
+    toast(e.message || '加载外观设置失败', 'err');
+  }
 }
 
 async function saveAppearance(reset) {
@@ -3505,7 +3528,8 @@ async function saveAppearance(reset) {
   try {
     await api('/api/settings', { method: 'PATCH', body: JSON.stringify({ appearance }) });
     toast(reset ? '已恢复默认外观' : '外观设置已保存', 'ok');
-    loadAppearance();
+    closeModal();
+    loadThemes();
   } catch (e) { toast(e.message, 'err'); }
 }
 async function loadAgentOrigin() {
@@ -4177,7 +4201,9 @@ byId("themeTable").onclick = (event) => {
   if (!button) return;
   const theme = managedThemes.find(item => item.id === button.dataset.themeId);
   if (!theme) return;
-  if (button.dataset.themeAction === "settings") return openThemeSettings(theme);
+  if (button.dataset.themeAction === "settings") {
+    return theme.id === "classic" ? openClassicThemeSettings() : openThemeSettings(theme);
+  }
   confirmThemeAction(theme, button.dataset.themeAction);
 };
 byId("archiveBtn").onclick = async () => {
