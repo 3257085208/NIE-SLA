@@ -300,7 +300,13 @@ write_env_file() {
     printf 'NIE_SLA_INTERVAL_SEC=%s\n' "$(shell_quote "$interval")"
     printf 'NIE_SLA_SAMPLE_SEC=1\n'
     printf 'NIE_SLA_QUEUE_FILE=%s\n' "$(shell_quote "${STATE_DIR}/samples-queue.json")"
-    printf 'NIE_SLA_PRIVILEGED_UPDATER=1\n'
+    if [[ "$ROOTLESS_MODE" == "true" ]]; then
+      # Rootless installs have no privileged manager, so the telemetry process
+      # owns its own verified updates (lock + marker live in the state dir).
+      printf 'NIE_SLA_PRIVILEGED_UPDATER=0\n'
+    else
+      printf 'NIE_SLA_PRIVILEGED_UPDATER=1\n'
+    fi
     printf 'NIE_SLA_PING_TARGETS=%s\n' "$(shell_quote "$ping_targets")"
     printf 'NIE_SLA_PING_SEC=%s\n' "$(shell_quote "$ping_sec")"
   } > "$ENV_FILE"
@@ -347,6 +353,75 @@ EOF
     ( cd "$STATE_DIR" && nohup "$WORK_DIR/$BIN_NAME" >> "$STATE_DIR/${SERVICE_NAME}.log" 2>&1 & )
     ROOTLESS_START_MODE="nohup"
   fi
+}
+
+rootless_linger_enabled() {
+  command -v loginctl >/dev/null 2>&1 || return 1
+  loginctl show-user "${USER:-$(id -un)}" 2>/dev/null | grep -q '^Linger=yes'
+}
+
+enable_rootless_linger() {
+  rootless_linger_enabled && return 0
+  command -v loginctl >/dev/null 2>&1 || return 1
+  local user="${USER:-$(id -un)}"
+  if command -v sudo >/dev/null 2>&1; then
+    if sudo -n loginctl enable-linger "$user" >/dev/null 2>&1; then
+      rootless_linger_enabled && return 0
+    fi
+    if [[ "$NON_INTERACTIVE" != "true" && -e /dev/tty ]]; then
+      local answer=""
+      info "rootless 模式建议启用 linger：否则断开 SSH 后 Agent 会停止，后台会显示上报中断。"
+      read -r -p "  现在执行 sudo loginctl enable-linger $user 吗？[Y/n] " answer </dev/tty || true
+      if [[ -z "$answer" || "$answer" == [yY] || "$answer" == [yY][eE][sS] ]]; then
+        sudo loginctl enable-linger "$user" </dev/tty || true
+        rootless_linger_enabled && return 0
+      fi
+    fi
+  fi
+  return 1
+}
+
+remove_rootless_watchdog() {
+  local watchdog="${STATE_DIR}/watchdog.sh"
+  if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -q 'nie-sla-agent-watchdog'; then
+    local tmp
+    tmp="$(mktemp)"
+    crontab -l 2>/dev/null | grep -v 'nie-sla-agent-watchdog' > "$tmp" || true
+    crontab "$tmp" >/dev/null 2>&1 || true
+    rm -f "$tmp"
+  fi
+  rm -f "$watchdog"
+}
+
+# Cron runs outside the login session, so nohup + watchdog keeps the Agent
+# alive after logout even when linger cannot be enabled.
+install_rootless_watchdog() {
+  local watchdog="${STATE_DIR}/watchdog.sh"
+  cat > "$watchdog" <<EOF
+#!/bin/sh
+BIN=$(shell_quote "${WORK_DIR}/${BIN_NAME}")
+if pgrep -f "\$BIN" >/dev/null 2>&1; then exit 0; fi
+cd $(shell_quote "$STATE_DIR") || exit 1
+set -a; . $(shell_quote "$ENV_FILE"); set +a
+nohup "\$BIN" >> $(shell_quote "${STATE_DIR}/${SERVICE_NAME}.log") 2>&1 &
+EOF
+  chmod 0755 "$watchdog"
+  if command -v crontab >/dev/null 2>&1; then
+    local tmp
+    tmp="$(mktemp)"
+    crontab -l 2>/dev/null | grep -v 'nie-sla-agent-watchdog' > "$tmp" || true
+    printf '@reboot %s # nie-sla-agent-watchdog\n*/3 * * * * %s # nie-sla-agent-watchdog\n' "$watchdog" "$watchdog" >> "$tmp"
+    if crontab "$tmp" >/dev/null 2>&1; then
+      ok "已安装 cron 看护（每 3 分钟检查，注销后继续运行）"
+    else
+      warn "crontab 写入失败：断开 SSH 后 Agent 可能停止"
+    fi
+    rm -f "$tmp"
+  else
+    warn "系统没有 crontab：断开 SSH 后 Agent 会停止；请启用 linger 或改用完整版安装"
+  fi
+  warn "未启用 linger：Agent 日志写入 ${STATE_DIR}/${SERVICE_NAME}.log，由 cron 看护"
+  ROOTLESS_START_MODE="nohup"
 }
 
 install_systemd_service() {
@@ -602,6 +677,7 @@ do_uninstall() {
     systemctl --user disable "$SERVICE_NAME" 2>/dev/null || true
     rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${SERVICE_NAME}.service"
     systemctl --user daemon-reload 2>/dev/null || true
+    remove_rootless_watchdog
     pkill -f "${HOME}/nie-sla-agent/${BIN_NAME}" 2>/dev/null || true
     rm -rf "$HOME/nie-sla-agent" "${XDG_STATE_HOME:-$HOME/.local/state}/nie-sla-agent" "${HOME}/.local/bin/${BIN_NAME}" "${HOME}/.local/bin/cftz"
     ok "已卸载 (rootless)"
@@ -764,9 +840,20 @@ fi
 case "$INIT" in
   systemd)
     if [[ "$ROOTLESS_MODE" == "true" ]]; then
-      install_rootless_service
+      if enable_rootless_linger; then
+        remove_rootless_watchdog
+        install_rootless_service
+        info "logs: journalctl --user -u ${SERVICE_NAME} -f"
+      else
+        warn "未启用 linger：改用 nohup + cron 看护模式，注销后仍会继续运行"
+        systemctl --user disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+        rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${SERVICE_NAME}.service"
+        systemctl --user daemon-reload >/dev/null 2>&1 || true
+        install_rootless_watchdog
+        "${STATE_DIR}/watchdog.sh"
+        info "logs: tail -f ${STATE_DIR}/${SERVICE_NAME}.log"
+      fi
       verify_rootless_agent_health
-      info "logs: journalctl --user -u ${SERVICE_NAME} -f"
     else
       install_systemd_service
       verify_systemd_agent_health

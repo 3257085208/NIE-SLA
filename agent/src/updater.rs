@@ -117,10 +117,7 @@ fn check_for_update(
         ));
     }
     #[cfg(target_os = "linux")]
-    let privileged_updater = env::var("NIE_SLA_PRIVILEGED_UPDATER")
-        .or_else(|_| env::var("NSTATUS_PRIVILEGED_UPDATER"))
-        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let privileged_updater = privileged_updater_enabled();
     #[cfg(not(target_os = "linux"))]
     let privileged_updater = false;
 
@@ -202,6 +199,28 @@ const BACKUP_FILE_NAME: &str = "nie-sla-agent.bak";
 const FAILED_FILE_NAME: &str = "nie-sla-agent.failed";
 #[cfg(target_os = "linux")]
 const UPDATE_LOCK_PATH: &str = "/var/lib/nie-sla-agent-manager/update.lock";
+
+#[cfg(target_os = "linux")]
+fn privileged_updater_enabled() -> bool {
+    env::var("NIE_SLA_PRIVILEGED_UPDATER")
+        .or_else(|_| env::var("NSTATUS_PRIVILEGED_UPDATER"))
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Rootless agents have no privileged manager, so their update lock lives next
+/// to the pending marker in the writable state directory. Agents supervised by
+/// the privileged service keep the manager-owned lock path.
+#[cfg(target_os = "linux")]
+fn update_lock_path() -> PathBuf {
+    if privileged_updater_enabled() {
+        return PathBuf::from(UPDATE_LOCK_PATH);
+    }
+    pending_marker_path()
+        .ok()
+        .and_then(|path| path.parent().map(|dir| dir.join("update.lock")))
+        .unwrap_or_else(|| PathBuf::from(UPDATE_LOCK_PATH))
+}
 
 #[cfg(target_os = "linux")]
 fn pending_marker_path() -> Result<PathBuf> {
@@ -371,7 +390,7 @@ fn sync_parent_directory(_path: &Path) -> Result<()> {
 #[cfg(target_os = "linux")]
 fn install_linux_update(policy: &UpdatePolicy, http: &HttpClient) -> Result<PathBuf> {
     let Some(_update_lock) =
-        crate::manager::acquire_instance_lock(Path::new(UPDATE_LOCK_PATH), "Agent update")?
+        crate::manager::acquire_instance_lock(&update_lock_path(), "Agent update")?
     else {
         return Err(anyhow!("another Agent update is already in progress"));
     };
