@@ -44,6 +44,8 @@ flowchart LR
 
 > 一键部署前请先在 Cloudflare 控制台开通 R2（免费额度：10 GB 存储、每月 100 万 A 类与 1000 万 B 类操作；即使只用免费额度也需要订阅 R2 并绑定付款方式），否则部署流程会停在「使用仅 R2 订阅提供的 R2，立即升级」。D1 与 R2 桶由部署流程自动创建并绑定，无需手动建库。
 
+> 部署完成后，`*.workers.dev` 地址默认返回 `Not Found`，这是安全策略（workers.dev 是平行入口，会绕过自定义域的限流与防护）。还没有域名时，在 Worker 的 Settings → Variables and Secrets 添加文本变量 `ALLOW_WORKERS_DEV` = `true` 保存并重新部署即可访问，绑定自定义域后建议删除；公共状态页在 `/`，后台入口是你部署时填写的 `ADMIN_PATH`。详见[常见问题](https://nie-sla.pages.dev/faq/)。
+
 ## 一键部署
 
 1. 点击上方 **Deploy to Cloudflare**。
