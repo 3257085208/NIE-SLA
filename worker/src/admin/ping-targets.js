@@ -150,6 +150,25 @@ export async function getAgentPings(env, url, ctx = null) {
   env = { ...env, AGENT_PINGS_PUBLIC_MAX_HOURS: String(await getRetentionHours(env)) };
   const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
   const { hours } = resolvePublicPingQuery(url, env);
+  // Random agent_id values would trigger a per-hour R2 scan and instantiate a
+  // fresh DO for every guess; unknown agents short-circuit before any of that
+  // (fail-open on D1 errors, matching the metrics endpoint).
+  const known = await env.DB.prepare(`SELECT 1 AS ok FROM targets WHERE id = ? UNION SELECT 1 AS ok FROM agent_metrics_state WHERE agent_id = ? LIMIT 1`)
+    .bind(agentId, agentId).first().catch(() => ({ ok: 1 }));
+  if (!known) {
+    return {
+      ok: true,
+      targets: [],
+      pings: [],
+      ping_stats: [],
+      pings_raw_count: 0,
+      pings_downsampled: false,
+      pings_raw: true,
+      ping_interval_sec: await getPingIntervalSec(env),
+      source: 'unknown-agent',
+      hours,
+    };
+  }
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
   const includeLoss = parseBoolean(url.searchParams.get('include_loss'), false);
   const requestedUntil = nowSec();

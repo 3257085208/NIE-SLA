@@ -10,7 +10,7 @@ set -euo pipefail
 
 DOWNLOAD_BASE="${DOWNLOAD_BASE:-https://status.example.com}"
 SETUP_URL="${DOWNLOAD_BASE%/}/setup.sh"
-DEFAULT_SETUP_SHA256="d3efe3f8e0c77d3c912d9e6635c19f885460012e51d45288a38428708555ae79"
+DEFAULT_SETUP_SHA256="a53e4b7c39018ca4e6d514d193dcc946021fcbf02193b7bf33bb96406ab07e49"
 
 for arg in "$@"; do
   case "$arg" in

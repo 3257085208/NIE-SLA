@@ -45,6 +45,7 @@ NODE
 
 DRY_RUN_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nie-sla-wrangler-dry-run.XXXXXX")"
 trap 'rm -rf -- "$DRY_RUN_DIR"' EXIT
+node scripts/verify-assets.mjs
 npx wrangler deploy --dry-run --outdir "$DRY_RUN_DIR"
 npx wrangler deploy
 

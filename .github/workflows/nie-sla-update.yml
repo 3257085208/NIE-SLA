@@ -133,6 +133,7 @@ jobs:
             local_changes="$(rsync -rlpcni --delete \
               --exclude='.git/' \
               --exclude='.github/' \
+              --exclude='.dev.vars' \
               --exclude='wrangler.jsonc' \
               "$RUNNER_TEMP/current-source/" ./ | grep -vE '^\.(f|d|L)\.\.T\.\.\.\.' || true)"
             if [[ -z "$local_changes" ]]; then
@@ -149,12 +150,13 @@ jobs:
               echo "The installed version has no online-update baseline. Perform one manual upstream sync first." >&2
               exit 1
             fi
-            if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ -z "$(git status --porcelain --untracked-files=no)" ]]; then
+            if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] && [[ -z "$(git status --porcelain --untracked-files=all)" ]]; then
               # Manual bootstrap: repositories created by the one-click deploy
               # flow can be partial copies that match no published baseline
               # (for example when CI files or other paths were never copied).
-              # A clean, user-triggered run may adopt the official snapshot
-              # directly; wrangler.jsonc and .github/ are still preserved.
+              # Only a clean, user-triggered run with no local changes at all
+              # may adopt the official snapshot directly; wrangler.jsonc,
+              # .github/ and .dev.vars are still preserved.
               echo "No official $CURRENT_VERSION baseline matched; adopting the official $SOURCE_REF snapshot because this is a manual bootstrap run."
               echo "Entries that will be replaced or removed (first ${diff_candidate:-unknown}):"
               printf '%s\n' "$diff_output" | head -40
@@ -170,10 +172,13 @@ jobs:
 
           # Never touch .github/: repository CI configuration belongs to the
           # deployment owner, and pushes that modify workflow files are
-          # rejected by GitHub, which would abort every update.
+          # rejected by GitHub, which would abort every update. Local secret
+          # files (.dev.vars) are excluded as well so an update cannot delete
+          # credentials that are not part of the repository.
           rsync -rlpc --delete \
             --exclude='.git/' \
             --exclude='.github/' \
+            --exclude='.dev.vars' \
             --exclude='wrangler.jsonc' \
             "$RUNNER_TEMP/target-source/" ./
           cp "$RUNNER_TEMP/wrangler.deployment.jsonc" wrangler.jsonc

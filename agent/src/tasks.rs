@@ -128,9 +128,24 @@ fn read_pending_task_result(path: &Path) -> Result<Option<(String, Value)>> {
     if !path.exists() || path.is_symlink() {
         return Ok(None);
     }
-    let data = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-    let value: Value =
-        serde_json::from_slice(&data).with_context(|| "parse pending task result")?;
+    // A corrupt pending file must not block every future poll before a task is
+    // even claimed: quarantine it and let the channel recover.
+    let data = match fs::read(path) {
+        Ok(data) => data,
+        Err(error) => {
+            eprintln!("pending task result unreadable; quarantining: {error}");
+            let _ = fs::rename(path, path.with_extension("corrupt"));
+            return Ok(None);
+        }
+    };
+    let value: Value = match serde_json::from_slice(&data) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("pending task result unparsable; quarantining: {error}");
+            let _ = fs::rename(path, path.with_extension("corrupt"));
+            return Ok(None);
+        }
+    };
     let task_id = value
         .get("task_id")
         .and_then(Value::as_str)
@@ -848,8 +863,12 @@ fn run_backroute(
                             return Err(anyhow!("回程检测已被取消"));
                         }
                     }
-                    let Ok(extra) = run_backroute_script(fallback) else {
-                        continue;
+                    let extra = match run_backroute_script(fallback) {
+                        Ok(extra) => extra,
+                        Err(error) => {
+                            eprintln!("backroute fallback {fallback} unavailable: {error:#}");
+                            continue;
+                        }
                     };
                     text = format!("{text}\n=== fallback {fallback} ===\n{extra}");
                     resolve_asns_for_text(

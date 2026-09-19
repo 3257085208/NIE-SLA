@@ -400,7 +400,7 @@ install_rootless_watchdog() {
   cat > "$watchdog" <<EOF
 #!/bin/sh
 BIN=$(shell_quote "${WORK_DIR}/${BIN_NAME}")
-if pgrep -f "\$BIN" >/dev/null 2>&1; then exit 0; fi
+if ps -eo args 2>/dev/null | grep -F -q -- "\$BIN"; then exit 0; fi
 cd $(shell_quote "$STATE_DIR") || exit 1
 set -a; . $(shell_quote "$ENV_FILE"); set +a
 nohup "\$BIN" >> $(shell_quote "${STATE_DIR}/${SERVICE_NAME}.log") 2>&1 &
@@ -413,6 +413,9 @@ EOF
     printf '@reboot %s # nie-sla-agent-watchdog\n*/3 * * * * %s # nie-sla-agent-watchdog\n' "$watchdog" "$watchdog" >> "$tmp"
     if crontab "$tmp" >/dev/null 2>&1; then
       ok "已安装 cron 看护（每 3 分钟检查，注销后继续运行）"
+      if ! ps -eo comm 2>/dev/null | grep -Eq '^(cron|crond)$'; then
+        warn "未检测到正在运行的 cron 守护进程：请确认 cron 已启用"
+      fi
     else
       warn "crontab 写入失败：断开 SSH 后 Agent 可能停止"
     fi
@@ -522,7 +525,7 @@ print_systemd_agent_diagnostics() {
 
 verify_rootless_agent_health() {
   if [[ "${ROOTLESS_START_MODE:-systemd}" == "nohup" ]]; then
-    verify_file_logged_agent_health "${STATE_DIR}/${SERVICE_NAME}.log" 0 "rootless"
+    verify_file_logged_agent_health "${STATE_DIR}/${SERVICE_NAME}.log" "${ROOTLESS_LOG_START_LINE:-0}" "rootless"
     return
   fi
   local waited=0 logs=""
@@ -842,13 +845,19 @@ case "$INIT" in
     if [[ "$ROOTLESS_MODE" == "true" ]]; then
       if enable_rootless_linger; then
         remove_rootless_watchdog
+        ROOTLESS_LOG_START_LINE="$(service_log_lines "${STATE_DIR}/${SERVICE_NAME}.log")"
         install_rootless_service
+        if [[ "${ROOTLESS_START_MODE:-systemd}" == "nohup" ]]; then
+          warn "systemd 用户会话不可用：改由 cron 看护保持运行"
+          install_rootless_watchdog
+        fi
         info "logs: journalctl --user -u ${SERVICE_NAME} -f"
       else
         warn "未启用 linger：改用 nohup + cron 看护模式，注销后仍会继续运行"
         systemctl --user disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
         rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/${SERVICE_NAME}.service"
         systemctl --user daemon-reload >/dev/null 2>&1 || true
+        ROOTLESS_LOG_START_LINE="$(service_log_lines "${STATE_DIR}/${SERVICE_NAME}.log")"
         install_rootless_watchdog
         "${STATE_DIR}/watchdog.sh"
         info "logs: tail -f ${STATE_DIR}/${SERVICE_NAME}.log"

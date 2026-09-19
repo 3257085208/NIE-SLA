@@ -71,4 +71,13 @@ assert.match(oneClick, /INTERNAL_CRON_SECRET/, 'one-click build must provision I
 assert.match(oneClick, /WORKERS_CI/, 'secret provisioning must target Cloudflare build environments');
 assert.match(oneClick, /randomBytes\(24\)/, 'generated secret must use crypto randomness');
 
+// File providers can recreate "name N.ext" conflict copies inside generated
+// assets between build and upload; they reached production once, so the build
+// sweeps them and the deploy refuses to upload a dirty tree.
+assert.match(source, /scripts['"\\/]verify-assets\.mjs|verify-assets\.mjs/, 'asset preparation must sweep file-sync conflict copies');
+const verifyAssets = await readFile(path.join(workerRoot, 'scripts', 'verify-assets.mjs'), 'utf8');
+assert.ok(verifyAssets.includes('isConflictCopy'), 'the sweep must define the conflict-copy matcher');
+assert.match(verifyAssets, /throw new Error\(`static assets still contain file-sync conflict copies/, 'the sweep must fail closed when copies survive');
+assert.match(deploy, /node scripts\/verify-assets\.mjs/, 'the deploy path must sweep conflict copies right before wrangler runs');
+
 console.log('prepare-assets provenance contract passed');

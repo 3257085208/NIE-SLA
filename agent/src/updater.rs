@@ -453,6 +453,11 @@ fn install_linux_update(policy: &UpdatePolicy, http: &HttpClient) -> Result<Path
     let temp = current.with_extension(format!("update-{}", std::process::id()));
     let backup = current.with_extension("bak");
     fs::write(&temp, &binary).with_context(|| format!("write Agent update {}", temp.display()))?;
+    fs::File::options()
+        .write(true)
+        .open(&temp)
+        .and_then(|file| file.sync_all())
+        .with_context(|| format!("sync Agent update {}", temp.display()))?;
     set_executable(&temp)?;
     let probe = Command::new(&temp)
         .arg("--version")

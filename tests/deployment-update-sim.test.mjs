@@ -25,7 +25,7 @@ if (!existsSync(workflowPath)) {
 const workflow = readFileSync(workflowPath, 'utf8');
 const compareFragment = 'rsync -rlpcni --delete';
 const applyFragment = 'rsync -rlpc --delete';
-const excludeFragments = ["--exclude='.git/'", "--exclude='.github/'", "--exclude='wrangler.jsonc'"];
+const excludeFragments = ["--exclude='.git/'", "--exclude='.github/'", "--exclude='.dev.vars'", "--exclude='wrangler.jsonc'"];
 const mtimeFilter = "grep -vE '^\\.(f|d|L)\\.\\.T\\.\\.\\.\\.'";
 for (const fragment of [compareFragment, applyFragment, ...excludeFragments, mtimeFilter]) {
   assert.ok(workflow.includes(fragment), `update workflow must keep the fragment this gate exercises: ${fragment}`);
@@ -95,6 +95,8 @@ try {
   run('git', ['init', '-q'], { cwd: deployment });
   run('git', ['add', '-A'], { cwd: deployment });
   run('git', ['-c', 'user.email=sim@example.test', '-c', 'user.name=sim', 'commit', '-qm', 'initial deployment'], { cwd: deployment });
+  // A local secret file that is not part of the repository must survive updates.
+  writeFileSync(path.join(deployment, '.dev.vars'), 'SIM_SECRET=keep-me\n');
 
   // Baseline comparison: a matching repository must not be reported as changed,
   // while a real content change must still be caught.
@@ -117,6 +119,7 @@ try {
     'the apply step must never rewrite workflow files',
   );
   assert.equal(JSON.parse(readFileSync(path.join(deployment, 'wrangler.jsonc'), 'utf8')).name, OLD_CONFIG.name, 'the apply step must preserve the deployment config');
+  assert.equal(readFileSync(path.join(deployment, '.dev.vars'), 'utf8'), 'SIM_SECRET=keep-me\n', 'the apply step must preserve local secret files');
 
   // Merge missing official bindings with the shipped script.
   mkdirSync(path.join(runner, 'target-source'), { recursive: true });

@@ -363,7 +363,10 @@ pub(crate) fn run_proxy_checks(
             .collect();
         for handle in handles {
             match handle {
-                Ok(handle) => results.extend(handle.join().ok()),
+                Ok(handle) => match handle.join() {
+                    Ok(result) => results.push(result),
+                    Err(_) => eprintln!("proxy probe thread panicked; result dropped"),
+                },
                 Err(target) => results.push(probe_proxy_target(&target, canary_host, canary_port)),
             }
         }

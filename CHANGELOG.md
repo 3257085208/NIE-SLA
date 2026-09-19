@@ -1,6 +1,13 @@
 # 更新日志
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
+## 1.1.86 - 2026-09-19
+
+- Agent：代理目标临时失败保留旧配置；rootless 进度标记写状态目录；更新二进制 fsync；坏任务结果文件隔离；回滚/panic/backroute fallback 补日志。
+- 安全/数据：公开 Pings 未知 agent 短路；探针历史迁移后主动调度刷盘。
+- rootless 安装器：linger 失败或 systemd 用户会话不可用时自动 cron 看护；健康检查只认本次日志。
+- 发布资产：清理并拒绝上传文件同步冲突副本（曾上线）；认领模式要求零本地改动并保留 `.dev.vars`。
+
 ## 1.1.85 - 2026-09-19
 
 - rootless 修复：安装时尝试并校验 systemd linger，无法启用则改用 nohup + cron 看护，注销/断开 SSH 后不再“上报中断”。

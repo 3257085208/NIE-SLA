@@ -359,6 +359,7 @@ struct PingPlan {
     targets: Vec<PingTarget>,
     interval_sec: u64,
     proxy_targets: Vec<proxy::ProxyTarget>,
+    proxy_targets_valid: bool,
     proxy_interval_sec: u64,
     proxy_canary_host: String,
     proxy_canary_port: u16,
@@ -503,10 +504,14 @@ fn run() -> Result<()> {
     let mut last_report = Instant::now();
     let mut first_report = true;
     #[cfg(target_os = "linux")]
-    if let Ok(true) = rollback_stale_pending_update() {
-        eprintln!("{{\"ok\":true,\"update_rollback\":\"restored previous agent binary\"}}");
-        flush_sample_queue(&queue_tx)?;
-        restart_after_update(&std::env::current_exe().unwrap_or_default())?;
+    match rollback_stale_pending_update() {
+        Ok(true) => {
+            eprintln!("{{\"ok\":true,\"update_rollback\":\"restored previous agent binary\"}}");
+            flush_sample_queue(&queue_tx)?;
+            restart_after_update(&std::env::current_exe().unwrap_or_default())?;
+        }
+        Ok(false) => {}
+        Err(error) => eprintln!("stale Agent update rollback failed: {error:#}"),
     }
     let mut uploading = false;
     let mut last_upload_failed = false;
@@ -800,8 +805,37 @@ fn spawn_disk_worker(disk_rows: DiskRowsCache) {
     });
 }
 
+/// The privileged manager watches the fixed system path; rootless installs have
+/// no manager and keep the marker inside their writable state directory (or
+/// skip it when there is no managed queue) so the report loop stops logging a
+/// permission error on every successful upload.
+fn telemetry_progress_path() -> Option<std::path::PathBuf> {
+    let privileged = std::env::var("NIE_SLA_PRIVILEGED_UPDATER")
+        .or_else(|_| std::env::var("NSTATUS_PRIVILEGED_UPDATER"))
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if privileged {
+        return Some(std::path::PathBuf::from(crate::manager::TELEMETRY_PROGRESS));
+    }
+    for key in ["NIE_SLA_QUEUE_FILE", "NSTATUS_QUEUE_FILE"] {
+        if let Ok(queue_file) = std::env::var(key) {
+            let queue_path = std::path::PathBuf::from(queue_file);
+            if let Some(parent) = queue_path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                return Some(parent.join("telemetry-progress"));
+            }
+        }
+    }
+    None
+}
+
 fn write_telemetry_progress(_cfg: &Config) -> Result<()> {
-    let path = Path::new(crate::manager::TELEMETRY_PROGRESS);
+    let Some(path) = telemetry_progress_path() else {
+        return Ok(());
+    };
+    let path = path.as_path();
     let temp = path.with_extension(format!("tmp-{}", std::process::id()));
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1601,10 +1635,12 @@ fn parse_control_ping_plan(value: &serde_json::Value) -> Option<PingPlan> {
         .and_then(|port| u16::try_from(port).ok())
         .filter(|port| *port > 0)
         .unwrap_or(443);
+    let proxy_targets_valid = value.get("proxy_targets").is_some();
     Some(PingPlan {
         targets: parsed,
         interval_sec,
         proxy_targets,
+        proxy_targets_valid,
         proxy_interval_sec,
         proxy_canary_host,
         proxy_canary_port,
@@ -1653,18 +1689,21 @@ fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
         .and_then(|item| item.as_u64())
         .filter(|interval| (5..=300).contains(interval))
         .unwrap_or(cfg.ping_sec);
-    let (proxy_targets, proxy_canary_host, proxy_canary_port) = match fetch_proxy_targets(cfg, http)
-    {
-        Ok(value) => value,
-        Err(error) => {
-            eprintln!("proxy target refresh unavailable; keeping no proxy targets: {error}");
-            (Vec::new(), "example.com".into(), 443)
-        }
-    };
+    let (proxy_targets, proxy_canary_host, proxy_canary_port, proxy_targets_valid) =
+        match fetch_proxy_targets(cfg, http) {
+            Ok((targets, host, port)) => (targets, host, port, true),
+            Err(error) => {
+                eprintln!(
+                    "proxy target refresh unavailable; keeping previous proxy targets: {error}"
+                );
+                (Vec::new(), "example.com".into(), 443, false)
+            }
+        };
     Ok(PingPlan {
         targets,
         interval_sec,
         proxy_targets,
+        proxy_targets_valid,
         proxy_interval_sec: DEFAULT_PROXY_SEC,
         proxy_canary_host,
         proxy_canary_port,
@@ -2316,24 +2355,28 @@ fn spawn_ping_worker(
             while let Ok(plan) = plan_rx.try_recv() {
                 apply_ping_interval(&ping_interval_sec, plan.interval_sec);
                 targets = plan.targets;
-                proxy_targets = plan.proxy_targets;
-                proxy_interval_sec = plan.proxy_interval_sec.clamp(30, 900);
-                proxy_canary_host = plan.proxy_canary_host;
-                proxy_canary_port = plan.proxy_canary_port;
+                if plan.proxy_targets_valid {
+                    proxy_targets = plan.proxy_targets;
+                    proxy_interval_sec = plan.proxy_interval_sec.clamp(30, 900);
+                    proxy_canary_host = plan.proxy_canary_host;
+                    proxy_canary_port = plan.proxy_canary_port;
+                    last_proxy = Instant::now() - Duration::from_secs(proxy_interval_sec);
+                }
                 last_refresh = Instant::now();
-                last_proxy = Instant::now() - Duration::from_secs(proxy_interval_sec);
             }
             if last_refresh.elapsed() >= refresh_period {
                 match fetch_ping_targets(&cfg, &http) {
                     Ok(plan) => {
                         apply_ping_interval(&ping_interval_sec, plan.interval_sec);
                         targets = plan.targets;
-                        proxy_targets = plan.proxy_targets;
-                        proxy_interval_sec = plan.proxy_interval_sec.clamp(30, 900);
-                        proxy_canary_host = plan.proxy_canary_host;
-                        proxy_canary_port = plan.proxy_canary_port;
+                        if plan.proxy_targets_valid {
+                            proxy_targets = plan.proxy_targets;
+                            proxy_interval_sec = plan.proxy_interval_sec.clamp(30, 900);
+                            proxy_canary_host = plan.proxy_canary_host;
+                            proxy_canary_port = plan.proxy_canary_port;
+                            last_proxy = Instant::now() - Duration::from_secs(proxy_interval_sec);
+                        }
                         last_refresh = Instant::now();
-                        last_proxy = Instant::now() - Duration::from_secs(proxy_interval_sec);
                     }
                     Err(error) => {
                         let retry_after = ping_target_refresh_retry_after(refresh_period);
@@ -2453,7 +2496,10 @@ fn run_pings(targets: &[PingTarget], selector: &str, http: &HttpClient) -> Vec<P
             .collect();
         for handle in handles {
             match handle {
-                Ok(handle) => results.extend(handle.join().ok()),
+                Ok(handle) => match handle.join() {
+                    Ok(sample) => results.push(sample),
+                    Err(_) => eprintln!("ping probe thread panicked; sample dropped"),
+                },
                 Err(target) => results.push(ping_target(&target, http)),
             }
         }

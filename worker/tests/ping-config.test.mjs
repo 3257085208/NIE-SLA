@@ -50,6 +50,11 @@ for (let index = 0; index < 500; index += 1) {
   database.prepare(`INSERT INTO ping_history (target_id, agent_id, ts, latency_ms, ok) VALUES (?, ?, ?, ?, 1)`)
     .run('target-1', 'agent-raw', rawPingNow - index * 20, 10 + (index % 5));
 }
+database.prepare(`INSERT INTO agent_metrics_state (agent_id, updated_at) VALUES (?, ?)`)
+  .run('agent-raw', new Date(rawPingNow * 1000).toISOString());
+const unknownAgentPayload = await getAgentPings(env, new URL('https://api.example.test/api/agent/pings?agent_id=not-a-real-agent&hours=24'));
+assert.equal(unknownAgentPayload.source, 'unknown-agent', 'random agent ids must short-circuit before touching R2/DO');
+assert.equal(unknownAgentPayload.pings_raw_count, 0);
 const rawPingPayload = await getAgentPings(env, new URL('https://api.example.test/api/agent/pings?agent_id=agent-raw&hours=24&format=series&max_points_per_target=10'));
 assert.equal(rawPingPayload.pings_raw_count, 500);
 assert.equal(rawPingPayload.pings_downsampled, false);

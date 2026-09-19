@@ -10,7 +10,7 @@ Rust Agent 与 Worker 在本仓库，生产前端在同级 `frontend/` 仓库。
 bash test.sh
 ```
 
-覆盖 Worker 语法与打包、鉴权、任务白名单、GeoIP、备份恢复、同级生产 Frontend 的 `npm run verify`、Rust fmt/check/test、安装器与 shell 语法。
+覆盖 Worker 语法与打包、鉴权、任务白名单、GeoIP、备份恢复、同级生产 Frontend 的 `npm run verify`、Rust fmt/check/test、安装器与 shell 语法，以及同级公开仓库存在时的**部署形态在线更新仿真**（无 `.github` CI、旧 `wrangler.jsonc`、可复用工作流 wrapper 的完整更新链；回归 mtime 噪声、CI 文件门槛、DO 绑定合并与工作流文件推送等历史事故）。
 
 ## Agent 本地发布
 

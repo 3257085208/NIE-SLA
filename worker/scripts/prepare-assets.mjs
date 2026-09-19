@@ -172,6 +172,11 @@ try {
 
   await rm(outputRoot, { recursive: true, force: true });
   await rename(stagingOutput, outputRoot);
+  // File providers may inject "name 2.ext" conflict copies into the generated
+  // tree; sweep them and fail closed before anything can upload them.
+  await execFileAsync('node', [path.join(workerRoot, 'scripts', 'verify-assets.mjs')], {
+    maxBuffer: 1024 * 1024,
+  });
 } finally {
   await rm(stagingRoot, { recursive: true, force: true });
 }

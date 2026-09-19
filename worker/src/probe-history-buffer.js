@@ -579,6 +579,11 @@ export class ProbeHistoryBuffer {
     }
     await this.state.storage.put(flagKey, nowSec()).catch(() => {});
     this.migratedTargets.add(targetId);
+    if (this.memDays.size > 0) {
+      // Migrated points live in memory until an append or alarm flushes them;
+      // schedule one now so a DO eviction cannot drop them.
+      await this.scheduleFlush(dayFromSec(nowSec(), this.env), true).catch(() => {});
+    }
   }
 
   async scheduleFlush(currentDay, memPending = false) {

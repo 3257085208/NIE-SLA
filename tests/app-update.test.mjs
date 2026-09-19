@@ -63,6 +63,8 @@ assert.match(workflow, /--exclude='\.github\/'/, 'repository CI configuration mu
 assert.match(workflow, /rsync -rlpc --delete[\s\S]{0,220}--exclude='\.github\/'/, 'online updates must never rewrite workflow files');
 assert.match(workflow, /rsync -rlpcni --delete[\s\S]{0,400}grep -vE/, 'the baseline comparison must ignore modification-time-only differences');
 assert.match(workflow, /adopting the official \$SOURCE_REF snapshot because this is a manual bootstrap run/, 'manual runs must be able to bootstrap partial deployment copies');
+assert.match(workflow, /--untracked-files=all/, 'manual bootstrap adoption must require a repository with no local changes');
+assert.ok(workflow.includes("--exclude='.dev.vars'"), 'online updates must preserve local secret files');
 assert.match(workflow, /Merged official Durable Object bindings and migrations into wrangler\.jsonc/, 'online updates must merge missing official DO bindings into preserved deployment configs');
 assert.match(workflow, /rsync -rlpcni --delete/);
 assert.match(workflow, /Only wrangler\.jsonc and \.github may differ/);

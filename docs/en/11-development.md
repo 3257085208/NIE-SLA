@@ -10,7 +10,7 @@ The Rust Agent and Worker live in this repository; the production frontend lives
 bash test.sh
 ```
 
-Covers Worker syntax and packaging, auth, task whitelist, GeoIP, backup/restore, the sibling production Frontend's `npm run verify`, Rust fmt/check/test, installers, and shell syntax.
+Covers Worker syntax and packaging, auth, task whitelist, GeoIP, backup/restore, the sibling production Frontend's `npm run verify`, Rust fmt/check/test, installers, shell syntax, and — when the sibling public repository is present — a **deployment-shape online-update simulation** (full update chain against a repository without `.github` CI files, an older preserved `wrangler.jsonc`, and the reusable-workflow wrapper; it regresses the historical incidents around mtime noise, CI-file gating, DO binding merges, and workflow-file pushes).
 
 ## Local Agent release
 
