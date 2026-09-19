@@ -1,0 +1,51 @@
+import { VERSION } from './version.js';
+
+// Builtin official themes. The canvas package ships with the deployment as
+// static assets under /themes/<id>/ and is served through the same
+// /api/themes/file/<id>/... route as uploaded packages, so the admin and the
+// public runtime need no special-casing beyond the builtin flag.
+// Regenerate from the theme package manifest:
+//   frontend/themes/nodeget-nie-sla/manifest.json
+// after copying a new dist build into frontend/themes/nodeget-nie-sla/.
+export const BUILTIN_CLASSIC_THEME_ID = 'classic';
+export const BUILTIN_CANVAS_THEME_ID = "nodeget-nie-sla";
+
+export const BUILTIN_THEMES = [
+  {
+    id: BUILTIN_CLASSIC_THEME_ID,
+    builtin: true,
+    mode: 'default',
+    name: 'NIE-SLA 原版',
+    version: VERSION,
+    description: '默认原版状态页：布局、文案与配色由主题设置中的外观配置控制。',
+    author: 'NIE-SLA',
+    license: 'MIT',
+    entry: '',
+    height: 0,
+    permissions: [],
+    files: [],
+    settings: [],
+  },
+  {
+    id: "nodeget-nie-sla",
+    builtin: true,
+    mode: "canvas",
+    name: "NIE-SLA NodeGet Theme",
+    version: "1.4.44",
+    description: "Complete port of NIE-Theme-NodeGet for NIE-SLA — pixel-identical cards, rings, maps, filters and latency panels adapted to SLA probe (status/metrics/pings/latency over iframe message bridge).",
+    author: "MarkNKX",
+    license: "AGPL-3.0",
+    homepage: "https://github.com/3257085208/NIE-Theme-NodeGet",
+    repository: "https://github.com/3257085208/NIE-Theme-NodeGet",
+    entry: "index.html",
+    height: 1200,
+    permissions: ["status:read"],
+    files: ["assets/index-3NU5mN0r.css", "assets/index-BzK8F0LL.js", "config.json", "custom.css", "custom.js", "download.html", "geo/world.json", "index.html", "linux-logo-icon/alpinelinux-icon.svg", "linux-logo-icon/archlinux.svg", "linux-logo-icon/centos.svg", "linux-logo-icon/debian.svg", "linux-logo-icon/fedora.svg", "linux-logo-icon/freebsd.svg", "linux-logo-icon/gentoo.svg", "linux-logo-icon/kali.svg", "linux-logo-icon/linux.svg", "linux-logo-icon/manjaro.svg", "linux-logo-icon/mint.svg", "linux-logo-icon/nixos.svg", "linux-logo-icon/oracle.svg", "linux-logo-icon/redhat.svg", "linux-logo-icon/rocky.svg", "linux-logo-icon/ubuntu.svg", "linux-logo-icon/windows.svg", "linux-logo-icon/zorin.svg", "logo.png", "manifest.json", "nodeget-theme-files.json", "nodeget-theme.json", "world-110m.json"],
+    settings: [{"key": "site_name", "type": "text", "label": "站点标题", "description": "显示在导航栏的站点名称", "default": "NodeGet Status"}, {"key": "site_logo", "type": "text", "label": "站点图标", "description": "输入 Logo 图片链接，留空则使用主题内置 Logo", "default": ""}, {"key": "footer", "type": "text", "label": "页脚文本", "description": "显示在页面底部的文字", "default": "Powered by NodeGet"}, {"key": "refresh_interval_ms", "type": "number", "label": "刷新间隔毫秒", "description": "动态监控数据刷新间隔，建议 5000-60000", "default": 10000}, {"key": "background_palette", "type": "select", "label": "背景配色", "description": "cloud=云白，mint=薄荷，blue=海盐蓝，purple=紫雾，peach=蜜桃，rose=玫瑰，yellow=奶油黄，slate=曜石，sea=深海，forest=森林", "options": [{"value": "cloud", "label": "cloud"}, {"value": "mint", "label": "mint"}, {"value": "blue", "label": "blue"}, {"value": "purple", "label": "purple"}, {"value": "peach", "label": "peach"}, {"value": "rose", "label": "rose"}, {"value": "yellow", "label": "yellow"}, {"value": "slate", "label": "slate"}, {"value": "sea", "label": "sea"}, {"value": "forest", "label": "forest"}], "default": "cloud"}, {"key": "background_pattern", "type": "select", "label": "背景图案", "description": "grid=网格，solid=纯色，dots=点状", "options": [{"value": "grid", "label": "grid"}, {"value": "solid", "label": "solid"}, {"value": "dots", "label": "dots"}], "default": "grid"}, {"key": "background_density", "type": "number", "label": "背景纹理密度", "description": "数值越大纹理越疏，建议 12-48", "default": 22}, {"key": "background_opacity", "type": "number", "label": "背景纹理强度", "description": "背景纹理透明度百分比，建议 2-24", "default": 10}, {"key": "home_card_metric_style", "type": "select", "label": "首页卡片指标样式", "description": "circle=CPU/内存/磁盘圆环，bar=两列四项 18 格横条", "options": [{"value": "circle", "label": "circle"}, {"value": "bar", "label": "bar"}], "default": "circle"}, {"key": "home_tcping_include", "type": "text", "label": "首页延迟指定线路", "description": "多个用逗号分隔，例如 上海电信,福建电信,上海移动；也可填写 sh-ct,fj-ct,sh-cm；留空显示全部", "default": ""}, {"key": "home_show_ipv4_ping", "type": "boolean", "label": "首页显示 IPv4 Ping", "description": "是否在首页 VPS 卡片中显示 IPv4 Ping", "default": false}, {"key": "home_show_ipv4_tcping", "type": "boolean", "label": "首页显示 IPv4 TCP Ping", "description": "是否在首页 VPS 卡片中显示 IPv4 TCP Ping", "default": true}, {"key": "home_show_ipv6_ping", "type": "boolean", "label": "首页显示 IPv6 Ping", "description": "是否在首页 VPS 卡片中显示 IPv6 Ping", "default": false}, {"key": "home_show_ipv6_tcping", "type": "boolean", "label": "首页显示 IPv6 TCP Ping", "description": "是否在首页 VPS 卡片中显示 IPv6 TCP Ping", "default": false}, {"key": "detail_resource_metric_style", "type": "select", "label": "详情页资源指标样式", "description": "circle=CPU/内存/硬盘/Swap 圆环，bar=两列四项 18 格横条", "options": [{"value": "circle", "label": "circle"}, {"value": "bar", "label": "bar"}], "default": "circle"}, {"key": "detail_show_ipv4_ping", "type": "boolean", "label": "详情页显示 IPv4 Ping", "description": "是否在 VPS 详情页显示 IPv4 Ping", "default": true}, {"key": "detail_show_ipv4_tcping", "type": "boolean", "label": "详情页显示 IPv4 TCP Ping", "description": "是否在 VPS 详情页显示 IPv4 TCP Ping", "default": true}, {"key": "detail_show_ipv6_ping", "type": "boolean", "label": "详情页显示 IPv6 Ping", "description": "是否在 VPS 详情页显示 IPv6 Ping", "default": true}, {"key": "detail_show_ipv6_tcping", "type": "boolean", "label": "详情页显示 IPv6 TCP Ping", "description": "是否在 VPS 详情页显示 IPv6 TCP Ping", "default": true}],
+  },
+];
+
+export function builtinTheme(id) {
+  const clean = String(id || '').trim();
+  return BUILTIN_THEMES.find(theme => theme.id === clean) || null;
+}
