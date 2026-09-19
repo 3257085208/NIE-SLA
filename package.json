@@ -21,6 +21,11 @@
   "devDependencies": {
     "wrangler": "4.115.0"
   },
+  "pnpm": {
+    "overrides": {
+      "undici": ">=7.29.0"
+    }
+  },
   "cloudflare": {
     "label": "NIE-SLA 状态页与 VPS 探针",
     "products": ["Workers", "D1", "R2", "Durable Objects"],
