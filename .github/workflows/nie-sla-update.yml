@@ -152,8 +152,12 @@ jobs:
           fi
           echo "Applying update from $baseline to $SOURCE_REF"
 
+          # Never touch .github/: repository CI configuration belongs to the
+          # deployment owner, and pushes that modify workflow files are
+          # rejected by GitHub, which would abort every update.
           rsync -rlpc --delete \
             --exclude='.git/' \
+            --exclude='.github/' \
             --exclude='wrangler.jsonc' \
             "$RUNNER_TEMP/target-source/" ./
           cp "$RUNNER_TEMP/wrangler.deployment.jsonc" wrangler.jsonc
