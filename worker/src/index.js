@@ -124,11 +124,14 @@ export default {
     try {
       env = withS3Archive(env);
       const url = new URL(request.url);
-      // The workers.dev hostname is a parallel entry point that bypasses the
-      // custom-domain WAF/rate-limit rules. Keep it disabled unless the
-      // deployment explicitly opts back in.
+      // The workers.dev hostname is the only entry point for self-hosted
+      // one-click deployments, so it stays available by default. Deployments
+      // with a custom domain that want to reject the parallel hostname set
+      // ALLOW_WORKERS_DEV="false"; the official production worker also turns
+      // workers.dev off at the configuration level.
       const host = String(url.hostname || '').toLowerCase();
-      if (host.endsWith('.workers.dev') && String(env.ALLOW_WORKERS_DEV || '').trim() !== 'true') {
+      const workersDevFlag = String(env.ALLOW_WORKERS_DEV ?? 'true').trim().toLowerCase();
+      if (host.endsWith('.workers.dev') && (workersDevFlag === 'false' || workersDevFlag === '0')) {
         return new Response('Not Found', { status: 404 });
       }
       if (url.pathname === INTERNAL_SCHEDULE_PATH) return handleInternalScheduledRequest(request, env);

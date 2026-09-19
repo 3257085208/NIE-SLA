@@ -1,11 +1,12 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.83",
-  "agent_version": "v1.1.83",
-  "source_ref": "app-v1.1.83",
-  "published_at": "2026-09-19T12:05:00Z",
-  "title": "NIE-SLA 1.1.83",
+  "version": "1.1.84",
+  "agent_version": "v1.1.84",
+  "source_ref": "app-v1.1.84",
+  "published_at": "2026-09-19T12:30:00Z",
+  "title": "NIE-SLA 1.1.84",
   "changelog": [
+    "修复自托管访问入口：`*.workers.dev` 现在默认可用。此前默认返回 Not Found，导致没有自定义域的一键部署在升级后失去访问入口；绑定了域名的部署如需关闭这个平行入口，可设置文本变量 `ALLOW_WORKERS_DEV=false`，官方生产站仍在配置层与变量层双重禁用。",
     "一键部署的在线更新修复：更新校验不再把只有文件时间戳不同的条目判为“文件不一致”；不再要求部署仓库包含官方 CI 文件；手动运行时，对于一键部署生成的“部分副本”仓库会自动认领官方快照（保留 wrangler.jsonc 与现有工作流文件）。",
     "更新会自动把官方新增的 Durable Object 绑定与迁移合并进保留的 wrangler.jsonc：旧部署因此补上 PROBE_HISTORY 与 STATUS_STREAM，恢复探测历史缓冲与实时状态流能力。",
     "部署校验测试改为按部署仓库的实际工作流形态运行（极简 wrapper 或完整官方工作流均可通过），同时官方门禁保持全部严格断言。",

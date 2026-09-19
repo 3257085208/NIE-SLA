@@ -29,7 +29,7 @@ Both options deploy one Worker only: static frontend, admin panel, API, D1, R2, 
 
 > Enable R2 in the Cloudflare dashboard before the one-click deploy (free tier: 10 GB storage, 1M Class A and 10M Class B operations per month; R2 still requires an R2 subscription with a payment method even for the free tier), otherwise the deploy stops at "uses R2, which is available with an R2 subscription". D1 and the R2 bucket are created and bound automatically.
 
-> After deployment the `*.workers.dev` address returns `Not Found` by default. That is deliberate hardening: workers.dev is a parallel entry point that would bypass your custom-domain rate limits and protections. Without a domain yet, add the text variable `ALLOW_WORKERS_DEV` = `true` under the Worker's Settings → Variables and Secrets and redeploy; remove it after binding a custom domain. The public status page lives at `/` and the admin entry is the `ADMIN_PATH` you chose. See the [FAQ](https://nie-sla.pages.dev/en/faq/).
+> Self-hosted deployments can use the `*.workers.dev` address by default. After binding a custom domain, add the text variable `ALLOW_WORKERS_DEV` = `false` under the Worker's Settings → Variables and Secrets if you do not want to keep that parallel entry (it would bypass your custom-domain rate limits and protections; the official production site also disables it at the configuration level). The public status page lives at `/` and the admin entry is the `ADMIN_PATH` you chose. See the [FAQ](https://nie-sla.pages.dev/en/faq/).
 
 ## Quick start
 
