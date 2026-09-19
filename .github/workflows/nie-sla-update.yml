@@ -126,11 +126,15 @@ jobs:
             rm -rf "$RUNNER_TEMP/current-source"
             mkdir -p "$RUNNER_TEMP/current-source"
             git archive "refs/tags/$candidate" | tar -x -C "$RUNNER_TEMP/current-source"
+            # Itemized dry-run: drop entries whose only difference is the file
+            # modification time (`.f..T......` and friends). A fresh checkout
+            # never has the archive's timestamps, so without this filter every
+            # pristine repository would be reported as "files differ".
             local_changes="$(rsync -rlpcni --delete \
               --exclude='.git/' \
               --exclude='.github/' \
               --exclude='wrangler.jsonc' \
-              "$RUNNER_TEMP/current-source/" ./ || true)"
+              "$RUNNER_TEMP/current-source/" ./ | grep -vE '^\.(f|d|L)\.\.T\.\.\.\.' || true)"
             if [[ -z "$local_changes" ]]; then
               baseline="$candidate"
               break
