@@ -36,6 +36,14 @@
       {
         "name": "TELEMETRY_BUFFER",
         "class_name": "TelemetryBuffer"
+      },
+      {
+        "name": "PROBE_HISTORY",
+        "class_name": "ProbeHistoryBuffer"
+      },
+      {
+        "name": "STATUS_STREAM",
+        "class_name": "StatusStream"
       }
     ]
   },
@@ -47,6 +55,14 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["TelemetryBuffer"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["ProbeHistoryBuffer"]
+    },
+    {
+      "tag": "v4",
+      "new_sqlite_classes": ["StatusStream"]
     }
   ]
 }

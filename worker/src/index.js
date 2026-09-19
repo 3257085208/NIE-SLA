@@ -141,6 +141,14 @@ export default {
     catch (err) {
       const status = err?.status || 500;
       const message = status === 500 ? '服务器内部错误' : String(err?.message || '请求失败');
+      if (status >= 500) {
+        // Server-side failures must leave a trail: the client only receives a
+        // generic message, so the route and stack are the only way to debug a
+        // broken deployment from Workers Logs.
+        let route = 'unknown';
+        try { route = new URL(request.url).pathname; } catch (_) {}
+        console.error('unhandled request error', String(request.method || 'GET'), route, String(err?.stack || err?.message || err).slice(0, 1200));
+      }
       return json({ ok: false, error: message }, status, env, err?.headers || null);
     }
   },

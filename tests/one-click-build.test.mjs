@@ -69,16 +69,23 @@ if (!deploymentValidation) assert.equal(databaseId, '00000000-0000-0000-0000-000
 assert.deepEqual(wrangler.triggers?.crons, ['* * * * *']);
 assert.deepEqual(
   wrangler.durable_objects?.bindings?.map(binding => [binding.name, binding.class_name]),
-  [['REGION_PROXY', 'ProbeRegion'], ['TELEMETRY_BUFFER', 'TelemetryBuffer']],
+  [
+    ['REGION_PROXY', 'ProbeRegion'],
+    ['TELEMETRY_BUFFER', 'TelemetryBuffer'],
+    ['PROBE_HISTORY', 'ProbeHistoryBuffer'],
+    ['STATUS_STREAM', 'StatusStream'],
+  ],
 );
-assert.deepEqual(wrangler.migrations?.at(-1), { tag: 'v2', new_sqlite_classes: ['TelemetryBuffer'] });
+assert.deepEqual(wrangler.migrations?.at(-1), { tag: 'v4', new_sqlite_classes: ['StatusStream'] });
 
 const describedBindings = packageJson.cloudflare?.bindings || {};
 assert.match(packageJson.cloudflare?.label || '', /\p{Script=Han}/u);
-assert.deepEqual(wrangler.vars || {}, {});
+// Cloudflare builds inject INTERNAL_CRON_SECRET into the deployed config;
+// nothing else may rely on plain-text vars.
+assert.deepEqual(Object.keys(wrangler.vars || {}).filter(name => name !== 'INTERNAL_CRON_SECRET'), []);
 assert.deepEqual(
   Object.keys(describedBindings).sort(),
-  ['ADMIN_PASSWORD', 'ADMIN_PATH', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'REGION_PROXY', 'TELEMETRY_BUFFER', 'TOTP_ENCRYPTION_KEY'].sort(),
+  ['ADMIN_PASSWORD', 'ADMIN_PATH', 'ADMIN_USERNAME', 'ARCHIVE', 'ASSETS', 'DB', 'PROBE_HISTORY', 'REGION_PROXY', 'STATUS_STREAM', 'TELEMETRY_BUFFER', 'TOTP_ENCRYPTION_KEY'].sort(),
 );
 for (const name of Object.keys(describedBindings)) assert.match(describedBindings[name]?.description || '', /\p{Script=Han}/u);
 assert.equal('AGENT_TOKEN' in describedBindings, false);
@@ -87,7 +94,7 @@ assert.match(describedBindings.TOTP_ENCRYPTION_KEY.description, /长期|32/);
 const pnpmWorkspace = await readFile(path.join(root, 'pnpm-workspace.yaml'), 'utf8');
 assert.match(pnpmWorkspace, /^packages:\s*\n\s+-\s+["']?\.["']?\s*$/m);
 const secretExample = await readFile(path.join(root, '.dev.vars.example'), 'utf8');
-for (const name of ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'ADMIN_PATH', 'TOTP_ENCRYPTION_KEY']) {
+for (const name of ['ADMIN_USERNAME', 'ADMIN_PASSWORD', 'ADMIN_PATH', 'TOTP_ENCRYPTION_KEY', 'INTERNAL_CRON_SECRET']) {
   assert.match(secretExample, new RegExp(`^${name}=\\s*(?:#.*)?$`, 'm'));
 }
 assert.doesNotMatch(secretExample, /^AGENT_TOKEN=/m);

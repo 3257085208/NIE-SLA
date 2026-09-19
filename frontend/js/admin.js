@@ -267,6 +267,10 @@ function toast(m, t = "info") {
   toastTimer = setTimeout(() => e.classList.remove("show"), t === "err" ? 6000 : 3200);
 }
 function showLogin(message = "", { requireTotp = false, provider = "password" } = {}) {
+  // The modal overlay sits outside #app, so a session that expires while a
+  // dialog is open would leave it covering the login page with no visible
+  // feedback beyond the toast.
+  if (byId("overlay")?.classList.contains("on")) closeModal();
   byId("loginPage").style.display = "flex";
   byId("app").style.display = "none";
   byId("passwordLoginFields").style.display = provider === "github" ? "none" : "block";

@@ -2,5 +2,7 @@ ADMIN_USERNAME=
 ADMIN_PASSWORD=
 ADMIN_PATH=
 TOTP_ENCRYPTION_KEY=
+# Required for internal Durable Object calls; one-click Cloudflare builds inject a generated value.
+INTERNAL_CRON_SECRET=
 # Optional during a key rotation; remove only after the Admin migration check succeeds.
 # PREVIOUS_ENCRYPTION_KEY=

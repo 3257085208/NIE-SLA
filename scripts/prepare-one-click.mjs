@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -26,7 +26,29 @@ for (const relative of trackedFrontendFiles()) {
 }
 await cp(path.join(root, 'update-manifest.json'), path.join(outputRoot, 'update-manifest.json'));
 await prepareAgentRelease(path.join(outputRoot, 'bin'));
+await ensureInternalCronSecret();
 console.log(`One-click assets prepared in ${path.relative(root, outputRoot)}`);
+
+// Internal Durable Object calls are fail-closed without INTERNAL_CRON_SECRET, so
+// a fresh one-click deployment would reject Agent telemetry, probe-history
+// batches, status-stream publishes and region batches. Cloudflare build
+// environments get a generated secret written into the deployed config; manual
+// deployments keep setting it themselves (`wrangler secret put`).
+async function ensureInternalCronSecret() {
+  const configPath = path.join(root, 'wrangler.jsonc');
+  let config;
+  try {
+    config = JSON.parse(await readFile(configPath, 'utf8'));
+  } catch (_) {
+    return;
+  }
+  if (config?.vars?.INTERNAL_CRON_SECRET) return;
+  const inCloudflareBuild = Boolean(process.env.WORKERS_CI || process.env.CF_PAGES || process.env.NIE_SLA_ONE_CLICK_INTERNAL_SECRET === '1');
+  if (!inCloudflareBuild) return;
+  config.vars = { ...(config.vars || {}), INTERNAL_CRON_SECRET: randomBytes(24).toString('hex') };
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  console.log('one-click build: injected INTERNAL_CRON_SECRET for internal Durable Object calls');
+}
 
 async function prepareAgentRelease(binRoot) {
   const localReleaseDir = String(process.env.NIE_SLA_AGENT_RELEASE_DIR || process.env.NSTATUS_AGENT_RELEASE_DIR || '').trim();
