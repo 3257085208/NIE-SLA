@@ -49,7 +49,9 @@ Installed Agents download install and update assets from their own deployed Work
 
 ## Online updates
 
-One-click deployments bring a **NIE-SLA Online Update** workflow into your GitHub deployment repository: every six hours it checks the official stable release, verifies the deployment files against the official baseline, applies the update, pushes it, and Cloudflare Workers Builds redeploys automatically. The panel's update card shows the current and latest versions.
+Online updates run through the **NIE-SLA Online Update** workflow in your deployment repository: every six hours it checks the official stable release, verifies the deployment files against the official baseline, applies the update, pushes it, and Cloudflare Workers Builds redeploys automatically. The panel's update card shows the current and latest versions.
+
+If the repository's Actions tab shows "Get started with GitHub Actions" (no workflows at all — some one-click deploy flows do not copy workflow files), paste the 12-line snippet from the panel's update guide once in the GitHub web editor. It calls the official reusable workflow, so the update logic always lives in the official repository and never has to be maintained in yours.
 
 To upgrade immediately, or when a deployment stays behind:
 

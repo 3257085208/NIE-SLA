@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260919-update21";
-import { createAdminClient } from "./admin/api.js?v=20260919-update21";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260919-update21";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260919-update21";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260919-update21";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260919-update21";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260919-update22";
+import { createAdminClient } from "./admin/api.js?v=20260919-update22";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260919-update22";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260919-update22";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260919-update22";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260919-update22";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260919-update21";
+} from "./shared/target-catalogs.js?v=20260919-update22";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260919-update21";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260919-update21";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260919-update21";
-import { fmtBytes } from "./shared/format.js?v=20260919-update21";
+} from "./shared/grouping.js?v=20260919-update22";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260919-update22";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260919-update22";
+import { fmtBytes } from "./shared/format.js?v=20260919-update22";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -3393,6 +3393,17 @@ function showAppUpdateChangelog() {
   openModal();
 }
 
+const ONLINE_UPDATE_WORKFLOW_SNIPPET = `name: NIE-SLA Online Update
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+permissions:
+  contents: write
+jobs:
+  update:
+    uses: 3257085208/NIE-SLA/.github/workflows/nie-sla-update.yml@main`;
+
 function showAppUpdateGuide() {
   byId("modal").innerHTML = `
     <h3>立即更新</h3>
@@ -3404,6 +3415,15 @@ function showAppUpdateGuide() {
       <li>点击 <b>Run workflow</b>，无需填写参数。</li>
     </ol>
     <p class="hint">工作流会保留现有 Cloudflare 资源绑定，验证通过后由 Cloudflare 自动重新部署。</p>
+    <h3>部署仓库没有工作流？</h3>
+    <p class="hint">如果 Actions 页面是「Get started with GitHub Actions」（完全没有工作流列表），说明一键部署没有把工作流复制进仓库。在浏览器里补装一次即可，以后无需再动：</p>
+    <ol class="app-update-guide">
+      <li>打开部署仓库的 <b>Actions</b> 页，点击 <b>set up a workflow yourself</b>。</li>
+      <li>把下面这段粘贴进编辑器（无需修改）。</li>
+      <li>点 <b>Commit changes</b>；之后在左侧选择 NIE-SLA Online Update → <b>Run workflow</b>。</li>
+    </ol>
+    <pre class="app-update-snippet">${escapeHtml(ONLINE_UPDATE_WORKFLOW_SNIPPET)}</pre>
+    <div class="ma"><button class="btn btn-sm" type="button" id="copyUpdateWorkflow">复制工作流内容</button></div>
     <h3>长时间没有更新？</h3>
     <ul class="app-update-guide">
       <li>新仓库或复刻仓库可能默认关闭 Actions：仓库 <b>Settings → Actions → General</b> 里选择允许运行。</li>
@@ -3418,6 +3438,17 @@ function showAppUpdateGuide() {
       <a class="btn btn-primary" href="https://github.com/?tab=repositories" target="_blank" rel="noopener noreferrer">打开仓库列表</a>
     </div>`;
   openModal();
+  const copyWorkflow = byId("copyUpdateWorkflow");
+  if (copyWorkflow) {
+    copyWorkflow.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(ONLINE_UPDATE_WORKFLOW_SNIPPET);
+        toast("已复制，粘贴到 GitHub 工作流编辑器并提交即可", "ok");
+      } catch (_) {
+        toast("复制失败，请手动选中上方内容复制", "err");
+      }
+    };
+  }
 }
 
 function formatUpdateTime(value) {

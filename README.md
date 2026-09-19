@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.1.81**
+**Stable · 1.1.82**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -66,7 +66,9 @@ VPS 上的 Agent 安装与后续更新从用户自己的 Worker/站点 `/bin` �
 
 ## 在线更新
 
-一键部署会在你的 GitHub 部署仓库中带上 **NIE-SLA Online Update** workflow：默认每 6 小时检查官方稳定版，验证文件与基线一致后应用新版本并推送，由 Cloudflare Workers Builds 自动重新部署。后台「系统更新」卡片显示当前版本与官方最新版本。
+一键部署的在线更新由部署仓库中的 **NIE-SLA Online Update** workflow 执行：默认每 6 小时检查官方稳定版，验证部署文件与官方基线一致后应用新版本并推送，由 Cloudflare Workers Builds 自动重新部署。后台「系统更新」卡片显示当前版本与官方最新版本。
+
+如果仓库的 Actions 页面是「Get started with GitHub Actions」（没有任何工作流——部分一键部署方式不会复制工作流文件），按后台「更新指引」里的 12 行内容在 GitHub 网页补装一次即可；这段内容引用官方仓库的可复用工作流，更新逻辑以后由官方维护，不需要再改仓库。
 
 需要立即升级或长期没有升级时：
 

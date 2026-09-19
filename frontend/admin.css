@@ -472,6 +472,19 @@ h3 {
 .app-update-log li + li { margin-top: 5px; }
 .app-update-note { line-height: 1.6; }
 .app-update-warn { line-height: 1.6; color: #b45309; }
+.app-update-snippet {
+  margin: 10px 0 6px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+}
 .app-update-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .app-update-log-modal,
 .app-update-guide {

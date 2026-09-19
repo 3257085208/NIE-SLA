@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "17 */6 * * *"
+  workflow_call:
 
 permissions:
   contents: write
@@ -127,6 +128,7 @@ jobs:
             git archive "refs/tags/$candidate" | tar -x -C "$RUNNER_TEMP/current-source"
             local_changes="$(rsync -rlpcni --delete \
               --exclude='.git/' \
+              --exclude='.github/' \
               --exclude='wrangler.jsonc' \
               "$RUNNER_TEMP/current-source/" ./ || true)"
             if [[ -z "$local_changes" ]]; then
@@ -144,7 +146,7 @@ jobs:
             else
               echo "Deployment files differ from the official $CURRENT_VERSION baselines (first tried: $diff_candidate):" >&2
               printf '%s\n' "$diff_output" | head -80 >&2
-              echo "Only wrangler.jsonc may differ during an online update. Reconcile custom code manually." >&2
+              echo "Only wrangler.jsonc and .github may differ during an online update. Reconcile custom code manually." >&2
             fi
             exit 1
           fi

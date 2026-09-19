@@ -21,6 +21,7 @@ assert.ok(Array.isArray(manifest.changelog) && manifest.changelog.length > 0);
 assert.ok(Number.isFinite(Date.parse(manifest.published_at)));
 
 assert.match(workflow, /workflow_dispatch:/);
+assert.match(workflow, /workflow_call:/, 'the update workflow must be callable as a reusable workflow');
 assert.match(workflow, /schedule:[\s\S]*cron: "17 \*\/6 \* \* \*"/);
 assert.doesNotMatch(workflow, /inputs:[\s\S]*(?:source_ref|expected_version)/);
 assert.match(workflow, /contents: write/);
@@ -34,8 +35,9 @@ assert.match(workflow, /cp "\$RUNNER_TEMP\/wrangler\.deployment\.jsonc" wrangler
 assert.match(workflow, /baselines=\("\$CURRENT_REF" "v\$CURRENT_VERSION"\)/, 'online updates must accept both official baselines for a version');
 assert.match(workflow, /git archive "refs\/tags\/\$candidate"/);
 assert.match(workflow, /git archive "refs\/tags\/\$SOURCE_REF"/);
+assert.match(workflow, /--exclude='\.github\/'/, 'repository CI configuration must not gate the deployment baseline');
 assert.match(workflow, /rsync -rlpcni --delete/);
-assert.match(workflow, /Only wrangler\.jsonc may differ/);
+assert.match(workflow, /Only wrangler\.jsonc and \.github may differ/);
 assert.match(workflow, /pnpm run build/);
 assert.match(workflow, /NIE_SLA_DEPLOYMENT_VALIDATION=1 pnpm test/);
 assert.match(workflow, /pnpm run test:update/);
