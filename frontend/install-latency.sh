@@ -69,9 +69,15 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 stop_existing_latency_agent
+# BusyBox adduser on Alpine does not always create the same-named group, and
+# the env file is chowned to root:nie-sla-latency so the service user can read
+# it. Create the group explicitly before the user on every init system.
+if ! grep -q '^nie-sla-latency:' /etc/group 2>/dev/null; then
+  groupadd --system nie-sla-latency 2>/dev/null || addgroup -S nie-sla-latency 2>/dev/null || addgroup nie-sla-latency 2>/dev/null || true
+fi
 if ! id nie-sla-latency >/dev/null 2>&1; then
-  useradd --system --home-dir /opt/nie-sla-latency --shell /usr/sbin/nologin nie-sla-latency 2>/dev/null \
-    || adduser -S -H -h /opt/nie-sla-latency -s /sbin/nologin nie-sla-latency
+  useradd --system --gid nie-sla-latency --home-dir /opt/nie-sla-latency --shell /usr/sbin/nologin nie-sla-latency 2>/dev/null \
+    || adduser -S -H -G nie-sla-latency -h /opt/nie-sla-latency -s /sbin/nologin nie-sla-latency
 fi
 install -d -m 0750 /opt/nie-sla-latency
 chown nie-sla-latency:nie-sla-latency /opt/nie-sla-latency 2>/dev/null || true
@@ -95,7 +101,8 @@ NIE_SLA_LATENCY_NODE_ID=${NIE_SLA_LATENCY_NODE_ID}
 NIE_SLA_LATENCY_INTERVAL_SEC=${NIE_SLA_LATENCY_INTERVAL_SEC:-${NSTATUS_LATENCY_INTERVAL_SEC:-60}}
 NIE_SLA_LATENCY_UPDATE_CHECK_SEC=${NIE_SLA_LATENCY_UPDATE_CHECK_SEC:-${NSTATUS_LATENCY_UPDATE_CHECK_SEC:-3600}}
 EOF
-chown root:nie-sla-latency /etc/nie-sla-latency-agent.env
+chown root:nie-sla-latency /etc/nie-sla-latency-agent.env 2>/dev/null \
+  || chown root:"$(id -gn nie-sla-latency 2>/dev/null || echo root)" /etc/nie-sla-latency-agent.env
 chmod 0640 /etc/nie-sla-latency-agent.env
 
 cat > "$RUN_SCRIPT" <<'EOF'
@@ -169,7 +176,7 @@ name="${SERVICE_NAME}"
 description="NIE-SLA External Latency Agent"
 
 command="/opt/nie-sla-latency/run.sh"
-command_user="nie-sla-latency"
+command_user="nie-sla-latency:nie-sla-latency"
 ${background_block}
 pidfile="/run/${SERVICE_NAME}.pid"
 output_log="${LOG_FILE}"

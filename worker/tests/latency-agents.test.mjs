@@ -34,7 +34,7 @@ assert.deepEqual(await getLatencyAgentUpdatePolicy(env), {
   ok: true,
   auto_update: true,
   check_interval_sec: 3600,
-  script_version: 7,
+  script_version: 8,
   script_sha256: 'a76f1e06835aa37965fe60b46bf7f94f6b65ef36083597ab11995ec00238958a',
 });
 database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES ('agent_auto_update', 'false', ?)`).run(now);
@@ -71,8 +71,8 @@ assert.equal(installScript.status, 200);
 assert.equal(installScript.headers.get('content-type'), 'text/x-shellscript; charset=utf-8');
 const installScriptText = await installScript.text();
 assert.match(installScriptText, /NIE_SLA_LATENCY_TOKEN='nst_[a-f0-9]{48}'/);
-assert.match(installScriptText, /install-latency\.sh\?v=7/);
-assert.match(installScriptText, /9dad2f0e2c6225583699590477ed320c32d1871c2a3d9d101ffea936db6f1e4a/);
+assert.match(installScriptText, /install-latency\.sh\?v=8/);
+assert.match(installScriptText, /0982cf3546282fc445a5fb84169db009cdc1177defbc8efc12d297fd41b0737c/);
 await assert.rejects(
   () => getLatencyAgentInstallScript(env, new Request('https://api.example.test/api/latency-agent/install-script', { headers: { authorization: `Bearer ${installTicket}` } })),
   /无效|已使用/,

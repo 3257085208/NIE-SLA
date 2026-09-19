@@ -1,11 +1,12 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.76",
-  "agent_version": "v1.1.76",
-  "source_ref": "app-v1.1.76",
-  "published_at": "2026-09-19T08:40:00Z",
-  "title": "NIE-SLA 1.1.76",
+  "version": "1.1.77",
+  "agent_version": "v1.1.77",
+  "source_ref": "app-v1.1.77",
+  "published_at": "2026-09-19T09:20:00Z",
+  "title": "NIE-SLA 1.1.77",
   "changelog": [
+    "修复 Alpine/OpenRC 上 Latency 安装器在 `chown root:nie-sla-latency` 处失败（BusyBox adduser 不总是创建同名组）：安装前显式创建用户组，OpenRC 服务固定 user:group，环境文件 chown 失败时回退到该用户的主组；安装器版本升至 8。",
     "内置官方主题：管理后台「主题」页现在同时列出 NIE-SLA 原版与官方内置的 NodeGet 交互画布主题；原版主题的设置（外观与文案）移动到主题卡片中，与新主题及第三方主题的设置入口统一。",
     "官方 NodeGet 画布主题随版本内置（无需上传）：默认保持停用，启用后公开状态页切换为交互式画布界面，停用即恢复原版；主题设置（站点标题、背景、延迟显示等）与第三方主题一致保存。",
     "内置主题文件通过与原版主题一致的受控入口提供（沙箱 iframe + 只读状态协议），并随部署与在线更新一起分发。",
