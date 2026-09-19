@@ -1,5 +1,5 @@
 
-import { clamp, nowSec, parseBoolean, timezoneOffsetMin, publicError, publicHost, publicUrl, REGION_LABELS } from '../utils.js';
+import { clamp, nowSec, dayFromSec, parseBoolean, timezoneOffsetMin, publicError, publicHost, publicUrl, REGION_LABELS } from '../utils.js';
 import { summaryRowsFromChecks, writeR2Json } from '../storage.js';
 import { getMeta, setMeta } from './settings.js';
 import { readCheckBuckets } from './check-buckets.js';
@@ -63,14 +63,19 @@ export async function getStats(env) {
   const results = {};
   try {
     const tables = ['targets', 'check_buckets', 'latest_status', 'incident_events', 'agent_metrics_state', 'agent_metrics_history', 'agent_traffic_monthly', 'agent_traffic_daily', 'ping_targets', 'ping_history', 'rate_limits', 'app_meta'];
+    // Count a bounded prefix per table so this diagnostic cannot scan a
+    // multi-hundred-thousand-row bucket table on every admin render.
+    const countCap = clamp(Number(env.STATS_COUNT_CAP || 20000), 100, 100000);
     for (const table of tables) {
       try {
-        const row = await env.DB.prepare(`SELECT COUNT(*) as cnt FROM ${table}`).first();
-        results[table] = { rows: row?.cnt || 0 };
+        const row = await env.DB.prepare(`SELECT COUNT(*) as cnt FROM (SELECT 1 FROM ${table} LIMIT ?)`).bind(countCap).first();
+        const rows = Number(row?.cnt || 0);
+        results[table] = rows >= countCap ? { rows, count_capped: true } : { rows };
       } catch (_) { results[table] = { error: 'not found' }; }
     }
     const targetsCount = (await env.DB.prepare(`SELECT COUNT(*) as cnt FROM targets WHERE enabled = 1`).first())?.cnt || 0;
-    const recentProbes = await env.DB.prepare(`SELECT target_id, COUNT(*) as cnt FROM check_buckets WHERE bucket_at >= ? GROUP BY target_id ORDER BY cnt ASC LIMIT 20`).bind(nowSec() - 3600).all();
+    const recentCutoff = nowSec() - 3600;
+    const recentProbes = await env.DB.prepare(`SELECT target_id, COUNT(*) as cnt FROM check_buckets WHERE day >= ? AND bucket_at >= ? GROUP BY target_id ORDER BY cnt ASC LIMIT 20`).bind(dayFromSec(recentCutoff, env), recentCutoff).all();
     results.probe_status = { enabled_targets: targetsCount, recent_buckets_per_target: recentProbes.results || [] };
     const agentState = await env.DB.prepare(`SELECT agent_id, updated_at FROM agent_metrics_state`).all();
     const now = nowSec();
