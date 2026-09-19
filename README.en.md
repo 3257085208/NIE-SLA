@@ -47,6 +47,19 @@ This repository is the only public distribution entry point self-hosters need. C
 
 Installed Agents download install and update assets from their own deployed Worker/site. Individual VPS nodes never query the GitHub API; GitHub Releases distribute assets to deployments, and each deployment serves its own Agents.
 
+## Online updates
+
+One-click deployments bring a **NIE-SLA Online Update** workflow into your GitHub deployment repository: every six hours it checks the official stable release, verifies the deployment files against the official baseline, applies the update, pushes it, and Cloudflare Workers Builds redeploys automatically. The panel's update card shows the current and latest versions.
+
+To upgrade immediately, or when a deployment stays behind:
+
+1. Open the deployment repository's **Actions** tab (no runs at all? first enable workflows under Settings → Actions → General).
+2. Choose **NIE-SLA Online Update** → **Run workflow** (no inputs), then wait 1–3 minutes.
+3. After the workflow succeeds, Cloudflare still runs one build; hard-refresh the panel and check for updates again.
+4. On failure, read the run log: `no online-update baseline` means the repository does not match the official baseline (sync manually once); `files differ` means the repository has changes beyond the official release (only `wrangler.jsonc` may differ).
+
+Without GitHub Actions you can update manually: sync the repository to the latest official release and run `npm run deploy`, or redeploy from the latest template. The full troubleshooting checklist lives in the [FAQ](https://nie-sla.pages.dev/en/faq/).
+
 ## Capabilities
 
 - Cloudflare HTTP/TCP availability and SLA history.

@@ -471,6 +471,7 @@ h3 {
 .app-update-log { margin: 8px 0 12px; padding-left: 18px; color: var(--ink-soft); font-size: 12px; }
 .app-update-log li + li { margin-top: 5px; }
 .app-update-note { line-height: 1.6; }
+.app-update-warn { line-height: 1.6; color: #b45309; }
 .app-update-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .app-update-log-modal,
 .app-update-guide {

@@ -1,23 +1,23 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260919-themes20";
-import { createAdminClient } from "./admin/api.js?v=20260919-themes20";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260919-themes20";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260919-themes20";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260919-themes20";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260919-themes20";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260919-update21";
+import { createAdminClient } from "./admin/api.js?v=20260919-update21";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260919-update21";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260919-update21";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260919-update21";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260919-update21";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260919-themes20";
+} from "./shared/target-catalogs.js?v=20260919-update21";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260919-themes20";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260919-themes20";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260919-themes20";
-import { fmtBytes } from "./shared/format.js?v=20260919-themes20";
+} from "./shared/grouping.js?v=20260919-update21";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260919-update21";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260919-update21";
+import { fmtBytes } from "./shared/format.js?v=20260919-update21";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -3331,6 +3331,9 @@ async function loadAppUpdate(refresh = false) {
     const status = data.update_available
       ? '<span class="tag tag-warn">发现新版本</span>'
       : '<span class="tag tag-on">已是最新版</span>';
+    const updateHint = data.update_available
+      ? '<p class="hint app-update-warn">自动更新由部署仓库的 GitHub Actions 执行，不在本站内运行。若长时间未升级，请确认仓库已启用 Actions，或在仓库 Actions 页手动运行 <b>NIE-SLA Online Update</b>；排查步骤见「更新指引」。</p>'
+      : '';
     box.innerHTML = `
       <div class="app-update-versions">
         <div><span>当前版本</span><b>v${escapeHtml(data.current_version || "-")}</b></div>
@@ -3339,6 +3342,7 @@ async function loadAppUpdate(refresh = false) {
       <div class="app-update-status">${status}${data.stale ? `<span class="hint">${data.update_source === "bundled" ? "官方源暂时受限，使用当前部署版本" : "官方源暂时受限，使用缓存结果"}</span>` : ""}</div>
       <p class="hint">发布时间：${escapeHtml(formatUpdateTime(data.published_at))}</p>
       <p class="hint app-update-note">部署仓库默认每 ${escapeHtml(data.automatic_check_hours || 6)} 小时自动检查并应用稳定更新，无需填写仓库或 Token。</p>
+      ${updateHint}
       <div class="app-update-actions">
         <button class="btn btn-sm" id="checkAppUpdate">检查更新</button>
         <button class="btn btn-primary btn-sm" id="showAppUpdateGuide">更新指引</button>
@@ -3400,6 +3404,15 @@ function showAppUpdateGuide() {
       <li>点击 <b>Run workflow</b>，无需填写参数。</li>
     </ol>
     <p class="hint">工作流会保留现有 Cloudflare 资源绑定，验证通过后由 Cloudflare 自动重新部署。</p>
+    <h3>长时间没有更新？</h3>
+    <ul class="app-update-guide">
+      <li>新仓库或复刻仓库可能默认关闭 Actions：仓库 <b>Settings → Actions → General</b> 里选择允许运行。</li>
+      <li>Actions 页面<b>没有任何运行记录</b> = 工作流未启用；手动 Run workflow 可立即触发一次。</li>
+      <li>打开失败运行的日志对照：<code>baseline</code> = 仓库内容与官方当前版本基线不一致，需要先手动同步一次；<code>files differ</code> = 仓库里有官方版本之外的改动（仅 <code>wrangler.jsonc</code> 允许不同）。</li>
+      <li>工作流推送成功后，Cloudflare Workers Builds 还需要一次构建（约 1–3 分钟）。</li>
+      <li>完成后强制刷新后台页面再点「检查更新」；仍显示旧版本说明构建还未完成。</li>
+    </ul>
+    <p class="hint">不使用 GitHub Actions 时也可以手动更新：把仓库同步到官方最新版本后执行 <code>npm run deploy</code>，或直接用最新模板重新一键部署。</p>
     <div class="ma">
       <button class="btn" type="button" data-close>关闭</button>
       <a class="btn btn-primary" href="https://github.com/?tab=repositories" target="_blank" rel="noopener noreferrer">打开仓库列表</a>

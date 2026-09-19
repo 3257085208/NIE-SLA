@@ -1,4 +1,4 @@
-import { escapeHtml } from './html.js?v=20260919-themes20';
+import { escapeHtml } from './html.js?v=20260919-update21';
 export { escapeHtml };
 
 export function targetHasNodeQuality(target = {}) {

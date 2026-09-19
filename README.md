@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.1.80**
+**Stable · 1.1.81**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -63,6 +63,19 @@ flowchart LR
 本仓库是自托管用户唯一的公开分发入口。Cloudflare 构建按 `update-manifest.json` 固定的版本下载本仓库 Release 资产，校验 `VERSION` 与 `SHA256SUMS` 后打包到部署实例的 `/bin`。
 
 VPS 上的 Agent 安装与后续更新从用户自己的 Worker/站点 `/bin` 下载，不在每台 VPS 上查询 GitHub API。GitHub Release 负责公开分发，已部署站点负责实际 Agent 下载。
+
+## 在线更新
+
+一键部署会在你的 GitHub 部署仓库中带上 **NIE-SLA Online Update** workflow：默认每 6 小时检查官方稳定版，验证文件与基线一致后应用新版本并推送，由 Cloudflare Workers Builds 自动重新部署。后台「系统更新」卡片显示当前版本与官方最新版本。
+
+需要立即升级或长期没有升级时：
+
+1. 打开部署仓库的 **Actions** 页（若页面没有运行记录，先到 Settings → Actions → General 允许工作流运行）。
+2. 选择 **NIE-SLA Online Update** → **Run workflow**（无需参数），等待 1–3 分钟。
+3. 工作流成功后，Cloudflare 还会完成一次构建；强制刷新后台页面并重新检查版本。
+4. 失败时打开运行日志：`no online-update baseline` 表示仓库内容与官方基线不一致（需先手动同步一次）；`files differ` 表示仓库有官方版本之外的改动（只有 `wrangler.jsonc` 允许不同）。
+
+不使用 GitHub Actions 时也可以手动更新：把仓库同步到官方最新版本后执行 `npm run deploy`，或直接用最新模板重新一键部署。完整排障清单见[常见问题](https://nie-sla.pages.dev/faq/)。
 
 ## 功能
 
