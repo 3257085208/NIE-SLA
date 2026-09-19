@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
-use std::thread;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -141,50 +141,89 @@ pub(super) fn flush_sample_queue(tx: &mpsc::Sender<QueueCommand>) -> Result<()> 
 
 pub(super) fn spawn_queue_writer(
     path: PathBuf,
-    mut samples: VecDeque<SamplePoint>,
+    samples: VecDeque<SamplePoint>,
     max_samples: usize,
 ) -> mpsc::Sender<QueueCommand> {
     let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let mut dirty = false;
-        let mut last_flush = Instant::now();
-        loop {
-            match rx.recv_timeout(Duration::from_secs(1)) {
-                Ok(QueueCommand::Append(sample)) => {
-                    samples.push_back(sample);
-                    if samples.len() > max_samples {
-                        samples.pop_front();
-                    }
-                    dirty = true;
+    let rx = Arc::new(Mutex::new(rx));
+    let mut initial_samples = Some(samples);
+    crate::supervisor::respawn_loop("queue-writer", move || {
+        let samples = match initial_samples.take() {
+            Some(samples) => samples,
+            // A rebuilt writer reloads the durable tail; only appends that were
+            // still inside the panicked thread can be lost.
+            None => match load_sample_queue(&path) {
+                Ok(samples) => samples,
+                Err(error) => {
+                    eprintln!(
+                        "{{\"ok\":false,\"queue_reload_error\":{}}}",
+                        json_string(&error.to_string())
+                    );
+                    VecDeque::new()
                 }
-                Ok(QueueCommand::AcknowledgeCount(count)) => {
-                    // Count-based drop stays correct across clock steps where
-                    // a timestamp comparison would delete fresh samples.
-                    samples.drain(0..count.min(samples.len()));
-                    dirty = persist_sample_queue(&path, &samples);
-                    last_flush = Instant::now();
-                }
-                Ok(QueueCommand::Flush(reply)) => {
-                    let result = save_sample_queue(&path, &samples);
-                    dirty = result.is_err();
-                    last_flush = Instant::now();
-                    let _ = reply.send(result.map_err(|error| error.to_string()));
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    if dirty {
-                        persist_sample_queue(&path, &samples);
-                    }
-                    break;
-                }
-            }
-            if dirty && last_flush.elapsed() >= Duration::from_secs(QUEUE_FLUSH_SEC) {
-                dirty = persist_sample_queue(&path, &samples);
-                last_flush = Instant::now();
-            }
-        }
+            },
+        };
+        run_queue_writer(&path, samples, max_samples, &rx)
     });
     tx
+}
+
+fn run_queue_writer(
+    path: &Path,
+    mut samples: VecDeque<SamplePoint>,
+    max_samples: usize,
+    rx: &Mutex<mpsc::Receiver<QueueCommand>>,
+) -> bool {
+    let mut dirty = false;
+    let mut last_flush = Instant::now();
+    loop {
+        let received = match rx.lock() {
+            Ok(guard) => guard.recv_timeout(Duration::from_secs(1)),
+            Err(poisoned) => poisoned.into_inner().recv_timeout(Duration::from_secs(1)),
+        };
+        match received {
+            Ok(QueueCommand::Append(sample)) => {
+                samples.push_back(sample);
+                if samples.len() > max_samples {
+                    samples.pop_front();
+                }
+                dirty = true;
+            }
+            Ok(QueueCommand::AcknowledgeCount(count)) => {
+                // Count-based drop stays correct across clock steps where
+                // a timestamp comparison would delete fresh samples.
+                samples.drain(0..count.min(samples.len()));
+                shrink_queue_capacity(&mut samples);
+                dirty = persist_sample_queue(path, &samples);
+                last_flush = Instant::now();
+            }
+            Ok(QueueCommand::Flush(reply)) => {
+                let result = save_sample_queue(path, &samples);
+                dirty = result.is_err();
+                last_flush = Instant::now();
+                let _ = reply.send(result.map_err(|error| error.to_string()));
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                if dirty {
+                    persist_sample_queue(path, &samples);
+                }
+                return false;
+            }
+        }
+        if dirty && last_flush.elapsed() >= Duration::from_secs(QUEUE_FLUSH_SEC) {
+            dirty = persist_sample_queue(path, &samples);
+            last_flush = Instant::now();
+        }
+    }
+}
+
+fn shrink_queue_capacity(samples: &mut VecDeque<SamplePoint>) {
+    // A burst (offline period, failed uploads) can grow the queue far beyond
+    // its steady size; without this the capacity stays resident forever.
+    if samples.capacity() > samples.len().saturating_add(1024) {
+        samples.shrink_to_fit();
+    }
 }
 
 fn persist_sample_queue(path: &Path, samples: &VecDeque<SamplePoint>) -> bool {
@@ -250,6 +289,7 @@ fn json_f64_opt(value: &serde_json::Value, key: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
 
     #[test]
     fn sample_queue_survives_restart_round_trip() {

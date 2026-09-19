@@ -37,7 +37,18 @@ pub(super) fn spawn_update_worker(
                 thread::sleep(Duration::from_secs(cfg.update_check_sec));
                 continue;
             }
-            let checked = check_for_update(&cfg, &http, role);
+            // A panicking update check must not kill the worker for the whole
+            // process lifetime; log it and retry on the normal cadence.
+            let checked = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                check_for_update(&cfg, &http, role)
+            })) {
+                Ok(checked) => checked,
+                Err(_) => {
+                    eprintln!("{{\"ok\":false,\"update_check_panicked\":true}}");
+                    thread::sleep(Duration::from_secs(cfg.update_check_sec));
+                    continue;
+                }
+            };
             let next_check_sec = checked
                 .as_ref()
                 .map(|(_, seconds)| *seconds)

@@ -24,12 +24,16 @@ pub(crate) fn spawn_geoip_worker(cfg: Config, http: HttpClient) {
     if cfg.once {
         return;
     }
-    thread::spawn(move || loop {
-        let delay = match geoip_refresh_delay(read_last_success(&cfg), now_sec()) {
+    crate::supervisor::respawn_loop("geoip-worker", move || run_geoip_worker(&cfg, &http));
+}
+
+fn run_geoip_worker(cfg: &Config, http: &HttpClient) -> bool {
+    loop {
+        let delay = match geoip_refresh_delay(read_last_success(cfg), now_sec()) {
             Some(delay) => delay,
-            None => match refresh_location(&cfg, &http) {
+            None => match refresh_location(cfg, http) {
                 Ok(()) => {
-                    if let Err(error) = write_last_success(&cfg, now_sec()) {
+                    if let Err(error) = write_last_success(cfg, now_sec()) {
                         eprintln!(
                             "{{\"ok\":false,\"geoip_state_error\":{}}}",
                             serde_json::to_string(&error.to_string())
@@ -49,7 +53,7 @@ pub(crate) fn spawn_geoip_worker(cfg: Config, http: HttpClient) {
             },
         };
         thread::sleep(delay);
-    });
+    }
 }
 
 fn geoip_state_path(cfg: &Config) -> PathBuf {

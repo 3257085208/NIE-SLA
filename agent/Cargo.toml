@@ -1,6 +1,6 @@
 ﻿[package]
 name = "nie-sla-agent"
-version = "1.1.87"
+version = "1.1.88"
 edition = "2021"
 license = "MIT"
 description = "NIE-SLA cross-platform metrics agent"
@@ -13,6 +13,7 @@ path = "src/main.rs"
 anyhow = "1"
 base64 = "0.22.1"
 libc = "0.2"
+mimalloc = { version = "0.1", default-features = false }
 serde_json = "1"
 sha2 = "0.10"
 sysinfo = "=0.30.13"

@@ -1,6 +1,5 @@
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -337,6 +336,7 @@ impl ProxyTarget {
 }
 
 pub(crate) fn run_proxy_checks(
+    probe_pool: &crate::pool::ProbePool,
     targets: &[ProxyTarget],
     canary_host: &str,
     canary_port: u16,
@@ -348,28 +348,18 @@ pub(crate) fn run_proxy_checks(
         .cloned()
         .collect();
     let mut results = Vec::with_capacity(selected.len());
+    // Chunking keeps the previous MAX_PROXY_CONCURRENCY cap while the pool
+    // reuses its worker threads across chunks instead of respawning them.
     for batch in selected.chunks(MAX_PROXY_CONCURRENCY) {
-        let handles: Vec<_> = batch
+        let jobs: Vec<_> = batch
             .iter()
             .cloned()
             .map(|target| {
                 let canary_host = canary_host.to_string();
-                let fallback_target = target.clone();
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-                    thread::spawn(move || probe_proxy_target(&target, &canary_host, canary_port))
-                }))
-                .map_err(|_| fallback_target)
+                move || probe_proxy_target(&target, &canary_host, canary_port)
             })
             .collect();
-        for handle in handles {
-            match handle {
-                Ok(handle) => match handle.join() {
-                    Ok(result) => results.push(result),
-                    Err(_) => eprintln!("proxy probe thread panicked; result dropped"),
-                },
-                Err(target) => results.push(probe_proxy_target(&target, canary_host, canary_port)),
-            }
-        }
+        results.extend(probe_pool.run(jobs));
     }
     results.sort_by(|left, right| left.target_id.cmp(&right.target_id));
     results

@@ -178,11 +178,15 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
 }
 
 fn spawn_task_worker(cfg: Config, http: HttpClient) {
-    thread::spawn(move || loop {
+    crate::supervisor::respawn_loop("manager-task-worker", move || run_task_worker(&cfg, &http));
+}
+
+fn run_task_worker(cfg: &Config, http: &HttpClient) -> bool {
+    loop {
         // poll_once_manager blocks while a fixed task runs (up to two hours);
         // running it here keeps the manager's health, reconcile and update
         // duties responsive throughout.
-        if let Err(error) = crate::tasks::poll_once_manager(&cfg, &http) {
+        if let Err(error) = crate::tasks::poll_once_manager(cfg, http) {
             eprintln!(
                 "{{\"ok\":false,\"task_error\":{}}}",
                 serde_json::to_string(&format!("{error:#}"))
@@ -190,12 +194,16 @@ fn spawn_task_worker(cfg: Config, http: HttpClient) {
             );
         }
         thread::sleep(Duration::from_secs(TASK_POLL_SEC));
-    });
+    }
 }
 
 fn spawn_heartbeat(cfg: Config) {
-    thread::spawn(move || loop {
-        if let Err(error) = write_heartbeat(&cfg, "current") {
+    crate::supervisor::respawn_loop("manager-heartbeat", move || run_heartbeat(&cfg));
+}
+
+fn run_heartbeat(cfg: &Config) -> bool {
+    loop {
+        if let Err(error) = write_heartbeat(cfg, "current") {
             eprintln!(
                 "{{\"ok\":false,\"manager_heartbeat_error\":{}}}",
                 serde_json::to_string(&error.to_string())
@@ -203,7 +211,7 @@ fn spawn_heartbeat(cfg: Config) {
             );
         }
         thread::sleep(Duration::from_secs(HEARTBEAT_INTERVAL_SEC));
-    });
+    }
 }
 
 pub(crate) fn bootstrap_if_root() {

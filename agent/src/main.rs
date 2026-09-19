@@ -4,6 +4,7 @@ use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{
@@ -24,8 +25,10 @@ mod dns_compat;
 mod geoip;
 mod manager;
 mod platform;
+mod pool;
 mod proxy;
 mod queue;
+mod supervisor;
 mod tasks;
 mod telemetry_proto;
 mod updater;
@@ -36,6 +39,14 @@ use updater::{confirm_pending_update, rollback_stale_pending_update};
 use updater::{restart_after_update, spawn_update_worker, UpdateRole};
 
 const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// musl's allocator keeps freed pages in per-size-class groups, which left the
+// long-running telemetry process holding tens of megabytes after probe bursts.
+// mimalloc returns freed pages to the OS eagerly with the same allocator on
+// every target, so RSS tracks the live working set.
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 const DEFAULT_REPORT_SEC: u64 = 300;
 const DEFAULT_SAMPLE_SEC: u64 = 1;
 const DEFAULT_PING_SEC: u64 = 20;
@@ -296,6 +307,9 @@ struct UploadResult {
     ping_count: usize,
     proxy_count: usize,
     generation: u64,
+    // Recycled JSON body buffer: rebuilding this string every cycle used to
+    // grow a fresh allocation that musl then kept for the process lifetime.
+    body: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -484,8 +498,13 @@ fn run() -> Result<()> {
         cfg.queue_max_samples,
     );
     let ping_interval_sec = Arc::new(AtomicU64::new(cfg.ping_sec));
-    let (ping_rx, ping_plan_tx) =
-        spawn_ping_worker(cfg.clone(), http.clone(), ping_interval_sec.clone());
+    let probe_pool = Arc::new(pool::ProbePool::new());
+    let (ping_rx, ping_plan_tx) = spawn_ping_worker(
+        cfg.clone(),
+        http.clone(),
+        ping_interval_sec.clone(),
+        Arc::clone(&probe_pool),
+    );
     let update_rx = if cfg.once {
         None
     } else {
@@ -518,6 +537,7 @@ fn run() -> Result<()> {
     let mut last_successful_upload = Instant::now();
     let mut upload_started = Instant::now();
     let mut upload_generation: u64 = 0;
+    let mut upload_body_buffer: Vec<u8> = Vec::new();
     let mut report_interval_sec = cfg.report_sec;
     let mut retry_sec = report_interval_sec.clamp(10, 60);
     let (upload_tx, upload_rx) = mpsc::channel::<UploadResult>();
@@ -538,10 +558,13 @@ fn run() -> Result<()> {
             if result.generation != upload_generation {
                 // A previous attempt was abandoned by the stall recovery
                 // below; its late result must not consume samples or reset
-                // the in-flight state of the newer attempt.
+                // the in-flight state of the newer attempt. Its recycled body
+                // buffer is still safe to reuse.
+                upload_body_buffer = result.body;
                 continue;
             }
             uploading = false;
+            upload_body_buffer = result.body;
             match result.result {
                 Ok(upload) => {
                     if let Some(plan) = upload.ping_plan {
@@ -578,6 +601,7 @@ fn run() -> Result<()> {
                     // after a backwards NTP correction.
                     let drop = result.sample_count.min(samples.len());
                     samples.drain(0..drop);
+                    shrink_deque_capacity(&mut samples);
                     if queue_tx
                         .send(QueueCommand::AcknowledgeCount(result.sample_count))
                         .is_err()
@@ -619,10 +643,12 @@ fn run() -> Result<()> {
         if pings.len() > ping_queue_capacity {
             let keep_from = pings.len().saturating_sub(ping_queue_capacity);
             pings.drain(0..keep_from);
+            shrink_vec_capacity(&mut pings);
         }
         if proxy_checks.len() > MAX_PROXY_QUEUE_CAPACITY {
             let keep_from = proxy_checks.len().saturating_sub(MAX_PROXY_QUEUE_CAPACITY);
             proxy_checks.drain(0..keep_from);
+            shrink_vec_capacity(&mut proxy_checks);
         }
 
         if let Some(rx) = &update_rx {
@@ -712,19 +738,31 @@ fn run() -> Result<()> {
             let generation = upload_generation;
             first_report = false;
             last_report = Instant::now();
+            let body_buffer = std::mem::take(&mut upload_body_buffer);
             thread::spawn(move || {
-                let result = submit(
-                    &cfg_for_upload,
-                    &http_for_upload,
-                    ws_for_upload.as_ref(),
-                    metrics,
-                );
+                // A panic here must still resolve the in-flight upload state,
+                // otherwise the loop would wait forever for a result that can
+                // never arrive.
+                let (result, body) = match catch_unwind(AssertUnwindSafe(|| {
+                    submit(
+                        &cfg_for_upload,
+                        &http_for_upload,
+                        ws_for_upload.as_ref(),
+                        metrics,
+                        body_buffer,
+                    )
+                })) {
+                    Ok(Ok((upload, body))) => (Ok(upload), body),
+                    Ok(Err(error)) => (Err(error), Vec::new()),
+                    Err(_) => (Err(anyhow!("upload thread panicked")), Vec::new()),
+                };
                 let _ = tx.send(UploadResult {
                     result,
                     sample_count,
                     ping_count,
                     proxy_count,
                     generation,
+                    body,
                 });
             });
             if cfg.once {
@@ -793,32 +831,34 @@ fn telemetry_restart_available() -> bool {
 // process that is still "active" from systemd's point of view but has wedged
 // before its next successful upload.
 fn spawn_disk_worker(disk_rows: DiskRowsCache) {
-    thread::spawn(move || {
-        // Enumerating and refreshing mounts can block on a dead device; it
-        // must never stall the sampling/upload loop.
-        let mut disks = Disks::new_with_refreshed_list();
-        loop {
-            disks.refresh_list();
-            disks.refresh();
-            let rows = disks
-                .list()
-                .iter()
-                .map(|disk| {
-                    (
-                        disk.name().to_string_lossy().to_string(),
-                        disk.mount_point().to_string_lossy().to_string(),
-                        disk.total_space(),
-                        disk.available_space(),
-                        disk.is_removable(),
-                    )
-                })
-                .collect();
-            if let Ok(mut guard) = disk_rows.lock() {
-                *guard = rows;
-            }
-            thread::sleep(Duration::from_secs(60));
+    supervisor::respawn_loop("disk-worker", move || run_disk_worker(&disk_rows));
+}
+
+fn run_disk_worker(disk_rows: &DiskRowsCache) -> bool {
+    // Enumerating and refreshing mounts can block on a dead device; it
+    // must never stall the sampling/upload loop.
+    let mut disks = Disks::new_with_refreshed_list();
+    loop {
+        disks.refresh_list();
+        disks.refresh();
+        let rows = disks
+            .list()
+            .iter()
+            .map(|disk| {
+                (
+                    disk.name().to_string_lossy().to_string(),
+                    disk.mount_point().to_string_lossy().to_string(),
+                    disk.total_space(),
+                    disk.available_space(),
+                    disk.is_removable(),
+                )
+            })
+            .collect();
+        if let Ok(mut guard) = disk_rows.lock() {
+            *guard = rows;
         }
-    });
+        thread::sleep(Duration::from_secs(60));
+    }
 }
 
 /// The privileged manager watches the fixed system path; rootless installs have
@@ -1278,43 +1318,50 @@ fn disk_info(total: u64, avail: u64) -> DiskInfo {
 
 fn spawn_ws_uploader(cfg: Config) -> WsUploader {
     let (tx, rx) = mpsc::channel::<WsCommand>();
-    thread::spawn(move || {
-        let mut socket = None;
-        let mut retry = WsRetryState::default();
-        loop {
-            match rx.recv_timeout(Duration::from_secs(30)) {
-                Ok(WsCommand::Submit {
-                    body,
-                    binary,
-                    response,
-                }) => {
-                    let result = if let Some(delay) = retry.retry_delay(Instant::now()) {
-                        Err(anyhow!("WSS retry delayed for {}s", delay.as_secs().max(1)))
+    let rx = Arc::new(Mutex::new(rx));
+    supervisor::respawn_loop("ws-uploader", move || run_ws_uploader(&cfg, &rx));
+    WsUploader { tx }
+}
+
+fn run_ws_uploader(cfg: &Config, rx: &Mutex<mpsc::Receiver<WsCommand>>) -> bool {
+    let mut socket = None;
+    let mut retry = WsRetryState::default();
+    loop {
+        let received = match rx.lock() {
+            Ok(guard) => guard.recv_timeout(Duration::from_secs(30)),
+            Err(poisoned) => poisoned.into_inner().recv_timeout(Duration::from_secs(30)),
+        };
+        match received {
+            Ok(WsCommand::Submit {
+                body,
+                binary,
+                response,
+            }) => {
+                let result = if let Some(delay) = retry.retry_delay(Instant::now()) {
+                    Err(anyhow!("WSS retry delayed for {}s", delay.as_secs().max(1)))
+                } else {
+                    let result = submit_ws_payload(cfg, &mut socket, &body, binary.as_deref());
+                    if result.is_err() {
+                        socket = None;
+                        retry.record_failure(Instant::now());
                     } else {
-                        let result = submit_ws_payload(&cfg, &mut socket, &body, binary.as_deref());
-                        if result.is_err() {
-                            socket = None;
-                            retry.record_failure(Instant::now());
-                        } else {
-                            retry.record_success();
-                        }
-                        result
-                    };
-                    let _ = response.send(result);
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    if let Some(ws) = socket.as_mut() {
-                        if ws.send(Message::Ping(Vec::new().into())).is_err() {
-                            socket = None;
-                            retry.record_failure(Instant::now());
-                        }
+                        retry.record_success();
+                    }
+                    result
+                };
+                let _ = response.send(result);
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if let Some(ws) = socket.as_mut() {
+                    if ws.send(Message::Ping(Vec::new().into())).is_err() {
+                        socket = None;
+                        retry.record_failure(Instant::now());
                     }
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return false,
         }
-    });
-    WsUploader { tx }
+    }
 }
 
 fn submit_ws_payload(
@@ -1469,7 +1516,8 @@ fn submit(
     http: &HttpClient,
     ws: Option<&WsUploader>,
     metrics: Metrics,
-) -> Result<WsSubmitResponse> {
+    body_buffer: Vec<u8>,
+) -> Result<(WsSubmitResponse, Vec<u8>)> {
     let payload = serde_json::json!({
         "agent_id": cfg.agent_id,
         "agent_label": cfg.agent_label,
@@ -1478,7 +1526,10 @@ fn submit(
         "metrics": metrics_json(&metrics),
     });
     let url = format!("{}/api/agent/metrics", cfg.api.trim_end_matches('/'));
-    let body = payload.to_string();
+    let mut body = body_buffer;
+    body.clear();
+    serde_json::to_writer(&mut body, &payload)
+        .map_err(|err| anyhow!("serialize metrics payload: {}", err))?;
     let binary = (cfg.ws_encoding == WsEncoding::Protobuf).then(|| {
         telemetry_proto::encode_payload(
             &cfg.agent_id,
@@ -1489,11 +1540,13 @@ fn submit(
         )
     });
     if let Some(uploader) = ws {
+        let ws_body = String::from_utf8(body.clone())
+            .map_err(|err| anyhow!("metrics payload is not utf8: {}", err))?;
         let (response_tx, response_rx) = mpsc::channel();
         if uploader
             .tx
             .send(WsCommand::Submit {
-                body: body.clone(),
+                body: ws_body,
                 binary,
                 response: response_tx,
             })
@@ -1505,7 +1558,7 @@ fn submit(
                         "{{\"ok\":true,\"submitted_at\":{},\"transport\":\"ws\"}}",
                         now_sec()
                     );
-                    return Ok(upload);
+                    return Ok((upload, body));
                 }
                 Ok(Err(err)) => {
                     eprintln!("WS metrics upload failed, falling back to HTTP: {}", err)
@@ -1515,14 +1568,19 @@ fn submit(
         }
     }
     let response = http
-        .post_json(&url, &cfg.token, &body)
+        .post_json(
+            &url,
+            &cfg.token,
+            std::str::from_utf8(&body)
+                .map_err(|err| anyhow!("metrics payload is not utf8: {}", err))?,
+        )
         .map_err(|err| anyhow!("submit failed for {}: {}", url, err))?;
     let upload = parse_submit_response(&response)?;
     println!(
         "{{\"ok\":true,\"submitted_at\":{},\"transport\":\"http\"}}",
         now_sec()
     );
-    Ok(upload)
+    Ok((upload, body))
 }
 
 fn parse_submit_response(response: &str) -> Result<WsSubmitResponse> {
@@ -2354,102 +2412,124 @@ fn spawn_ping_worker(
     cfg: Config,
     http: HttpClient,
     ping_interval_sec: Arc<AtomicU64>,
+    probe_pool: Arc<pool::ProbePool>,
 ) -> (mpsc::Receiver<PingBatch>, mpsc::Sender<PingPlan>) {
     let (tx, rx) = mpsc::channel();
     let (plan_tx, plan_rx) = mpsc::channel::<PingPlan>();
-    thread::spawn(move || {
-        let mut targets = Vec::new();
-        let mut proxy_targets = Vec::new();
-        let mut proxy_interval_sec = DEFAULT_PROXY_SEC;
-        let mut proxy_canary_host = "example.com".to_string();
-        let mut proxy_canary_port = 443_u16;
-        let refresh_period = Duration::from_secs(cfg.ping_target_refresh_sec);
-        let mut last_refresh = Instant::now() - refresh_period;
-        let mut last_ping = Instant::now() - Duration::from_secs(cfg.ping_sec);
-        let mut last_proxy = Instant::now() - Duration::from_secs(DEFAULT_PROXY_SEC);
-        loop {
-            while let Ok(plan) = plan_rx.try_recv() {
-                apply_ping_interval(&ping_interval_sec, plan.interval_sec);
-                targets = plan.targets;
-                if plan.proxy_targets_valid {
-                    proxy_targets = plan.proxy_targets;
-                    proxy_interval_sec = plan.proxy_interval_sec.clamp(30, 900);
-                    proxy_canary_host = plan.proxy_canary_host;
-                    proxy_canary_port = plan.proxy_canary_port;
-                    last_proxy = Instant::now() - Duration::from_secs(proxy_interval_sec);
-                }
-                last_refresh = Instant::now();
-            }
-            if last_refresh.elapsed() >= refresh_period {
-                match fetch_ping_targets(&cfg, &http) {
-                    Ok(plan) => {
-                        apply_ping_interval(&ping_interval_sec, plan.interval_sec);
-                        targets = plan.targets;
-                        if plan.proxy_targets_valid {
-                            proxy_targets = plan.proxy_targets;
-                            proxy_interval_sec = plan.proxy_interval_sec.clamp(30, 900);
-                            proxy_canary_host = plan.proxy_canary_host;
-                            proxy_canary_port = plan.proxy_canary_port;
-                            last_proxy = Instant::now() - Duration::from_secs(proxy_interval_sec);
-                        }
-                        last_refresh = Instant::now();
-                    }
-                    Err(error) => {
-                        let retry_after = ping_target_refresh_retry_after(refresh_period);
-                        eprintln!(
-                            "ping target refresh failed; retrying in {}s: {}",
-                            retry_after.as_secs(),
-                            error
-                        );
-                        last_refresh = Instant::now() - refresh_period.saturating_sub(retry_after);
-                    }
-                }
-            }
-            let interval = current_ping_interval(&ping_interval_sec);
-            let ping_due = last_ping.elapsed() >= Duration::from_secs(interval);
-            let proxy_period = Duration::from_secs(proxy_interval_sec.clamp(30, 900));
-            let proxy_due = last_proxy.elapsed() >= proxy_period;
-            if ping_due || proxy_due {
-                if tx
-                    .send(PingBatch {
-                        results: if ping_due {
-                            run_pings(&targets, &cfg.ping_targets, &http)
-                        } else {
-                            Vec::new()
-                        },
-                        proxy_results: if proxy_due {
-                            proxy::run_proxy_checks(
-                                &proxy_targets,
-                                &proxy_canary_host,
-                                proxy_canary_port,
-                            )
-                        } else {
-                            Vec::new()
-                        },
-                        interval_sec: interval,
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-                if ping_due {
-                    last_ping = Instant::now();
-                }
-                if proxy_due {
-                    last_proxy = Instant::now();
-                }
-            }
-            thread::sleep(next_ping_worker_sleep(
-                last_refresh.elapsed(),
-                refresh_period,
-                last_ping.elapsed(),
-                Duration::from_secs(current_ping_interval(&ping_interval_sec)),
-                last_proxy.elapsed(),
-                proxy_period,
-            ));
-        }
+    let plan_rx = Arc::new(Mutex::new(plan_rx));
+    supervisor::respawn_loop("ping-worker", move || {
+        run_ping_worker(&cfg, &http, &ping_interval_sec, &tx, &plan_rx, &probe_pool)
     });
     (rx, plan_tx)
+}
+
+fn run_ping_worker(
+    cfg: &Config,
+    http: &HttpClient,
+    ping_interval_sec: &AtomicU64,
+    tx: &mpsc::Sender<PingBatch>,
+    plan_rx: &Mutex<mpsc::Receiver<PingPlan>>,
+    probe_pool: &pool::ProbePool,
+) -> bool {
+    let mut targets = Vec::new();
+    let mut proxy_targets = Vec::new();
+    let mut proxy_interval_sec = DEFAULT_PROXY_SEC;
+    let mut proxy_canary_host = "example.com".to_string();
+    let mut proxy_canary_port = 443_u16;
+    let refresh_period = Duration::from_secs(cfg.ping_target_refresh_sec);
+    let mut last_refresh = Instant::now() - refresh_period;
+    let mut last_ping = Instant::now() - Duration::from_secs(cfg.ping_sec);
+    let mut last_proxy = Instant::now() - Duration::from_secs(DEFAULT_PROXY_SEC);
+    loop {
+        loop {
+            let plan = match plan_rx.lock() {
+                Ok(guard) => guard.try_recv(),
+                Err(poisoned) => poisoned.into_inner().try_recv(),
+            };
+            let plan = match plan {
+                Ok(plan) => plan,
+                Err(_) => break,
+            };
+            apply_ping_interval(ping_interval_sec, plan.interval_sec);
+            targets = plan.targets;
+            if plan.proxy_targets_valid {
+                proxy_targets = plan.proxy_targets;
+                proxy_interval_sec = plan.proxy_interval_sec.clamp(30, 900);
+                proxy_canary_host = plan.proxy_canary_host;
+                proxy_canary_port = plan.proxy_canary_port;
+                last_proxy = Instant::now() - Duration::from_secs(proxy_interval_sec);
+            }
+            last_refresh = Instant::now();
+        }
+        if last_refresh.elapsed() >= refresh_period {
+            match fetch_ping_targets(cfg, http) {
+                Ok(plan) => {
+                    apply_ping_interval(ping_interval_sec, plan.interval_sec);
+                    targets = plan.targets;
+                    if plan.proxy_targets_valid {
+                        proxy_targets = plan.proxy_targets;
+                        proxy_interval_sec = plan.proxy_interval_sec.clamp(30, 900);
+                        proxy_canary_host = plan.proxy_canary_host;
+                        proxy_canary_port = plan.proxy_canary_port;
+                        last_proxy = Instant::now() - Duration::from_secs(proxy_interval_sec);
+                    }
+                    last_refresh = Instant::now();
+                }
+                Err(error) => {
+                    let retry_after = ping_target_refresh_retry_after(refresh_period);
+                    eprintln!(
+                        "ping target refresh failed; retrying in {}s: {}",
+                        retry_after.as_secs(),
+                        error
+                    );
+                    last_refresh = Instant::now() - refresh_period.saturating_sub(retry_after);
+                }
+            }
+        }
+        let interval = current_ping_interval(ping_interval_sec);
+        let ping_due = last_ping.elapsed() >= Duration::from_secs(interval);
+        let proxy_period = Duration::from_secs(proxy_interval_sec.clamp(30, 900));
+        let proxy_due = last_proxy.elapsed() >= proxy_period;
+        if ping_due || proxy_due {
+            if tx
+                .send(PingBatch {
+                    results: if ping_due {
+                        run_pings(probe_pool, &targets, &cfg.ping_targets, http)
+                    } else {
+                        Vec::new()
+                    },
+                    proxy_results: if proxy_due {
+                        proxy::run_proxy_checks(
+                            probe_pool,
+                            &proxy_targets,
+                            &proxy_canary_host,
+                            proxy_canary_port,
+                        )
+                    } else {
+                        Vec::new()
+                    },
+                    interval_sec: interval,
+                })
+                .is_err()
+            {
+                return false;
+            }
+            if ping_due {
+                last_ping = Instant::now();
+            }
+            if proxy_due {
+                last_proxy = Instant::now();
+            }
+        }
+        thread::sleep(next_ping_worker_sleep(
+            last_refresh.elapsed(),
+            refresh_period,
+            last_ping.elapsed(),
+            Duration::from_secs(current_ping_interval(ping_interval_sec)),
+            last_proxy.elapsed(),
+            proxy_period,
+        ));
+    }
 }
 
 fn current_ping_interval(interval: &AtomicU64) -> u64 {
@@ -2487,40 +2567,24 @@ fn ping_target_refresh_retry_after(refresh_period: Duration) -> Duration {
         .max(Duration::from_secs(1))
 }
 
-fn run_pings(targets: &[PingTarget], selector: &str, http: &HttpClient) -> Vec<PingResult> {
-    let selected: Vec<_> = targets
+fn run_pings(
+    probe_pool: &pool::ProbePool,
+    targets: &[PingTarget],
+    selector: &str,
+    http: &HttpClient,
+) -> Vec<PingResult> {
+    let jobs: Vec<_> = targets
         .iter()
         .filter(|target| ping_target_selected(&target.id, selector))
         .cloned()
+        .map(|target| {
+            let http = http.clone();
+            move || ping_target(&target, &http)
+        })
         .collect();
-    let mut results = Vec::with_capacity(selected.len());
-    for batch in selected.chunks(MAX_PING_CONCURRENCY) {
-        let handles: Vec<_> = batch
-            .iter()
-            .cloned()
-            .map(|target| {
-                let http = http.clone();
-                let fallback_target = target.clone();
-                // A thread-spawn failure (resource exhaustion) must not unwind
-                // and silently kill the whole ping worker: fall back to an
-                // inline probe on this thread instead.
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-                    thread::spawn(move || ping_target(&target, &http))
-                }))
-                .map_err(|_| fallback_target)
-            })
-            .collect();
-        for handle in handles {
-            match handle {
-                Ok(handle) => match handle.join() {
-                    Ok(sample) => results.push(sample),
-                    Err(_) => eprintln!("ping probe thread panicked; sample dropped"),
-                },
-                Err(target) => results.push(ping_target(&target, http)),
-            }
-        }
-    }
-    results
+    // The pool caps concurrency at MAX_PING_CONCURRENCY workers, matching the
+    // previous chunked fan-out while removing per-cycle thread churn.
+    probe_pool.run(jobs)
 }
 
 fn ping_target_selected(id: &str, selector: &str) -> bool {
@@ -2655,6 +2719,7 @@ fn aggregate(samples: &[SamplePoint]) -> AggStats {
 
 fn drop_ping_prefix(pings: &mut Vec<PingResult>, count: usize) {
     pings.drain(0..count.min(pings.len()));
+    shrink_vec_capacity(pings);
 }
 
 fn ping_upload_batch(pings: &[PingResult]) -> Vec<PingResult> {
@@ -2663,6 +2728,21 @@ fn ping_upload_batch(pings: &[PingResult]) -> Vec<PingResult> {
 
 fn drop_proxy_prefix(checks: &mut Vec<proxy::ProxyCheckResult>, count: usize) {
     checks.drain(0..count.min(checks.len()));
+    shrink_vec_capacity(checks);
+}
+
+fn shrink_vec_capacity<T>(items: &mut Vec<T>) {
+    // Queues can balloon during upload outages; release the surplus pages once
+    // the backlog is delivered again instead of keeping them resident.
+    if items.capacity() > items.len().saturating_add(1024) {
+        items.shrink_to_fit();
+    }
+}
+
+fn shrink_deque_capacity<T>(items: &mut VecDeque<T>) {
+    if items.capacity() > items.len().saturating_add(1024) {
+        items.shrink_to_fit();
+    }
 }
 
 fn proxy_upload_batch(checks: &[proxy::ProxyCheckResult]) -> Vec<proxy::ProxyCheckResult> {
