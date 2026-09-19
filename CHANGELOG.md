@@ -1,6 +1,10 @@
 # 更新日志
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
+## 1.1.78 - 2026-09-19
+
+- 修复 CSP `frame-src` 未含 `'self'` 导致 Canvas 主题 iframe 被拦截。
+
 ## 1.1.77 - 2026-09-19
 
 - 修复 Alpine/OpenRC 上 Latency 安装器的用户组缺失问题（安装器版本 8）。
