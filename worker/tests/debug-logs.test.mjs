@@ -54,6 +54,18 @@ const afterCleanup = await listDebugLogs(env);
 assert.equal(afterCleanup.logs.length, 1);
 assert.equal(afterCleanup.logs[0].ip, '198.51.100.7');
 
+// The listing total must be counted through a bounded subquery: COUNT(*) over
+// the whole table used to read every retained log row on each admin render.
+database.prepare(`
+  INSERT INTO debug_logs (id, ts, level, ip, method, path, actor, summary, status, ref)
+  SELECT 'bulk-' || value, ?, 'debug', '', '', '/api/status', '', '', 200, ''
+  FROM (WITH RECURSIVE seq(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM seq WHERE value < 5002) SELECT value FROM seq)
+`).run(now);
+const capped = await listDebugLogs(env);
+assert.equal(capped.total, 5000, 'debug log total must stop at the bounded count cap');
+assert.equal(capped.total_capped, true);
+assert.equal(capped.logs.length, 200);
+
 assert.equal(shouldLogDebugOperation('/api/auth/login', 'POST'), true);
 assert.equal(shouldLogDebugOperation('/api/auth/login', 'POST', true), true, 'login failures must be logged');
 assert.equal(shouldLogDebugOperation('/api/auth/config', 'GET'), false, 'public auth config discovery must not write D1');
@@ -139,6 +151,13 @@ assert.match(
 assert.doesNotMatch(routes, /recordDebugLog\(env,[\s\S]{0,200}(?:authorization|x-admin-session)/i, 'debug logging must never capture auth headers');
 const index = await readFile(new URL('../src/index.js', import.meta.url), 'utf8');
 assert.match(index, /debug_log_cleanup[\s\S]{0,160}cleanupDebugLogs\(env\)/, 'hourly maintenance must clean debug logs');
+const archive = await readFile(new URL('../src/admin/archive.js', import.meta.url), 'utf8');
+assert.match(
+  archive,
+  /SELECT COUNT\(\*\) as cnt FROM \(SELECT 1 FROM \$\{table\} LIMIT \?\)/,
+  'admin stats must count a bounded prefix instead of scanning whole tables',
+);
+assert.match(archive, /count_capped/, 'admin stats must expose when a table count was capped');
 
 console.log('debug operation log tests passed');
 

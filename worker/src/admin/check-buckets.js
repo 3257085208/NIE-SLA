@@ -646,9 +646,14 @@ export async function reconcileOpenIncidents(env) {
   if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
   try {
     const result = await env.DB.prepare(
+      // The recovery point can never precede the incident start, and the
+      // EXISTS gate below already requires a success in the last 30 minutes;
+      // bounding the scan keeps this hourly reconciliation from re-reading
+      // every stored bucket of long-lived incidents.
       `UPDATE incident_events SET recovered_at = (
          SELECT MAX(cb.bucket_at) FROM check_buckets cb
          WHERE cb.target_id = incident_events.target_id AND cb.ok_count > 0
+           AND cb.bucket_at >= MAX(incident_events.started_at, strftime('%s','now') - 604800)
        )
        WHERE recovered_at IS NULL
          AND EXISTS (

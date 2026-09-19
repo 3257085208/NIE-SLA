@@ -4,6 +4,7 @@ import { ensureV6Schema } from './schema.js';
 
 const LOG_LEVEL = 'debug';
 const RETENTION_DAYS = 30;
+const DEBUG_COUNT_CAP = 5000;
 const SUMMARY_MAX_HOURS = 24;
 const SUMMARY_GROUP_LIMIT = 512;
 const DEBUG_ROUTE_BUCKETS = [
@@ -216,14 +217,21 @@ export async function listDebugLogs(env, url = new URL('https://status.example/a
     .all()
     .catch(() => ({ results: [] }));
   const rows = Array.isArray(rowsResult) ? rowsResult : (rowsResult?.results || []);
-  const countRow = await env.DB.prepare(`SELECT COUNT(*) AS total FROM debug_logs ${where}`)
-    .bind(...(actor ? [actor] : []))
+  // COUNT(*) over the whole table used to read every log row on each admin
+  // render (the table keeps months of entries). Count a bounded prefix through
+  // the ts index instead; the value stays exact until it reaches the cap.
+  const actorScanFrom = Math.floor(Date.now() / 1000) - RETENTION_DAYS * 86400;
+  const countWhere = actor ? 'WHERE actor = ? AND ts >= ?' : '';
+  const countRow = await env.DB.prepare(`SELECT COUNT(*) AS total FROM (SELECT 1 FROM debug_logs ${countWhere} LIMIT ?)`)
+    .bind(...(actor ? [actor, actorScanFrom, DEBUG_COUNT_CAP] : [DEBUG_COUNT_CAP]))
     .first()
     .catch(() => ({ total: 0 }));
+  const total = Number(countRow?.total || 0);
   return {
     ok: true,
     logs: rows,
-    total: Number(countRow?.total || 0),
+    total,
+    total_capped: total >= DEBUG_COUNT_CAP,
     limit,
     offset,
   };
