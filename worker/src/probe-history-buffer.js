@@ -270,7 +270,9 @@ export class ProbeHistoryBuffer {
 
   async listDeadLetters(targetId = null, limit = 50) {
     const boundedLimit = clamp(Number(limit || 50), 1, 100);
-    const scoped = this.isHub ? sanitizeId(targetId || '') : '';
+    // In hub mode an empty target means "every target"; sanitizeId never returns
+    // an empty string, so only sanitize when a target was actually provided.
+    const scoped = this.isHub && targetId ? sanitizeId(targetId) : '';
     const meta = this.isHub ? null : await this.state.storage.get('meta');
     const rows = this.isHub
       ? await this.state.storage.list({
@@ -291,7 +293,7 @@ export class ProbeHistoryBuffer {
   }
 
   async replayDeadLetter(day, targetId = null) {
-    const scoped = this.isHub ? sanitizeId(targetId || '') : '';
+    const scoped = this.isHub && targetId ? sanitizeId(targetId) : '';
     const key = this.isHub ? hubDeadLetterKey(scoped, day) : `${DEAD_LETTER_PREFIX}${day}`;
     const entry = await this.state.storage.get(key);
     if (!entry) return { ok: true, day, replayed: false, reason: 'not_found' };
@@ -303,7 +305,7 @@ export class ProbeHistoryBuffer {
 
   async drainDeadLetters(targetId = null, limit = 25) {
     const boundedLimit = clamp(Number(limit || 25), 1, 25);
-    const scoped = this.isHub ? sanitizeId(targetId || '') : '';
+    const scoped = this.isHub && targetId ? sanitizeId(targetId) : '';
     const rows = this.isHub
       ? await this.state.storage.list({
         prefix: scoped ? `${HUB_DEAD_LETTER_PREFIX}${scoped}|` : HUB_DEAD_LETTER_PREFIX,
@@ -406,9 +408,15 @@ export class ProbeHistoryBuffer {
     let replayed = 0;
     let deadLettersPending = false;
     try {
-      const replay = await this.drainDeadLetters(3);
+      // Hub mode stores dead letters under a per-target prefix: drain across all
+      // targets (targetId=null) with the per-alarm budget as the limit, and count
+      // pending entries with the same prefix the hub actually writes.
+      const replay = await this.drainDeadLetters(null, 3);
       replayed = Array.isArray(replay?.drained) ? replay.drained.length : 0;
-      const remaining = await this.state.storage.list({ prefix: DEAD_LETTER_PREFIX, limit: 1 });
+      const remaining = await this.state.storage.list({
+        prefix: this.isHub ? HUB_DEAD_LETTER_PREFIX : DEAD_LETTER_PREFIX,
+        limit: 1,
+      });
       deadLettersPending = remaining.size > 0;
     } catch (error) {
       console.error('probe dead-letter auto drain failed:', String(error?.message || error));
@@ -535,27 +543,36 @@ export class ProbeHistoryBuffer {
     try {
       const legacy = this.env.PROBE_HISTORY.get(this.env.PROBE_HISTORY.idFromName(`probe:${targetId}`));
       const response = await legacy.fetch('https://nie-sla.internal/export', { headers: internalRequestHeaders(this.env) });
-      if (response.ok) {
-        const body = await response.json().catch(() => null);
-        for (const item of Array.isArray(body?.days) ? body.days : []) {
-          const day = String(item?.day || '').slice(0, 10);
-          const points = Array.isArray(item?.points) ? item.points : [];
-          if (!isDay(day) || !points.length) continue;
-          await this.appendLocal(targetId, points.map(point => ({ day, point })));
-        }
-        for (const item of Array.isArray(body?.dead_letters) ? body.dead_letters : []) {
-          const day = String(item?.day || '').slice(0, 10);
-          if (!isDay(day)) continue;
-          await this.state.storage.put(hubDeadLetterKey(targetId, day), {
-            target_id: targetId,
-            day,
-            points: Array.isArray(item?.points) ? item.points : [],
-            dead_letter: true,
-            saved_at: item?.saved_at || new Date().toISOString(),
-          });
-        }
-        await legacy.fetch('https://nie-sla.internal/delete', { method: 'POST', headers: internalRequestHeaders(this.env) }).catch(() => {});
+      if (!response.ok) {
+        // A failed export must not be recorded as migrated: the legacy instance
+        // still holds the only copy of any unarchived points, so retry on the
+        // next append/read instead of abandoning them.
+        console.error(`probe history hub migration deferred: legacy export HTTP ${response.status}`);
+        return;
       }
+      const body = await response.json().catch(() => null);
+      if (!body || !Array.isArray(body.days) || !Array.isArray(body.dead_letters)) {
+        console.error('probe history hub migration deferred: invalid legacy export payload');
+        return;
+      }
+      for (const item of body.days) {
+        const day = String(item?.day || '').slice(0, 10);
+        const points = Array.isArray(item?.points) ? item.points : [];
+        if (!isDay(day) || !points.length) continue;
+        await this.appendLocal(targetId, points.map(point => ({ day, point })));
+      }
+      for (const item of body.dead_letters) {
+        const day = String(item?.day || '').slice(0, 10);
+        if (!isDay(day)) continue;
+        await this.state.storage.put(hubDeadLetterKey(targetId, day), {
+          target_id: targetId,
+          day,
+          points: Array.isArray(item?.points) ? item.points : [],
+          dead_letter: true,
+          saved_at: item?.saved_at || new Date().toISOString(),
+        });
+      }
+      await legacy.fetch('https://nie-sla.internal/delete', { method: 'POST', headers: internalRequestHeaders(this.env) }).catch(() => {});
     } catch (error) {
       console.error('probe history hub migration deferred:', String(error?.message || error));
       return;

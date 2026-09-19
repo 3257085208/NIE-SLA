@@ -102,27 +102,53 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --force --no-tags nie-sla-upstream "+refs/tags/$CURRENT_REF:refs/tags/$CURRENT_REF" || {
-            echo "The installed version has no online-update baseline. Perform one manual upstream sync first." >&2
-            exit 1
-          }
           cp wrangler.jsonc "$RUNNER_TEMP/wrangler.deployment.jsonc"
           git config user.name "nie-sla-update[bot]"
           git config user.email "nie-sla-update[bot]@users.noreply.github.com"
           mkdir -p "$RUNNER_TEMP/current-source" "$RUNNER_TEMP/target-source"
-          git archive "refs/tags/$CURRENT_REF" | tar -x -C "$RUNNER_TEMP/current-source"
           git archive "refs/tags/$SOURCE_REF" | tar -x -C "$RUNNER_TEMP/target-source"
 
-          local_changes="$(rsync -rlpcni --delete \
-            --exclude='.git/' \
-            --exclude='wrangler.jsonc' \
-            "$RUNNER_TEMP/current-source/" ./)"
-          if [[ -n "$local_changes" ]]; then
-            echo "Deployment files differ from the official $CURRENT_REF baseline:" >&2
-            printf '%s\n' "$local_changes" | head -80 >&2
-            echo "Only wrangler.jsonc may differ during an online update. Reconcile custom code manually." >&2
+          # A published release tag can be re-cut (for example when a packaging
+          # fix lands right after the release) while app-v<version> keeps moving
+          # with the branch. Accept either official baseline so a deployment
+          # created before a re-cut is not stuck without updates forever.
+          baselines=("$CURRENT_REF" "v$CURRENT_VERSION")
+          baseline=""
+          fetched_any="false"
+          diff_candidate=""
+          diff_output=""
+          for candidate in "${baselines[@]}"; do
+            if ! git fetch --force --no-tags nie-sla-upstream "+refs/tags/$candidate:refs/tags/$candidate" 2>/dev/null; then
+              continue
+            fi
+            fetched_any="true"
+            rm -rf "$RUNNER_TEMP/current-source"
+            mkdir -p "$RUNNER_TEMP/current-source"
+            git archive "refs/tags/$candidate" | tar -x -C "$RUNNER_TEMP/current-source"
+            local_changes="$(rsync -rlpcni --delete \
+              --exclude='.git/' \
+              --exclude='wrangler.jsonc' \
+              "$RUNNER_TEMP/current-source/" ./ || true)"
+            if [[ -z "$local_changes" ]]; then
+              baseline="$candidate"
+              break
+            fi
+            if [[ -z "$diff_candidate" ]]; then
+              diff_candidate="$candidate"
+              diff_output="$local_changes"
+            fi
+          done
+          if [[ -z "$baseline" ]]; then
+            if [[ "$fetched_any" == "false" ]]; then
+              echo "The installed version has no online-update baseline. Perform one manual upstream sync first." >&2
+            else
+              echo "Deployment files differ from the official $CURRENT_VERSION baselines (first tried: $diff_candidate):" >&2
+              printf '%s\n' "$diff_output" | head -80 >&2
+              echo "Only wrangler.jsonc may differ during an online update. Reconcile custom code manually." >&2
+            fi
             exit 1
           fi
+          echo "Applying update from $baseline to $SOURCE_REF"
 
           rsync -rlpc --delete \
             --exclude='.git/' \

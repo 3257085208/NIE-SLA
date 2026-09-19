@@ -554,24 +554,41 @@ export async function writeProbeBucketsToD1(env, entries) {
 // Rebuild per-day summaries for the live window only (today + yesterday).
 // Historical days are backfilled once at schema-ensure time and never change,
 // so the expensive full-window scans disappear from the hot path.
+const CHECK_BUCKET_REFRESH_DAYS = 3;
+
 export async function refreshCheckBucketDays(env) {
   if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
   try {
-    // Only completed days are ever read back from check_bucket_days
+    // Completed days are the only ones read back from check_bucket_days
     // (getCheckBucketSummaries filters day < today), so aggregating today's
     // still-growing bucket set on every maintenance run only burned D1 reads.
-    const yesterday = dayFromSec(nowSec() - 86400, env);
-    await env.DB.batch([
-      env.DB.prepare(`DELETE FROM check_bucket_days WHERE day = ?`).bind(yesterday),
-      env.DB.prepare(`INSERT INTO check_bucket_days (day, target_id, total, ok_count, sum_latency_ms, updated_at)
+    // Yesterday is always rebuilt so late backfill lands; older completed days
+    // are rebuilt only when their summary is missing, so a worker outage across
+    // a day boundary cannot leave a permanent hole in the availability history.
+    const days = [];
+    for (let offset = 1; offset <= CHECK_BUCKET_REFRESH_DAYS; offset += 1) {
+      days.push(dayFromSec(nowSec() - offset * 86400, env));
+    }
+    const stmts = [];
+    for (let index = 0; index < days.length; index += 1) {
+      const day = days[index];
+      if (index > 0) {
+        const existing = await env.DB.prepare(`SELECT 1 FROM check_bucket_days WHERE day = ? LIMIT 1`).bind(day).first();
+        if (existing) continue;
+        console.warn(`check_bucket_days summary missing for ${day}; rebuilding`);
+      }
+      stmts.push(env.DB.prepare(`DELETE FROM check_bucket_days WHERE day = ?`).bind(day));
+      stmts.push(env.DB.prepare(`INSERT INTO check_bucket_days (day, target_id, total, ok_count, sum_latency_ms, updated_at)
         SELECT day, target_id,
                SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE total END),
                SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE ok_count END),
                SUM(CASE WHEN last_error LIKE '%monitor missed this 5-minute check%' THEN 0 ELSE sum_latency_ms END),
                strftime('%s','now')
-        FROM check_buckets WHERE day = ? GROUP BY day, target_id`).bind(yesterday, yesterday),
-    ]);
-    return { ok: true };
+        FROM check_buckets WHERE day = ? GROUP BY day, target_id`).bind(day, day));
+    }
+    if (!stmts.length) return { ok: true, rebuilt_days: 0 };
+    await env.DB.batch(stmts);
+    return { ok: true, rebuilt_days: stmts.length / 2 };
   } catch (error) {
     console.error('refreshCheckBucketDays failed:', String(error?.message || error));
     return { ok: false, error: String(error?.message || error) };

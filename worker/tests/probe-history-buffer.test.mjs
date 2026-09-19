@@ -66,6 +66,60 @@ assert.equal(deadLetter?.points?.length, 1, 'dead-letter storage must retain the
 const recovered = await corruptBuffer.read({ fromDay: previousDay, toDay: previousDay, since: now - 2 * 86400, until: now });
 assert.equal(recovered.points.length, 1, 'dead-letter points must remain readable while the archive is corrupt');
 
+// --- hub migration and dead-letter drain regressions (v1.1.80) ----------------
+const unavailableLegacy = {
+  idFromName: (name) => name,
+  get: () => ({ async fetch() { return new Response('legacy unavailable', { status: 503 }); } }),
+};
+const failedMigrationStorage = memoryStorage();
+const failedMigrationHub = new ProbeHistoryBuffer(
+  { id: { name: 'probe-history-hub' }, storage: failedMigrationStorage },
+  { ...env, PROBE_HISTORY: unavailableLegacy },
+);
+await failedMigrationHub.ensureLegacyBufferMigrated('vps-a');
+assert.equal(
+  await failedMigrationStorage.get('migrated:vps-a'),
+  undefined,
+  'a failed legacy export must not be recorded as migrated',
+);
+
+const readyLegacy = {
+  idFromName: (name) => name,
+  get: () => ({
+    async fetch(url) {
+      if (String(url).endsWith('/export')) {
+        return Response.json({
+          days: [{ day: previousDay, points: [{ checked_at: now - 86400 + 120, ok: 1, latency_ms: 9 }] }],
+          dead_letters: [],
+        });
+      }
+      return Response.json({ ok: true });
+    },
+  }),
+};
+const readyMigrationStorage = memoryStorage();
+const readyMigrationHub = new ProbeHistoryBuffer(
+  { id: { name: 'probe-history-hub' }, storage: readyMigrationStorage },
+  { ...env, PROBE_HISTORY: readyLegacy },
+);
+await readyMigrationHub.ensureLegacyBufferMigrated('vps-b');
+assert.ok(await readyMigrationStorage.get('migrated:vps-b'), 'a successful legacy export must be recorded as migrated');
+const migratedPoints = readyMigrationHub.memDays.get(`vps-b|${previousDay}`) || [];
+assert.equal(migratedPoints.length, 1, 'migrated points must land in the hub buffer');
+assert.equal(migratedPoints[0].last_latency_ms, 9);
+
+const drainStorage = memoryStorage();
+await drainStorage.put(`dl:vps-a|${previousDay}`, { target_id: 'vps-a', day: previousDay, points: [{ checked_at: now - 86400 + 60, ok: 1, latency_ms: 5 }], dead_letter: true });
+await drainStorage.put(`dl:vps-b|${previousDay}`, { target_id: 'vps-b', day: previousDay, points: [{ checked_at: now - 86400 + 90, ok: 1, latency_ms: 6 }], dead_letter: true });
+const drainHub = new ProbeHistoryBuffer(
+  { id: { name: 'probe-history-hub' }, storage: drainStorage },
+  { ...env, ARCHIVE: memoryR2() },
+);
+const drainResult = await drainHub.flushCompletedDays(currentDay);
+assert.equal(drainResult.replayed, 2, 'maintenance must replay hub dead letters from every target');
+assert.equal(drainResult.dead_letters_pending, false, 'a fully drained backlog must report no pending dead letters');
+assert.equal((await drainStorage.list({ prefix: 'dl:' })).size, 0, 'replayed hub dead letters must be removed');
+
 console.log('probe history buffer tests passed');
 
 function memoryStorage() {

@@ -142,16 +142,29 @@ async function encryptLegacySecret(secret, material) {
       error => error?.status === 401,
     );
   }
-  await assert.rejects(
-    passwordLogin(jsonRequest('https://status.example/api/auth/login', {
-      username: 'owner',
-      password: 'correct horse battery staple',
-    }), env),
-    error => error?.status === 429 && Number(error?.headers?.['retry-after']) > 0,
-  );
   assert.equal(db.rateLimits.length, 10);
   assert.ok(db.rateLimits.every(row => /^login-account:[a-f0-9]{64}$/.test(row.key)));
   assert.ok(db.rateLimits.every(row => !row.key.includes('owner')));
+  // The account window throttles brute force but must not lock the real owner
+  // out: a correct password succeeds even with the failure window saturated,
+  // and the successful login clears the stored failures.
+  const recovered = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
+    username: 'owner',
+    password: 'correct horse battery staple',
+  }), env);
+  assert.equal(recovered.session_valid, true);
+  assert.equal(db.rateLimits.length, 0, 'a successful login clears the failure window');
+  // Wrong credentials keep hitting the account rate limit after re-saturation.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await assert.rejects(
+      passwordLogin(jsonRequest('https://status.example/api/auth/login', { username: 'owner', password: 'wrong' }), env),
+      error => error?.status === 401,
+    );
+  }
+  await assert.rejects(
+    passwordLogin(jsonRequest('https://status.example/api/auth/login', { username: 'owner', password: 'wrong' }), env),
+    error => error?.status === 429 && Number(error?.headers?.['retry-after']) > 0,
+  );
 }
 
 {

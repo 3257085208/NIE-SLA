@@ -212,6 +212,23 @@ assert.ok(assertPublicHttpUrl('https://example.com/path'));
   assert.ok(Array.isArray(points));
 }
 
+// --- v1.1.80 hardening contracts ---------------------------------------------
+const checkBucketsSource = await readFile(new URL('../src/admin/check-buckets.js', import.meta.url), 'utf8');
+const pingTargetsSource = await readFile(new URL('../src/admin/ping-targets.js', import.meta.url), 'utf8');
+assert.match(wranglerSource, /^workers_dev = false$/m, 'production must not expose the workers.dev parallel hostname');
+assert.match(routesSource, /async function allowPublicPingsBatchRequest[\s\S]{0,300}durable: true[\s\S]{0,200}rateLimitGlobal/, 'batch ping limits must be durable and global when D1 is present');
+assert.match(routesSource, /path === '\/api\/agent\/pings\/batch' && m === 'GET'[\s\S]{0,220}allowPublicPingsBatchRequest\(request, env\)/, 'the batch ping route must use the fan-out limiter');
+assert.match(routesSource, /path === '\/api\/v1\/pings\/batch' && m === 'GET'[\s\S]{0,220}allowPublicPingsBatchRequest\(request, env\)/, 'the developer batch ping alias must share the fan-out limiter');
+assert.match(pingTargetsSource, /const PINGS_BATCH_MAX_HOURS = 24;/, 'the anonymous batch ping window must stay bounded');
+assert.match(pingTargetsSource, /Math\.min\(hours, PINGS_BATCH_MAX_HOURS\)/, 'the batch ping window must clamp the requested hours');
+assert.match(pingTargetsSource, /rateLimitByIp\(request, env, 120, 60[\s\S]{0,260}requireAnyAgent\(request, env\)/, 'agent ping submission must throttle before credential lookup');
+assert.ok(
+  adminAuthSource.indexOf('verifyPassword(password, credentials)') < adminAuthSource.indexOf('rateLimitStatusD1(env, accountKey'),
+  'the account failure window must only gate rejected credentials, never a correct password',
+);
+assert.match(checkBucketsSource, /const CHECK_BUCKET_REFRESH_DAYS = 3;/, 'completed-day summaries must stay repairable');
+assert.match(checkBucketsSource, /check_bucket_days summary missing for/, 'a missing completed-day summary must trigger a rebuild');
+
 console.log('hardening tests passed');
 
 

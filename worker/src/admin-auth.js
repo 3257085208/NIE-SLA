@@ -38,12 +38,15 @@ export async function passwordLogin(request, env) {
   const username = String(body.username || '').trim();
   const password = String(body.password || '');
   const accountKey = await passwordFailureKey(username);
-  const failureStatus = await rateLimitStatusD1(env, accountKey, PASSWORD_FAILURE_LIMIT, PASSWORD_FAILURE_WINDOW_SEC);
-  if (failureStatus.limited) throw passwordRateLimitError(failureStatus.retryAfter);
   const credentials = await resolveAdminCredentials(env);
   const usernameValid = credentials && constantTimeEqual(username, credentials.username);
   const passwordValid = credentials && await verifyPassword(password, credentials);
   if (!usernameValid || !passwordValid) {
+    // The failure counter is a brute-force brake, not a lock: check it only for
+    // rejected credentials so a third party cannot lock the real administrator
+    // out of a correct password by burning the account window from other IPs.
+    const failureStatus = await rateLimitStatusD1(env, accountKey, PASSWORD_FAILURE_LIMIT, PASSWORD_FAILURE_WINDOW_SEC);
+    if (failureStatus.limited) throw passwordRateLimitError(failureStatus.retryAfter);
     if (!await rateLimitD1(env, accountKey, PASSWORD_FAILURE_LIMIT, PASSWORD_FAILURE_WINDOW_SEC)) {
       throw passwordRateLimitError(PASSWORD_FAILURE_WINDOW_SEC);
     }

@@ -2,7 +2,11 @@ name = "nie-sla"
 main = "src/index.js"
 compatibility_date = "2026-07-24"
 compatibility_flags = ["global_fetch_strictly_public"]
-workers_dev = true
+# Production is served exclusively through the custom domains below. The
+# workers.dev parallel hostname leaked static assets past the in-Worker 404
+# hardening (assets bypass the Worker), so it is disabled here; use
+# ALLOW_WORKERS_DEV only on deployments that intentionally expose it.
+workers_dev = false
 [assets]
 directory = "./dist-one-click"
 binding = "ASSETS"

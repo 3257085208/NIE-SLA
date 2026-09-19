@@ -236,8 +236,8 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/v1/proxy-checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'v1-proxy-checks' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getAgentProxyChecksCached(request, env, developerApiUrl(url, '/api/proxy-checks'), ctx), request, env); }
   if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true, keyPrefix: 'v1-pings' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/v1/latency' && m === 'GET') { if (!await allowPublicLatencyRequest(request, env)) return withDeveloperApiHeaders(deny(60), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(await getPublicLatencyCached(env, developerApiUrl(url, '/api/latency'), ctx), request, env); }
-  if (path === '/api/agent/pings/batch' && m === 'GET') { if (!await rateLimitByIp(request, env, 100, 60, { bestEffort: true, keyPrefix: 'pings-batch' })) return deny(); return json(await getAgentPingsBatch(env, url, ctx), 200, env, { 'cache-control': 'public, max-age=20' }); }
-  if (path === '/api/v1/pings/batch' && m === 'GET') { if (!await rateLimitByIp(request, env, 100, 60, { bestEffort: true, keyPrefix: 'v1-pings-batch' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPingsBatch(env, developerApiUrl(url, '/api/agent/pings/batch'), ctx), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
+  if (path === '/api/agent/pings/batch' && m === 'GET') { if (!await allowPublicPingsBatchRequest(request, env)) return deny(); return json(await getAgentPingsBatch(env, url, ctx), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  if (path === '/api/v1/pings/batch' && m === 'GET') { if (!await allowPublicPingsBatchRequest(request, env)) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPingsBatch(env, developerApiUrl(url, '/api/agent/pings/batch'), ctx), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/themes' && m === 'GET') { if (!await rateLimitByIp(request, env, 600, 60, { bestEffort: true, keyPrefix: 'themes-api' })) return deny(); return json(await getPublicTheme(env), 200, env, { 'cache-control': 'public, max-age=20' }); }
   if (path === '/api/nq/image-broker' && m === 'POST') {
     try {
@@ -591,6 +591,17 @@ async function allowPublicLatencyRequest(request, env) {
     : { bestEffort: true, keyPrefix: 'latency-public' };
   return await rateLimitByIp(request, env, 60, 60, options)
     && await rateLimitGlobal(request, env, 600, 60, options);
+}
+
+// The batch ping endpoint fans out to up to 50 agents of D1/R2 history in one
+// anonymous request, so its limits are durable (per-IP and global) whenever D1
+// is available instead of the per-isolate in-memory fallback.
+async function allowPublicPingsBatchRequest(request, env) {
+  const options = env?.DB
+    ? { durable: true, keyPrefix: 'pings-batch' }
+    : { bestEffort: true, keyPrefix: 'pings-batch' };
+  return await rateLimitByIp(request, env, 30, 60, options)
+    && await rateLimitGlobal(request, env, 300, 60, options);
 }
 
 

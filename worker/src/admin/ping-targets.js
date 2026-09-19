@@ -26,6 +26,9 @@ function normalizeEnabled(value, fallback) {
 const MAX_PING_HOURS_PER_BATCH = 25;
 const MAX_PING_AGE_SEC = 7 * 86400;
 const MAX_PING_FUTURE_SEC = 300;
+// One anonymous batch request fans out to up to 50 agents; keep the window
+// bounded so a single call cannot pull a full retention span for every agent.
+const PINGS_BATCH_MAX_HOURS = 24;
 
 
 
@@ -80,15 +83,17 @@ export async function deletePingTarget(id, env) {
 
 export async function submitAgentPings(request, env) {
   if (!env.DB) return { ok: false, error: '缺少 D1 的 DB 绑定' };
+  // Throttle before credential lookup: an unauthenticated burst must not force
+  // per-request D1 reads of agent credentials and enabled-target scans.
+  if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) {
+    throw new ApiError(429, '请求过于频繁，请稍后重试。');
+  }
   const identity = await requireAnyAgent(request, env);
   const body = await safeJson(request);
   const agentId = sanitizeAgentId(body?.agent_id || '');
   if (!agentId) return { ok: false, error: '必须提供 agent_id' };
   if (identity?.type !== 'scoped' || sanitizeAgentId(identity.agent_id) !== agentId) {
     await requireAgentForId(request, env, agentId);
-  }
-  if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) {
-    throw new ApiError(429, '请求过于频繁，请稍后重试。');
   }
   const pings = Array.isArray(body?.pings) ? body.pings : [];
   if (!pings.length) return { ok: false, error: 'pings 必须是非空数组' };
@@ -204,6 +209,7 @@ export async function getAgentPingsBatch(env, url, ctx = null) {
   if (!env.DB) return { ok: true, targets: [], agents: {} };
   env = { ...env, AGENT_PINGS_PUBLIC_MAX_HOURS: String(await getRetentionHours(env)) };
   const { hours } = resolvePublicPingQuery(url, env);
+  const batchHours = Math.min(hours, PINGS_BATCH_MAX_HOURS);
   const responseFormat = String(url.searchParams.get('format') || '').toLowerCase();
   const includeLoss = parseBoolean(url.searchParams.get('include_loss'), false);
   const raw = String(url.searchParams.get('agent_ids') || url.searchParams.get('agentIds') || '').trim();
@@ -233,6 +239,7 @@ export async function getAgentPingsBatch(env, url, ctx = null) {
       const agentId = ids[my];
       const u = new URL(url.toString());
       u.searchParams.set('agent_id', agentId);
+      u.searchParams.set('hours', String(batchHours));
       u.searchParams.delete('agent_ids');
       u.searchParams.delete('agentIds');
       try {
@@ -247,7 +254,7 @@ export async function getAgentPingsBatch(env, url, ctx = null) {
   if (responseFormat === 'series') {
     for (const v of Object.values(results)) if (v?.ok) { if (Array.isArray(v.series) && v.series.length) continue; if (Array.isArray(v.pings) && v.pings.length) { v.series = pingPointsToSeries(v.pings); v.pings = []; } else if (!v.series) { v.series = []; } }
   }
-  return { ok: true, targets: targets.results || [], ping_interval_sec: pingIntervalSec, hours, max_per_target: null, format: responseFormat || 'pings', include_loss: includeLoss, agents: results };
+  return { ok: true, targets: targets.results || [], ping_interval_sec: pingIntervalSec, hours: batchHours, max_per_target: null, format: responseFormat || 'pings', include_loss: includeLoss, agents: results };
 }
 
 export function resolvePublicPingQuery(url, env = {}) {
