@@ -92,6 +92,12 @@ fn pending_task_result_path() -> PathBuf {
     Path::new(crate::manager::MANAGER_STATE_DIR).join(PENDING_TASK_RESULT_FILE)
 }
 
+/// A second slot keeps one older undelivered result alive when a newer task
+/// finishes before the previous result could be delivered.
+fn pending_task_result_backup_path() -> PathBuf {
+    pending_task_result_path().with_extension("backup.json")
+}
+
 fn write_pending_task_result(path: &Path, task_id: &str, payload: &Value) -> Result<()> {
     let parent = path
         .parent()
@@ -172,40 +178,58 @@ fn task_result_url(cfg: &Config, task_id: &str) -> String {
 // A finished task result must not be lost just because the network dropped at
 // that exact second: the completed payload is persisted (0600) and retried on
 // the next poll before claiming anything new. Terminal 4xx answers mean the
-// Worker no longer accepts the result and the file is discarded.
+// Worker no longer accepts the result and the file is discarded. Two slots keep
+// one older result alive when a newer task finishes first.
 fn flush_pending_task_result(cfg: &Config, http: &HttpClient) -> Result<bool> {
-    let path = pending_task_result_path();
-    let Some((task_id, payload)) = read_pending_task_result(&path)? else {
-        return Ok(false);
-    };
-    let url = task_result_url(cfg, &task_id);
-    match http.post_json(&url, &cfg.token, &payload.to_string()) {
-        Ok(_) => {
-            let _ = fs::remove_file(&path);
-            println!("{{\"ok\":true,\"pending_task_result\":\"flushed\"}}");
-            Ok(true)
+    let mut flushed = false;
+    for path in [
+        pending_task_result_path(),
+        pending_task_result_backup_path(),
+    ] {
+        if !path.exists() || path.is_symlink() {
+            continue;
         }
-        Err(error) => {
-            let text = format!("{error:#}");
-            let terminal = [
-                " 404",
-                "StatusCode(404",
-                "status: 404",
-                "status 404",
-                " 409",
-                "StatusCode(409",
-                "status: 409",
-                "status 409",
-            ];
-            if terminal.iter().any(|pattern| text.contains(pattern)) {
-                let _ = fs::remove_file(&path);
-                eprintln!("{{\"ok\":false,\"pending_task_result\":\"discarded\"}}");
-                return Ok(false);
+        let Some((task_id, payload)) = read_pending_task_result(&path)? else {
+            if path.exists() {
+                let _ = fs::rename(&path, path.with_extension("corrupt"));
+                eprintln!("{{\"ok\":false,\"pending_task_result\":\"quarantined\"}}");
             }
-            eprintln!("{{\"ok\":false,\"pending_task_result_retry\":true}}");
-            Ok(false)
+            continue;
+        };
+        let url = task_result_url(cfg, &task_id);
+        match http.post_json(&url, &cfg.token, &payload.to_string()) {
+            Ok(_) => {
+                let _ = fs::remove_file(&path);
+                println!("{{\"ok\":true,\"pending_task_result\":\"flushed\"}}");
+                flushed = true;
+            }
+            Err(error) => {
+                if let Some(status) = terminal_task_status(&error) {
+                    let _ = fs::remove_file(&path);
+                    eprintln!("{{\"ok\":false,\"pending_task_result\":\"discarded\",\"status\":{status}}}");
+                    continue;
+                }
+                eprintln!("{{\"ok\":false,\"pending_task_result_retry\":true}}");
+                // Keep the slot and do not claim new work until it is delivered.
+                return Ok(true);
+            }
         }
     }
+    Ok(flushed)
+}
+
+/// Terminal task results are answered with a client error; everything else
+/// (including 408/429) is worth retrying. Read the status from the typed error
+/// chain instead of guessing from message substrings.
+fn terminal_task_status(error: &anyhow::Error) -> Option<u16> {
+    error.chain().find_map(|cause| {
+        cause
+            .downcast_ref::<ureq::Error>()
+            .and_then(|inner| match inner {
+                ureq::Error::StatusCode(code) => Some(*code),
+                _ => None,
+            })
+    })
 }
 
 fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
@@ -272,9 +296,14 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
             }
         }
     }
-    if let Err(write_error) =
-        write_pending_task_result(&pending_task_result_path(), task_id, &payload)
-    {
+    let primary = pending_task_result_path();
+    let target = if primary.exists() {
+        eprintln!("{{\"ok\":false,\"pending_task_result_slot\":\"backup\"}}");
+        pending_task_result_backup_path()
+    } else {
+        primary
+    };
+    if let Err(write_error) = write_pending_task_result(&target, task_id, &payload) {
         eprintln!(
             "{{\"ok\":false,\"pending_task_result_write_error\":{}}}",
             serde_json::to_string(&write_error.to_string())

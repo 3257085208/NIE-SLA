@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { access, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { parseJsonc } from '../scripts/jsonc.mjs';
 
 const root = path.resolve(import.meta.dirname, '..');
 const output = path.join(root, 'dist-one-click');
@@ -57,7 +58,7 @@ for (const line of manifest.split(/\r?\n/)) {
 }
 assert.ok(verified >= 3, 'expected Agent binaries for multiple platforms');
 
-const wrangler = JSON.parse(await readFile(path.join(root, 'wrangler.jsonc'), 'utf8'));
+const wrangler = parseJsonc(await readFile(path.join(root, 'wrangler.jsonc'), 'utf8'));
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 assert.equal(wrangler.assets?.directory, './dist-one-click');
 assert.equal(wrangler.assets?.run_worker_first, true);

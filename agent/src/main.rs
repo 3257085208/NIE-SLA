@@ -527,7 +527,9 @@ fn run() -> Result<()> {
     loop {
         let sample = collector.sample();
         samples.push_back(sample.clone());
-        let _ = queue_tx.send(QueueCommand::Append(sample));
+        if queue_tx.send(QueueCommand::Append(sample)).is_err() {
+            eprintln!("{{\"ok\":false,\"queue_send_error\":\"writer thread stopped; sample not persisted\"}}");
+        }
         if samples.len() > cfg.queue_max_samples {
             samples.pop_front();
         }
@@ -576,7 +578,14 @@ fn run() -> Result<()> {
                     // after a backwards NTP correction.
                     let drop = result.sample_count.min(samples.len());
                     samples.drain(0..drop);
-                    let _ = queue_tx.send(QueueCommand::AcknowledgeCount(result.sample_count));
+                    if queue_tx
+                        .send(QueueCommand::AcknowledgeCount(result.sample_count))
+                        .is_err()
+                    {
+                        eprintln!(
+                            "{{\"ok\":false,\"queue_send_error\":\"writer thread stopped\"}}"
+                        );
+                    }
                     drop_ping_prefix(&mut pings, result.ping_count);
                     drop_proxy_prefix(&mut proxy_checks, result.proxy_count);
                     println!(
@@ -727,7 +736,14 @@ fn run() -> Result<()> {
                     if let Some(interval) = upload.ping_interval_sec {
                         apply_ping_interval(&ping_interval_sec, interval);
                     }
-                    let _ = queue_tx.send(QueueCommand::AcknowledgeCount(result.sample_count));
+                    if queue_tx
+                        .send(QueueCommand::AcknowledgeCount(result.sample_count))
+                        .is_err()
+                    {
+                        eprintln!(
+                            "{{\"ok\":false,\"queue_send_error\":\"writer thread stopped\"}}"
+                        );
+                    }
                     drop_ping_prefix(&mut pings, result.ping_count);
                     drop_proxy_prefix(&mut proxy_checks, result.proxy_count);
                     flush_sample_queue(&queue_tx)?;
@@ -2203,7 +2219,7 @@ fn is_restricted_ip(ip: IpAddr) -> bool {
                 || value.is_multicast()
                 || value.is_broadcast()
                 || octets[0] == 0
-                || octets[0] == 240
+                || octets[0] >= 240
                 || (octets[0] == 100 && (64..=127).contains(&octets[1]))
                 || (octets[0] == 169 && octets[1] == 254)
                 || (octets[0] == 192 && octets[1] == 0)
@@ -2564,21 +2580,30 @@ fn tcp_ping_target(target: &str) -> Option<u128> {
 }
 
 fn resolve_socket_addresses(authority: &str) -> Vec<SocketAddr> {
-    authority
-        .to_socket_addrs()
-        .map(|resolved| {
-            let mut unique = Vec::new();
-            for address in resolved {
-                if !unique.contains(&address) {
-                    unique.push(address);
+    // The system resolver can block for seconds or minutes; resolve on a helper
+    // thread with a bounded wait so one slow lookup cannot stall the whole ping
+    // batch.
+    let authority = authority.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = authority
+            .to_socket_addrs()
+            .map(|resolved| {
+                let mut unique = Vec::new();
+                for address in resolved {
+                    if !unique.contains(&address) {
+                        unique.push(address);
+                    }
+                    if unique.len() >= MAX_PING_RESOLVED_ADDRESSES {
+                        break;
+                    }
                 }
-                if unique.len() >= MAX_PING_RESOLVED_ADDRESSES {
-                    break;
-                }
-            }
-            unique
-        })
-        .unwrap_or_default()
+                unique
+            })
+            .unwrap_or_default();
+        let _ = tx.send(result);
+    });
+    rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default()
 }
 
 fn strip_ascii_case_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {

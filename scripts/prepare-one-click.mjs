@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseJsonc } from './jsonc.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const frontendRoot = path.join(root, 'frontend');
@@ -38,7 +39,7 @@ async function ensureInternalCronSecret() {
   const configPath = path.join(root, 'wrangler.jsonc');
   let config;
   try {
-    config = JSON.parse(await readFile(configPath, 'utf8'));
+    config = parseJsonc(await readFile(configPath, 'utf8'));
   } catch (_) {
     return;
   }

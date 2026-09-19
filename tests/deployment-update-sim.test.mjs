@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { parseJsonc } from '../scripts/jsonc.mjs';
 
 // Release gate: replay the online-update chain against a repository shaped like
 // a real one-click deployment (no .github CI files, an older preserved
@@ -85,7 +86,11 @@ try {
   rmSync(path.join(deployment, 'wrangler.jsonc'), { force: true });
   mkdirSync(path.join(deployment, '.github/workflows'), { recursive: true });
   writeFileSync(path.join(deployment, '.github/workflows/nie-sla-update.yml'), WRAPPER);
-  writeFileSync(path.join(deployment, 'wrangler.jsonc'), `${JSON.stringify(OLD_CONFIG, null, 2)}\n`);
+  // Deployment configs are allowed to be JSON-with-comments.
+  const oldConfigJsonc = JSON.stringify(OLD_CONFIG, null, 2)
+    .replace('{\n', '{\n  // deployment-local config kept across updates\n')
+    .replace('\n}', ',\n}');
+  writeFileSync(path.join(deployment, 'wrangler.jsonc'), `${oldConfigJsonc}\n`);
   // Simulate a deployment that trails the target release: the committed tree
   // carries an older application version.
   writeFileSync(path.join(deployment, 'worker/src/version.js'), 'export const VERSION = "0.0.0";\n');
@@ -118,7 +123,7 @@ try {
     /uses: 3257085208\/NIE-SLA\/\.github\/workflows\/nie-sla-update\.yml@main/,
     'the apply step must never rewrite workflow files',
   );
-  assert.equal(JSON.parse(readFileSync(path.join(deployment, 'wrangler.jsonc'), 'utf8')).name, OLD_CONFIG.name, 'the apply step must preserve the deployment config');
+  assert.equal(parseJsonc(readFileSync(path.join(deployment, 'wrangler.jsonc'), 'utf8')).name, OLD_CONFIG.name, 'the apply step must preserve the deployment config');
   assert.equal(readFileSync(path.join(deployment, '.dev.vars'), 'utf8'), 'SIM_SECRET=keep-me\n', 'the apply step must preserve local secret files');
 
   // Merge missing official bindings with the shipped script.
@@ -129,7 +134,7 @@ try {
     env: { ...process.env, RUNNER_TEMP: runner },
     stdio: 'pipe',
   });
-  const merged = JSON.parse(readFileSync(path.join(deployment, 'wrangler.jsonc'), 'utf8'));
+  const merged = parseJsonc(readFileSync(path.join(deployment, 'wrangler.jsonc'), 'utf8'));
   assert.deepEqual(
     merged.durable_objects.bindings.map((binding) => binding.name),
     ['REGION_PROXY', 'TELEMETRY_BUFFER', 'PROBE_HISTORY', 'STATUS_STREAM'],

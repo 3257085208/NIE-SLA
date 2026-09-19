@@ -662,25 +662,31 @@ export async function cleanupVolatileHistory(env, options = {}) {
 export async function reconcileOpenIncidents(env) {
   if (!env.DB) return { ok: false, skipped: true, reason: 'no_db' };
   try {
-    const result = await env.DB.prepare(
-      // The recovery point can never precede the incident start, and the
-      // EXISTS gate below already requires a success in the last 30 minutes;
-      // bounding the scan keeps this hourly reconciliation from re-reading
-      // every stored bucket of long-lived incidents.
-      `UPDATE incident_events SET recovered_at = (
-         SELECT MAX(cb.bucket_at) FROM check_buckets cb
-         WHERE cb.target_id = incident_events.target_id AND cb.ok_count > 0
-           AND cb.bucket_at >= MAX(incident_events.started_at, strftime('%s','now') - 604800)
-       )
-       WHERE recovered_at IS NULL
-         AND EXISTS (
-           SELECT 1 FROM check_buckets cb2
-           WHERE cb2.target_id = incident_events.target_id AND cb2.ok_count > 0
-             AND cb2.bucket_at > strftime('%s','now') - 1800
-         )`
-    ).run();
-    const changes = Number(result?.meta?.changes || 0);
-    if (changes) console.log(`reconciled ${changes} open incidents against fresh successful buckets`);
+    const incidents = await env.DB.prepare(
+      `SELECT id, target_id, started_at FROM incident_events WHERE recovered_at IS NULL`
+    ).all();
+    const rows = incidents.results || [];
+    if (!rows.length) return { ok: true, changes: 0 };
+    const windowStart = nowSec() - 1800;
+    let changes = 0;
+    for (const incident of rows) {
+      const since = Math.max(Number(incident.started_at || 0), windowStart);
+      // readCheckBuckets merges the durable probe buffer with the D1 mirror,
+      // so this safety net keeps working while raw bucket writes stay off.
+      const points = await readCheckBuckets(env, incident.target_id, 2).catch(() => []);
+      let recoveredAt = 0;
+      for (const point of points) {
+        const checkedAt = Math.floor(Number(point?.checked_at) || 0);
+        const ok = Number(point?.ok ?? point?.last_ok ?? 0) > 0;
+        if (ok && checkedAt >= since && checkedAt > recoveredAt) recoveredAt = checkedAt;
+      }
+      if (recoveredAt > 0) {
+        await env.DB.prepare(`UPDATE incident_events SET recovered_at = ? WHERE id = ? AND recovered_at IS NULL`)
+          .bind(recoveredAt, incident.id).run();
+        changes += 1;
+      }
+    }
+    if (changes) console.log(`reconciled ${changes} open incidents against fresh successful probes`);
     return { ok: true, changes };
   } catch (error) {
     console.error('reconcile open incidents failed:', String(error?.message || error));

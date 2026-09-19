@@ -104,7 +104,7 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
     spawn_heartbeat(cfg.clone());
     spawn_update_confirmation();
     let updates = spawn_manager_update_worker(cfg.clone(), http.clone());
-    let mut last_task_poll = Instant::now() - Duration::from_secs(TASK_POLL_SEC);
+    spawn_task_worker(cfg.clone(), http.clone());
     let mut last_reconcile = Instant::now();
     let mut last_telemetry_check = Instant::now();
     let mut last_telemetry_restart =
@@ -147,16 +147,9 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
             }
         }
 
-        if last_task_poll.elapsed() >= Duration::from_secs(TASK_POLL_SEC) {
-            if let Err(error) = crate::tasks::poll_once_manager(cfg, http) {
-                eprintln!(
-                    "{{\"ok\":false,\"task_error\":{}}}",
-                    serde_json::to_string(&format!("{error:#}"))
-                        .unwrap_or_else(|_| "\"task failed\"".into())
-                );
-            }
-            last_task_poll = Instant::now();
-        }
+        // Fixed tasks run on their own thread (spawn_task_worker) so a long
+        // job can no longer stall update handling, service reconciliation or
+        // telemetry supervision in this loop.
         if last_reconcile.elapsed() >= Duration::from_secs(SERVICE_RECONCILE_SEC) {
             if let Err(error) = reconcile_service_layout() {
                 eprintln!(
@@ -182,6 +175,22 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
         }
         thread::sleep(Duration::from_secs(HEARTBEAT_INTERVAL_SEC));
     }
+}
+
+fn spawn_task_worker(cfg: Config, http: HttpClient) {
+    thread::spawn(move || loop {
+        // poll_once_manager blocks while a fixed task runs (up to two hours);
+        // running it here keeps the manager's health, reconcile and update
+        // duties responsive throughout.
+        if let Err(error) = crate::tasks::poll_once_manager(&cfg, &http) {
+            eprintln!(
+                "{{\"ok\":false,\"task_error\":{}}}",
+                serde_json::to_string(&format!("{error:#}"))
+                    .unwrap_or_else(|_| "\"task failed\"".into())
+            );
+        }
+        thread::sleep(Duration::from_secs(TASK_POLL_SEC));
+    });
 }
 
 fn spawn_heartbeat(cfg: Config) {
