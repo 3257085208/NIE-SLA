@@ -5,7 +5,7 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const manifest = JSON.parse(await readFile(path.join(root, 'update-manifest.json'), 'utf8'));
 const workflow = await readFile(path.join(root, '.github/workflows/nie-sla-update.yml'), 'utf8');
-const publicCi = await readFile(path.join(root, '.github/workflows/public-ci.yml'), 'utf8');
+const publicCi = await readFile(path.join(root, '.github/workflows/public-ci.yml'), 'utf8').catch(() => null);
 const versionSource = await readFile(path.join(root, 'worker/src/version.js'), 'utf8');
 const updateSource = await readFile(path.join(root, 'worker/src/app-update.js'), 'utf8');
 const routesSource = await readFile(path.join(root, 'worker/src/routes.js'), 'utf8');
@@ -19,6 +19,30 @@ assert.equal(manifest.source_ref, `app-v${manifest.version}`);
 assert.equal(version, manifest.version, 'public Worker version must match the update manifest');
 assert.ok(Array.isArray(manifest.changelog) && manifest.changelog.length > 0);
 assert.ok(Number.isFinite(Date.parse(manifest.published_at)));
+
+const deploymentValidation = process.env.NIE_SLA_DEPLOYMENT_VALIDATION === '1';
+
+if (deploymentValidation) {
+  // Deployment validation runs inside a self-hosted repository: it verifies the
+  // app, the manifest and the presence of an update workflow, while the official
+  // workflow internals are asserted against the official snapshot (where this
+  // flag is never set). Repositories created by the one-click flow may carry
+  // only the minimal wrapper that calls the official reusable workflow.
+  assert.ok(workflow.trim().length > 0, 'the deployment repository must keep an update workflow');
+  assert.match(workflow, /workflow_dispatch:/);
+  if (!/OFFICIAL_REPOSITORY/.test(workflow)) {
+    assert.match(workflow, /uses: 3257085208\/NIE-SLA\/\.github\/workflows\/nie-sla-update\.yml@main/, 'a minimal update workflow must call the official reusable workflow');
+  }
+  assert.doesNotMatch(workflow, /CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID|github_token|fine-grained|personal access token/i);
+  assert.match(updateSource, /update_mode:\s*'github-actions'/);
+  assert.match(updateSource, /automatic_check_hours:\s*6/);
+  assert.match(updateSource, /FAILURE_BACKOFF_MS/);
+  assert.match(updateSource, /fetchBundledManifest/);
+  assert.doesNotMatch(updateSource, /repository|token_stored|github_token|dispatchAppUpdate/);
+  assert.doesNotMatch(routesSource, /path === '\/api\/system\/update' && m === 'POST'/);
+  console.log(`application update contract passed (${manifest.version}, deployment validation)`);
+  process.exit(0);
+}
 
 assert.match(workflow, /workflow_dispatch:/);
 assert.match(workflow, /workflow_call:/, 'the update workflow must be callable as a reusable workflow');
@@ -48,6 +72,7 @@ assert.match(workflow, /pnpm run test:update/);
 assert.doesNotMatch(workflow, /bash test\.sh|rustup|musl-tools/);
 assert.match(workflow, /wrangler deploy --dry-run/);
 assert.doesNotMatch(workflow, /CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID|github_token|fine-grained|personal access token/i);
+assert.ok(publicCi, 'public-ci.yml must exist in the official snapshot');
 assert.match(publicCi, /if: github\.repository == '3257085208\/NIE-SLA'/, 'deployment repositories must not run the official snapshot CI');
 
 assert.match(updateSource, /update_mode:\s*'github-actions'/);
