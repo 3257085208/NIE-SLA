@@ -6,6 +6,15 @@ import { fileURLToPath } from 'node:url';
 const workerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = await readFile(path.join(workerRoot, 'scripts', 'prepare-assets.mjs'), 'utf8');
 
+// The private repository keeps the one-click template under public-release/;
+// the sanitized public snapshot places the same files at its repository root.
+async function readFirst(candidates) {
+  for (const candidate of candidates) {
+    try { return await readFile(candidate, 'utf8'); } catch (_) {}
+  }
+  throw new Error(`missing required file: ${candidates.join(' | ')}`);
+}
+
 assert.match(source, /assertCleanGitRepository\(agentRoot, 'Agent'\)/);
 assert.match(source, /assertCleanGitRepository\(frontendRoot, 'Frontend'\)/);
 assert.match(source, /'archive'/);
@@ -29,7 +38,10 @@ assert.match(deploy, /build-provenance\.json/);
 // silently lose probe-history buffering, the live status stream and region
 // batches while local tests keep passing.
 const production = await readFile(path.join(workerRoot, 'wrangler.toml'), 'utf8');
-const template = JSON.parse(await readFile(path.resolve(workerRoot, '..', 'public-release', 'wrangler.jsonc'), 'utf8'));
+const template = JSON.parse(await readFirst([
+  path.resolve(workerRoot, '..', 'public-release', 'wrangler.jsonc'),
+  path.resolve(workerRoot, '..', 'wrangler.jsonc'),
+]));
 const productionBindings = [...production.matchAll(/\[\[durable_objects\.bindings\]\]([\s\S]*?)(?=\n\[\[|$)/g)].map((match) => ({
   name: (match[1].match(/name = "([^"]+)"/) || [])[1],
   className: (match[1].match(/class_name = "([^"]+)"/) || [])[1],
@@ -51,7 +63,10 @@ for (const migration of productionMigrations) {
 // Cloudflare build environments must provision the internal DO secret:
 // without it every internal Durable Object call fails closed (401 -> 500) on
 // fresh one-click deployments.
-const oneClick = await readFile(path.resolve(workerRoot, '..', 'public-release', 'scripts', 'prepare-one-click.mjs'), 'utf8');
+const oneClick = await readFirst([
+  path.resolve(workerRoot, '..', 'public-release', 'scripts', 'prepare-one-click.mjs'),
+  path.resolve(workerRoot, '..', 'scripts', 'prepare-one-click.mjs'),
+]);
 assert.match(oneClick, /INTERNAL_CRON_SECRET/, 'one-click build must provision INTERNAL_CRON_SECRET');
 assert.match(oneClick, /WORKERS_CI/, 'secret provisioning must target Cloudflare build environments');
 assert.match(oneClick, /randomBytes\(24\)/, 'generated secret must use crypto randomness');

@@ -33,7 +33,14 @@ export async function getPublicTheme(env) {
   // Builtin official themes are merged at read time: the classic default keeps
   // the original page (active_theme stays null for it) and the bundled canvas
   // theme behaves exactly like an uploaded package once enabled.
-  let activeTheme = themes.find(theme => theme.enabled) || null;
+  let activeTheme = themes.find(theme => theme.enabled && !builtinTheme(theme.id)) || null;
+  if (!activeTheme) {
+    // Legacy third-party builds of an official theme (same id) are superseded:
+    // keep the selection by serving the builtin successor package instead of
+    // the outdated R2 revision.
+    const legacyActive = themes.find(theme => theme.enabled && builtinTheme(theme.id));
+    if (legacyActive) activeTheme = builtinEntry(builtinTheme(legacyActive.id), true);
+  }
   if (!activeTheme && env?.DB) {
     const builtinActive = (await builtinEntries(env)).find(entry => entry.enabled) || null;
     if (builtinActive) {
@@ -64,7 +71,7 @@ export async function getPublicTheme(env) {
 }
 
 export async function listManagedThemes(env) {
-  const uploaded = await loadRegistry(env);
+  const uploaded = await retireSupersededBuiltinUploads(env);
   const builtins = await builtinEntries(env);
   return {
     ok: true,
@@ -658,6 +665,40 @@ async function builtinEntries(env) {
   const explicit = BUILTIN_THEMES.filter(theme => state?.[theme.id]?.enabled === true);
   const activeId = uploadedEnabled ? '' : (explicit.length ? explicit[explicit.length - 1].id : BUILTIN_CLASSIC_THEME_ID);
   return BUILTIN_THEMES.map(theme => builtinEntry(theme, !uploadedEnabled && theme.id === activeId));
+}
+
+// Official themes ship inside the deployment. Earlier releases allowed uploading
+// a package with the same id as a third-party theme; every admin endpoint now
+// resolves that id to the builtin (toggle/settings/delete), so the stale record
+// could only ever show up as a duplicate card with dead buttons. Retire such
+// records lazily: keep an active legacy selection by enabling the builtin
+// successor, then drop the obsolete registry entry and its R2 objects.
+async function retireSupersededBuiltinUploads(env) {
+  const registry = await loadRegistry(env);
+  const superseded = registry.filter(item => builtinTheme(item.id));
+  if (!superseded.length) return registry;
+  const remaining = registry.filter(item => !builtinTheme(item.id));
+  // Migrate an active legacy selection to the builtin successor before the
+  // registry entry is removed: if this write fails, the untouched registry
+  // keeps serving the current selection on the next read instead of silently
+  // falling back to the classic page.
+  for (const item of superseded) {
+    if (!item.enabled) continue;
+    const successor = builtinTheme(item.id);
+    const state = await loadBuiltinState(env);
+    const nextState = { ...state };
+    for (const theme of BUILTIN_THEMES) {
+      nextState[theme.id] = { ...(nextState[theme.id] || {}), enabled: theme.id === successor.id };
+    }
+    await saveBuiltinState(env, nextState);
+  }
+  await saveRegistry(env, remaining);
+  for (const item of superseded) {
+    if (themeArchive(env)) {
+      await deletePrefix(env, themePrefix(item)).catch(error => console.warn('failed to remove superseded theme files', error));
+    }
+  }
+  return remaining;
 }
 
 async function resolveTheme(env, id) {

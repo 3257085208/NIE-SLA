@@ -211,6 +211,56 @@ assert.equal((await getPublicTheme(builtinEnv)).active_theme, null, 're-enabling
 assert.equal((await listManagedThemes(builtinEnv)).themes.find(theme => theme.id === 'nodeget-nie-sla').enabled, false);
 await assert.rejects(() => deleteTheme('classic', builtinEnv), /内置主题不能删除/);
 
+// --- legacy third-party uploads sharing a builtin id are retired --------------
+function builtinAssetEnv() {
+  return {
+    DB: d1(),
+    ARCHIVE: r2(),
+    PUBLIC_SITE_ORIGIN: 'https://status.example.test',
+    ASSETS: { async fetch() { return new Response('<!doctype html><html>nodeget-builtin</html>', { status: 200, headers: { 'content-type': 'text/html' } }); } },
+  };
+}
+
+function legacyBuiltinRecord(enabled) {
+  return {
+    id: 'nodeget-nie-sla',
+    name: 'NIE-SLA NodeGet Theme',
+    version: '1.4.44',
+    description: 'legacy third-party upload of the official theme id',
+    author: 'MarkNKX',
+    type: 'theme',
+    mode: 'canvas',
+    entry: 'index.html',
+    permissions: ['status:read'],
+    height: 1200,
+    styles: [],
+    files: ['index.html'],
+    revision: '20260915nodegetfix2',
+    storage_root: 'themes/v1',
+    enabled,
+    uploaded_at: 1789467725,
+  };
+}
+
+const retiredEnv = builtinAssetEnv();
+retiredEnv.DB.meta.set('themes:registry:v1', JSON.stringify([legacyBuiltinRecord(false)]));
+retiredEnv.ARCHIVE.setValue('themes/v1/nodeget-nie-sla/20260915nodegetfix2/index.html', strToU8('<html>legacy</html>'));
+const retiredList = await listManagedThemes(retiredEnv);
+assert.equal(retiredList.themes.filter(theme => theme.id === 'nodeget-nie-sla').length, 1, 'a superseded upload must not duplicate the official card');
+assert.equal(retiredList.themes.find(theme => theme.id === 'nodeget-nie-sla').builtin, true, 'the surviving card must be the builtin');
+assert.equal(JSON.parse(retiredEnv.DB.meta.get('themes:registry:v1')).length, 0, 'the superseded registry entry must be removed');
+assert.equal(retiredEnv.ARCHIVE.keys().length, 0, 'the superseded theme files must be cleaned up');
+
+const legacyEnabledEnv = builtinAssetEnv();
+legacyEnabledEnv.DB.meta.set('themes:registry:v1', JSON.stringify([legacyBuiltinRecord(true)]));
+const legacyPublic = await getPublicTheme(legacyEnabledEnv);
+assert.equal(legacyPublic.active_theme.id, 'nodeget-nie-sla', 'an active legacy selection must keep serving the theme');
+assert.equal(legacyPublic.active_theme.builtin, true, 'the active legacy selection must be served by the builtin successor');
+assert.match(legacyPublic.active_theme.revision, /^builtin-/, 'the superseded revision must not leak into the public payload');
+const migratedList = await listManagedThemes(legacyEnabledEnv);
+assert.equal(migratedList.themes.find(theme => theme.id === 'nodeget-nie-sla').enabled, true, 'retirement must migrate the enabled state to the builtin theme');
+assert.equal(migratedList.themes.find(theme => theme.id === 'classic').enabled, false);
+
 console.log('theme package tests passed');
 
 function themeZip(manifest, files) {
