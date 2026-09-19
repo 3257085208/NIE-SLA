@@ -127,6 +127,14 @@ run_check "reviewed task source contract" node "$ROOT/tests/task-vendor-contract
 run_check "production frontend release asset sync" node "$ROOT/tests/production-release-sync.test.mjs"
 run_check "NIE-SLA branding migration guard" node "$ROOT/tests/branding-migration.test.mjs"
 
+# Release gate: replay the online-update chain against a real deployment shape
+# (no .github CI files, older preserved wrangler.jsonc, reusable-workflow
+# wrapper). Runs against the sibling public repository when it is present.
+PUBLIC_ROOT="$(cd "$FRONTEND_ROOT/.." 2>/dev/null && pwd -P)/public"
+if [[ -f "$PUBLIC_ROOT/tests/deployment-update-sim.test.mjs" && -f "$PUBLIC_ROOT/.github/workflows/nie-sla-update.yml" ]]; then
+  run_shell "deployment update simulation" "cd '$PUBLIC_ROOT' && node tests/deployment-update-sim.test.mjs"
+fi
+
 echo ""
 echo "=== Rust Agent ==="
 run_shell "cargo fmt" "cd '$ROOT/agent' && $CARGO_BIN fmt -- --check"
