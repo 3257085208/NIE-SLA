@@ -7,8 +7,9 @@ const NOW = 1_800_000_000;
 
 test('schedule flush is throttled per target with a configurable window', () => {
   assert.equal(scheduleFlushDue({ last_checked_at: NOW - 60 }, NOW, {}), false);
-  assert.equal(scheduleFlushDue({ last_checked_at: NOW - 1800 }, NOW, {}), true);
-  assert.equal(scheduleFlushDue({ last_checked_at: NOW - 3600 }, NOW, {}), true);
+  assert.equal(scheduleFlushDue({ last_checked_at: NOW - 1800 }, NOW, {}), false);
+  assert.equal(scheduleFlushDue({ last_checked_at: NOW - 7200 }, NOW, {}), true);
+  assert.equal(scheduleFlushDue({ last_checked_at: NOW - 3600 }, NOW, { TARGET_SCHEDULE_FLUSH_SEC: 1800 }), true);
   assert.equal(scheduleFlushDue({}, NOW, {}), true);
   assert.equal(scheduleFlushDue({ last_checked_at: 0 }, NOW, {}), true);
   assert.equal(scheduleFlushDue({ last_checked_at: NOW - 60 }, NOW, { TARGET_SCHEDULE_FLUSH_SEC: 300 }), false);
@@ -45,7 +46,7 @@ test('throttled probes skip the targets schedule UPDATE entirely', async () => {
   const targetUpdates = executed.filter((item) => /UPDATE targets/i.test(item.sql));
   assert.equal(targetUpdates.length, 0, 'throttled probe must not write the targets schedule mirror');
 
-  const staleTarget = { ...target, last_checked_at: NOW - 3600 };
+  const staleTarget = { ...target, last_checked_at: NOW - 7200 };
   await saveCheck(env, staleTarget, NOW, { ok: true, latency_ms: 12, status_code: null, error: null, cf_colo: null }, null);
   const staleUpdates = executed.filter((item) => /UPDATE targets/i.test(item.sql));
   assert.equal(staleUpdates.length, 1, 'stale schedule mirror must be flushed once');
