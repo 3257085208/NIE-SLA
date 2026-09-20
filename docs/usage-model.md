@@ -312,5 +312,10 @@ Cloudflare Dashboard 截图，均已四舍五入，不能当作实时 CF API 返
 
 v1.3.3 同步方案 A 的调度写入口径：探测节奏完全由 R2 状态承载后，D1 的
 `targets` 调度镜像（last_checked_at/next_probe_at）降级为每目标每
-`TARGET_SCHEDULE_FLUSH_SEC`（默认 1800 秒）一次的粗粒度回写，模型中
-`d1_probe_persist` 事件改为按"目标数 × 每 30 分钟"估算。
+`TARGET_SCHEDULE_FLUSH_SEC` 一次的粗粒度回写（v1.1.93 起默认 7200 秒），模型中
+`d1_probe_persist` 事件按该窗口估算。
+
+v1.1.93 无感削减同步：Agent 状态镜像 900 秒、Manager 联系人心跳 1800 秒、
+Latency 节点状态行 300 秒（图表仍读 R2 归档）、过期探测桶清理改为每天；
+60 台拓扑下 D1 写 99.6%→38.7%、读 83.5%→63.2%，免费额度内上限约 122 台
+（建议 ≤106 台）。
