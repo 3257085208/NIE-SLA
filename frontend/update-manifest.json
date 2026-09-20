@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.91",
-  "agent_version": "v1.1.91",
-  "source_ref": "app-v1.1.91",
-  "sums_sha256": "0f3601523f653a69bd0d9288a1b27789617b89c80d4d6be70cca16dd7fac6f7d",
-  "published_at": "2026-09-20T06:20:00Z",
-  "title": "NIE-SLA 1.1.91",
+  "version": "1.1.92",
+  "agent_version": "v1.1.92",
+  "source_ref": "app-v1.1.92",
+  "sums_sha256": "0b45659bd5296cd6dd646bc3173c33e27f218bd1453c3d546e1ad001aca06c9e",
+  "published_at": "2026-09-20T07:30:00Z",
+  "title": "NIE-SLA 1.1.92",
   "changelog": [
-    "用量模型 v1.4.0 精确校准：agent 驱动事件改按「在线 Agent」计数（舰队约 40% 注册节点离线，此前按全部注册数高估）；探针桶写入改为「DO 优先 + D1 回退率」模型；输出乘子按 2026-09-19 全天与 09-20 00:00–06:00Z 两个实测窗口重拟合（Workers ×0.73、DO ×1.32、R2 A ×0.86 / B ×1.26、D1 读行 ×0.95 / 写行 ×0.43、D1 查询 ×1.15）。",
-    "验证：两个窗口 8 项指标（Workers/DO/R2 A/B/请求分布/D1 查询/读行/写行）全部落在实测 ±8% 且位于模型报告区间内；后台「用量模型」卡片与 CLI 模型同步升级（内嵌模型同样改为在线 Agent 口径）。",
-    "文档：开发文档「用量计算模型」更新校准依据与乘子。"
+    "Agent 更新检查默认间隔从 24 小时缩短为 1 小时（AGENT_UPDATE_CHECK_SEC 未显式配置时生效；实例策略仍优先，可设 900–86400 秒）。",
+    "后台「系统更新」卡片明确区分「实例」与「执行节点」：实例落后时提示实例需由部署仓库的 GitHub Actions 更新，节点会通过官方通道自动更新（含更新指引内一键复制工作流）。",
+    "文档（FAQ 中/英）：补充节点官方回退通道的检查节奏说明，并修正通道起始版本为 v1.1.90。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

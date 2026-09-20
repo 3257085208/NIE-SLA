@@ -3332,7 +3332,7 @@ async function loadAppUpdate(refresh = false) {
       ? '<span class="tag tag-warn">发现新版本</span>'
       : '<span class="tag tag-on">已是最新版</span>';
     const updateHint = data.update_available
-      ? '<p class="hint app-update-warn">自动更新由部署仓库的 GitHub Actions 执行，不在本站内运行。若长时间未升级，请确认仓库已启用 Actions，或在仓库 Actions 页手动运行 <b>NIE-SLA Online Update</b>；排查步骤见「更新指引」。</p>'
+      ? '<p class="hint app-update-warn">本实例的 Worker 与静态资产仍停留在旧版本：实例自身由部署仓库的 GitHub Actions 更新（默认每 6 小时检查一次）；执行节点（Agent）不受影响——实例落后时节点会直接跟随官方发布通道自动更新。若实例长时间未升级，请确认仓库已启用 Actions，或在 Actions 页运行 <b>NIE-SLA Online Update</b>；排查步骤见「更新指引」。</p>'
       : '';
     box.innerHTML = `
       <div class="app-update-versions">
