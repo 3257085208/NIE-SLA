@@ -1,6 +1,6 @@
-export const MODEL_VERSION = 'usage-model-embedded-v1.3.4';
+export const MODEL_VERSION = 'usage-model-embedded-v1.4.0';
 
-// Structural constants mirrored from scripts/usage-model.mjs (usage-model-v1.3.4).
+// Structural constants mirrored from scripts/usage-model.mjs (usage-model-v1.4.0).
 // Output multipliers were fitted against five 6-hour Cloudflare dashboard
 // windows on 2026-09-16 (median actual/estimated); see
 // scripts/usage-model-calibration.json for the full basis. D1 rows written
@@ -19,19 +19,20 @@ const CAL = Object.freeze({
   r2PublicReadRate: 0.38,
   r2DistributionOverAb: 1.276,
   r2ClassAMultiplier: 1.37,
+  probeD1FallbackRate: 0.01,
   indexWriteMultiplier: 3,
   queryPathMultiplier: 1.135,
   rowsReadMultiplier: 2.65,
   rowsWrittenMultiplier: 1.92,
   output: {
-    workers_calls: 0.7264,
-    do_requests: 2.05,
-    r2_class_a: 1.43,
-    r2_class_b: 2.0602,
-    r2_requests: 1.5399,
-    d1_queries: 1.3212,
-    d1_rows_read: 1.2792,
-    d1_rows_written: 0.4527,
+    workers_calls: 0.7304,
+    do_requests: 1.32,
+    r2_class_a: 0.86,
+    r2_class_b: 1.26,
+    r2_requests: 0.92,
+    d1_queries: 1.2775,
+    d1_rows_read: 0.96,
+    d1_rows_written: 0.4347,
   },
   freeTier: {
     workers_calls: 100_000,
@@ -111,14 +112,14 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
   addD1(cron, { read: 8, write: 3, rowsRead: 100, rowsWritten: 1 });
   addD1(agents * periodic(seconds, 300), { write: 1, rowsWritten: 1 });
   addD1(agents * periodic(seconds, 600), { read: 1, write: 1, rowsWritten: 1 });
-  addD1(probeTargets * periodic(seconds, reportSec), { write: 1, rowsWritten: 1 });
+  addD1(probeTargets * periodic(seconds, reportSec) * CAL.probeD1FallbackRate, { write: 1, rowsWritten: 1 });
   addD1(probeTargets * periodic(seconds, 1800), { write: 1, rowsWritten: 1 });
   addD1(probeStateSync, { read: 8, rowsRead: 100 });
   addD1(trafficAgents * periodic(seconds, 1800), { read: 2, rowsRead: 4, write: 1, rowsWritten: 1 });
   addD1(Math.ceil(publicDynamic * 0.06), { read: 8, rowsRead: 100 });
   addD1(periodic(seconds, 3600), { read: 8, write: 5, rowsRead: 80, rowsWritten: 5 });
   addD1((agents + latencyNodes) * periodic(seconds, CAL.credentialTouchSec), { rowsWritten: 1 });
-  addD1(periodic(seconds, 3600), { read: 1, write: 2, rowsRead: probeTargets * 288, rowsWritten: probeTargets * 12 });
+  addD1(periodic(seconds, 3600), { read: 1, write: 2, rowsRead: probeTargets * 288, rowsWritten: Math.max(1, Math.round(probeTargets * 12 * CAL.probeD1FallbackRate)) });
   addD1(cron * 2, { read: 1, rowsRead: probeTargets });
 
   const d1Queries = (d1.read + d1.write) * CAL.queryPathMultiplier * CAL.output.d1_queries;
@@ -161,7 +162,7 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
     },
     quota: {},
     notes: [
-      '估算与本地 scripts/usage-model.mjs（usage-model-v1.3.4）同构，并以内置校准常数输出点估计；区间请使用 scripts/usage-model.mjs。',
+      '估算与本地 scripts/usage-model.mjs（usage-model-v1.4.0）同构，并以内置校准常数输出点估计；区间请使用 scripts/usage-model.mjs。',
       `D1 行写入包含索引行（内置放大系数 ${CAL.indexWriteMultiplier}）；R2 读操作含写入后 HEAD/GET 回读校验。`,
       'Latency 节点仅计入最近 30 分钟内活跃的节点；DO SQLite 写行为近似台账，以控制台为准。',
     ],
@@ -174,21 +175,26 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
 }
 
 export async function estimateUsageFromEnv(env, hours = 24) {
-  const one = async (sql) => {
+  const one = async (sql, ...binds) => {
     try {
-      const row = await env.DB.prepare(sql).first();
+      const row = await env.DB.prepare(sql).bind(...binds).first();
       return Number(Object.values(row || {})[0] || 0);
     } catch (_) {
       return 0;
     }
   };
+  // Only agents that reported within the offline window generate traffic; the
+  // fleet keeps roughly 40% of registered agents offline, and counting them all
+  // was the main source of the old overestimation.
+  const offlineAfterSec = Math.max(120, Math.min(3600, Number(env.AGENT_OFFLINE_AFTER_SEC || 1800)));
+  const onlineFilter = `s.updated_at IS NOT NULL AND CAST(strftime('%s', s.updated_at) AS INTEGER) >= CAST(strftime('%s','now') AS INTEGER) - ?`;
   const [agents, wssAgents, targets, pingTargets, latencyNodes, trafficAgents] = await Promise.all([
-    one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1`),
-    one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND s.capabilities LIKE '%"protocol"%'`),
-    one(`SELECT COUNT(*) AS n FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0`),
+    one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND ${onlineFilter}`, offlineAfterSec),
+    one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND s.capabilities LIKE '%"protocol"%' AND ${onlineFilter}`, offlineAfterSec),
+    one('SELECT COUNT(*) AS n FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0'),
     one('SELECT COUNT(*) AS n FROM ping_targets WHERE enabled = 1'),
     one(`SELECT COUNT(*) AS n FROM latency_agents WHERE enabled = 1 AND COALESCE(last_seen_at, 0) >= CAST(strftime('%s','now') AS INTEGER) - 1800`),
-    one('SELECT COUNT(*) AS n FROM targets WHERE enabled = 1 AND traffic_enabled = 1'),
+    one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND t.traffic_enabled = 1 AND ${onlineFilter}`, offlineAfterSec),
   ]);
   return estimateUsage({ agents, wssAgents, targets, pingTargets, latencyNodes, trafficAgents, hours });
 }

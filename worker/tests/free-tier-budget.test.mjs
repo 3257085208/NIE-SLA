@@ -14,7 +14,7 @@ const daysPerMonth = 30;
 // per completed local day and target. The public status stream adds one
 // bounded publish request per scheduler minute in this conservative model;
 // viewer connection churn is access-volume dependent and must be monitored
-// separately. Detailed capacity math lives in usage-model v1.3.4.
+// separately. Detailed capacity math lives in usage-model v1.4.0.
 const scaleNodes = 80;
 const wssReportsPerDay = scaleNodes * reportsPerDay;
 // One shared-hub append per probe run replaces one DO request per target.

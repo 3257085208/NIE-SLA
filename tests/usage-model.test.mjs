@@ -69,6 +69,9 @@ test('status normalization uses current topology without exposing target data', 
     probe_target_count: 4,
     agent_count: 3,
     online_agent_count: 3,
+    online_wss_agent_count: 2,
+    online_legacy_agent_count: 1,
+    online_traffic_agent_count: 0,
     wss_capable_agent_count: 2,
     legacy_or_unknown_agent_count: 1,
     unknown_version_agent_count: 0,
@@ -81,7 +84,7 @@ test('status normalization uses current topology without exposing target data', 
 });
 
 test('v1.3 uses the paired-window public request and the current-state D1 write calibration', () => {
-  assert.equal(DEFAULT_CALIBRATION.model_version, 'usage-model-v1.3.4');
+  assert.equal(DEFAULT_CALIBRATION.model_version, 'usage-model-v1.4.0');
   assert.equal(DEFAULT_CALIBRATION.factors.workers_public_rps.point, 0.42);
   assert.equal(DEFAULT_CALIBRATION.factors.r2_public_read_rate.point, 0.38);
   assert.equal(DEFAULT_CALIBRATION.factors.d1_rows_read_multiplier.point, 2.65);
@@ -89,7 +92,7 @@ test('v1.3 uses the paired-window public request and the current-state D1 write 
   assert.equal(DEFAULT_CALIBRATION.factors.d1_index_write_multiplier.point, 3);
 
   const result = estimateUsage({ status: STATUS, from: FROM, to: TO });
-  assert.equal(result.model_version, 'usage-model-v1.3.4');
+  assert.equal(result.model_version, 'usage-model-v1.4.0');
   assert.equal(result.workers.assumptions.public_rps.point, 0.42);
   assert.equal(result.d1.assumptions.rows_read_multiplier.point, 2.65);
   assert.equal(result.d1.assumptions.rows_written_multiplier.point, 1.92);

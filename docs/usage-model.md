@@ -2,7 +2,7 @@
 
 ## 目的
 
-`usage-model-v1.3.3` 是 NIE-SLA 的固定用量估算方法。它的**观测输入**只来自
+`usage-model-v1.4.0` 是 NIE-SLA 的固定用量估算方法。它的**观测输入**只来自
 `status.example.com` 的公开状态接口，以及在提供管理员会话时的站点
 `/api/debug/usage-summary` 聚合接口；固定计算系数来自仓库内版本化的 calibration 文件。运行时不会访问
 Cloudflare Dashboard、Cloudflare API 或浏览器会话。当前系数用一组同拓扑的人工
@@ -71,7 +71,7 @@ Latency 更新策略、后台任务列表以及其他已记录 API。部分日�
 
 ### 3. 本地校准文件
 
-`scripts/usage-model-calibration.json` 保存 v1.3.3 的透明先验和输出区间。它不包含凭据，
+`scripts/usage-model-calibration.json` 保存 v1.4.0 的透明先验和输出区间。它不包含凭据，
 只记录脱敏的成对数量和校准规则。先验来自当前 Worker/Rust 源码路径、Cloudflare 官方
 指标定义和同拓扑成对观测；运行时仍然只读站点数据。若以后有新的稳定窗口，可以在本地离线拟合输出乘数，
 但不要把 Cookie、Token、截图原件或账号信息放进仓库。
@@ -299,7 +299,7 @@ Cloudflare Dashboard 截图，均已四舍五入，不能当作实时 CF API 返
 埋点；若将来要把置信度从 `low` 提高，优先扩展已有站点日志的脱敏计数或导出机制，
 并先评估它本身增加的 Worker/D1/R2 消耗。
 
-涉及以下任一变化时，必须把模型版本从 `usage-model-v1.3.3` 升级，并重新审查校准：
+涉及以下任一变化时，必须把模型版本从 `usage-model-v1.4.0` 升级，并重新审查校准：
 
 - Agent 报告、任务、更新策略、Ping 或 Latency 默认间隔变化；
 - WSS、HTTP fallback、Durable Object、R2 flush 或 ProbeHistory 路径变化；

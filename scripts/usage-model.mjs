@@ -5,7 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-export const MODEL_VERSION = 'usage-model-v1.3.4';
+export const MODEL_VERSION = 'usage-model-v1.4.0';
 export const DEFAULT_BASE_URL = 'https://status.example.com';
 export const DEFAULT_CALIBRATION_FILE = new URL('./usage-model-calibration.json', import.meta.url);
 
@@ -82,6 +82,7 @@ export const DEFAULT_CALIBRATION = {
     d1_rows_written_multiplier: { point: 1.92, low: 1.55, high: 2.30 },
     d1_index_write_multiplier: { point: 3, low: 2, high: 5 },
     probe_event_multiplier: { point: 1.15, low: 1.05, high: 1.25 },
+    probe_d1_fallback_rate: { point: 0.01, low: 0, high: 0.05 },
     public_cache_miss_rate: { point: 0.06, low: 0.04, high: 0.09 },
   },
   stress_factors: {
@@ -96,27 +97,28 @@ export const DEFAULT_CALIBRATION = {
     d1_rows_written_multiplier: { point: 1.92, low: 1, high: 3.5 },
     d1_index_write_multiplier: { point: 3, low: 1.5, high: 6 },
     probe_event_multiplier: { point: 1.15, low: 1, high: 1.4 },
+    probe_d1_fallback_rate: { point: 0.05, low: 0, high: 0.15 },
     public_cache_miss_rate: { point: 0.06, low: 0.02, high: 0.15 },
   },
   output_multipliers: {
-    workers_calls: { point: 1, low: 0.90, high: 1.10 },
-    do_requests: { point: 2.05, low: 1.69, high: 2.16 },
-    r2_class_a: { point: 1, low: 0.95, high: 1.05 },
-    r2_class_b: { point: 1, low: 0.94, high: 1.06 },
-    r2_requests: { point: 1, low: 0.92, high: 1.08 },
-    d1_queries: { point: 1, low: 0.95, high: 1.05 },
-    d1_rows_read: { point: 1, low: 0.80, high: 1.25 },
-    d1_rows_written: { point: 1, low: 0.85, high: 1.15 },
+    workers_calls: { point: 0.73, low: 0.68, high: 0.79 },
+    do_requests: { point: 1.32, low: 1.20, high: 1.45 },
+    r2_class_a: { point: 0.86, low: 0.78, high: 0.95 },
+    r2_class_b: { point: 1.26, low: 1.14, high: 1.38 },
+    r2_requests: { point: 0.92, low: 0.84, high: 1.00 },
+    d1_queries: { point: 1.15, low: 1.07, high: 1.23 },
+    d1_rows_read: { point: 0.95, low: 0.85, high: 1.05 },
+    d1_rows_written: { point: 0.43, low: 0.37, high: 0.50 },
   },
   stress_output_multipliers: {
-    workers_calls: { point: 1, low: 0.9, high: 1.1 },
-    do_requests: { point: 2.05, low: 1.6, high: 2.6 },
-    r2_class_a: { point: 1, low: 0.9, high: 1.1 },
-    r2_class_b: { point: 1, low: 0.9, high: 1.1 },
-    r2_requests: { point: 1, low: 0.9, high: 1.1 },
-    d1_queries: { point: 1, low: 0.9, high: 1.1 },
-    d1_rows_read: { point: 1, low: 0.9, high: 1.1 },
-    d1_rows_written: { point: 1, low: 0.9, high: 1.1 },
+    workers_calls: { point: 0.73, low: 0.58, high: 0.91 },
+    do_requests: { point: 1.32, low: 1.06, high: 1.65 },
+    r2_class_a: { point: 0.86, low: 0.69, high: 1.08 },
+    r2_class_b: { point: 1.26, low: 1.01, high: 1.58 },
+    r2_requests: { point: 0.92, low: 0.74, high: 1.15 },
+    d1_queries: { point: 1.15, low: 0.92, high: 1.44 },
+    d1_rows_read: { point: 0.95, low: 0.76, high: 1.19 },
+    d1_rows_written: { point: 0.43, low: 0.34, high: 0.54 },
   },
 };
 
@@ -385,6 +387,9 @@ export function normalizeStatus(status = {}) {
   const trafficAgents = enabledTargets.filter((target) => Number(target?.traffic_enabled || 0) === 1 && hasAgentState(target));
   const pingTargets = Array.isArray(status?.ping_targets) ? status.ping_targets.filter((target) => enabled(target?.enabled)) : [];
   const onlineAgents = agentTargets.filter((target) => target?.agent_online === true);
+  const onlineWssAgents = onlineAgents.filter((target) => compareVersion(target?.agent_version, '1.1.16') >= 0);
+  const onlineLegacyAgents = onlineAgents.filter((target) => compareVersion(target?.agent_version, '1.1.16') < 0);
+  const onlineTrafficAgents = trafficAgents.filter((target) => target?.agent_online === true);
   return {
     target_count: enabledTargets.length,
     tcp_target_count: enabledTargets.filter((target) => String(target?.type || '').toLowerCase() === 'tcp').length,
@@ -392,6 +397,9 @@ export function normalizeStatus(status = {}) {
     probe_target_count: probeTargets.length,
     agent_count: agentTargets.length,
     online_agent_count: onlineAgents.length,
+    online_wss_agent_count: onlineWssAgents.length,
+    online_legacy_agent_count: onlineLegacyAgents.length,
+    online_traffic_agent_count: onlineTrafficAgents.length,
     wss_capable_agent_count: wssAgents.length,
     legacy_or_unknown_agent_count: Math.max(0, agentTargets.length - wssAgents.length),
     unknown_version_agent_count: agentTargets.filter((target) => !versionTuple(target?.agent_version)).length,
@@ -496,7 +504,7 @@ function estimateWorkers(status, logs, duration, options, calibration) {
   const latencySec = positiveNumber(options.latencySec, DEFAULT_LATENCY_SEC);
   const factor = (name, fallback) => calibratedFactor(calibration, name, fallback);
 
-  const wsReports = periodicCount(duration, reportSec) * fleet.wss_capable_agent_count;
+  const wsReports = periodicCount(duration, reportSec) * fleet.online_wss_agent_count;
   addEvent(events, {
     id: 'agent_metrics_ws',
     label: 'WSS Agent 遥测消息（DO 内处理）',
@@ -508,18 +516,18 @@ function estimateWorkers(status, logs, duration, options, calibration) {
     doRequests: 1,
   });
 
-  const legacyReports = periodicCount(duration, reportSec) * fleet.legacy_or_unknown_agent_count;
+  const legacyReports = periodicCount(duration, reportSec) * fleet.online_legacy_agent_count;
   addEvent(events, {
     id: 'agent_metrics_http',
     label: '旧 Agent / WSS fallback HTTP 遥测',
-    count: range(legacyReports, legacyReports * 0.8, legacyReports + periodicCount(duration, reportSec) * fleet.wss_capable_agent_count * factor('workers_wss_http_fallback_rate', 0.05).high),
+    count: range(legacyReports, legacyReports * 0.8, legacyReports + periodicCount(duration, reportSec) * fleet.online_wss_agent_count * factor('workers_wss_http_fallback_rate', 0.05).high),
     source: 'derived',
     note: `${SOURCE_NOTES.agent_metrics_http} 当前点估计只把旧/未知版本计入；WSS fallback 仅进入上界。`,
     worker: true,
     profile: 'agent_metrics_http',
   });
 
-  const taskDerived = periodicCount(duration, taskSec) * fleet.agent_count;
+  const taskDerived = periodicCount(duration, taskSec) * fleet.online_agent_count;
   routeEvent(events, logs, 'agent_tasks', taskDerived, {
     id: 'agent_tasks',
     label: 'Agent Manager 任务轮询',
@@ -533,7 +541,7 @@ function estimateWorkers(status, logs, duration, options, calibration) {
     profile: 'agent_task_action',
   });
 
-  const updateDerived = periodicCount(duration, updateSec) * fleet.agent_count;
+  const updateDerived = periodicCount(duration, updateSec) * fleet.online_agent_count;
   routeEvent(events, logs, 'agent_update_policy', updateDerived, {
     id: 'agent_update_policy',
     label: 'Agent 自动更新策略检查',
@@ -541,7 +549,7 @@ function estimateWorkers(status, logs, duration, options, calibration) {
     profile: 'agent_update_policy',
   });
 
-  const geoConfigDerived = Math.ceil((duration / DAY_SEC) * fleet.agent_count);
+  const geoConfigDerived = Math.ceil((duration / DAY_SEC) * fleet.online_agent_count);
   routeEvent(events, logs, 'agent_config', geoConfigDerived, {
     id: 'agent_config',
     label: 'Agent 地理位置配置读取',
@@ -555,7 +563,7 @@ function estimateWorkers(status, logs, duration, options, calibration) {
     profile: 'agent_location',
   });
 
-  const pingRefreshDerived = periodicCount(duration, pingRefreshSec) * fleet.legacy_or_unknown_agent_count;
+  const pingRefreshDerived = periodicCount(duration, pingRefreshSec) * fleet.online_legacy_agent_count;
   addEvent(events, {
     id: 'agent_ping_targets',
     label: '旧 Agent Ping 目标刷新',
@@ -626,7 +634,7 @@ function estimateWorkers(status, logs, duration, options, calibration) {
     worker: true,
   });
 
-  const handshake = fleet.wss_capable_agent_count * (duration / DAY_SEC);
+  const handshake = fleet.online_wss_agent_count * (duration / DAY_SEC);
   addEvent(events, {
     id: 'wss_handshake',
     label: 'WSS 建连/重连握手',
@@ -668,7 +676,7 @@ function estimateR2(workers, duration, options, calibration) {
     r2B: 1,
   });
 
-  const telemetryFlushes = fleet.agent_count * Math.ceil(duration / HOUR_SEC);
+  const telemetryFlushes = fleet.online_agent_count * Math.ceil(duration / HOUR_SEC);
   addEvent(events, {
     id: 'telemetry_flush',
     label: 'Agent 遥测缓冲按小时落 R2',
@@ -834,7 +842,7 @@ function estimateD1(workers, duration, options, calibration) {
     profile: 'status_snapshot',
   });
 
-  const trafficReports = activeReportCycles * fleet.traffic_agent_count;
+  const trafficReports = activeReportCycles * fleet.online_traffic_agent_count;
   addEvent(events, {
     id: 'd1_traffic_read',
     label: '流量设置/月份读取 · D1',
@@ -846,7 +854,7 @@ function estimateD1(workers, duration, options, calibration) {
   addEvent(events, {
     id: 'd1_traffic_period_write',
     label: '流量半小时累计写入 · D1',
-    count: exact(fleet.traffic_agent_count * periodicCount(duration, 1_800)),
+    count: exact(fleet.online_traffic_agent_count * periodicCount(duration, 1_800)),
     source: 'derived',
     note: 'persistAgentTraffic 的周期性月度累计更新。',
     profile: { write: 1, rowsWritten: 1 },
@@ -872,7 +880,7 @@ function estimateD1(workers, duration, options, calibration) {
     profile: 'maintenance',
   });
 
-  const credentialSubjects = fleet.agent_count + fleet.latency_node_count;
+  const credentialSubjects = fleet.online_agent_count + fleet.latency_node_count;
   addEvent(events, {
     id: 'd1_credential_effective_rows',
     label: '凭据 last_used_at 实际受影响行',
@@ -887,7 +895,7 @@ function estimateD1(workers, duration, options, calibration) {
   // task poller touches agent_contacts, every history probe writes a
   // check_buckets row, the hourly maintenance delete scans one calendar day
   // of buckets, and both per-minute schedulers scan the enabled targets.
-  const stateUpserts = fleet.agent_count * periodicCount(duration, reportSec);
+  const stateUpserts = fleet.online_agent_count * periodicCount(duration, reportSec);
   addEvent(events, {
     id: 'd1_agent_state_upserts',
     label: 'Agent 最新状态回退写入 · D1',
@@ -896,7 +904,7 @@ function estimateD1(workers, duration, options, calibration) {
     note: 'DO 缓冲在每次 drain 后仍会把最新状态回退写入 agent_metrics_state。',
     profile: { write: 1, rowsWritten: 1 },
   });
-  const contactTouches = fleet.agent_count * periodicCount(duration, 600);
+  const contactTouches = fleet.online_agent_count * periodicCount(duration, 600);
   addEvent(events, {
     id: 'd1_agent_contacts',
     label: 'Manager 活跃心跳 · D1',
@@ -905,13 +913,17 @@ function estimateD1(workers, duration, options, calibration) {
     note: '任务轮询按 600 秒节流更新 agent_contacts。',
     profile: { read: 1, write: 1, rowsWritten: 1 },
   });
-  const bucketWrites = fleet.probe_target_count * periodicCount(duration, reportSec);
+  const bucketFallback = calibratedFactor(calibration, 'probe_d1_fallback_rate', 0.01);
+  const bucketWrites = multiplyRange(
+    exact(fleet.probe_target_count * periodicCount(duration, reportSec)),
+    bucketFallback,
+  );
   addEvent(events, {
     id: 'd1_check_buckets',
-    label: '探针 5 分钟桶写入 · D1',
-    count: exact(bucketWrites),
+    label: '探针 5 分钟桶写入 · D1（DO 回退）',
+    count: bucketWrites,
     source: 'derived',
-    note: '每次历史探测写一个 check_buckets 桶；D1 的行写入计数包含表行与索引行，由 d1_index_write_multiplier 统一放大。',
+    note: '历史探测优先批量追加到共享 ProbeHistoryBuffer DO；只有 DO 追加失败时才回退写 check_buckets，因此按回退率（probe_d1_fallback_rate）估算，而不是每个探测周期一条。',
     profile: { write: 1, rowsWritten: 1 },
   });
   const cleanupRuns = Math.ceil(duration / HOUR_SEC);
@@ -920,8 +932,13 @@ function estimateD1(workers, duration, options, calibration) {
     label: '探针桶过期清理 · D1',
     count: exact(cleanupRuns),
     source: 'derived',
-    note: '每小时维护按 day 索引删除过期桶；cutoff 当天切片要扫描该日全部桶（约每目标 288 行），实际删除约每目标每小时 12 行。',
-    profile: { read: 1, write: 2, rowsRead: Math.max(1, fleet.probe_target_count) * 288, rowsWritten: Math.max(1, fleet.probe_target_count) * 12 },
+    note: '每小时维护按 day 索引删除过期桶；cutoff 当天切片要扫描该日全部桶（约每目标 288 行），实际删除量随 DO 回退写入量缩放。',
+    profile: {
+      read: 1,
+      write: 2,
+      rowsRead: Math.max(1, fleet.probe_target_count) * 288,
+      rowsWritten: Math.max(1, Math.round(fleet.probe_target_count * 12 * bucketFallback.point)),
+    },
   });
   const scheduleScans = periodicCount(duration, MINUTE_SEC) * 2;
   addEvent(events, {
