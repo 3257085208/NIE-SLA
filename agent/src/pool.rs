@@ -4,12 +4,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 // Ping and proxy probes used to spawn (and join) up to 32 short-lived threads
-// every cycle. On musl that churn fragments the allocator and keeps RSS high,
-// so probes now run on a fixed pool that is created once per process. The pool
-// size matches the previous concurrency cap, so probe throughput and ordering
-// guarantees stay the same.
-pub(super) const POOL_WORKERS: usize = crate::MAX_PING_CONCURRENCY;
-const WORKER_STACK_BYTES: usize = 512 * 1024;
+// every cycle; probes now run on a fixed pool that is created once per process.
+// Eight workers keep a full probe batch (dozens of targets, 1s TCP timeouts)
+// finishing in a few seconds while each idle worker costs only a small stack,
+// which matters on the small VPS hosts this agent targets.
+pub(super) const POOL_WORKERS: usize = 8;
+const WORKER_STACK_BYTES: usize = 256 * 1024;
 const JOB_TIMEOUT: Duration = Duration::from_secs(180);
 
 type ProbeJob = Box<dyn FnOnce() + Send + 'static>;

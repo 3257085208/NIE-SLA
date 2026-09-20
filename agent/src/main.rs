@@ -40,13 +40,6 @@ use updater::{restart_after_update, spawn_update_worker, UpdateRole};
 
 const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-// musl's allocator keeps freed pages in per-size-class groups, which left the
-// long-running telemetry process holding tens of megabytes after probe bursts.
-// mimalloc returns freed pages to the OS eagerly with the same allocator on
-// every target, so RSS tracks the live working set.
-#[global_allocator]
-static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 const DEFAULT_REPORT_SEC: u64 = 300;
 const DEFAULT_SAMPLE_SEC: u64 = 1;
 const DEFAULT_PING_SEC: u64 = 20;
@@ -63,7 +56,6 @@ const DEFAULT_QUEUE_MAX_SAMPLES: usize = 86_400;
 const QUEUE_FLUSH_SEC: u64 = 10;
 const MIN_PING_QUEUE_CAPACITY: usize = 200;
 const MAX_PING_QUEUE_CAPACITY: usize = 10_000;
-const MAX_PING_CONCURRENCY: usize = 32;
 const TCP_PING_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_PING_RESOLVED_ADDRESSES: usize = 8;
 const WS_READ_TIMEOUT: Duration = Duration::from_secs(45);
@@ -1340,7 +1332,7 @@ fn run_ws_uploader(cfg: &Config, rx: &Mutex<mpsc::Receiver<WsCommand>>) -> bool 
                 let result = if let Some(delay) = retry.retry_delay(Instant::now()) {
                     Err(anyhow!("WSS retry delayed for {}s", delay.as_secs().max(1)))
                 } else {
-                    let result = submit_ws_payload(cfg, &mut socket, &body, binary.as_deref());
+                    let result = submit_ws_payload(cfg, &mut socket, body, binary);
                     if result.is_err() {
                         socket = None;
                         retry.record_failure(Instant::now());
@@ -1369,8 +1361,8 @@ fn submit_ws_payload(
     socket: &mut Option<
         tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
     >,
-    body: &str,
-    binary: Option<&[u8]>,
+    body: String,
+    binary: Option<Vec<u8>>,
 ) -> Result<WsSubmitResponse> {
     if socket.is_none() {
         let ws_base = cfg
@@ -1399,10 +1391,10 @@ fn submit_ws_payload(
     let ws = socket.as_mut().expect("metrics WebSocket initialized");
     match binary {
         Some(payload) => ws
-            .send(Message::Binary(payload.to_vec().into()))
+            .send(Message::Binary(payload.into()))
             .context("send binary metrics WebSocket frame")?,
         None => ws
-            .send(Message::Text(body.to_string().into()))
+            .send(Message::Text(body.into()))
             .context("send metrics WebSocket frame")?,
     }
     loop {
@@ -1425,6 +1417,17 @@ fn submit_ws_payload(
             Message::Binary(_) | Message::Pong(_) | Message::Frame(_) => {}
         }
     }
+}
+
+fn ws_config() -> tungstenite::protocol::WebSocketConfig {
+    // tungstenite eagerly allocates 128 KiB for reads and 128 KiB for writes on
+    // every connection; submit responses are a few hundred bytes, so the
+    // default would hold a quarter of a megabyte for nothing. Writes over 4 KiB
+    // still go straight to the socket.
+    let mut config = tungstenite::protocol::WebSocketConfig::default();
+    config.read_buffer_size = 16 * 1024;
+    config.write_buffer_size = 4 * 1024;
+    config
 }
 
 fn connect_ws_with_timeout<Req: IntoClientRequest>(
@@ -1468,8 +1471,13 @@ fn connect_ws_with_timeout<Req: IntoClientRequest>(
                 stream
                     .set_write_timeout(Some(WS_CONNECT_TIMEOUT))
                     .context("set WebSocket handshake write timeout")?;
-                return tungstenite::client_tls(request, stream)
-                    .map_err(|error| anyhow!("WebSocket handshake failed: {error}"));
+                return tungstenite::client_tls_with_config(
+                    request,
+                    stream,
+                    Some(ws_config()),
+                    None,
+                )
+                .map_err(|error| anyhow!("WebSocket handshake failed: {error}"));
             }
             Err(error) => last_error = Some(error),
         }
@@ -2582,8 +2590,8 @@ fn run_pings(
             move || ping_target(&target, &http)
         })
         .collect();
-    // The pool caps concurrency at MAX_PING_CONCURRENCY workers, matching the
-    // previous chunked fan-out while removing per-cycle thread churn.
+    // The pool caps probe concurrency (see pool::POOL_WORKERS) while removing
+    // the per-cycle thread churn of the previous chunked fan-out.
     probe_pool.run(jobs)
 }
 
