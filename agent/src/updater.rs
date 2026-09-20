@@ -5,7 +5,6 @@ use super::{
     AGENT_VERSION, INITIAL_UPDATE_CHECK_SEC,
 };
 use anyhow::{anyhow, Context, Result};
-#[cfg(any(target_os = "linux", test))]
 use sha2::{Digest, Sha256};
 #[cfg(target_os = "linux")]
 use std::env;
@@ -78,6 +77,114 @@ pub(super) enum UpdateRole {
     PrivilegedManager,
 }
 
+// A self-hosted instance is normally the update source for its own agents, but
+// the instance itself is updated by its deployment pipeline. When that pipeline
+// stalls, every node it manages used to freeze at the instance's version; the
+// official release channel is the same upstream the deployment pipeline pulls
+// from, so nodes now follow it when the instance has nothing newer.
+const DEFAULT_OFFICIAL_UPDATE_BASE: &str = "https://status.example.com";
+
+fn official_update_base() -> Option<String> {
+    let disabled = std::env::var("NIE_SLA_OFFICIAL_UPDATE")
+        .or_else(|_| std::env::var("NSTATUS_OFFICIAL_UPDATE"))
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "false" | "off" | "no"
+            )
+        })
+        .unwrap_or(false);
+    if disabled {
+        return None;
+    }
+    let base = std::env::var("NIE_SLA_OFFICIAL_UPDATE_BASE")
+        .or_else(|_| std::env::var("NSTATUS_OFFICIAL_UPDATE_BASE"))
+        .unwrap_or_else(|_| DEFAULT_OFFICIAL_UPDATE_BASE.to_string());
+    let base = base.trim().trim_end_matches('/').to_string();
+    base.starts_with("https://").then_some(base)
+}
+
+fn official_fallback_needed(instance_latest: &str, current: &str) -> bool {
+    // Only when the instance has nothing newer: an instance that publishes its
+    // own builds stays in control of the versions it hands out.
+    matches!(is_newer_version(instance_latest, current), Ok(false))
+}
+
+fn official_fallback_policy(policy: &UpdatePolicy, http: &HttpClient) -> Option<UpdatePolicy> {
+    if !policy.auto_update || !official_fallback_needed(&policy.latest_version, AGENT_VERSION) {
+        return None;
+    }
+    let base = official_update_base()?;
+    let manifest_text = match http.get_public(&format!("{}/update-manifest.json", base)) {
+        Ok(text) => text,
+        Err(error) => {
+            eprintln!(
+                "{{\"ok\":false,\"official_update_manifest_error\":{}}}",
+                crate::json_string(&error.to_string())
+            );
+            return None;
+        }
+    };
+    let manifest: serde_json::Value = match serde_json::from_str(&manifest_text) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!(
+                "{{\"ok\":false,\"official_update_manifest_error\":{}}}",
+                crate::json_string(&error.to_string())
+            );
+            return None;
+        }
+    };
+    let version = manifest
+        .get("version")
+        .and_then(|item| item.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if !matches!(is_newer_version(&version, AGENT_VERSION), Ok(true)) {
+        return None;
+    }
+    let sums = match http.get_public(&format!("{}/bin/SHA256SUMS", base)) {
+        Ok(sums) => sums,
+        Err(error) => {
+            eprintln!(
+                "{{\"ok\":false,\"official_update_manifest_error\":{}}}",
+                crate::json_string(&error.to_string())
+            );
+            return None;
+        }
+    };
+    let computed = sha256_hex(sums.as_bytes());
+    let declared = manifest
+        .get("sums_sha256")
+        .and_then(|item| item.as_str())
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let manifest_sha256 = if declared.len() == 64 {
+        if declared != computed {
+            eprintln!("official update checksum manifest does not match its declared hash");
+            return None;
+        }
+        declared
+    } else {
+        // Older manifests predate the field; the download step still verifies
+        // the binary against this freshly fetched manifest.
+        computed
+    };
+    Some(UpdatePolicy {
+        auto_update: true,
+        latest_version: if version.starts_with('v') {
+            version
+        } else {
+            format!("v{}", version)
+        },
+        download_base: base,
+        manifest_sha256,
+        check_interval_sec: policy.check_interval_sec,
+    })
+}
+
 fn check_for_update(
     cfg: &Config,
     http: &HttpClient,
@@ -119,6 +226,17 @@ fn check_for_update(
             .and_then(|item| item.as_u64())
             .unwrap_or(cfg.update_check_sec)
             .clamp(900, 86_400),
+    };
+    let policy = match official_fallback_policy(&policy, http) {
+        Some(official) => {
+            eprintln!(
+                "{{\"ok\":true,\"update_source\":\"official\",\"instance_version\":{},\"official_version\":{}}}",
+                crate::json_string(&policy.latest_version),
+                crate::json_string(&official.latest_version)
+            );
+            official
+        }
+        None => policy,
     };
 
     if !is_newer_version(&policy.latest_version, AGENT_VERSION)? {
@@ -633,7 +751,6 @@ fn checksum_for_binary(manifest: &[u8], binary_name: &str) -> Result<String> {
     Err(anyhow!("missing checksum for {}", binary_name))
 }
 
-#[cfg(any(target_os = "linux", test))]
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -701,6 +818,15 @@ mod tests {
         assert!(!is_newer_version("1.0.8", "1.0.9").unwrap());
         assert!(is_newer_version("1.10.0", "1.9.99").unwrap());
         assert!(is_newer_version("1.0", "1.0.0").is_err());
+    }
+
+    #[test]
+    fn official_fallback_only_when_the_instance_has_nothing_newer() {
+        assert!(official_fallback_needed("v1.1.84", "1.1.89"));
+        assert!(official_fallback_needed("1.1.89", "1.1.89"));
+        assert!(!official_fallback_needed("v1.1.90", "1.1.89"));
+        assert!(!official_fallback_needed("", "1.1.89"));
+        assert!(!official_fallback_needed("not-a-version", "1.1.89"));
     }
 
     #[test]
