@@ -117,7 +117,7 @@ test('v1.3.2 adds a Durable Object request ledger and coarse schedule writes', (
   assert.equal(result.do.assumptions.free_tier_limit_requests_per_day, 100_000);
   const schedule = result.d1.components.find((item) => item.id === 'd1_probe_persist');
   assert.ok(schedule, 'coarse schedule flush event must exist');
-  assert.equal(schedule.count.estimate, Math.round(4 * 48 * 1.15));
+  assert.equal(schedule.count.estimate, Math.round(4 * 12 * 1.15));
   assert.match(schedule.label, /30/);
   const withoutRegionProxy = estimateUsage({ status: STATUS, from: FROM, to: TO, options: { regionProxy: false } });
   const scheduledWithoutProxy = withoutRegionProxy.do.components.find((item) => item.id === 'do_probe_region_scheduled');

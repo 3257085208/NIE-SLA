@@ -20,6 +20,11 @@ const DEFAULT_LATENCY_SEC = 60;
 const DEFAULT_SNAPSHOT_SEC = 300;
 const DEFAULT_MAX_TARGETS_PER_RUN = 20;
 const DEFAULT_CREDENTIAL_TOUCH_SEC = 21_600;
+// v1.1.93 write reductions: agent state mirror cadence, manager contact
+// touch cadence and the crash-recovery schedule flush window.
+const DEFAULT_STATE_MIRROR_SEC = 900;
+const DEFAULT_CONTACT_TOUCH_SEC = 1_800;
+const DEFAULT_SCHEDULE_FLUSH_SEC = 7_200;
 // This is the empirically calibrated rate of incoming dynamic Worker
 // requests that are not represented by the bounded site debug log.  It is
 // deliberately separate from R2/D1 public-read factors: an incoming Worker
@@ -39,7 +44,7 @@ const D1_PROFILES = Object.freeze({
   agent_location: { read: 6, write: 2, authTouch: 1, debugLog: 0, rowsRead: 8, rowsWritten: 2 },
   agent_ping_targets: { read: 6, authTouch: 1, rowsRead: 8, rowsWritten: 0 },
   latency_targets: { read: 5, authTouch: 1, rowsRead: 16, rowsWritten: 0 },
-  latency_results: { read: 8, write: 2, authTouch: 1, rowsRead: 38, rowsWritten: 2 },
+  latency_results: { read: 8, write: 2, authTouch: 1, rowsRead: 38, rowsWritten: 0.4 },
   latency_update_policy: { read: 7, authTouch: 1, debugLog: 0, rowsRead: 10, rowsWritten: 0 },
   admin_agent_tasks: { read: 3, debugLog: 0, rowsRead: 40, rowsWritten: 0 },
   other_debug: { read: 5, debugLog: 1, rowsRead: 20, rowsWritten: 0 },
@@ -802,7 +807,7 @@ function estimateD1(workers, duration, options, calibration) {
     label: 'Latency 结果处理 · D1',
     count: exact(latencyCycles),
     source: 'derived',
-    note: '包括允许目标查询、节点状态更新和清理；结果明细优先归档到 R2。',
+    note: '包括允许目标查询、节点状态更新和清理；结果明细优先归档到 R2。节点状态行自 v1.1.93 起每 300 秒才落一次（查询仍按结果周期执行，行写入按 1/5 计）。',
     profile: 'latency_results',
   });
 
@@ -819,7 +824,7 @@ function estimateD1(workers, duration, options, calibration) {
   // Plan-A coarse schedule bookkeeping: the per-probe targets UPDATE is
   // throttled to one flush per target per TARGET_SCHEDULE_FLUSH_SEC (default
   // 30 minutes); probing cadence lives in the R2 status state.
-  const scheduleFlushes = fleet.probe_target_count * periodicCount(duration, 1_800);
+  const scheduleFlushes = fleet.probe_target_count * periodicCount(duration, options.scheduleFlushSec ?? DEFAULT_SCHEDULE_FLUSH_SEC);
   const probeFactor = calibratedFactor(calibration, 'probe_event_multiplier', 1.15);
   const probeWrites = multiplyRange(exact(scheduleFlushes), probeFactor);
   addEvent(events, {
@@ -895,7 +900,7 @@ function estimateD1(workers, duration, options, calibration) {
   // task poller touches agent_contacts, every history probe writes a
   // check_buckets row, the hourly maintenance delete scans one calendar day
   // of buckets, and both per-minute schedulers scan the enabled targets.
-  const stateUpserts = fleet.online_agent_count * periodicCount(duration, reportSec);
+  const stateUpserts = fleet.online_agent_count * periodicCount(duration, options.stateMirrorSec ?? DEFAULT_STATE_MIRROR_SEC);
   addEvent(events, {
     id: 'd1_agent_state_upserts',
     label: 'Agent 最新状态回退写入 · D1',
@@ -904,7 +909,7 @@ function estimateD1(workers, duration, options, calibration) {
     note: 'DO 缓冲在每次 drain 后仍会把最新状态回退写入 agent_metrics_state。',
     profile: { write: 1, rowsWritten: 1 },
   });
-  const contactTouches = fleet.online_agent_count * periodicCount(duration, 600);
+  const contactTouches = fleet.online_agent_count * periodicCount(duration, options.contactTouchSec ?? DEFAULT_CONTACT_TOUCH_SEC);
   addEvent(events, {
     id: 'd1_agent_contacts',
     label: 'Manager 活跃心跳 · D1',
@@ -926,7 +931,7 @@ function estimateD1(workers, duration, options, calibration) {
     note: '历史探测优先批量追加到共享 ProbeHistoryBuffer DO；只有 DO 追加失败时才回退写 check_buckets，因此按回退率（probe_d1_fallback_rate）估算，而不是每个探测周期一条。',
     profile: { write: 1, rowsWritten: 1 },
   });
-  const cleanupRuns = Math.ceil(duration / HOUR_SEC);
+  const cleanupRuns = Math.ceil(duration / DAY_SEC);
   addEvent(events, {
     id: 'd1_check_bucket_cleanup',
     label: '探针桶过期清理 · D1',

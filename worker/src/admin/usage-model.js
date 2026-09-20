@@ -25,14 +25,14 @@ const CAL = Object.freeze({
   rowsReadMultiplier: 2.65,
   rowsWrittenMultiplier: 1.92,
   output: {
-    workers_calls: 0.7304,
+    workers_calls: 0.7308,
     do_requests: 1.32,
     r2_class_a: 0.86,
     r2_class_b: 1.26,
     r2_requests: 0.92,
-    d1_queries: 1.2775,
-    d1_rows_read: 0.96,
-    d1_rows_written: 0.4347,
+    d1_queries: 1.3623,
+    d1_rows_read: 0.9956,
+    d1_rows_written: 0.4331,
   },
   freeTier: {
     workers_calls: 100_000,
@@ -107,19 +107,19 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
   addD1(geoReads, { read: 12, rowsRead: 16, write: 2, rowsWritten: 2 });
   addD1(pingRefresh, { read: 6, rowsRead: 8 });
   addD1(latencyCycles, { read: 5, rowsRead: 16 });
-  addD1(latencyCycles, { read: 8, write: 2, rowsRead: 38, rowsWritten: 2 });
+  addD1(latencyCycles, { read: 8, write: 2, rowsRead: 38, rowsWritten: 0.4 });
   addD1(latencyUpdate, { read: 7, rowsRead: 10 });
   addD1(cron, { read: 8, write: 3, rowsRead: 100, rowsWritten: 1 });
-  addD1(agents * periodic(seconds, 300), { write: 1, rowsWritten: 1 });
-  addD1(agents * periodic(seconds, 600), { read: 1, write: 1, rowsWritten: 1 });
+  addD1(agents * periodic(seconds, 900), { write: 1, rowsWritten: 1 });
+  addD1(agents * periodic(seconds, 1800), { read: 1, write: 1, rowsWritten: 1 });
   addD1(probeTargets * periodic(seconds, reportSec) * CAL.probeD1FallbackRate, { write: 1, rowsWritten: 1 });
-  addD1(probeTargets * periodic(seconds, 1800), { write: 1, rowsWritten: 1 });
+  addD1(probeTargets * periodic(seconds, 7200), { write: 1, rowsWritten: 1 });
   addD1(probeStateSync, { read: 8, rowsRead: 100 });
   addD1(trafficAgents * periodic(seconds, 1800), { read: 2, rowsRead: 4, write: 1, rowsWritten: 1 });
   addD1(Math.ceil(publicDynamic * 0.06), { read: 8, rowsRead: 100 });
   addD1(periodic(seconds, 3600), { read: 8, write: 5, rowsRead: 80, rowsWritten: 5 });
   addD1((agents + latencyNodes) * periodic(seconds, CAL.credentialTouchSec), { rowsWritten: 1 });
-  addD1(periodic(seconds, 3600), { read: 1, write: 2, rowsRead: probeTargets * 288, rowsWritten: Math.max(1, Math.round(probeTargets * 12 * CAL.probeD1FallbackRate)) });
+  addD1(periodic(seconds, 86400), { read: 1, write: 2, rowsRead: probeTargets * 288, rowsWritten: Math.max(1, Math.round(probeTargets * 12 * CAL.probeD1FallbackRate)) });
   addD1(cron * 2, { read: 1, rowsRead: probeTargets });
 
   const d1Queries = (d1.read + d1.write) * CAL.queryPathMultiplier * CAL.output.d1_queries;

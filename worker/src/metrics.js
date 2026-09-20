@@ -1822,6 +1822,7 @@ async function writeAgentMetricState(env, state) {
       pings=excluded.pings,
       proxy_checks=excluded.proxy_checks,
       capabilities=CASE WHEN excluded.capabilities IS NOT NULL THEN excluded.capabilities ELSE capabilities END
+    WHERE CAST(strftime('%s', excluded.updated_at) AS INTEGER) - CAST(strftime('%s', agent_metrics_state.updated_at) AS INTEGER) >= 900
   `).bind(
     agentId, agentLabel, agentVersion, updatedAt,
     hostname, state.cpu_percent, state.process_count, state.thread_count,

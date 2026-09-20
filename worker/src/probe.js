@@ -325,7 +325,9 @@ export async function runDueTargets(env, options = {}) {
 // next_probe_at mirror) only runs once per target per flush window; probing
 // cadence itself is governed by the R2 status state, not by this row.
 export function scheduleFlushDue(target, checkedAt, env = {}) {
-  const min = clamp(Number(env.TARGET_SCHEDULE_FLUSH_SEC ?? 1800), 60, 86400);
+  // The D1 row is only a crash-recovery mirror of the R2 schedule state, so a
+  // two-hour flush window is plenty and cuts the mirror writes by 4x.
+  const min = clamp(Number(env.TARGET_SCHEDULE_FLUSH_SEC ?? 7200), 60, 86400);
   const last = Number(target?.last_checked_at || 0);
   if (!Number.isFinite(last) || last <= 0) return true;
   return checkedAt - last >= min;

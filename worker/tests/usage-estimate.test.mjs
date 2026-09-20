@@ -11,8 +11,8 @@ test('estimate stays within metered reality envelopes (2026-09-16 calibration)',
   assert.ok(r.estimates.workers_calls > 30_000 && r.estimates.workers_calls < 42_000, `workers ${r.estimates.workers_calls}`);
   assert.ok(r.estimates.do_requests > 25_000 && r.estimates.do_requests < 38_000, `do requests ${r.estimates.do_requests}`);
   assert.ok(r.estimates.do_rows_written > 30_000 && r.estimates.do_rows_written < 55_000, `do rows ${r.estimates.do_rows_written}`);
-  assert.ok(r.estimates.d1_rows_written > 45_000 && r.estimates.d1_rows_written < 75_000, `d1 written ${r.estimates.d1_rows_written}`);
-  assert.ok(r.estimates.d1_rows_read > 2_200_000 && r.estimates.d1_rows_read < 3_600_000, `d1 read ${r.estimates.d1_rows_read}`);
+  assert.ok(r.estimates.d1_rows_written > 18_000 && r.estimates.d1_rows_written < 32_000, `d1 written ${r.estimates.d1_rows_written}`);
+  assert.ok(r.estimates.d1_rows_read > 1_800_000 && r.estimates.d1_rows_read < 2_800_000, `d1 read ${r.estimates.d1_rows_read}`);
   assert.ok(r.estimates.r2_class_b > r.estimates.r2_class_a * 3, 'r2 b must stay far above a');
   assert.ok(r.estimates.d1_rows_read > r.estimates.d1_rows_written * 20, 'row reads must dwarf row writes');
   assert.ok(r.quota.do_requests.pct > 20 && r.quota.do_requests.pct < 70, 'do request quota pct visible');

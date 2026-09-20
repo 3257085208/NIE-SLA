@@ -45,6 +45,11 @@ const MAX_RESULT_BYTES = 256 * 1024;
 const MAX_EXCERPT_CHARS = 16 * 1024;
 const MAX_IP_UNLOCK_REPORT_CHARS = 64 * 1024;
 const AGENT_TASK_POLL_SEC = 600;
+// The manager contact row is only used for the admin "manager last seen"
+// display; refreshing it on every 600s poll burned one D1 row per agent per
+// poll. A 30-minute touch keeps the display meaningful at a fraction of the
+// writes.
+const AGENT_CONTACT_TOUCH_SEC = 1800;
 
 const MAX_BULK_AGENT_TASKS = 50;
 const BULK_AGENT_TASK_CONCURRENCY = 5;
@@ -227,7 +232,7 @@ export async function touchAgentManagerContact(env, agentIdValue) {
       VALUES (?, ?, NULL, ?)
       ON CONFLICT(agent_id) DO UPDATE SET manager_seen_at = excluded.manager_seen_at, updated_at = excluded.updated_at
       WHERE excluded.manager_seen_at - agent_contacts.manager_seen_at >= ?`)
-      .bind(agentId, now, now, AGENT_TASK_POLL_SEC)
+      .bind(agentId, now, now, AGENT_CONTACT_TOUCH_SEC)
       .run();
   } catch (error) {
     console.error('agent manager contact update failed:', String(error?.message || error));

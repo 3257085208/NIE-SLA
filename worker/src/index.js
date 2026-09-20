@@ -201,7 +201,13 @@ export async function runScheduledTasks(env, cron, options = {}) {
     try { results.exchange_rates = await measure('exchange_rates', async () => ({ ok: Boolean(await getExchangeRates(env)) })); } catch (err) { results.exchange_rates_error = String(err?.message || err); }
     try { results.volatile_cleanup = await measure('volatile_cleanup', () => cleanupVolatileHistory(env)); } catch (err) { results.volatile_cleanup_error = String(err?.message || err); }
     try { results.rate_limit_cleanup = await measure('rate_limit_cleanup', () => cleanupRateLimitsD1(env)); } catch (err) { results.rate_limit_cleanup_error = String(err?.message || err); }
-    try { results.check_bucket_cleanup = await measure('check_bucket_cleanup', () => cleanupOldCheckBuckets(env, 31)); } catch (err) { results.check_bucket_cleanup_error = String(err?.message || err); }
+    let runDailyCleanup = false;
+    try { runDailyCleanup = await claimDailyMaintenanceSlot(env); } catch (err) { results.daily_claim_error = String(err?.message || err); }
+    if (runDailyCleanup) {
+      try { results.check_bucket_cleanup = await measure('check_bucket_cleanup', () => cleanupOldCheckBuckets(env, 31)); } catch (err) { results.check_bucket_cleanup_error = String(err?.message || err); }
+    } else {
+      results.check_bucket_cleanup = { ok: true, skipped: true, reason: 'daily_slot_claimed' };
+    }
     if (parseBoolean(env.DEBUG_LOG_CLEANUP_OFF ?? false, false)) results.debug_log_cleanup = { ok: true, skipped: true, reason: 'disabled' };
     else try { results.debug_log_cleanup = await measure('debug_log_cleanup', () => cleanupDebugLogs(env)); } catch (err) { results.debug_log_cleanup_error = String(err?.message || err); }
     try { results.check_bucket_days = await measure('check_bucket_days', () => refreshCheckBucketDays(env)); } catch (err) { results.check_bucket_days_error = String(err?.message || err); }
@@ -331,6 +337,22 @@ async function claimHourlyMaintenanceSlot(env, cron = '') {
     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
     WHERE CAST(app_meta.value AS INTEGER) < ?`)
     .bind(key, String(hour), now, hour)
+    .run();
+  return Number(result?.meta?.changes || 0) > 0;
+}
+
+// Expired probe buckets stay readable for 31 days and every read path filters
+// by day, so sweeping them once per day is enough; the hourly sweep used to
+// scan a full day of bucket rows per target every hour.
+async function claimDailyMaintenanceSlot(env) {
+  if (!env.DB) return new Date().getUTCHours() === 3;
+  const day = Math.floor(Date.now() / 86400000);
+  const key = 'maintenance:daily';
+  const now = Math.floor(Date.now() / 1000);
+  const result = await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+    WHERE CAST(app_meta.value AS INTEGER) < ?`)
+    .bind(key, String(day), now, day)
     .run();
   return Number(result?.meta?.changes || 0) > 0;
 }

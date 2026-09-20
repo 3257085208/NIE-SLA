@@ -121,7 +121,17 @@ archived = JSON.parse([...env.ARCHIVE.objects.values()][0].value);
 assert.equal(archived.points.length, 2, 'R2 archive must replace duplicate node/target/time points');
 assert.equal(archived.points.find(point => point.checked_at === checkedAt).latency_ms, 45);
 const latest = JSON.parse(database.prepare(`SELECT latest_results FROM latency_agents WHERE id = ?`).get(created.id).latest_results);
-assert.equal(latest[0].latency_ms, 45);
+// The node row is a display cache throttled to one write per 300s (v1.1.93):
+// inside the window it keeps the first value while the archive still records
+// every accepted point.
+assert.equal(latest[0].latency_ms, 32);
+database.prepare(`UPDATE latency_agents SET last_seen_at = last_seen_at - 400 WHERE id = ?`).run(created.id);
+await submitLatencyAgentResults(jsonRequest({}), env, {
+  node_id: created.id,
+  results: [{ target_id: 'public-vps', checked_at: checkedAt, latency_ms: 45, ok: true }],
+});
+const refreshed = JSON.parse(database.prepare(`SELECT latest_results FROM latency_agents WHERE id = ?`).get(created.id).latest_results);
+assert.equal(refreshed[0].latency_ms, 45, 'node row must refresh after the throttle window');
 const publicHistory = await getPublicLatency(env, new URL('https://api.example.test/api/latency?target_id=public-vps&hours=24'));
 assert.equal(publicHistory.sources.length, 1, JSON.stringify(publicHistory));
 assert.equal(publicHistory.sources[0].points.length, 2);

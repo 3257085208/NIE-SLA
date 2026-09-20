@@ -13,6 +13,9 @@ const D1_FALLBACK_BUCKET_SEC = 300;
 const ARCHIVE_SEGMENT_SEC = 6 * 3600;
 const ARCHIVE_SCHEMA = 'nie-sla-latency-segment-v1';
 const LATENCY_SCRIPT_VERSION = 8;
+// Per-isolate throttle for the retention cleanup that used to run on every
+// accepted result batch.
+const lastLatencyCleanup = new Map();
 const LATENCY_SCRIPT_SHA256 = 'a76f1e06835aa37965fe60b46bf7f94f6b65ef36083597ab11995ec00238958a';
 const LATENCY_INSTALLER_SHA256 = '0982cf3546282fc445a5fb84169db009cdc1177defbc8efc12d297fd41b0737c';
 const INSTALL_TICKET_PREFIX = 'nsi_';
@@ -257,8 +260,15 @@ export async function submitLatencyAgentResults(request, env, body = null) {
   }
   if (!archived && accepted.length) await writeLatencyD1Fallback(env, nodeId, accepted);
   const latest = latestLatencyPoints(accepted);
-  await env.DB.prepare(`UPDATE latency_agents SET last_seen_at = ?, latest_results = ?, updated_at = ? WHERE id = ?`).bind(now, JSON.stringify(latest), now, nodeId).run();
-  await cleanupLatencyResults(env, now);
+  // The per-minute row refresh is a display cache (charts read the R2 archive),
+  // so a five-minute touch is enough and cuts these writes by 5x.
+  await env.DB.prepare(`UPDATE latency_agents SET last_seen_at = ?, latest_results = ?, updated_at = ?
+    WHERE id = ? AND (last_seen_at IS NULL OR ? - last_seen_at >= 300)`)
+    .bind(now, JSON.stringify(latest), now, nodeId, now).run();
+  if (now - (lastLatencyCleanup.get(nodeId) || 0) >= 300) {
+    lastLatencyCleanup.set(nodeId, now);
+    await cleanupLatencyResults(env, now);
+  }
   return { ok: true, node_id: nodeId, accepted: accepted.length, storage: archived ? 'r2' : 'd1_fallback' };
 }
 
