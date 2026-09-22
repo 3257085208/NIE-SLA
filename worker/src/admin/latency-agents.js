@@ -11,6 +11,14 @@ import { getMeta, getPublicSettings, setMeta } from './settings.js';
 const RESULT_BUCKET_SEC = 1;
 const D1_FALLBACK_BUCKET_SEC = 300;
 const ARCHIVE_SEGMENT_SEC = 6 * 3600;
+// A 60s result cadence was rewriting every 6-hour segment object five times
+// per flush window. Accepted points wait in latency_agents.pending_results
+// (raw seconds preserved) and are merged into the segment once per window.
+const ARCHIVE_FLUSH_MIN_SEC = 300;
+// Guardrail for a long R2 outage: beyond this many buffered points the
+// oldest overflow is bucketed into the D1 fallback table instead of growing
+// the pending JSON without bound.
+const PENDING_MAX_POINTS = 10_000;
 const ARCHIVE_SCHEMA = 'nie-sla-latency-segment-v1';
 const LATENCY_SCRIPT_VERSION = 8;
 // Per-isolate throttle for the retention cleanup that used to run on every
@@ -250,15 +258,19 @@ export async function submitLatencyAgentResults(request, env, body = null) {
     accepted.push({ target_id: targetId, checked_at: checkedAt, latency_ms: latency, ok: ok ? 1 : 0, error, target_revision: Number(target.created_at || 0) });
   }
   let archived = false;
+  let deferred = false;
   if (accepted.length && env.ARCHIVE) {
     try {
-      await appendLatencyArchive(env, nodeId, accepted);
-      archived = true;
+      const flushed = await flushLatencyArchive(env, nodeId, accepted);
+      archived = flushed.archived;
+      deferred = flushed.deferred;
     } catch (error) {
       console.error('latency archive write failed:', String(error?.message || error));
+      try { await retainLatencyPending(env, nodeId, accepted); } catch (_) {}
+      await writeLatencyD1Fallback(env, nodeId, accepted);
     }
   }
-  if (!archived && accepted.length) await writeLatencyD1Fallback(env, nodeId, accepted);
+  if (!env.ARCHIVE && accepted.length) await writeLatencyD1Fallback(env, nodeId, accepted);
   const latest = latestLatencyPoints(accepted);
   // The per-minute row refresh is a display cache (charts read the R2 archive),
   // so a five-minute touch is enough and cuts these writes by 5x.
@@ -269,7 +281,13 @@ export async function submitLatencyAgentResults(request, env, body = null) {
     lastLatencyCleanup.set(nodeId, now);
     await cleanupLatencyResults(env, now);
   }
-  return { ok: true, node_id: nodeId, accepted: accepted.length, storage: archived ? 'r2' : 'd1_fallback' };
+  return {
+    ok: true,
+    node_id: nodeId,
+    accepted: accepted.length,
+    storage: archived ? 'r2' : (deferred ? 'd1_pending' : 'd1_fallback'),
+    ...(deferred ? { pending: true } : {}),
+  };
 }
 
 export async function getPublicLatency(env, url) {
@@ -285,8 +303,24 @@ export async function getPublicLatency(env, url) {
   // binding for reads so the S3 compatibility facade does not consume one
   // external fetch per segment and hit the Worker subrequest ceiling.
   const archivedRows = await readLatencyArchive({ ...env, ARCHIVE: env.ARCHIVE_NATIVE || env.ARCHIVE }, nodes, targetId, cutoff, nowSec());
+  // Points waiting for the next segment flush stay publicly visible (raw
+  // seconds intact) and are deduplicated against the archive on flush.
+  const pendingRows = pendingLatencyRows(nodes, targetId, cutoff, nowSec());
   const legacyRows = await env.DB.prepare(`SELECT r.node_id, a.name AS node_name, a.color AS node_color, r.checked_at, r.latency_ms, r.ok FROM latency_results r JOIN latency_agents a ON a.id = r.node_id AND a.enabled = 1 WHERE r.target_id = ? AND r.checked_at >= ? ORDER BY r.checked_at ASC`).bind(targetId, cutoff).all().catch(() => ({ results: [] }));
-  return { ok: true, target_id: targetId, sources: groupLatencySeries([...(legacyRows.results || []), ...archivedRows]) };
+  return { ok: true, target_id: targetId, sources: groupLatencySeries([...(legacyRows.results || []), ...archivedRows, ...pendingRows]) };
+}
+
+function pendingLatencyRows(nodes, targetId, since, until) {
+  const rows = [];
+  for (const node of nodes || []) {
+    for (const point of parsePendingResults(node?.pending_results)) {
+      if (String(point.target_id) !== String(targetId)) continue;
+      const checkedAt = Number(point.checked_at || 0);
+      if (checkedAt < since || checkedAt > until) continue;
+      rows.push({ node_id: node.id, node_name: node.name, node_color: node.color, checked_at: checkedAt, latency_ms: point.latency_ms, ok: point.ok });
+    }
+  }
+  return rows;
 }
 
 export async function getLatestExternalLatencyByTarget(env, targetIds) {
@@ -324,7 +358,7 @@ export async function getLatestExternalLatencyByTarget(env, targetIds) {
 }
 
 async function enabledLatencyNodes(env) {
-  const rows = await env.DB.prepare(`SELECT id, name, color, latest_results FROM latency_agents WHERE enabled = 1 ORDER BY name COLLATE NOCASE`).all();
+  const rows = await env.DB.prepare(`SELECT id, name, color, latest_results, pending_results FROM latency_agents WHERE enabled = 1 ORDER BY name COLLATE NOCASE`).all();
   return rows.results || [];
 }
 
@@ -357,17 +391,26 @@ function latencySegmentKey(nodeId, segmentStart) {
   return `latency/v1/${encodeURIComponent(nodeId)}/${day}/${hour}.json`;
 }
 
-async function appendLatencyArchive(env, nodeId, points) {
+async function flushLatencyArchive(env, nodeId, points) {
+  const row = await env.DB.prepare(`SELECT pending_results FROM latency_agents WHERE id = ?`).bind(nodeId).first().catch(() => null);
+  const pending = parsePendingResults(row?.pending_results);
   const groups = new Map();
-  for (const point of points) {
+  for (const point of [...pending, ...points]) {
     const start = latencySegmentStart(point.checked_at);
     const list = groups.get(start) || [];
     list.push(point);
     groups.set(start, list);
   }
+  const remaining = [];
+  let archived = false;
   for (const [segmentStart, additions] of groups) {
     const key = latencySegmentKey(nodeId, segmentStart);
     const existing = await readArchiveObjectStrict(env.ARCHIVE, key);
+    const lastWriteAt = Number(existing?.updated_at || 0);
+    if (lastWriteAt > 0 && nowSec() - lastWriteAt < ARCHIVE_FLUSH_MIN_SEC) {
+      remaining.push(...additions);
+      continue;
+    }
     const byPoint = new Map();
     for (const point of existing?.points || []) byPoint.set(`${point.target_id}:${point.checked_at}`, point);
     for (const point of additions) byPoint.set(`${point.target_id}:${point.checked_at}`, point);
@@ -379,6 +422,44 @@ async function appendLatencyArchive(env, nodeId, points) {
       points: [...byPoint.values()].sort((a, b) => Number(a.checked_at) - Number(b.checked_at) || String(a.target_id).localeCompare(String(b.target_id))),
     };
     await writeR2Json(env, key, payload, { schema: ARCHIVE_SCHEMA });
+    archived = true;
+  }
+  const { keep, overflow } = capPendingResults(remaining);
+  if (overflow.length) await writeLatencyD1Fallback(env, nodeId, overflow);
+  if (pending.length || keep.length) {
+    await env.DB.prepare(`UPDATE latency_agents SET pending_results = ? WHERE id = ?`)
+      .bind(JSON.stringify(keep), nodeId)
+      .run();
+  }
+  return { archived, deferred: keep.length > 0, pending: keep.length };
+}
+
+// Keeps accepted points safe while the segment write window is closed. The
+// buffer is bounded; on overflow the oldest points fall back to the existing
+// 5-minute D1 table so nothing is dropped silently.
+async function retainLatencyPending(env, nodeId, points) {
+  const row = await env.DB.prepare(`SELECT pending_results FROM latency_agents WHERE id = ?`).bind(nodeId).first().catch(() => null);
+  const pending = parsePendingResults(row?.pending_results);
+  const { keep, overflow } = capPendingResults([...pending, ...points]);
+  if (overflow.length) await writeLatencyD1Fallback(env, nodeId, overflow);
+  await env.DB.prepare(`UPDATE latency_agents SET pending_results = ? WHERE id = ?`)
+    .bind(JSON.stringify(keep), nodeId)
+    .run();
+  return keep.length;
+}
+
+function capPendingResults(points) {
+  if (points.length <= PENDING_MAX_POINTS) return { keep: points, overflow: [] };
+  return { keep: points.slice(points.length - PENDING_MAX_POINTS), overflow: points.slice(0, points.length - PENDING_MAX_POINTS) };
+}
+
+function parsePendingResults(value) {
+  try {
+    const parsed = JSON.parse(String(value || '[]'));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(point => point && Number(point.checked_at || 0) > 0);
+  } catch (_) {
+    return [];
   }
 }
 

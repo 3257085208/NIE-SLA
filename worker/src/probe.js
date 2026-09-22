@@ -296,6 +296,7 @@ export async function loadProbeTargetRows(env) {
 
 export async function runDueTargets(env, options = {}) {
   const maxTargets = clamp(Number(env.MAX_TARGETS_PER_RUN || 20), 1, 200);
+  const stateSync = options.stateSync || null;
   const now = nowSec();
   // Schedule bookkeeping lives in the R2 status state's history_checked_at
   // marker (lastCheckedAt gate below); fast-status writes never touch that
@@ -314,7 +315,7 @@ export async function runDueTargets(env, options = {}) {
       .filter(item => item.lastCheckedAt <= now - historyDueIntervalSec(item.target, env, previousById.get(item.target.id)))
       .sort((a, b) => a.lastCheckedAt - b.lastCheckedAt).slice(0, maxTargets).map(item => item.target);
     if (!targets.length) return { ok: true, count: 0, results: [] };
-    const results = await runTargetBatch(env, targets, previousById);
+    const results = await runTargetBatch(env, targets, previousById, stateSync ? { stateSync } : {});
     return { ok: true, count: targets.length, results, events: compactStatusEvents(results) };
   } finally {
     if (!options.skipLease) await releaseProbeRunLease(env, lease);
@@ -371,9 +372,11 @@ export async function runFastStatusTargets(env, options = {}) {
   // unchanged; this only prevents a larger enabled fleet from being silently
   // truncated.
   const maxTargets = clamp(Number(env.FAST_STATUS_MAX_TARGETS || 100), 1, 200);
+  const stateSync = options.stateSync || null;
   const now = nowSec();
   const targetRows = Array.isArray(options.targetRows) ? options.targetRows : await loadProbeTargetRows(env);
   const state = await readR2State(env);
+  if (stateSync) stateSync.applyOverlay(state);
   const d1Latest = await readLatestStatusMap(env, targetRows.map((target) => target.id));
   const previousById = buildPreviousStateMap(targetRows, state, d1Latest);
   const targets = targetRows
@@ -411,21 +414,7 @@ export async function runFastStatusTargets(env, options = {}) {
         for (const item of settled) results.push(item.status === 'fulfilled' ? item.value : { ok: false, error: String(item.reason?.message || item.reason) });
       }
     }
-    let stateSyncWarning = '';
     const stateUpdates = results.map((item) => item.state_update).filter(Boolean);
-    try {
-      const stateSync = await mergeR2StateUpdates(env, stateUpdates);
-      if (!stateSync?.ok) {
-        stateSyncWarning = 'r2_state_sync_failed';
-        const fallback = await fallbackLatestStatusToD1(env, stateUpdates);
-        if (!fallback.ok) stateSyncWarning = 'r2_state_sync_and_d1_fallback_failed';
-      }
-    } catch (error) {
-      stateSyncWarning = 'r2_state_sync_failed';
-      console.error('fast-status R2 state sync failed:', String(error?.message || error));
-      const fallback = await fallbackLatestStatusToD1(env, stateUpdates);
-      if (!fallback.ok) stateSyncWarning = 'r2_state_sync_and_d1_fallback_failed';
-    }
     const response = {
       ok: true,
       count: targets.length,
@@ -433,7 +422,11 @@ export async function runFastStatusTargets(env, options = {}) {
       results: results.map(({ state_update, ...result }) => result),
       events: compactStatusEvents(results),
     };
-    if (stateSyncWarning) response.warning = stateSyncWarning;
+    if (stateSync) stateSync.add(stateUpdates);
+    else {
+      const outcome = await commitR2StateSync(env, { updates: stateUpdates });
+      if (outcome.warning) response.warning = outcome.warning;
+    }
     return response;
   } finally {
     if (!options.skipLease) await releaseProbeRunLease(env, lease);
@@ -506,7 +499,8 @@ async function releaseProbeRunLease(env, lease) {
   });
 }
 
-export async function runTargetBatch(env, targets, previousById = null) {
+export async function runTargetBatch(env, targets, previousById = null, options = {}) {
+  const stateSync = options.stateSync || null;
   const concurrency = clamp(Number(env.CONCURRENCY || 20), 1, 40);
   if (!previousById) {
     const state = await readR2State(env);
@@ -530,23 +524,38 @@ export async function runTargetBatch(env, targets, previousById = null) {
       for (const item of settled) out.push(item.status === 'fulfilled' ? item.value : { ok: false, error: String(item.reason?.message || item.reason) });
     }
   }
+  const stateUpdates = out.map(item => item.state_update).filter(Boolean);
+  if (stateSync) {
+    stateSync.add(stateUpdates);
+    return out.map(({ state_update, ...publicResult }) => publicResult);
+  }
+  const outcome = await commitR2StateSync(env, { updates: stateUpdates });
+  return out.map(({ state_update, ...publicResult }) => outcome.warning
+    ? { ...publicResult, warning: outcome.warning }
+    : publicResult);
+}
+
+// Shared merge for standalone schedulers. It performs the single R2 state
+// write, falls back to the D1 latest_status mirror when R2 fails, and reports
+// the same warning strings the schedulers always returned.
+export async function commitR2StateSync(env, session) {
+  const updates = session?.updates || [];
+  if (!updates.length) return { ok: true, skipped: true };
   let stateSyncWarning = '';
   try {
-    const stateSync = await mergeR2StateUpdates(env, out.map(item => item.state_update).filter(Boolean));
+    const stateSync = await mergeR2StateUpdates(env, updates);
     if (!stateSync?.ok) {
       stateSyncWarning = 'r2_state_sync_failed';
-      const fallback = await fallbackLatestStatusToD1(env, out.map(item => item.state_update).filter(Boolean));
+      const fallback = await fallbackLatestStatusToD1(env, updates);
       if (!fallback.ok) stateSyncWarning = 'r2_state_sync_and_d1_fallback_failed';
     }
   } catch (error) {
     stateSyncWarning = 'r2_state_sync_failed';
     console.error('probe R2 state sync failed:', String(error?.message || error));
-    const fallback = await fallbackLatestStatusToD1(env, out.map(item => item.state_update).filter(Boolean));
+    const fallback = await fallbackLatestStatusToD1(env, updates);
     if (!fallback.ok) stateSyncWarning = 'r2_state_sync_and_d1_fallback_failed';
   }
-  return out.map(({ state_update, ...publicResult }) => stateSyncWarning
-    ? { ...publicResult, warning: stateSyncWarning }
-    : publicResult);
+  return stateSyncWarning ? { ok: false, warning: stateSyncWarning } : { ok: true, count: updates.length };
 }
 
 async function fallbackLatestStatusToD1(env, updates = []) {
@@ -568,9 +577,14 @@ async function runSingleTarget(env, target, previousState = null) {
   }
 }
 
-async function readLatestStatusMap(env, targetIds) {
+export async function readLatestStatusMap(env, targetIds) {
   const map = new Map();
   if (!env.DB) return map;
+  // When the D1 latest_status mirror is disabled (production), the table can
+  // never receive a newer row and every probe cycle still paid one chunked
+  // SELECT per target id. The R2 state is the scheduling source of truth in
+  // that mode, so skip the dead read entirely.
+  if (!latestStatusToD1Enabled(env)) return map;
   const ids = [...new Set((targetIds || []).map(id => String(id || '').trim()).filter(Boolean))];
   for (let i = 0; i < ids.length; i += 80) {
     const chunk = ids.slice(i, i + 80);

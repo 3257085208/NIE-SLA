@@ -61,7 +61,8 @@ export async function fetchActualUsage(env, hours = 24) {
         workers: workersInvocationsAdaptive(limit: 10000, filter: { ${window} }) {
           sum { requests errors }
         }
-        d1: d1AnalyticsAdaptiveGroups(limit: 1, filter: { ${window} }) {
+        d1: d1AnalyticsAdaptiveGroups(limit: 100, filter: { ${window} }) {
+          dimensions { databaseId }
           sum { rowsWritten rowsRead readQueries writeQueries }
         }
         durableObjects: durableObjectsInvocationsAdaptiveGroups(limit: 1, filter: { ${window} }) {
@@ -79,7 +80,28 @@ export async function fetchActualUsage(env, hours = 24) {
   const sumOf = (group) => (Array.isArray(group) ? group[0]?.sum : group?.sum) || {};
   const sumAll = (group, key) => (Array.isArray(group) ? group : [group])
     .reduce((total, item) => total + Number(item?.sum?.[key] || 0), 0);
-  const d1 = sumOf(account.d1);
+  const ownD1Ids = String(env.USAGE_D1_DATABASE_IDS || '279ad7f9-0b69-49aa-90eb-c42321eda6c3')
+    .split(',').map((value) => value.trim()).filter(Boolean);
+  const d1Groups = Array.isArray(account.d1) ? account.d1 : [account.d1];
+  const d1Total = { rowsWritten: 0, rowsRead: 0, readQueries: 0, writeQueries: 0 };
+  const d1Own = { rowsWritten: 0, rowsRead: 0, readQueries: 0, writeQueries: 0 };
+  const d1ByDatabase = [];
+  for (const group of d1Groups) {
+    const sum = group?.sum || {};
+    const row = {
+      database_id: String(group?.dimensions?.databaseId || ''),
+      rows_written: Number(sum.rowsWritten || 0),
+      rows_read: Number(sum.rowsRead || 0),
+      read_queries: Number(sum.readQueries || 0),
+      write_queries: Number(sum.writeQueries || 0),
+    };
+    d1ByDatabase.push(row);
+    for (const key of Object.keys(d1Total)) d1Total[key] += Number(sum[key] || 0);
+    if (ownD1Ids.includes(row.database_id)) {
+      for (const key of Object.keys(d1Own)) d1Own[key] += Number(sum[key] || 0);
+    }
+  }
+  const d1 = d1Own;
   const durable = sumOf(account.durableObjects);
   const r2ClassA = new Set(['PutObject', 'CopyObject', 'ListObjects', 'ListObjectsV2', 'ListBuckets', 'HeadBucket', 'DeleteObject', 'DeleteObjects', 'CreateMultipartUpload', 'CompleteMultipartUpload', 'UploadPart', 'UploadPartCopy']);
   let r2A = 0;
@@ -102,6 +124,14 @@ export async function fetchActualUsage(env, hours = 24) {
       r2_class_a: r2A,
       r2_class_b: r2B,
       r2_requests: r2A + r2B,
+    },
+    d1_scope: 'own',
+    d1_database_ids: ownD1Ids,
+    d1_by_database: d1ByDatabase,
+    actual_account: {
+      d1_rows_written: d1Total.rowsWritten,
+      d1_rows_read: d1Total.rowsRead,
+      d1_queries: d1Total.readQueries + d1Total.writeQueries,
     },
     unavailable: ['DO SQLite 行写入（GraphQL 未暴露，请在控制台查看）'],
     fetched_at: Math.floor(now / 1000),

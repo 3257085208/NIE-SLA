@@ -77,7 +77,9 @@ test('alert settings round-trip the new channels and encrypt their secrets', asy
   assert.equal(settings.webhook_enabled, true);
   assert.equal(settings.webhook_method, 'GET');
   assert.equal(settings.webhook_template, CHANNEL_SETTINGS.webhook_template);
-  assert.equal(settings.webhook_headers, CHANNEL_SETTINGS.webhook_headers);
+  assert.equal(settings.webhook_headers_set, true);
+  assert.deepEqual(JSON.parse(settings.webhook_headers), { Authorization: '***', 'X-Test': '***' }, 'GET must redact webhook header values but keep the key names');
+  assert.equal(JSON.stringify(settings).includes('secret-token'), false, 'webhook header secrets must not leak through the settings API');
   assert.equal(settings.bark_server, 'https://api.day.app');
   assert.equal(settings.gotify_url, 'https://gotify.example.com/');
   for (const flag of ['bark_device_key_set', 'gotify_token_set', 'feishu_webhook_set', 'dingtalk_webhook_set', 'wecom_webhook_set', 'serverchan_sendkey_set']) {
@@ -90,7 +92,24 @@ test('alert settings round-trip the new channels and encrypt their secrets', asy
   assert.equal(withSecret.gotify_token, 'gotify-token-abc');
   assert.equal(withSecret.feishu_webhook, CHANNEL_SETTINGS.feishu_webhook);
   assert.equal(withSecret.serverchan_sendkey, 'SCT-key-123');
+  assert.equal(withSecret.webhook_headers, CHANNEL_SETTINGS.webhook_headers, 'internal callers must still receive the raw webhook headers');
   assert.deepEqual(configuredAlertChannels(env, withSecret), ['webhook', 'bark', 'gotify', 'feishu', 'dingtalk', 'wecom', 'serverchan']);
+
+  // The admin UI round-trips the redacted JSON; saving it back must preserve
+  // every stored value, while a real edit still goes through.
+  const maskedSave = await updateAlertSettings(jsonRequest({ webhook_headers: settings.webhook_headers }), env);
+  assert.equal(maskedSave.ok, true);
+  assert.equal(
+    (await getAlertSettings(env, { includeSecret: true })).webhook_headers,
+    CHANNEL_SETTINGS.webhook_headers,
+    'saving the masked JSON must keep the stored header values',
+  );
+  await updateAlertSettings(jsonRequest({ webhook_headers: '{"Authorization":"***","X-Test":"2"}' }), env);
+  assert.equal(
+    (await getAlertSettings(env, { includeSecret: true })).webhook_headers,
+    '{"Authorization":"Bearer secret-token","X-Test":"2"}',
+    'masked keys must keep their secret while edited keys are updated',
+  );
 
   const raw = String(env.DB.meta.get('alert_channel_secrets') || '');
   assert.ok(raw.startsWith('enc:v1:'), 'channel secrets must be encrypted at rest');

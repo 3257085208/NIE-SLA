@@ -84,7 +84,7 @@ test('status normalization uses current topology without exposing target data', 
 });
 
 test('v1.3 uses the paired-window public request and the current-state D1 write calibration', () => {
-  assert.equal(DEFAULT_CALIBRATION.model_version, 'usage-model-v1.4.0');
+  assert.equal(DEFAULT_CALIBRATION.model_version, 'usage-model-v1.4.2');
   assert.equal(DEFAULT_CALIBRATION.factors.workers_public_rps.point, 0.42);
   assert.equal(DEFAULT_CALIBRATION.factors.r2_public_read_rate.point, 0.38);
   assert.equal(DEFAULT_CALIBRATION.factors.d1_rows_read_multiplier.point, 2.65);
@@ -92,12 +92,34 @@ test('v1.3 uses the paired-window public request and the current-state D1 write 
   assert.equal(DEFAULT_CALIBRATION.factors.d1_index_write_multiplier.point, 3);
 
   const result = estimateUsage({ status: STATUS, from: FROM, to: TO });
-  assert.equal(result.model_version, 'usage-model-v1.4.0');
+  assert.equal(result.model_version, 'usage-model-v1.4.2');
   assert.equal(result.workers.assumptions.public_rps.point, 0.42);
   assert.equal(result.d1.assumptions.rows_read_multiplier.point, 2.65);
   assert.equal(result.d1.assumptions.rows_written_multiplier.point, 1.92);
   assert.match(result.workers.excluded[0], /Asset/);
   assert.match(result.workers.excluded[1], /WSS/);
+});
+
+test('v1.4.2 gates latest_status and bills one R2 state lock per cron round', () => {
+  const withMirror = estimateUsage({ status: STATUS, from: FROM, to: TO });
+  const withoutMirror = estimateUsage({ status: STATUS, from: FROM, to: TO, options: { latestStatusToD1: false } });
+
+  const lock = withMirror.d1.components.find((item) => item.id === 'd1_r2_state_lock');
+  assert.ok(lock, 'the R2 state lock churn component must exist');
+  assert.equal(lock.count.estimate, 1440);
+  assert.equal(lock.d1.write_queries.estimate, 2880, 'acquire INSERT + release DELETE per round');
+  assert.equal(lock.d1.rows_written.estimate, 2880);
+  assert.equal(lock.d1.read_queries.estimate, 1440);
+
+  const mirror = withMirror.d1.components.find((item) => item.id === 'd1_latest_status');
+  const mirrorOff = withoutMirror.d1.components.find((item) => item.id === 'd1_latest_status');
+  assert.ok(mirror && mirrorOff);
+  assert.equal(mirror.count.estimate, 4 * 96, 'four probe targets at the 900s lower bound');
+  assert.equal(mirrorOff.count.estimate, 0, 'PROBE_LATEST_STATUS_TO_D1=false must bill nothing');
+  assert.equal(mirrorOff.d1.write_queries.estimate, 0);
+  assert.equal(withMirror.d1.assumptions.latest_status_to_d1, true);
+  assert.equal(withoutMirror.d1.assumptions.latest_status_to_d1, false);
+  assert.ok(withMirror.d1.rows_written.estimate > withoutMirror.d1.rows_written.estimate, 'the gate must change the estimate');
 });
 
 test('v1.3.2 adds a Durable Object request ledger and coarse schedule writes', () => {

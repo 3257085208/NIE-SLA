@@ -37,19 +37,39 @@ export async function verifyR2Json(env, key, validator = null) {
   return result.value;
 }
 
+// R2 PUT is strongly consistent and already returns the persisted object
+// size, so the old unconditional HEAD+GET readback only duplicated billing
+// (2 Class B ops per write). Keep the PUT result size check, fall back to a
+// HEAD only when the binding does not return a size, and read back every
+// Nth write as a sampling tripwire (R2_WRITE_READBACK_EVERY, default 50; 0
+// disables sampling).
+let r2WriteReadbackCounter = 0;
+
+function r2WriteReadbackEvery(env) {
+  const raw = env?.R2_WRITE_READBACK_EVERY;
+  const value = raw === undefined || raw === null || raw === '' ? 50 : Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
 export async function writeR2Json(env, key, value, metadata = {}) {
   if (!env.ARCHIVE) throw new Error('缺少 R2 的 ARCHIVE 绑定');
   const { body, bytes, encoding } = await encodeJsonBody(value);
   try {
     const result = await env.ARCHIVE.put(key, body, { httpMetadata: httpMetadataFor(encoding), customMetadata: metadata });
-    const verify = typeof env.ARCHIVE.head === 'function' ? await env.ARCHIVE.head(key) : null;
-    if (typeof env.ARCHIVE.head === 'function' && !verify) throw new Error(`R2 write did not persist (${key})`);
-    if (verify && Number.isFinite(Number(verify.size)) && Number(verify.size) !== bytes) {
-      throw new Error(`R2 write size mismatch (${key} expected ${bytes}, got ${verify.size})`);
+    let putSize = Number(result?.size);
+    if (!Number.isFinite(putSize) && typeof env.ARCHIVE.head === 'function') {
+      const verify = await env.ARCHIVE.head(key);
+      if (!verify) throw new Error(`R2 write did not persist (${key})`);
+      putSize = Number(verify.size);
     }
-    await verifyR2Json(env, key);
-    const verdict = verify ? verify.size : 'no-head';
-    console.log(`r2-put: key=${key} bodyBytes=${bytes} encoding=${encoding || 'none'} putSize=${result?.size ?? 'none'} verify=${verdict} readback=ok`);
+    if (Number.isFinite(putSize) && putSize !== bytes) {
+      throw new Error(`R2 write size mismatch (${key} expected ${bytes}, got ${putSize})`);
+    }
+    const every = r2WriteReadbackEvery(env);
+    r2WriteReadbackCounter += 1;
+    const sampled = every > 0 && r2WriteReadbackCounter % every === 0;
+    if (sampled) await verifyR2Json(env, key);
+    console.log(`r2-put: key=${key} bodyBytes=${bytes} encoding=${encoding || 'none'} putSize=${Number.isFinite(putSize) ? putSize : 'none'} readback=${sampled ? 'ok' : 'skipped'}`);
   } catch (error) {
     console.error(`r2-put-failed: key=${key} bodyBytes=${bytes}:`, String(error?.message || error));
     throw error;
@@ -143,6 +163,14 @@ export async function releaseAgentHistoryLock(env, lock) {
   await env.DB.prepare(`DELETE FROM app_meta WHERE key = ? AND value = ?`).bind(lock.key, lock.token).run().catch(() => {});
 }
 
+function applyR2StateUpdate(targets, update) {
+  const previous = targets[update.target_id];
+  if (!previous || Number(update.checked_at || 0) >= Number(previous.checked_at || 0)) targets[update.target_id] = update;
+  const current = targets[update.target_id];
+  const historyCheckedAt = Math.max(Number(update.history_checked_at || 0), Number(previous?.history_checked_at || 0));
+  if (historyCheckedAt > 0) current.history_checked_at = historyCheckedAt;
+}
+
 export async function mergeR2StateUpdates(env, updates) {
   if (!updates.length) return { ok: true, skipped: true };
 
@@ -159,17 +187,45 @@ export async function mergeR2StateUpdates(env, updates) {
     state.targets ||= {};
     for (const update of updates) {
       if (!update?.target_id) continue;
-      const previous = state.targets[update.target_id];
-      if (!previous || Number(update.checked_at || 0) >= Number(previous.checked_at || 0)) state.targets[update.target_id] = update;
-      const current = state.targets[update.target_id];
-      const historyCheckedAt = Math.max(Number(update.history_checked_at || 0), Number(previous?.history_checked_at || 0));
-      if (historyCheckedAt > 0) current.history_checked_at = historyCheckedAt;
+      applyR2StateUpdate(state.targets, update);
     }
     await writeR2State(env, state);
     return { ok: true, count: updates.length };
   } finally {
     await releaseR2Lock(env, lock);
   }
+}
+
+// One scheduled round runs the history scheduler and the fast-status
+// scheduler back to back; both used to call mergeR2StateUpdates, which paid
+// the app_meta lock (INSERT+SELECT+DELETE) and one R2 state rewrite twice per
+// minute. Collect both batches here, fold them into the scheduling view
+// in memory, and merge once per round. Update order and the lock semantics
+// are unchanged, and the final R2 payload is identical to two sequential
+// merges.
+export function createR2StateSyncSession() {
+  const updates = [];
+  const overlay = Object.create(null);
+  return {
+    get updates() { return updates; },
+    get size() { return updates.length; },
+    add(list) {
+      for (const update of list || []) {
+        if (!update?.target_id) continue;
+        updates.push(update);
+        applyR2StateUpdate(overlay, update);
+      }
+      return updates.length;
+    },
+    // Make this round's buffered updates visible to a later scheduler before
+    // the single durable merge (fast status must see freshly probed history
+    // targets so they are not probed twice in one round).
+    applyOverlay(state) {
+      if (!state?.targets || typeof state.targets !== 'object') return state;
+      for (const update of Object.values(overlay)) applyR2StateUpdate(state.targets, update);
+      return state;
+    },
+  };
 }
 
 

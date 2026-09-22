@@ -5,7 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-export const MODEL_VERSION = 'usage-model-v1.4.0';
+export const MODEL_VERSION = 'usage-model-v1.4.2';
 export const DEFAULT_BASE_URL = 'https://status.example.com';
 export const DEFAULT_CALIBRATION_FILE = new URL('./usage-model-calibration.json', import.meta.url);
 
@@ -19,6 +19,8 @@ const DEFAULT_PING_REFRESH_SEC = 1_800;
 const DEFAULT_LATENCY_SEC = 60;
 const DEFAULT_SNAPSHOT_SEC = 300;
 const DEFAULT_MAX_TARGETS_PER_RUN = 20;
+// Mirrors CAL.latestStatusMinIntervalSec in worker/src/admin/usage-model.js.
+const LATEST_STATUS_MIN_INTERVAL_SEC = 900;
 const DEFAULT_CREDENTIAL_TOUCH_SEC = 21_600;
 // v1.1.93 write reductions: agent state mirror cadence, manager contact
 // touch cadence and the crash-recovery schedule flush window.
@@ -140,6 +142,8 @@ const SOURCE_NOTES = Object.freeze({
   latency_update_policy: 'Latency 节点默认每 3,600 秒读取一次更新策略。',
   scheduled_sweep: 'Workers Cron 默认每分钟触发；这里估算调度入口和锁/状态读取。',
   probe_persist: '探测节奏由 R2 状态承载；D1 仅按每目标每 30 分钟回写调度镜像（TARGET_SCHEDULE_FLUSH_SEC，默认 1800 秒）。',
+  d1_latest_status: '每目标按 PROBE_LATEST_STATUS_MIN_INTERVAL_SEC（默认 900 秒）写一次当前状态，状态/错误码变化即时写；PROBE_LATEST_STATUS_TO_D1=false 时读与写均不计。',
+  d1_r2_state_lock: '每轮 cron 一次 R2 状态锁：acquire(INSERT)+release(DELETE) 与 token SELECT；2026-09-21→09-22 实测写查询 7,475/日，其中 2 次/分钟的双合并占 5,760。',
   status_snapshot: '状态快照只在有探测结果的 scheduled run 中生成，默认按探测批次估算。',
   public_cache_miss: '公开动态接口和详情接口不在当前 debug_logs 范围内，只能用缓存未命中先验估算。',
 });
@@ -156,6 +160,14 @@ function finiteNumber(value, fallback = 0) {
 function positiveNumber(value, fallback) {
   const number = finiteNumber(value, fallback);
   return number > 0 ? number : fallback;
+}
+
+function booleanOption(value, fallback = true) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const text = String(value).trim().toLowerCase();
+  if (['0', 'false', 'off', 'no'].includes(text)) return false;
+  if (['1', 'true', 'on', 'yes'].includes(text)) return true;
+  return fallback;
 }
 
 function integer(value, fallback = 0) {
@@ -821,6 +833,30 @@ function estimateD1(workers, duration, options, calibration) {
     profile: 'scheduled_sweep',
   });
 
+  // v1.4.2: the R2 state lock is acquired once per cron round after the
+  // history and fast-status updates were folded into a single merge. Each
+  // round bills the acquire INSERT, the release DELETE and the token SELECT.
+  addEvent(events, {
+    id: 'd1_r2_state_lock',
+    label: 'R2 状态锁 · D1',
+    count: exact(schedulerCount),
+    source: 'derived',
+    note: SOURCE_NOTES.d1_r2_state_lock,
+    profile: { read: 1, write: 2, rowsRead: 1, rowsWritten: 2 },
+  });
+
+  // v1.4.2: the latest_status mirror is deployment-gated; production sets
+  // PROBE_LATEST_STATUS_TO_D1="false", so the component bills zero there.
+  const latestStatusToD1 = options.latestStatusToD1 !== false;
+  addEvent(events, {
+    id: 'd1_latest_status',
+    label: 'latest_status 当前状态镜像 · D1',
+    count: exact(latestStatusToD1 ? fleet.probe_target_count * periodicCount(duration, LATEST_STATUS_MIN_INTERVAL_SEC) : 0),
+    source: 'derived',
+    note: `${SOURCE_NOTES.d1_latest_status} 当前窗口按 ${latestStatusToD1 ? `每目标 ${LATEST_STATUS_MIN_INTERVAL_SEC} 秒` : '关闭（--latest-status-to-d1 false）'} 计。`,
+    profile: { write: 1, rowsWritten: 1 },
+  });
+
   // Plan-A coarse schedule bookkeeping: the per-probe targets UPDATE is
   // throttled to one flush per target per TARGET_SCHEDULE_FLUSH_SEC (default
   // 30 minutes); probing cadence lives in the R2 status state.
@@ -985,6 +1021,8 @@ function estimateD1(workers, duration, options, calibration) {
       rows_read_multiplier: rowsReadMultiplier,
       rows_written_multiplier: rowsWrittenMultiplier,
       index_write_multiplier: indexWriteMultiplier,
+      latest_status_to_d1: latestStatusToD1,
+      latest_status_min_interval_sec: LATEST_STATUS_MIN_INTERVAL_SEC,
       credential_touch_sec: positiveNumber(options.credentialTouchSec, DEFAULT_CREDENTIAL_TOUCH_SEC),
       observed_debug_route_events: workers.events
         .filter((event) => ['agent_tasks', 'agent_task_action', 'agent_update_policy', 'agent_config', 'agent_location', 'latency_update_policy', 'admin_agent_tasks', 'other_debug'].includes(event.id))
@@ -1308,7 +1346,7 @@ function usageText() {
     '  node agent/scripts/usage-model.mjs [--status-file FILE] [--logs-file FILE]',
     '    [--from ISO] [--to ISO] [--hours 24] [--json]',
     '    [--public-rps 0.42] [--report-sec 300] [--latency-sec 60]',
-    '    [--range-mode operational|stress]',
+    '    [--range-mode operational|stress] [--latest-status-to-d1 true|false]',
     '',
     'Online inputs:',
     '  Without --status-file, fetches the public /api/status endpoint.',
@@ -1410,6 +1448,7 @@ async function runCli(argv) {
   calibration.range_mode = requestedRangeMode === 'stress' ? 'stress' : 'operational';
   const explicitPublicRps = args.public_rps !== undefined;
   const options = {
+    latestStatusToD1: booleanOption(args.latest_status_to_d1, booleanOption(process.env.PROBE_LATEST_STATUS_TO_D1, true)),
     reportSec: positiveNumber(args.report_sec, DEFAULT_REPORT_SEC),
     taskSec: positiveNumber(args.task_sec, DEFAULT_TASK_SEC),
     updateSec: positiveNumber(args.update_sec, DEFAULT_UPDATE_SEC),

@@ -1,8 +1,8 @@
-# NIE-SLA 站点用量估算模型 v1.3.3
+# NIE-SLA 站点用量估算模型 v1.4.2
 
 ## 目的
 
-`usage-model-v1.4.0` 是 NIE-SLA 的固定用量估算方法。它的**观测输入**只来自
+`usage-model-v1.4.2` 是 NIE-SLA 的固定用量估算方法。它的**观测输入**只来自
 `status.example.com` 的公开状态接口，以及在提供管理员会话时的站点
 `/api/debug/usage-summary` 聚合接口；固定计算系数来自仓库内版本化的 calibration 文件。运行时不会访问
 Cloudflare Dashboard、Cloudflare API 或浏览器会话。当前系数用一组同拓扑的人工
@@ -71,7 +71,7 @@ Latency 更新策略、后台任务列表以及其他已记录 API。部分日�
 
 ### 3. 本地校准文件
 
-`scripts/usage-model-calibration.json` 保存 v1.4.0 的透明先验和输出区间。它不包含凭据，
+`scripts/usage-model-calibration.json` 保存 v1.4.2 的透明先验和输出区间。它不包含凭据，
 只记录脱敏的成对数量和校准规则。先验来自当前 Worker/Rust 源码路径、Cloudflare 官方
 指标定义和同拓扑成对观测；运行时仍然只读站点数据。若以后有新的稳定窗口，可以在本地离线拟合输出乘数，
 但不要把 Cookie、Token、截图原件或账号信息放进仓库。
@@ -299,7 +299,7 @@ Cloudflare Dashboard 截图，均已四舍五入，不能当作实时 CF API 返
 埋点；若将来要把置信度从 `low` 提高，优先扩展已有站点日志的脱敏计数或导出机制，
 并先评估它本身增加的 Worker/D1/R2 消耗。
 
-涉及以下任一变化时，必须把模型版本从 `usage-model-v1.4.0` 升级，并重新审查校准：
+涉及以下任一变化时，必须把模型版本从 `usage-model-v1.4.2` 升级，并重新审查校准：
 
 - Agent 报告、任务、更新策略、Ping 或 Latency 默认间隔变化；
 - WSS、HTTP fallback、Durable Object、R2 flush 或 ProbeHistory 路径变化；
@@ -319,3 +319,9 @@ v1.1.93 无感削减同步：Agent 状态镜像 900 秒、Manager 联系人心�
 Latency 节点状态行 300 秒（图表仍读 R2 归档）、过期探测桶清理改为每天；
 60 台拓扑下 D1 写 99.6%→38.7%、读 83.5%→63.2%，免费额度内上限约 122 台
 （建议 ≤106 台）。
+
+v1.1.97 无感削减同步：R2 状态锁由每分钟 2 次合并为每轮 1 次；生产
+`PROBE_LATEST_STATUS_TO_D1=false` 时完全跳过 latest_status 读取；Latency 归档段
+写入节流 ≥300 秒（窗口内原始点暂存，公开接口仍逐秒可见）；R2 写入后的强校验改为
+抽样回读（默认 1/50，异常仍 fail-closed）；探测记录只在变化/失败/300 秒心跳时写入。
+模型 v1.4.2 新增 R2 状态锁组件与 latest_status 门控，不再把生产已禁用的写入计入估算。

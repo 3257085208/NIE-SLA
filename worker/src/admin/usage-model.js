@@ -1,11 +1,16 @@
-export const MODEL_VERSION = 'usage-model-embedded-v1.4.0';
+import { parseBoolean } from '../utils.js';
 
-// Structural constants mirrored from scripts/usage-model.mjs (usage-model-v1.4.0).
+export const MODEL_VERSION = 'usage-model-embedded-v1.4.2';
+
+// Structural constants mirrored from scripts/usage-model.mjs (usage-model-v1.4.2).
 // Output multipliers were fitted against five 6-hour Cloudflare dashboard
 // windows on 2026-09-16 (median actual/estimated); see
 // scripts/usage-model-calibration.json for the full basis. D1 rows written
 // includes index rows (documented D1 billing rule), hence the separate
-// indexWriteMultiplier.
+// indexWriteMultiplier. v1.4.2 gates the latest_status component on
+// PROBE_LATEST_STATUS_TO_D1 and adds the R2 state lock churn component using
+// the 2026-09-21→09-22 D1 window (7,475 write queries/day, of which 5,760
+// came from the old double merge).
 const CAL = Object.freeze({
   reportSec: 300,
   taskSec: 600,
@@ -20,6 +25,7 @@ const CAL = Object.freeze({
   r2DistributionOverAb: 1.276,
   r2ClassAMultiplier: 1.37,
   probeD1FallbackRate: 0.01,
+  latestStatusMinIntervalSec: 900,
   indexWriteMultiplier: 3,
   queryPathMultiplier: 1.135,
   rowsReadMultiplier: 2.65,
@@ -31,7 +37,7 @@ const CAL = Object.freeze({
     r2_class_b: 1.26,
     r2_requests: 0.92,
     d1_queries: 1.3623,
-    d1_rows_read: 0.9956,
+    d1_rows_read: 0.769,
     d1_rows_written: 0.4331,
   },
   freeTier: {
@@ -54,7 +60,7 @@ function periodic(seconds, interval) {
   return Math.ceil(Math.max(0, Number(seconds) || 0) / period);
 }
 
-export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTargets = 0, latencyNodes = 0, trafficAgents = 0, hours = 24, reportSec = CAL.reportSec } = {}) {
+export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTargets = 0, latencyNodes = 0, trafficAgents = 0, hours = 24, reportSec = CAL.reportSec, latestStatusToD1 = true } = {}) {
   const h = Math.max(0.01, Number(hours) || 24);
   const seconds = h * 3600;
   const wss = Math.max(0, wssAgents);
@@ -114,7 +120,17 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
   addD1(agents * periodic(seconds, 1800), { read: 1, write: 1, rowsWritten: 1 });
   addD1(probeTargets * periodic(seconds, reportSec) * CAL.probeD1FallbackRate, { write: 1, rowsWritten: 1 });
   addD1(probeTargets * periodic(seconds, 7200), { write: 1, rowsWritten: 1 });
+  // latest_status only bills when the D1 mirror is enabled; the production
+  // wrangler.toml sets PROBE_LATEST_STATUS_TO_D1="false", and the probe path
+  // then neither reads nor writes the table.
+  addD1(latestStatusToD1 ? probeTargets * periodic(seconds, CAL.latestStatusMinIntervalSec) : 0, { write: 1, rowsWritten: 1 });
   addD1(probeStateSync, { read: 8, rowsRead: 100 });
+  // R2 state lock churn after the single-merge round: one acquire (INSERT)
+  // and one release (DELETE) per cron minute, each billing one app_meta row
+  // written, plus the token SELECT. The measured 2026-09-21→09-22 window
+  // showed 7,475 write queries/day, of which 5,760 (2 rounds/min x 2 writes)
+  // were the old per-scheduler double merge.
+  addD1(cron, { read: 1, write: 2, rowsRead: 1, rowsWritten: 2 });
   addD1(trafficAgents * periodic(seconds, 1800), { read: 2, rowsRead: 4, write: 1, rowsWritten: 1 });
   addD1(Math.ceil(publicDynamic * 0.06), { read: 8, rowsRead: 100 });
   addD1(periodic(seconds, 3600), { read: 8, write: 5, rowsRead: 80, rowsWritten: 5 });
@@ -146,6 +162,7 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
       latency_nodes: latencyNodes,
       traffic_agents: trafficAgents,
       public_rps: CAL.publicRps,
+      latest_status_to_d1: Boolean(latestStatusToD1),
     },
     estimates: {
       workers_calls: round(workersBase * CAL.output.workers_calls),
@@ -162,8 +179,9 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
     },
     quota: {},
     notes: [
-      '估算与本地 scripts/usage-model.mjs（usage-model-v1.4.0）同构，并以内置校准常数输出点估计；区间请使用 scripts/usage-model.mjs。',
-      `D1 行写入包含索引行（内置放大系数 ${CAL.indexWriteMultiplier}）；R2 读操作含写入后 HEAD/GET 回读校验。`,
+      '估算与本地 scripts/usage-model.mjs（usage-model-v1.4.2）同构，并以内置校准常数输出点估计；区间请使用 scripts/usage-model.mjs。',
+      `D1 行写入包含索引行（内置放大系数 ${CAL.indexWriteMultiplier}）；R2 读操作默认只在抽样（每 50 次写入 1 次）回读校验。`,
+      `latest_status ${latestStatusToD1 ? `按 ${CAL.latestStatusMinIntervalSec}s 下限写入（状态/错误码变化即时写入）` : '在 PROBE_LATEST_STATUS_TO_D1=false 时读与写均不计（生产 wrangler.toml 已关闭）'}；R2 状态锁按每轮 cron 1 次 acquire(INSERT)+release(DELETE)+token SELECT 计（2026-09-21→09-22 实测写查询 7,475/日，其中双次合并占 5,760）；读行乘子已按 2026-09-21→09-22 实测窗口（nie-sla-db 1,415,503 行）重拟合，写行乘子待上线后复验。`,
       'Latency 节点仅计入最近 30 分钟内活跃的节点；DO SQLite 写行为近似台账，以控制台为准。',
     ],
   };
@@ -200,7 +218,10 @@ export async function usageInputsFromEnv(env) {
     one(`SELECT COUNT(*) AS n FROM latency_agents WHERE enabled = 1 AND COALESCE(last_seen_at, 0) >= CAST(strftime('%s','now') AS INTEGER) - 1800`),
     one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND t.traffic_enabled = 1 AND ${onlineFilter}`, offlineAfterSec),
   ]);
-  return { agents, wssAgents, targets, pingTargets, latencyNodes, trafficAgents };
+  // Production disables the latest_status mirror; the estimate must follow
+  // the deployment flag instead of assuming the default-on path.
+  const latestStatusToD1 = parseBoolean(env.PROBE_LATEST_STATUS_TO_D1 ?? true, true);
+  return { agents, wssAgents, targets, pingTargets, latencyNodes, trafficAgents, latestStatusToD1 };
 }
 
 export const CAPACITY_QUOTAS = ['workers_calls', 'do_requests', 'd1_rows_read', 'd1_rows_written', 'r2_class_a', 'r2_class_b'];
@@ -214,6 +235,7 @@ function capacityEstimateAt(base, perNode, extra) {
     latencyNodes: base.latencyNodes + perNode.latencyNodes * extra,
     trafficAgents: base.trafficAgents + perNode.trafficAgents * extra,
     hours: base.hours,
+    latestStatusToD1: base.latestStatusToD1,
   });
 }
 
@@ -243,6 +265,7 @@ export function estimateCapacity(inputs = {}, options = {}) {
     latencyNodes: Math.max(0, Number(inputs.latencyNodes) || 0),
     trafficAgents: Math.max(0, Number(inputs.trafficAgents) || 0),
     hours: Math.max(0.01, Number(inputs.hours) || 24),
+    latestStatusToD1: inputs.latestStatusToD1 !== false,
   };
   const perNode = {
     agents: 1,
@@ -278,6 +301,7 @@ export function estimateCapacity(inputs = {}, options = {}) {
       ping_targets: base.pingTargets,
       latency_nodes: base.latencyNodes,
       traffic_agents: base.trafficAgents,
+      latest_status_to_d1: base.latestStatusToD1,
     },
     per_node: {
       agents: perNode.agents,

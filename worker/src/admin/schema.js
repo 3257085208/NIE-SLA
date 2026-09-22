@@ -321,11 +321,13 @@ export async function ensureV6Schema(env) {
     enabled INTEGER NOT NULL DEFAULT 1,
     last_seen_at INTEGER,
     latest_results TEXT,
+    pending_results TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`).run();
   await runOptionalSchemaChange(env, `ALTER TABLE latency_agents ADD COLUMN color TEXT NOT NULL DEFAULT '#2e7dd7'`);
   await runOptionalSchemaChange(env, `ALTER TABLE latency_agents ADD COLUMN latest_results TEXT`);
+  await runOptionalSchemaChange(env, `ALTER TABLE latency_agents ADD COLUMN pending_results TEXT`);
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS agent_credentials (
     subject_type TEXT NOT NULL CHECK (subject_type IN ('agent', 'latency')),
     subject_id TEXT NOT NULL,

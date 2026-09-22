@@ -9,8 +9,15 @@ const SETTINGS_KEY = 'alert_settings';
 const TG_TOKEN_KEY = 'alert_telegram_bot_token';
 const RESEND_KEY = 'alert_resend_api_key';
 const CHANNEL_SECRETS_KEY = 'alert_channel_secrets';
+const CHANNEL_BACKOFF_KEY = 'alert_channel_backoff';
+const PENDING_DELIVERIES_KEY = 'alert_pending_deliveries';
 const ALERT_STATE_CACHE = Symbol('alert_state_cache');
 const SECRET_PREFIX = 'enc:v1:';
+const WEBHOOK_HEADER_MASK = '***';
+const CHANNEL_RETRY_BASE_SEC = 300;
+const CHANNEL_RETRY_MAX_SEC = 3600;
+const CHANNEL_RETRY_MAX_ATTEMPTS = 8;
+const PENDING_DELIVERIES_MAX = 100;
 const DEFAULT_TELEGRAM_TEMPLATE = '{{title}}\n{{message}}\n\n{{site_name}} · {{time}}';
 const DEFAULT_EMAIL_SUBJECT_TEMPLATE = '{{site_name}} · {{title}}';
 const DEFAULT_EMAIL_TEMPLATE = '{{message}}\n\n站点：{{site_name}}\n时间：{{time}}';
@@ -117,7 +124,10 @@ export async function getAlertSettings(env, options = {}) {
     email_reply_to: emailReplyTo(env, settings),
     resend_api_key_set: Boolean(resendKey),
     resend_api_key_source: String(env.RESEND_API_KEY || '').trim() ? 'env' : (resendKey ? 'db' : 'none'),
-    webhook_headers: String(channelSecrets.webhook_headers || ''),
+    webhook_headers: options.includeSecret
+      ? String(channelSecrets.webhook_headers || '')
+      : redactWebhookHeaders(channelSecrets.webhook_headers),
+    webhook_headers_set: Boolean(String(channelSecrets.webhook_headers || '').trim()),
     last_result: await readAlertLastResult(env),
   };
   for (const field of CHANNEL_SECRET_FIELDS) out[`${field}_set`] = Boolean(channelSecrets[field]);
@@ -242,14 +252,35 @@ export async function runAlertChecks(env, options = {}) {
   }
 
   const sent = [];
+  const retried = [];
   const errors = [];
+  const channelStatus = {};
   const batches = buildAlertBatches(messages);
   const channelCounts = {};
+
+  // Per-channel delivery state: a failing channel backs off (and its payload is
+  // queued for a later retry) without blocking healthy channels, and a healthy
+  // channel never receives duplicates of an alert that is queued elsewhere.
+  const backoff = await readChannelBackoff(env);
+  const pendingDeliveries = await readPendingDeliveries(env);
+  const drain = await drainPendingDeliveries(env, settings, channels, pendingDeliveries, backoff, now);
+  errors.push(...drain.errors);
+  let deliveryStateChanged = drain.changed;
+
   for (const batch of batches) {
     const results = [];
     const title = `NIE-SLA 报警汇总（${batch.items.length} 条）`;
     const targets = [...new Set(batch.items.map((item) => String(item.targetId || '')).filter(Boolean))].join(', ');
     for (const channel of channels) {
+      const state = backoff[channel];
+      if (state && Number(state.next_at || 0) > now) {
+        const error = `渠道退避中，${formatDuration(Number(state.next_at) - now)}后重试`;
+        results.push({ channel, ok: false, deferred: true, queued: true, error });
+        if (enqueuePendingDelivery(pendingDeliveries, pendingDeliveryEntry(channel, batch, title, targets, now, Number(state.next_at)))) {
+          deliveryStateChanged = true;
+        }
+        continue;
+      }
       const result = await sendAlertToChannel(channel, env, settings, {
         text: batch.text,
         title,
@@ -257,29 +288,63 @@ export async function runAlertChecks(env, options = {}) {
         target: targets,
         status: 'active',
       });
-      results.push({ channel, ...result });
-      if (result.ok) channelCounts[channel] = (channelCounts[channel] || 0) + 1;
+      results.push({ channel, ...result, queued: !result.ok });
+      if (result.ok) {
+        channelCounts[channel] = (channelCounts[channel] || 0) + 1;
+        if (backoff[channel]) {
+          delete backoff[channel];
+          deliveryStateChanged = true;
+        }
+        continue;
+      }
+      recordChannelFailure(backoff, channel, result.error, now);
+      deliveryStateChanged = true;
+      if (enqueuePendingDelivery(pendingDeliveries, pendingDeliveryEntry(channel, batch, title, targets, now, backoff[channel].next_at))) {
+        deliveryStateChanged = true;
+      }
     }
-    if (results.some((result) => result.ok)) {
+    const delivered = results.some((result) => result.ok);
+    // The state machine must advance exactly once per batch; when nothing was
+    // delivered the queued retry owns delivery, so committing here prevents the
+    // every-minute regeneration storm.
+    const queuedAll = results.every((result) => result.ok || result.queued);
+    if (delivered || queuedAll) {
       for (const item of batch.items) {
         await item.commit();
-        sent.push({ target_id: item.targetId, rule_key: item.ruleKey });
+        if (delivered) sent.push({ target_id: item.targetId, rule_key: item.ruleKey });
+        else retried.push({ target_id: item.targetId, rule_key: item.ruleKey });
       }
     }
     for (const result of results.filter((item) => !item.ok)) {
       for (const item of batch.items) {
         errors.push({ target_id: item.targetId, rule_key: item.ruleKey, channel: result.channel, error: result.error });
       }
+      const status = channelStatus[result.channel] || { ok: 0, failed: 0, deferred: 0 };
+      if (result.deferred) status.deferred += 1;
+      else status.failed += 1;
+      channelStatus[result.channel] = status;
     }
+    for (const result of results.filter((item) => item.ok)) {
+      const status = channelStatus[result.channel] || { ok: 0, failed: 0, deferred: 0 };
+      status.ok += 1;
+      channelStatus[result.channel] = status;
+    }
+  }
+  if (deliveryStateChanged) {
+    await writeChannelBackoff(env, backoff);
+    await writePendingDeliveries(env, pendingDeliveries);
   }
   return finishAlertRun(env, {
     ok: errors.length === 0,
     checked: (targetRows.results || []).length,
     queued: messages.length,
     sent: sent.length,
+    retried: retried.length,
+    retried_deliveries: drain.delivered,
     telegram_messages: channelCounts.telegram || 0,
     email_messages: channelCounts.email || 0,
     channel_messages: channelCounts,
+    channel_status: channelStatus,
     errors,
   });
 }
@@ -771,6 +836,34 @@ function parseWebhookHeaders(raw) {
   }
 }
 
+// Authorization and similar webhook header values must never leave the Worker
+// through the settings API. Keep the key names so the admin UI can still show
+// which headers exist, and replace every value with a mask.
+function redactWebhookHeaders(raw) {
+  const headers = parseWebhookHeaders(raw);
+  const keys = Object.keys(headers);
+  if (!keys.length) return '';
+  const masked = {};
+  for (const key of keys) masked[key] = WEBHOOK_HEADER_MASK;
+  return JSON.stringify(masked);
+}
+
+// The admin UI round-trips the redacted JSON it received; masked values mean
+// "keep the stored value for this key", everything else is a real edit.
+function mergeMaskedWebhookHeaders(raw, previousRaw) {
+  const incoming = parseWebhookHeaders(raw);
+  const previous = parseWebhookHeaders(previousRaw);
+  const merged = {};
+  for (const [key, value] of Object.entries(incoming)) {
+    if (value === WEBHOOK_HEADER_MASK) {
+      if (Object.prototype.hasOwnProperty.call(previous, key)) merged[key] = previous[key];
+      continue;
+    }
+    merged[key] = value;
+  }
+  return JSON.stringify(merged);
+}
+
 function validateWebhookHeaders(raw) {
   let parsed;
   try {
@@ -986,6 +1079,129 @@ export function configuredAlertChannels(env, settings) {
   return channels;
 }
 
+function channelRetryDelaySec(failures) {
+  const attempt = Math.max(1, Math.floor(Number(failures) || 1));
+  return Math.min(CHANNEL_RETRY_MAX_SEC, CHANNEL_RETRY_BASE_SEC * (2 ** (attempt - 1)));
+}
+
+async function readChannelBackoff(env) {
+  try {
+    const parsed = JSON.parse(await getMeta(env, CHANNEL_BACKOFF_KEY) || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+async function readPendingDeliveries(env) {
+  try {
+    const parsed = JSON.parse(await getMeta(env, PENDING_DELIVERIES_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter((entry) => (
+      entry && typeof entry === 'object'
+      && typeof entry.channel === 'string'
+      && typeof entry.text === 'string'
+    )) : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+async function writeChannelBackoff(env, backoff) {
+  await setMeta(env, CHANNEL_BACKOFF_KEY, JSON.stringify(backoff));
+}
+
+async function writePendingDeliveries(env, queue) {
+  await setMeta(env, PENDING_DELIVERIES_KEY, JSON.stringify(queue.slice(0, PENDING_DELIVERIES_MAX)));
+}
+
+function recordChannelFailure(backoff, channel, error, now) {
+  const previous = backoff[channel] || {};
+  const failures = Math.max(1, Math.floor(Number(previous.failures) || 0) + 1);
+  backoff[channel] = {
+    failures,
+    next_at: now + channelRetryDelaySec(failures),
+    error: String(error || '').slice(0, 200),
+    updated_at: now,
+  };
+}
+
+function pendingDeliveryKey(entry) {
+  return `${entry.channel}\u0000${entry.text}`;
+}
+
+function pendingDeliveryEntry(channel, batch, title, targets, now, nextAt) {
+  return {
+    channel,
+    text: batch.text,
+    title,
+    target: targets,
+    status: 'active',
+    alertCount: batch.items.length,
+    attempts: 0,
+    next_at: nextAt,
+    created_at: now,
+  };
+}
+
+// Idempotent append: a regenerated alert (e.g. every-minute retries while a
+// channel is down) must reuse the existing scheduled retry instead of adding
+// duplicates or resetting the backoff.
+function enqueuePendingDelivery(queue, entry) {
+  const key = pendingDeliveryKey(entry);
+  if (queue.some((item) => pendingDeliveryKey(item) === key)) return false;
+  queue.push(entry);
+  if (queue.length > PENDING_DELIVERIES_MAX) queue.splice(0, queue.length - PENDING_DELIVERIES_MAX);
+  return true;
+}
+
+// Retry queued per-channel deliveries whose backoff has elapsed. Entries for
+// channels that are no longer configured are dropped; entries that keep failing
+// are kept until CHANNEL_RETRY_MAX_ATTEMPTS, then dropped with an error.
+async function drainPendingDeliveries(env, settings, channels, queue, backoff, now) {
+  let delivered = 0;
+  let changed = false;
+  let writeIndex = 0;
+  const errors = [];
+  for (const entry of queue) {
+    if (!channels.includes(entry.channel)) {
+      changed = true;
+      continue;
+    }
+    if (Number(entry.next_at || 0) > now) {
+      queue[writeIndex] = entry;
+      writeIndex += 1;
+      continue;
+    }
+    const result = await sendAlertToChannel(entry.channel, env, settings, {
+      text: entry.text,
+      title: entry.title,
+      alertCount: entry.alertCount,
+      target: entry.target,
+      status: entry.status,
+    });
+    changed = true;
+    if (result.ok) {
+      delivered += 1;
+      delete backoff[entry.channel];
+      continue;
+    }
+    const attempts = Math.max(1, Math.floor(Number(entry.attempts) || 0) + 1);
+    recordChannelFailure(backoff, entry.channel, result.error, now);
+    const exhausted = attempts >= CHANNEL_RETRY_MAX_ATTEMPTS;
+    errors.push({
+      target_id: '',
+      rule_key: 'delivery_retry',
+      channel: entry.channel,
+      error: `第 ${attempts} 次重试失败：${String(result.error || '')}${exhausted ? '（已达重试上限，停止投递）' : ''}`,
+    });
+    if (exhausted) continue;
+    queue[writeIndex] = { ...entry, attempts, next_at: now + channelRetryDelaySec(attempts), last_error: String(result.error || '').slice(0, 200) };
+    writeIndex += 1;
+  }
+  queue.length = writeIndex;
+  return { delivered, errors, changed };
+}
+
 async function finishAlertRun(env, result) {
   try {
     const now = nowSec();
@@ -1104,8 +1320,9 @@ async function updateChannelSecrets(env, body) {
       }
     } else {
       validateWebhookHeaders(raw);
-      if (secrets.webhook_headers !== raw) {
-        secrets.webhook_headers = raw.slice(0, 4000);
+      const merged = mergeMaskedWebhookHeaders(raw, secrets.webhook_headers);
+      if (secrets.webhook_headers !== merged) {
+        secrets.webhook_headers = merged.slice(0, 4000);
         changed = true;
       }
     }

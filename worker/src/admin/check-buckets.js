@@ -5,6 +5,10 @@ import { appendBufferedProbeHistory, probeHistoryEnabled, readBufferedProbeHisto
 
 
 
+export function latestStatusMinIntervalSec(env = {}) {
+  return clamp(Number(env.PROBE_LATEST_STATUS_MIN_INTERVAL_SEC ?? 900) || 900, 60, 3600);
+}
+
 function latestStatusStatement(env, s) {
   return env.DB.prepare(`
     INSERT INTO latest_status (target_id, checked_at, ok, latency_ms, status_code, error, probe_region, cf_colo, uptime_24h, uptime_7d, avg_latency_24h, last_fail_at, current_outage_started_at, last_recover_at, status_changed_at)
@@ -15,12 +19,16 @@ function latestStatusStatement(env, s) {
       uptime_24h=excluded.uptime_24h, uptime_7d=excluded.uptime_7d, avg_latency_24h=excluded.avg_latency_24h,
       last_fail_at=excluded.last_fail_at, current_outage_started_at=excluded.current_outage_started_at,
       last_recover_at=excluded.last_recover_at, status_changed_at=excluded.status_changed_at
-    WHERE excluded.checked_at >= latest_status.checked_at
+    WHERE excluded.checked_at >= latest_status.checked_at + ?
+       OR excluded.ok <> latest_status.ok
+       OR COALESCE(excluded.status_code, -1) <> COALESCE(latest_status.status_code, -1)
+       OR (excluded.error IS NULL) <> (latest_status.error IS NULL)
   `).bind(
     s.target_id, s.checked_at, s.ok, s.latency_ms, s.status_code,
     s.error ? String(s.error).slice(0, 500) : null,
     s.probe_region || 'auto', s.cf_colo || null, s.uptime_24h, s.uptime_7d, s.avg_latency_24h,
-    s.last_fail_at, s.current_outage_started_at, s.last_recover_at, s.status_changed_at
+    s.last_fail_at, s.current_outage_started_at, s.last_recover_at, s.status_changed_at,
+    latestStatusMinIntervalSec(env)
   );
 }
 

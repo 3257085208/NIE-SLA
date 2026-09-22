@@ -180,18 +180,48 @@ const metricsPayload = {
   resetAdaptiveReportCacheForTests();
   const { env: invalidEnv } = viewerEnv(0, { ADAPTIVE_IDLE_SEC: 'not-a-number' });
   assert.equal(await getAdaptiveReportInterval(invalidEnv), 300, 'invalid env values must fall back');
+  resetAdaptiveReportCacheForTests();
+  const { env: emptyEnv } = viewerEnv(0, { ADAPTIVE_IDLE_SEC: '' });
+  assert.equal(await getAdaptiveReportInterval(emptyEnv), 300, 'empty idle env values must fall back to the default, not clamp to 10');
+  resetAdaptiveReportCacheForTests();
+  const { env: blankFastEnv } = viewerEnv(1, { ADAPTIVE_FAST_SEC: '   ' });
+  assert.equal(await getAdaptiveReportInterval(blankFastEnv), 60, 'blank fast env values must fall back to the default');
   assert.equal(viewerCacheTtlSec({ ADAPTIVE_VIEWER_CACHE_SEC: '1' }), 5);
   assert.equal(viewerCacheTtlSec({ ADAPTIVE_VIEWER_CACHE_SEC: '999' }), 60);
   assert.equal(viewerCacheTtlSec({}), 15);
 }
 
-// 5. A failed viewer refresh keeps the last known count; a missing binding is idle.
+// 5. A failed viewer refresh keeps the last known count once; repeated
+//    failures degrade to idle, a successful read resets the counter, and a
+//    missing binding counts as idle.
 {
   resetAdaptiveReportCacheForTests();
   const { env, state } = viewerEnv(2);
   assert.equal(await readViewerCount(env), 2);
   state.fail = true;
-  assert.equal(await readViewerCount(env, { now: Date.now() + 60_000 }), 2, 'transient failures must keep the last count');
+  assert.equal(await readViewerCount(env, { now: Date.now() + 60_000 }), 2, 'a transient failure must keep the last count');
+  assert.equal(
+    await readViewerCount(env, { now: Date.now() + 120_000 }),
+    0,
+    'repeated failures must degrade to idle instead of holding fast forever',
+  );
+  state.fail = false;
+  assert.equal(await readViewerCount(env, { now: Date.now() + 180_000 }), 2, 'a successful read must recover the live count');
+  state.fail = true;
+  assert.equal(
+    await readViewerCount(env, { now: Date.now() + 240_000 }),
+    2,
+    'the failure counter must reset after a successful read',
+  );
+
+  resetAdaptiveReportCacheForTests();
+  const { env: outageEnv, state: outageState } = viewerEnv(4);
+  assert.equal(await getAdaptiveReportInterval(outageEnv), 60, 'live viewers must still report fast before the outage');
+  outageState.fail = true;
+  assert.equal(await readViewerCount(outageEnv, { now: Date.now() + 60_000 }), 4, 'the first outage read keeps the last count');
+  assert.equal(await readViewerCount(outageEnv, { now: Date.now() + 120_000 }), 0, 'a sustained viewer outage degrades to idle');
+  assert.equal(await getAdaptiveReportInterval(outageEnv), 300, 'a viewer outage must fall back to the idle interval');
+
   resetAdaptiveReportCacheForTests();
   assert.equal(await getAdaptiveReportInterval({ ADAPTIVE_REPORT_ENABLED: true }), 300, 'missing STATUS_STREAM binding counts as idle');
 }

@@ -7,7 +7,7 @@ const fleet = { agents: 34, wssAgents: 31, targets: 38, pingTargets: 5, latencyN
 test('capacity fixture follows the embedded model point estimate', () => {
   const capacity = estimateCapacity(fleet);
   const estimate = estimateUsage(fleet);
-  assert.equal(capacity.model_version, 'usage-model-embedded-v1.4.0');
+  assert.equal(capacity.model_version, 'usage-model-embedded-v1.4.2');
   assert.equal(capacity.window_hours, 24);
   assert.deepEqual(capacity.per_node, { agents: 1, wss_agents: 1, targets: 1, ping_targets: 0, latency_nodes: 0, traffic_agents: 0 });
 
@@ -23,18 +23,28 @@ test('capacity fixture follows the embedded model point estimate', () => {
     assert.ok(quota.extra_nodes_80 <= quota.extra_nodes_100, `${key} 80% must be at most 100%`);
   }
 
-  // Known fixture values (usage-model-embedded-v1.4.0, 24h window).
+  // Known fixture values (usage-model-embedded-v1.4.2, 24h window).
   assert.equal(capacity.quotas.workers_calls.extra_nodes_80, 249);
   assert.equal(capacity.quotas.workers_calls.extra_nodes_100, 362);
   assert.equal(capacity.quotas.do_requests.extra_nodes_80, 65);
   assert.equal(capacity.quotas.do_requests.extra_nodes_100, 92);
-  assert.equal(capacity.quotas.d1_rows_read.extra_nodes_80, 62);
-  assert.equal(capacity.quotas.d1_rows_read.extra_nodes_100, 101);
-  assert.equal(capacity.quotas.d1_rows_written.extra_nodes_80, 136);
-  assert.equal(capacity.quotas.d1_rows_written.extra_nodes_100, 185);
+  assert.equal(capacity.quotas.d1_rows_read.extra_nodes_80, 105);
+  assert.equal(capacity.quotas.d1_rows_read.extra_nodes_100, 152);
+  assert.equal(capacity.quotas.d1_rows_written.extra_nodes_80, 61);
+  assert.equal(capacity.quotas.d1_rows_written.extra_nodes_100, 92);
   assert.equal(capacity.quotas.r2_class_a.extra_nodes_100, 15702);
   assert.equal(capacity.quotas.r2_class_b.extra_nodes_100, 49022);
+  assert.equal(capacity.inputs.latest_status_to_d1, true);
   assert.ok(capacity.notes.some((note) => note.includes('80%')), 'capacity notes must explain the 80% watermark');
+});
+
+test('capacity follows the deployment latest_status gate', () => {
+  const capacity = estimateCapacity({ ...fleet, latestStatusToD1: false });
+  assert.equal(capacity.inputs.latest_status_to_d1, false);
+  assert.equal(capacity.quotas.d1_rows_written.extra_nodes_80, 119);
+  assert.equal(capacity.quotas.d1_rows_written.extra_nodes_100, 167);
+  const migrated = estimateCapacity({ ...fleet, latestStatusToD1: false });
+  assert.ok(migrated.quotas.d1_rows_written.used < estimateCapacity(fleet).quotas.d1_rows_written.used, 'the disabled mirror must free D1 write headroom');
 });
 
 test('capacity shrinks monotonically as the fleet grows', () => {

@@ -105,21 +105,52 @@ assert.equal(archived.schema, 'nie-sla-latency-segment-v1');
 assert.equal(archived.points.length, 1);
 assert.equal(archived.points[0].latency_ms, 32);
 
-await submitLatencyAgentResults(jsonRequest({}), env, {
+// Inside the 300s segment write window new points wait in pending_results
+// instead of read-modify-writing the whole segment object.
+const deferred = await submitLatencyAgentResults(jsonRequest({}), env, {
   node_id: created.id,
   results: [{ target_id: 'public-vps', checked_at: checkedAt - 30, latency_ms: 37, ok: true }],
 });
+assert.equal(deferred.storage, 'd1_pending');
+assert.equal(deferred.pending, true);
 archived = JSON.parse([...env.ARCHIVE.objects.values()][0].value);
-assert.equal(archived.points.length, 2, 'R2 Latency archive must retain distinct raw seconds');
-assert.deepEqual(archived.points.map(point => point.checked_at), [checkedAt - 30, checkedAt]);
+assert.equal(archived.points.length, 1, 'a throttled submission must not rewrite the segment');
+const pendingAfterSecond = JSON.parse(database.prepare(`SELECT pending_results FROM latency_agents WHERE id = ?`).get(created.id).pending_results);
+assert.deepEqual(pendingAfterSecond.map(point => [point.checked_at, point.latency_ms]), [[checkedAt - 30, 37]]);
+
+// The public chart reads the pending buffer, so the visible raw-second series
+// is unchanged while the segment write is deferred.
+const pendingHistory = await getPublicLatency(env, new URL('https://api.example.test/api/latency?target_id=public-vps&hours=24'));
+assert.equal(pendingHistory.sources.length, 1, JSON.stringify(pendingHistory));
+assert.equal(pendingHistory.sources[0].points.length, 2);
+assert.equal(pendingHistory.sources[0].points.find(point => point.checked_at === checkedAt).latency_ms, 32);
+assert.equal(pendingHistory.sources[0].points.find(point => point.checked_at === checkedAt - 30).latency_ms, 37);
 
 await submitLatencyAgentResults(jsonRequest({}), env, {
   node_id: created.id,
   results: [{ target_id: 'public-vps', checked_at: checkedAt, latency_ms: 45, ok: true }],
 });
 archived = JSON.parse([...env.ARCHIVE.objects.values()][0].value);
-assert.equal(archived.points.length, 2, 'R2 archive must replace duplicate node/target/time points');
+assert.equal(archived.points.length, 1, 'the segment stays untouched inside the throttle window');
+const pendingAfterThird = JSON.parse(database.prepare(`SELECT pending_results FROM latency_agents WHERE id = ?`).get(created.id).pending_results);
+assert.equal(pendingAfterThird.length, 2, 'pending points must replace the same node/target/second');
+
+// Once the window is due the whole pending batch is merged into one write.
+const archiveKey = [...env.ARCHIVE.objects.keys()][0];
+const stale = JSON.parse(env.ARCHIVE.objects.get(archiveKey).value);
+stale.updated_at = Math.floor(Date.now() / 1000) - 400;
+env.ARCHIVE.objects.set(archiveKey, { value: JSON.stringify(stale), options: {} });
+const flushed = await submitLatencyAgentResults(jsonRequest({}), env, {
+  node_id: created.id,
+  results: [{ target_id: 'public-vps', checked_at: checkedAt, latency_ms: 45, ok: true }],
+});
+assert.equal(flushed.storage, 'r2');
+archived = JSON.parse([...env.ARCHIVE.objects.values()][0].value);
+assert.equal(archived.points.length, 2, 'the flush must merge every pending raw second');
+assert.deepEqual(archived.points.map(point => point.checked_at), [checkedAt - 30, checkedAt]);
 assert.equal(archived.points.find(point => point.checked_at === checkedAt).latency_ms, 45);
+assert.equal(database.prepare(`SELECT pending_results FROM latency_agents WHERE id = ?`).get(created.id).pending_results, '[]');
+
 const latest = JSON.parse(database.prepare(`SELECT latest_results FROM latency_agents WHERE id = ?`).get(created.id).latest_results);
 // The node row is a display cache throttled to one write per 300s (v1.1.93):
 // inside the window it keeps the first value while the archive still records

@@ -1,4 +1,5 @@
-import { enrichCfContext, probeTarget, saveCheck, runDueTargets, runFastStatusTargets, loadProbeTargetRows } from './probe.js';
+import { enrichCfContext, probeTarget, saveCheck, runDueTargets, runFastStatusTargets, loadProbeTargetRows, commitR2StateSync } from './probe.js';
+import { createR2StateSyncSession } from './storage.js';
 import { writeStatusSnapshot } from './status.js';
 import { archiveYesterdayOncePerLocalDay, cleanupDebugLogs, cleanupFinishedAgentTasks, cleanupOldCheckBuckets, cleanupVolatileHistory, ensureV6Schema, getExchangeRates, refreshCheckBucketDays, reconcileOpenIncidents, writeProbeBucketsToD1 } from './admin.js';
 import { appendBufferedProbeHistoryBatch } from './probe-history-buffer.js';
@@ -176,12 +177,23 @@ export async function runScheduledTasks(env, cron, options = {}) {
   let scheduledTargetRows = null;
   try { scheduledTargetRows = await loadProbeTargetRows(env); } catch (err) { results.target_scan_error = String(err?.message || err); }
   const targetOptions = scheduledTargetRows ? { targetRows: scheduledTargetRows } : {};
-  try { results.probe = await measure('probe', () => runDueTargets(env, { skipLease: options.serialized === true, ...targetOptions })); } catch (err) { results.probe_error = String(err?.message || err); }
+  // Both schedulers buffer their R2 state updates in one session; the durable
+  // merge (and its app_meta lock) runs once per round instead of twice.
+  const stateSync = createR2StateSyncSession();
+  try { results.probe = await measure('probe', () => runDueTargets(env, { skipLease: options.serialized === true, ...targetOptions, stateSync })); } catch (err) { results.probe_error = String(err?.message || err); }
   if (results.probe_error || shouldRunScheduledFollowups(results.probe)) {
     try { await recordProbeResult(env, cron, results.probe, results.probe_error, timings.probe); } catch (_) {}
   }
   const historyProbeCount = Number(results.probe?.count || 0);
-  try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env, { skipLease: options.serialized === true, ...targetOptions })); } catch (err) { results.fast_status_error = String(err?.message || err); }
+  try { results.fast_status = await measure('fast_status', () => runFastStatusTargets(env, { skipLease: options.serialized === true, ...targetOptions, stateSync })); } catch (err) { results.fast_status_error = String(err?.message || err); }
+  let stateCommit = null;
+  try { stateCommit = await measure('state_sync', () => commitR2StateSync(env, stateSync)); } catch (err) { results.state_sync_error = String(err?.message || err); }
+  if (stateCommit?.warning) {
+    if (Array.isArray(results.probe?.results)) {
+      results.probe.results = results.probe.results.map(item => (item && typeof item === 'object' ? { ...item, warning: stateCommit.warning } : item));
+    }
+    if (results.fast_status && typeof results.fast_status === 'object') results.fast_status.warning = stateCommit.warning;
+  }
   const statusEvents = [...(results.probe?.events || []), ...(results.fast_status?.events || [])];
   if (statusEvents.length) {
     try { results.status_stream = await measure('status_stream', () => publishStatusEvents(env, statusEvents)); } catch (err) {
@@ -281,16 +293,36 @@ async function signInternalSchedule(secret, timestamp, cron) {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function recordProbeResult(env, cron, probe, error, durationMs) {
+export async function recordProbeResult(env, cron, probe, error, durationMs) {
   if (!env.DB) return;
   const now = Math.floor(Date.now() / 1000);
+  const ok = !error && probe?.ok !== false;
+  const count = Number(probe?.count || 0);
+  const failed = Array.isArray(probe?.results) ? probe.results.filter(item => !item?.ok).length : 0;
+  // The mirror only has to move when the outcome changes, when a run fails,
+  // or on a 300s heartbeat. The old unconditional upsert burned write rows
+  // every minute while nothing consumed the intermediate values.
+  const previous = await env.DB.prepare(`SELECT value, updated_at FROM app_meta WHERE key = ?`)
+    .bind('scheduled:probe:last')
+    .first()
+    .catch(() => null);
+  if (previous && !error) {
+    let parsed = null;
+    try { parsed = JSON.parse(String(previous.value || '')); } catch (_) {}
+    const unchanged = parsed
+      && parsed.ok === ok
+      && Number(parsed.count || 0) === count
+      && Number(parsed.failed || 0) === failed
+      && !parsed.error;
+    if (unchanged && now - Number(previous.updated_at || 0) < 300) return;
+  }
   const value = JSON.stringify({
     at: now,
     cron,
     duration_ms: Number(durationMs || 0),
-    ok: !error && probe?.ok !== false,
-    count: Number(probe?.count || 0),
-    failed: Array.isArray(probe?.results) ? probe.results.filter(item => !item?.ok).length : 0,
+    ok,
+    count,
+    failed,
     error: error || null,
   });
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)

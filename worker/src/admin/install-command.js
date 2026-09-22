@@ -147,7 +147,9 @@ function buildAgentInstallScript(config) {
     `curl -fsSL ${shellQuote(`${config.installBase}/install.sh?v=${encodeURIComponent(config.sha256SumsSha256)}`)} -o "$tmp"`,
     `actual=$(if command -v sha256sum >/dev/null 2>&1; then sha256sum "$tmp" | awk '{print $1}'; elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$tmp" | awk '{print $1}'; elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$tmp" | awk '{print $NF}'; else exit 127; fi)`,
     '[ "$actual" = "$NIE_SLA_INSTALLER_SHA256" ]',
-    `if [ "$(id -u)" -eq 0 ]; then sh "$tmp" --non-interactive; else sudo --preserve-env=${preserveEnv} sh "$tmp" --non-interactive; fi`,
+    'rootless=0',
+    'for arg in "$@"; do if [ "$arg" = "--rootless" ]; then rootless=1; fi; done',
+    `if [ "$(id -u)" -eq 0 ] || [ "$rootless" -eq 1 ]; then sh "$tmp" --non-interactive "$@"; else sudo --preserve-env=${preserveEnv} sh "$tmp" --non-interactive "$@"; fi`,
     '',
   ].join('\n');
 }

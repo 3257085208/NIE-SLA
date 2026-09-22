@@ -10,12 +10,15 @@ const MIN_VIEWER_CACHE_SEC = 5;
 const MAX_VIEWER_CACHE_SEC = 60;
 const VIEWER_FETCH_TIMEOUT_MS = 3000;
 const STATUS_STREAM_INSTANCE = 'public-status-stream';
+// One failed refresh may keep the last known count for a single TTL, but
+// repeated failures must degrade to idle instead of pinning Agents to fast.
+const MAX_VIEWER_REFRESH_FAILURES = 1;
 
-let viewerCache = { viewers: 0, expiresAtMs: 0 };
+let viewerCache = { viewers: 0, expiresAtMs: 0, failures: 0 };
 let viewerInflight = null;
 
 export function resetAdaptiveReportCacheForTests() {
-  viewerCache = { viewers: 0, expiresAtMs: 0 };
+  viewerCache = { viewers: 0, expiresAtMs: 0, failures: 0 };
   viewerInflight = null;
 }
 
@@ -24,7 +27,9 @@ export function adaptiveReportEnabled(env) {
 }
 
 export function clampReportInterval(value, fallback) {
-  const seconds = Math.floor(Number(value));
+  const raw = String(value ?? '').trim();
+  if (!raw) return fallback;
+  const seconds = Math.floor(Number(raw));
   if (!Number.isFinite(seconds)) return fallback;
   return Math.min(MAX_REPORT_SEC, Math.max(MIN_REPORT_SEC, seconds));
 }
@@ -38,7 +43,8 @@ export function viewerCacheTtlSec(env) {
 /**
  * Live public-status viewer count with a short-TTL in-isolate cache. A missing
  * binding counts as idle (quota-safe); a failed refresh keeps the last known
- * count for one more TTL instead of flapping between fast and idle.
+ * count for one more TTL, then consecutive failures degrade to idle instead of
+ * flapping Agents into permanent fast reporting.
  */
 export async function readViewerCount(env, options = {}) {
   const now = Number(options.now) || Date.now();
@@ -64,12 +70,14 @@ export async function readViewerCount(env, options = {}) {
       const body = response?.ok ? await response.json().catch(() => null) : null;
       const raw = Math.floor(Number(body?.viewers));
       const viewers = Number.isFinite(raw) && raw > 0 ? raw : 0;
-      viewerCache = { viewers, expiresAtMs: Date.now() + ttlMs };
+      viewerCache = { viewers, expiresAtMs: Date.now() + ttlMs, failures: 0 };
       return viewers;
     } catch (error) {
       console.error('viewer count read failed:', String(error?.message || error));
-      viewerCache = { viewers: viewerCache.viewers, expiresAtMs: Date.now() + ttlMs };
-      return viewerCache.viewers;
+      const failures = (viewerCache.failures || 0) + 1;
+      const viewers = failures > MAX_VIEWER_REFRESH_FAILURES ? 0 : viewerCache.viewers;
+      viewerCache = { viewers, expiresAtMs: Date.now() + ttlMs, failures };
+      return viewers;
     }
   })();
   try {
