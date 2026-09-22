@@ -119,6 +119,7 @@ run_check "legacy chart color schema migration" node "$ROOT/worker/tests/schema-
 run_check "debug operation log retention and safety" node "$ROOT/worker/tests/debug-logs.test.mjs"
 run_check "usage summary read-only access credential tests" node "$ROOT/worker/tests/usage-summary-access.test.mjs"
 run_check "usage summary read-only access route tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/usage-summary-access-route.test.mjs"
+run_check "usage actual tests" node "$ROOT/worker/tests/usage-actual.test.mjs"
 run_check "auth order tests" node "$ROOT/worker/tests/auth-order.test.mjs"
 if [[ -f "$ROOT/scripts/export-public.mjs" ]]; then
   run_check "public export tool" node --check "$ROOT/scripts/export-public.mjs"
