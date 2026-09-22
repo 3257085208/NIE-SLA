@@ -5,15 +5,15 @@ import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
 
-const INSTALLER_SHA256 = '12f0a2a4d3ed684c65124586ec2ee8de1ffb01c234ada03c5f722f70c16fe13b';
-const SETUP_SHA256 = 'a53e4b7c39018ca4e6d514d193dcc946021fcbf02193b7bf33bb96406ab07e49';
+const INSTALLER_SHA256 = '279f25a6e095cd283bd26130a88399579b8f42d28abc891a9dae42d0e25c4bd7';
+const SETUP_SHA256 = '9793d47180b9e482d2a2a91383a4a61027718bc19e1da1c629d30dba49fb9e92';
 const CFTZ_SHA256 = '4da4b2a42f679a4f93225158436d8b9d4dc2dd7afac2ff80190d5330238391a6';
 const INSTALL_TICKET_PREFIX = 'nsi_';
 const INSTALL_TICKET_BYTES = 24;
 const INSTALL_TICKET_TTL_SEC = 600;
 const INSTALL_SCRIPT_PATH = '/api/agent/install-script';
 
-export async function getAgentInstallCommand(env, url, request = null) {
+export async function getAgentInstallCommand(env, url, request = null, options = {}) {
   const targetId = String(url.searchParams.get('target_id') || '').trim();
   const agentId = sanitizeAgentId(targetId);
   if (!targetId || !agentId) return { ok: false, error: '必须提供有效的 target_id' };
@@ -46,8 +46,9 @@ const expectedVersion = String(env.AGENT_LATEST_VERSION || '').trim() || String(
     .run();
   await cleanupInstallTickets(env, now);
 
-  const linuxCommand = `(t=$(mktemp) && trap 'rm -f "$t"' EXIT INT TERM && chmod 0600 "$t" && curl -fsSL -H ${shellQuote(`Authorization: Bearer ${installTicket}`)} ${shellQuote(`${apiBase}${INSTALL_SCRIPT_PATH}`)} -o "$t" && sh "$t")`;
-  const linuxCommandRootless = `(t=$(mktemp) && trap 'rm -f "$t"' EXIT INT TERM && chmod 0600 "$t" && curl -fsSL -H ${shellQuote(`Authorization: Bearer ${installTicket}`)} ${shellQuote(`${apiBase}${INSTALL_SCRIPT_PATH}`)} -o "$t" && sh "$t" --rootless)`;
+  const replaceFlag = replaceAgentArgument(options?.replaceAgent);
+  const linuxCommand = `(t=$(mktemp) && trap 'rm -f "$t"' EXIT INT TERM && chmod 0600 "$t" && curl -fsSL -H ${shellQuote(`Authorization: Bearer ${installTicket}`)} ${shellQuote(`${apiBase}${INSTALL_SCRIPT_PATH}`)} -o "$t" && sh "$t"${replaceFlag})`;
+  const linuxCommandRootless = `(t=$(mktemp) && trap 'rm -f "$t"' EXIT INT TERM && chmod 0600 "$t" && curl -fsSL -H ${shellQuote(`Authorization: Bearer ${installTicket}`)} ${shellQuote(`${apiBase}${INSTALL_SCRIPT_PATH}`)} -o "$t" && sh "$t" --rootless${replaceFlag})`;
 
   return {
     ok: true,
@@ -246,4 +247,10 @@ function isPublicHttpOrigin(value) {
 
 export function shellQuote(value) {
   return `'${String(value ?? '').replace(/'/g, `'\\''`)}'`;
+}
+
+function replaceAgentArgument(value) {
+  const source = String(value || '').trim().toLowerCase();
+  if (source !== 'nezha' && source !== 'komari' && source !== 'nodeget') return '';
+  return ` --replace-agent ${source}`;
 }

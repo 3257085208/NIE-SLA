@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.94",
-  "agent_version": "v1.1.94",
-  "source_ref": "app-v1.1.94",
-  "sums_sha256": "89586bf0021ea74fcdc63656960d7f6d3bab1656ebabdbd18fc031ad6dfe0892",
-  "published_at": "2026-09-22T06:45:00Z",
-  "title": "NIE-SLA 1.1.94",
+  "version": "1.1.95",
+  "agent_version": "v1.1.95",
+  "source_ref": "app-v1.1.95",
+  "sums_sha256": "52aa678ac7ec5a1aed150d384a2aa05780488a39511fa40dd74b1a61cda7c930",
+  "published_at": "2026-09-22T08:30:00Z",
+  "title": "NIE-SLA 1.1.95",
   "changelog": [
-    "生产 Worker 更名为 nie-sla-prod：旧脚本名遭平台级停服（与一次滥用举报同时发生）后完成站点迁移，域名、D1/R2 数据与节点身份全部保留，Agent 无需重装。",
-    "后台仪表盘：30 天状态构建的超时从默认 12 秒放宽到 30 秒（慢网络/冷缓存下不再出现“API 请求超时”）。",
-    "文档：用量模型节奏常数（状态镜像/联系人/探测回退/桶清理）同步 v1.1.93 口径。"
+    "迁移向导：后台「探针 → 从其它面板导入」支持从 NeZha / Komari / NodeGet 拉取节点、预览去重后批量导入为目标，并为每台节点生成一条安装命令。",
+    "一键替换旧探针：安装器新增 --replace-agent <auto|nezha|komari|nodeget>（迁移命令自动带上），会停止并禁用旧的第三方探针服务（不删除文件）；真机验证通过。",
+    "文档：新增《从其它面板迁移》中文指南与 FAQ 条目。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

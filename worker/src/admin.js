@@ -38,6 +38,7 @@ export { createUsageSummaryAccess, getUsageSummaryAccessStatus, revokeUsageSumma
 
 
 export { getAgentInstallCommand, getAgentInstallScript } from './admin/install-command.js';
+export { previewNezhaMigration, importNezhaMigration, previewKomariMigration, importKomariMigration, previewNodeGetMigration, importNodeGetMigration } from './admin/migration.js';
 
 
 export { getLatencyHealth } from './admin/latency-health.js';

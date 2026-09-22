@@ -17,6 +17,20 @@ Agent 是 VPS 侧的 Rust 采集器，只主动访问 Worker，不监听端口�
 systemd 或 OpenRC 服务 nie-sla-agent / nie-sla-agent-manager
 ```
 
+### 替换第三方探针（--replace-agent）
+
+如果 VPS 上已经运行其它面板的探针，可在安装命令后追加 `--replace-agent`，让安装器先停止并禁用旧探针，避免两套探针同时上报：
+
+```bash
+sudo bash install.sh --replace-agent auto
+```
+
+- `--replace-agent auto`：自动检测 NeZha、Komari、NodeGet 三种旧探针。
+- `--replace-agent nezha|komari|nodeget`：只处理指定来源。
+- 也可使用环境变量 `NIE_SLA_REPLACE_AGENT`；不设置时安装器不做任何处理。
+- 检测 systemd 单元（`systemctl list-unit-files`、`/etc/systemd/system`、`/lib/systemd/system`）与 OpenRC 服务（`/etc/init.d`）。命中的旧服务只执行停止与禁用开机自启，**不会删除任何文件**；未发现时提示“未发现 <来源> 旧探针服务（跳过）”，处理结果在安装日志末尾汇总。
+- rootless 安装或系统上没有可用的 systemd/OpenRC 时安全跳过，不影响本次安装结果。
+
 ## 数据流
 
 - 每 1 秒采样 CPU、内存、磁盘、负载、IO、网络、进程/线程、运行时长、温度。

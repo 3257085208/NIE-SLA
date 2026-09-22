@@ -2210,6 +2210,190 @@ function installModeModal(target, command, rootlessCommand) {
   openModal();
 }
 
+const MIGRATION_NAT_NOTE = "导入节点默认使用“无公网 IP（NAT）”模式和 300 秒探测间隔，可导入后在探针列表修改。";
+const MIGRATION_SOURCES = [
+  {
+    id: "nezha", label: "NeZha", tokenLabel: "API Token",
+    tokenPlaceholder: "NeZha 个人访问令牌",
+    panelPlaceholder: "https://nezha.example.com",
+    note: `${MIGRATION_NAT_NOTE}Token 只用于本次预览与导入，不会保存。`,
+  },
+  {
+    id: "komari", label: "Komari", tokenLabel: "API Key",
+    tokenPlaceholder: "Komari 后台 API Key",
+    panelPlaceholder: "https://komari.example.com",
+    note: `${MIGRATION_NAT_NOTE}需先在 Komari 后台创建 API Key，Key 只用于本次预览与导入，不会保存。`,
+  },
+  {
+    id: "nodeget", label: "NodeGet", tokenLabel: "API Key",
+    tokenPlaceholder: "NodeGet API Key",
+    panelPlaceholder: "https://nodeget.example.com",
+    note: `${MIGRATION_NAT_NOTE}NodeGet 仅返回节点 UUID，名称需导入后补。`,
+  },
+];
+let migrationPanelRequest = null;
+let migrationPreviewNodes = [];
+
+function migrationSource(id) {
+  return MIGRATION_SOURCES.find((source) => source.id === id) || MIGRATION_SOURCES[0];
+}
+
+function mountPanelImportButton() {
+  const anchor = byId("addTargetBtn");
+  if (!anchor || byId("importPanelBtn")) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "btn btn-sm";
+  button.id = "importPanelBtn";
+  button.textContent = "从其它面板导入";
+  button.onclick = openMigrationModal;
+  anchor.before(button);
+}
+
+function openMigrationModal() {
+  migrationPanelRequest = null;
+  migrationPreviewNodes = [];
+  const initial = migrationSource("nezha");
+  byId("modal").innerHTML = `
+    <h3>从其它面板导入</h3>
+    <p class="hint">读取来源面板中的服务器并创建为 NIE-SLA 探针；导入后每台 VPS 会生成一条独立的 Agent 安装命令。</p>
+    <div class="f"><label>来源面板</label><select id="migrationSource">${MIGRATION_SOURCES.map((source) => `<option value="${escapeAttr(source.id)}">${escapeHtml(source.label)}</option>`).join("")}</select></div>
+    <div class="f"><label>面板地址</label><input id="migrationPanelUrl" type="url" placeholder="${escapeAttr(initial.panelPlaceholder)}" autocomplete="off"></div>
+    <div class="f"><label id="migrationTokenLabel">${escapeHtml(initial.tokenLabel)}</label><input id="migrationToken" type="password" placeholder="${escapeAttr(initial.tokenPlaceholder)}" autocomplete="new-password"></div>
+    <p class="hint" id="migrationSourceNote">${escapeHtml(initial.note)}</p>
+    <div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-blue" id="migrationPreviewBtn">预览</button></div>
+    <div id="migrationResult"></div>`;
+  byId("migrationSource").onchange = syncMigrationSourceFields;
+  byId("migrationPreviewBtn").onclick = previewMigration;
+  openModal();
+}
+
+function syncMigrationSourceFields() {
+  const source = migrationSource(byId("migrationSource")?.value);
+  byId("migrationTokenLabel").textContent = source.tokenLabel;
+  byId("migrationToken").placeholder = source.tokenPlaceholder;
+  byId("migrationPanelUrl").placeholder = source.panelPlaceholder;
+  byId("migrationSourceNote").textContent = source.note;
+  migrationPanelRequest = null;
+  migrationPreviewNodes = [];
+  const resultBox = byId("migrationResult");
+  if (resultBox) resultBox.innerHTML = "";
+}
+
+async function previewMigration() {
+  const source = migrationSource(byId("migrationSource")?.value).id;
+  const panelUrl = byId("migrationPanelUrl")?.value.trim() || "";
+  const token = byId("migrationToken")?.value.trim() || "";
+  const resultBox = byId("migrationResult");
+  if (!panelUrl) return toast("请填写面板地址", "err");
+  if (!/^https:\/\//i.test(panelUrl)) return toast("面板地址必须为 HTTPS", "err");
+  if (!token) return toast(`请填写 ${migrationSource(source).tokenLabel}`, "err");
+  const button = byId("migrationPreviewBtn");
+  button.disabled = true;
+  resultBox.innerHTML = '<div class="loading">正在读取面板节点...</div>';
+  try {
+    const data = await apiAdmin(`/api/admin/migration/${source}/preview`, {
+      method: "POST",
+      body: JSON.stringify({ panel_url: panelUrl, token }),
+      noAuthReset: true,
+    }, 30000);
+    migrationPanelRequest = { source, panel_url: panelUrl, token };
+    renderMigrationPreview(data);
+  } catch (error) {
+    resultBox.innerHTML = `<div class="error">预览失败：${escapeHtml(error?.message || "未知错误")}</div>`;
+  } finally {
+    if (document.body.contains(button)) button.disabled = false;
+  }
+}
+
+function renderMigrationPreview(data) {
+  migrationPreviewNodes = Array.isArray(data?.nodes) ? data.nodes : [];
+  const summary = data?.summary || {};
+  const rows = migrationPreviewNodes.map((node, index) => {
+    const selectable = !node.exists;
+    const nameNote = node.name_missing ? '<small class="table-note">名称需导入后补</small>' : "";
+    return `<tr>
+      <td><input type="checkbox" data-migration-node="${escapeAttr(String(index))}"${selectable ? " checked" : " disabled"}></td>
+      <td>${escapeHtml(node.name || "-")}${nameNote}</td>
+      <td>${escapeHtml(node.group || "-")}</td>
+      <td><code>${escapeHtml(node.ip || "-")}</code></td>
+      <td>${selectable ? '<span class="tag tag-on">可导入</span>' : `<span class="tag tag-off">已存在</span><small class="table-note">${escapeHtml(node.reason || "")}</small>`}</td>
+    </tr>`;
+  }).join("");
+  const nameHint = data?.name_hint ? `<p class="hint">${escapeHtml(data.name_hint)}；导入后可在探针列表中重命名。</p>` : "";
+  byId("migrationResult").innerHTML = `
+    <p class="hint">共 ${Number(summary.total || migrationPreviewNodes.length)} 台 · 可导入 ${Number(summary.creatable || 0)} 台 · 已存在 ${Number(summary.existing || 0)} 台</p>
+    ${nameHint}
+    <div class="table-scroll"><table class="pings-table"><thead><tr><th></th><th>名称</th><th>分组</th><th>IP</th><th>状态</th></tr></thead><tbody>${rows || '<tr><td colspan="5">面板没有返回节点</td></tr>'}</tbody></table></div>
+    <div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="migrationImportBtn">导入选中</button></div>`;
+  byId("migrationImportBtn").onclick = importMigrationSelection;
+}
+
+async function importMigrationSelection() {
+  if (!migrationPanelRequest) return toast("请先预览面板节点", "err");
+  const nodes = [...byId("modal").querySelectorAll("[data-migration-node]")]
+    .filter((box) => box.checked && !box.disabled)
+    .map((box) => migrationPreviewNodes[Number(box.dataset.migrationNode)])
+    .filter(Boolean)
+    .map((node) => ({ source_id: node.source_id, name: node.name, group: node.group, ip: node.ip }));
+  if (!nodes.length) return toast("请选择要导入的节点", "err");
+  const button = byId("migrationImportBtn");
+  button.disabled = true;
+  button.textContent = "导入中...";
+  try {
+    const data = await apiAdmin(`/api/admin/migration/${migrationPanelRequest.source || "nezha"}/import`, {
+      method: "POST",
+      body: JSON.stringify({ panel_url: migrationPanelRequest.panel_url, token: migrationPanelRequest.token, nodes }),
+      noAuthReset: true,
+    }, 120000);
+    renderMigrationImportResult(data);
+    toast(`已导入 ${data?.created?.length || 0} 台探针`, "ok");
+    loadTargets();
+  } catch (error) {
+    toast(error?.message || "导入失败", "err");
+  } finally {
+    if (document.body.contains(button)) {
+      button.disabled = false;
+      button.textContent = "导入选中";
+    }
+  }
+}
+
+function renderMigrationImportResult(data) {
+  const created = Array.isArray(data?.created) ? data.created : [];
+  const skipped = Array.isArray(data?.skipped) ? data.skipped : [];
+  const sourceLabel = migrationSource(migrationPanelRequest?.source).label;
+  const replaceNote = created.length
+    ? `<p class="hint">迁移会同时停止并禁用旧的 ${escapeHtml(sourceLabel)} 探针服务（不删除文件）；如果旧探针还要保留，请手动去掉命令末尾的 <code>--replace-agent</code> 参数。</p>`
+    : "";
+  const commandBlocks = created.map((item) => {
+    const command = String(item.install_command || "").trim();
+    return `<div class="install-command-block">
+      <div class="install-command-head"><strong>${escapeHtml(item.name || item.id)}</strong>${command ? `<button type="button" class="btn btn-xs" data-copy-migration="${escapeAttr(command)}">复制命令</button>` : '<span class="tag tag-warn">命令生成失败</span>'}</div>
+      ${command ? `<pre class="code">${escapeHtml(command)}</pre>` : '<p class="hint">请稍后在探针列表中使用“部署 Agent”重新生成。</p>'}
+    </div>`;
+  }).join("");
+  const skippedHtml = skipped.length
+    ? `<details class="migration-skipped"><summary>已跳过 ${skipped.length} 台</summary>${skipped.map((item) => `<div class="migration-skipped-row"><span>${escapeHtml(item.name || item.source_id)}</span><small>${escapeHtml(item.reason || "")}</small></div>`).join("")}</details>`
+    : "";
+  byId("migrationResult").innerHTML = `
+    <p class="hint">导入完成：成功 ${created.length} 台${skipped.length ? `，跳过 ${skipped.length} 台` : ""}。每台 VPS 只需执行对应的一条命令（含一次性凭据，10 分钟内有效）。</p>
+    ${replaceNote}
+    ${commandBlocks}
+    ${skippedHtml}
+    <div class="ma"><button type="button" class="btn btn-primary" data-close>完成</button></div>`;
+  byId("migrationResult").querySelectorAll("[data-copy-migration]").forEach((copyButton) => {
+    copyButton.addEventListener("click", async () => {
+      try {
+        await copyText(copyButton.getAttribute("data-copy-migration") || "");
+        toast("已复制安装命令（10 分钟内有效）", "ok");
+      } catch (error) {
+        toast(error?.message || "复制失败", "err");
+      }
+    });
+  });
+}
+
 async function loadLatencyNodes() {
   loading("latencyTable", "加载 Latency 节点...");
   try {
@@ -4229,6 +4413,7 @@ if (sidebarBackdrop) {
   };
 }
 byId("addTargetBtn").onclick = () => targetModal();
+mountPanelImportButton();
 byId("addLatencyBtn").onclick = () => latencyNodeModal();
 byId("probeBtn").onclick = async () => {
   try {

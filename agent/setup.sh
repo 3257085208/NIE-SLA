@@ -61,6 +61,10 @@ LEGACY_TASK_USER="nstatus-task"
 ROOTLESS_MODE=false
 case "${NIE_SLA_ROOTLESS:-${NSTATUS_ROOTLESS:-}}" in 1|true|TRUE|yes|YES) ROOTLESS_MODE=true ;; esac
 
+REPLACE_AGENT="${NIE_SLA_REPLACE_AGENT:-}"
+REPLACE_PROBE_STOPPED=0
+REPLACE_PROBE_DISABLED=0
+
 if [[ "$ROOTLESS_MODE" == "true" ]]; then
   INSTALL_DIR="${HOME}/.local/bin"
   WORK_DIR="${HOME}/nie-sla-agent"
@@ -211,6 +215,120 @@ stop_existing_agent() {
   if command -v pkill >/dev/null 2>&1; then
     pkill -x "$BIN_NAME" 2>/dev/null || true
     pkill -x "$LEGACY_SERVICE_NAME" 2>/dev/null || true
+  fi
+}
+
+# ---------- 替换第三方探针（--replace-agent）：只停止/禁用旧服务，绝不删除文件 ----------
+old_probe_systemd_candidates() {
+  local dir unit
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl list-unit-files --type=service --no-legend --no-pager 2>/dev/null | awk '{print $1}' || true
+  fi
+  for dir in /etc/systemd/system /lib/systemd/system; do
+    [[ -d "$dir" ]] || continue
+    for unit in "$dir"/*.service; do
+      [[ -e "$unit" ]] || continue
+      printf '%s\n' "${unit##*/}"
+    done
+  done
+}
+
+old_probe_openrc_candidates() {
+  local init
+  [[ -d /etc/init.d ]] || return 0
+  for init in /etc/init.d/*; do
+    [[ -e "$init" ]] || continue
+    printf '%s\n' "${init##*/}"
+  done
+}
+
+old_probe_systemd_pattern() {
+  case "$1" in
+    nezha) printf '%s' '^nezha-agent\.service$' ;;
+    komari) printf '%s' '^(komari|komari-agent)\.service$' ;;
+    nodeget) printf '%s' '^(nodeget|nodeget-agent)\.service$' ;;
+  esac
+}
+
+old_probe_openrc_pattern() {
+  case "$1" in
+    nezha) printf '%s' '^nezha-agent$' ;;
+    komari) printf '%s' '^komari' ;;
+    nodeget) printf '%s' '^nodeget' ;;
+  esac
+}
+
+stop_old_probe_systemd_service() {
+  local unit="$1"
+  if [[ "$INIT" != "systemd" ]] || ! command -v systemctl >/dev/null 2>&1; then
+    warn "检测到旧探针单元 ${unit}，但 systemd 不可用：未执行停止/禁用"
+    return 0
+  fi
+  systemctl stop "$unit" 2>/dev/null || true
+  ok "已停止旧探针服务 ${unit}（systemd）"
+  REPLACE_PROBE_STOPPED=$((REPLACE_PROBE_STOPPED + 1))
+  systemctl disable "$unit" 2>/dev/null || true
+  ok "已禁用旧探针服务 ${unit} 的开机自启（systemd）"
+  REPLACE_PROBE_DISABLED=$((REPLACE_PROBE_DISABLED + 1))
+}
+
+stop_old_probe_openrc_service() {
+  local name="$1"
+  if [[ "$INIT" != "openrc" ]] || ! command -v rc-service >/dev/null 2>&1; then
+    warn "检测到旧探针服务 /etc/init.d/${name}，但 OpenRC 不可用：未执行停止/禁用"
+    return 0
+  fi
+  rc-service "$name" stop 2>/dev/null || true
+  ok "已停止旧探针服务 ${name}（OpenRC）"
+  REPLACE_PROBE_STOPPED=$((REPLACE_PROBE_STOPPED + 1))
+  if command -v rc-update >/dev/null 2>&1; then
+    rc-update del "$name" default 2>/dev/null || rc-update del "$name" 2>/dev/null || true
+    ok "已移除旧探针服务 ${name} 的开机自启（OpenRC）"
+    REPLACE_PROBE_DISABLED=$((REPLACE_PROBE_DISABLED + 1))
+  else
+    warn "未找到 rc-update：请手动执行 rc-update del ${name}"
+  fi
+}
+
+replace_third_party_agents() {
+  [[ -n "$REPLACE_AGENT" ]] || return 0
+  if [[ "$ROOTLESS_MODE" == "true" ]]; then
+    info "rootless 模式：跳过 --replace-agent ${REPLACE_AGENT} 的旧探针服务处理"
+    return 0
+  fi
+  local sources source pattern units inits unit name found=0 all_units all_inits
+  case "$REPLACE_AGENT" in
+    auto) sources=(nezha komari nodeget) ;;
+    *) sources=("$REPLACE_AGENT") ;;
+  esac
+  title "替换第三方旧探针服务（--replace-agent ${REPLACE_AGENT}）"
+  all_units="$(old_probe_systemd_candidates | sort -u || true)"
+  all_inits="$(old_probe_openrc_candidates | sort -u || true)"
+  for source in "${sources[@]}"; do
+    pattern="$(old_probe_systemd_pattern "$source")"
+    units="$(printf '%s\n' "$all_units" | grep -E "$pattern" || true)"
+    pattern="$(old_probe_openrc_pattern "$source")"
+    inits="$(printf '%s\n' "$all_inits" | grep -E "$pattern" || true)"
+    if [[ -z "$units" && -z "$inits" ]]; then
+      info "未发现 ${source} 旧探针服务（跳过）"
+      continue
+    fi
+    found=1
+    while IFS= read -r unit; do
+      [[ -n "$unit" ]] || continue
+      info "检测到 ${source} 旧探针服务：${unit}（systemd）"
+      stop_old_probe_systemd_service "$unit"
+    done <<< "$units"
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      info "检测到 ${source} 旧探针服务：${name}（OpenRC）"
+      stop_old_probe_openrc_service "$name"
+    done <<< "$inits"
+  done
+  if (( found == 0 )); then
+    info "旧探针服务处理汇总：未发现可停止/禁用的服务（--replace-agent ${REPLACE_AGENT}）"
+  else
+    info "旧探针服务处理汇总：已停止 ${REPLACE_PROBE_STOPPED} 个、已禁用 ${REPLACE_PROBE_DISABLED} 个（--replace-agent ${REPLACE_AGENT}）"
   fi
 }
 
@@ -733,9 +851,18 @@ while [[ $# -gt 0 ]]; do
     --ping-sec) NIE_SLA_PING_SEC="$2"; shift 2 ;;
     --non-interactive|-y) NON_INTERACTIVE=true; shift ;;
     --rootless) export NIE_SLA_ROOTLESS="${NIE_SLA_ROOTLESS:-1}"; ROOTLESS_MODE=true; shift ;;
+    --replace-agent)
+      if [[ $# -lt 2 ]]; then err "--replace-agent 缺少取值（可选 auto、nezha、komari、nodeget）"; exit 2; fi
+      REPLACE_AGENT="$2"; shift 2 ;;
+    --replace-agent=*) REPLACE_AGENT="${1#*=}"; shift ;;
     *) shift ;;
   esac
 done
+
+case "$REPLACE_AGENT" in
+  ''|auto|nezha|komari|nodeget) ;;
+  *) err "无效的 --replace-agent：${REPLACE_AGENT}（可选 auto、nezha、komari、nodeget）"; exit 2 ;;
+esac
 
 if [[ "$ROOTLESS_MODE" != "true" ]]; then
   need_root
@@ -810,6 +937,7 @@ else
   fi
   mkdir -p "$WORK_DIR" "$INSTALL_DIR"
 fi
+replace_third_party_agents
 install -m 0755 "$TMPBIN" "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || { cp "$TMPBIN" "${WORK_DIR}/${BIN_NAME}"; chmod 0755 "${WORK_DIR}/${BIN_NAME}"; }
 ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${BIN_NAME}"
 if [[ "$ROOTLESS_MODE" != "true" ]]; then
