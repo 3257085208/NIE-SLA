@@ -1,18 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.97",
-  "agent_version": "v1.1.97",
-  "source_ref": "app-v1.1.97",
-  "sums_sha256": "06434302225e935b1ce52d970226a3ea4973dfc5e5540004d202cc1f297bcc3f",
-  "published_at": "2026-09-22T16:15:00Z",
-  "title": "NIE-SLA 1.1.97",
+  "version": "1.1.98",
+  "agent_version": "v1.1.98",
+  "source_ref": "app-v1.1.98",
+  "sums_sha256": "8e70e54024e41e36ddaa886567f480b3cdb42a980125ae343eb7bacf44268a9e",
+  "published_at": "2026-09-22T18:00:00Z",
+  "title": "NIE-SLA 1.1.98",
   "changelog": [
-    "免费额度无感优化：R2 状态锁每分钟 2 次合并为每轮 1 次；禁用 latest_status 时不再读取该表；Latency 归档段写入节流到 ≥300 秒（窗口内数据暂存，公开图表仍逐秒可见）；R2 写入强校验改为抽样（默认 1/50，异常仍拒绝）；探测记录只在变化/失败/300 秒心跳时写入。",
-    "用量模型 v1.4.2：内嵌面板与 CLI 同步，新增 R2 状态锁组件与 latest_status 门控，不再把已禁用的写入估算成消耗。",
-    "告警加固：渠道设置不再回显 Webhook Headers 明文（返回 *** 与 *_set 标记，保存 *** 视为保持原值）；投递改为按渠道独立指数退避（300s×2^n，上限 1 小时，最多 8 次）并引入幂等待投递队列。",
-    "自适应上报加固：空/空白环境变量回退默认 60/300 秒；观众计数连续失败 ≥2 次降级为无人观看档。",
-    "安装与一键部署：安装命令 wrapper 会把 --replace-agent 等参数转发给 setup.sh（root/sudo 两条路径一致，--rootless 不再叠加 sudo）；一键部署计费模板的静态资源规则与生产环境对齐。",
-    "前端：Google Fonts 改为非阻塞加载（js/fonts-async.js），首屏渲染不再等待字体。"
+    "流量统计：修复启用流量统计或变更周期重置日后，下一份上报会把 Agent 自开机以来的累计计数器整份计入当期、导致用量虚高（如 1.60 TB vs 实际 28 GB）；现在无有效基线时不再计入全量，只从当前计数器建立基线后累计增量。",
+    "离线告警：离线判定改用每个 Agent 的真实上报心跳（WSS 与 HTTP 回退、含 Durable Object 内部心跳），不再依赖被 900 秒节流的状态镜像，修复在线节点被按 600 秒阈值误报离线；目标被禁用或删除后残留的活跃告警会自动清除。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

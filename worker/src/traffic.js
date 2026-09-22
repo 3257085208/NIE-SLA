@@ -97,14 +97,23 @@ export function summarizeTraffic(row, settings) {
   };
 }
 
+// A missing counter baseline (NULL/empty) must never be read as 0: the Agent
+// counter is cumulative since boot, so treating NULL as 0 would credit the
+// entire lifetime total to the current period.
+export function hasTrafficBaseline(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string' && value.trim() === '') return false;
+  return Number.isFinite(Number(value));
+}
+
 export function summarizeTrafficWithPending(row, settings, metricRow) {
   const net = parseJsonObject(metricRow?.net);
   const currentRx = Number(net?.rx_bytes);
   const currentTx = Number(net?.tx_bytes);
-  const lastRx = Number(row?.last_rx_bytes);
-  const lastTx = Number(row?.last_tx_bytes);
-  const pendingRx = Number.isFinite(currentRx) && Number.isFinite(lastRx) && currentRx >= lastRx ? currentRx - lastRx : 0;
-  const pendingTx = Number.isFinite(currentTx) && Number.isFinite(lastTx) && currentTx >= lastTx ? currentTx - lastTx : 0;
+  const lastRx = hasTrafficBaseline(row?.last_rx_bytes) ? Number(row.last_rx_bytes) : null;
+  const lastTx = hasTrafficBaseline(row?.last_tx_bytes) ? Number(row.last_tx_bytes) : null;
+  const pendingRx = Number.isFinite(currentRx) && lastRx !== null && currentRx >= lastRx ? currentRx - lastRx : 0;
+  const pendingTx = Number.isFinite(currentTx) && lastTx !== null && currentTx >= lastTx ? currentTx - lastTx : 0;
   return summarizeTraffic({
     ...(row || {}),
     rx_bytes: Number(row?.rx_bytes || 0) + pendingRx,

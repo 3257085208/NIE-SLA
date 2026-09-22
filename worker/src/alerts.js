@@ -3,7 +3,7 @@ import { summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffi
 import { ApiError, safeJson } from './auth.js';
 import { readR2State } from './storage.js';
 import { bufferedAgentStateEnabled, mergeAgentMetricRows } from './agent-state.js';
-import { readFleetLatestAgentStates } from './telemetry-buffer.js';
+import { readFleetLatestSnapshot } from './telemetry-buffer.js';
 
 const SETTINGS_KEY = 'alert_settings';
 const TG_TOKEN_KEY = 'alert_telegram_bot_token';
@@ -190,17 +190,20 @@ export async function runAlertChecks(env, options = {}) {
   if (!channels.length) return finishAlertRun(env, { ok: true, skipped: true, reason: 'channels_not_configured' });
   await ensureAlertStateTable(env);
 
-  const [targetRows, metricRows, trafficRows, latestRows, stateRows, bufferedMetrics] = await Promise.all([
+  const [targetRows, metricRows, trafficRows, latestRows, stateRows, bufferedSnapshot] = await Promise.all([
     env.DB.prepare(`SELECT ${TARGET_RUNTIME_COLUMNS} FROM targets WHERE enabled = 1 ORDER BY group_name, name`).all(),
     env.DB.prepare(`SELECT * FROM agent_metrics_state`).all(),
     env.DB.prepare(`SELECT * FROM agent_traffic_monthly`).all(),
     env.DB.prepare(`SELECT * FROM latest_status`).all(),
     env.DB.prepare(`SELECT * FROM alert_state`).all(),
-    bufferedAgentStateEnabled(env) ? readFleetLatestAgentStates(env).catch((error) => {
+    // The heartbeat is read whenever the telemetry DO is bound: it feeds the
+    // offline rule even for deployments that keep the D1 state mirror enabled.
+    env.TELEMETRY_BUFFER ? readFleetLatestSnapshot(env).catch((error) => {
       console.error('Alert buffered Agent metrics unavailable:', String(error?.message || error));
-      return {};
-    }) : Promise.resolve({}),
+      return { states: {}, lastSeen: {} };
+    }) : Promise.resolve({ states: {}, lastSeen: {} }),
   ]);
+  const bufferedMetrics = bufferedAgentStateEnabled(env) ? bufferedSnapshot.states : {};
 
   const alertEnv = Object.create(env);
   alertEnv[ALERT_STATE_CACHE] = new Map(
@@ -211,6 +214,12 @@ export async function runAlertChecks(env, options = {}) {
   for (const row of mergeAgentMetricRows(metricRows.results, bufferedMetrics)) {
     const id = sanitizeAgentId(row.agent_id);
     if (id) metricsByAgent.set(id, row);
+  }
+  const lastSeenByAgent = new Map();
+  for (const [key, value] of Object.entries(bufferedSnapshot.lastSeen || {})) {
+    const id = sanitizeAgentId(key);
+    const at = Math.floor(Number(value) || 0);
+    if (id && at > 0) lastSeenByAgent.set(id, at);
   }
 
   const trafficByKey = new Map();
@@ -242,7 +251,8 @@ export async function runAlertChecks(env, options = {}) {
     if (messages.length >= maxMessages) break;
     await collectProbeDownAlert(alertEnv, targetSettings, target, latest, now, messages, maxMessages);
     if (messages.length >= maxMessages) break;
-    await collectOfflineAlert(alertEnv, targetSettings, target, metric, now, messages, maxMessages);
+    const heartbeatAt = Number(lastSeenByAgent.get(agentId) || 0);
+    await collectOfflineAlert(alertEnv, targetSettings, target, metric, heartbeatAt, now, messages, maxMessages);
     if (messages.length >= maxMessages) break;
     await collectMetricAlerts(alertEnv, targetSettings, target, metric, now, messages, maxMessages);
     if (messages.length >= maxMessages) break;
@@ -250,6 +260,11 @@ export async function runAlertChecks(env, options = {}) {
     if (messages.length >= maxMessages) break;
     await collectTrafficAlert(alertEnv, targetSettings, target, trafficByKey, metric, now, messages, maxMessages);
   }
+
+  // Rows that were opened while a target was still being checked would stay
+  // "active" forever once that target is disabled or deleted. Resolve them so a
+  // re-enabled target starts from a clean state.
+  const cleared = await clearOrphanedAlertStates(alertEnv, targetRows.results, stateRows.results, now);
 
   const sent = [];
   const retried = [];
@@ -340,6 +355,7 @@ export async function runAlertChecks(env, options = {}) {
     queued: messages.length,
     sent: sent.length,
     retried: retried.length,
+    cleared,
     retried_deliveries: drain.delivered,
     telegram_messages: channelCounts.telegram || 0,
     email_messages: channelCounts.email || 0,
@@ -450,14 +466,26 @@ async function collectProbeDownAlert(env, settings, target, latest, now, message
   }
 }
 
-async function collectOfflineAlert(env, settings, target, metric, now, messages, maxMessages) {
+async function collectOfflineAlert(env, settings, target, metric, heartbeatAt, now, messages, maxMessages) {
   const ruleKey = 'agent_offline';
   const thresholdSec = clamp(Number(settings.offline_minutes || 10), 1, 1440) * 60;
-  const seenAt = metricUpdatedAtSec(metric);
-  const isOffline = Boolean(seenAt && now - seenAt >= thresholdSec);
-  if (!metric && !seenAt) return;
+  // Both the D1 state mirror (written at most every 900s since v1.1.93) and the
+  // buffered DO latest state (persisted in 300s steps, never touched by the
+  // HTTP fallback) can lag far behind the real report arrival, which made
+  // online Agents look offline in the 600-1200s window. The heartbeat recorded
+  // on every accepted report is the authoritative "last reported" clock; the
+  // state timestamp is kept as a fallback for D1-only deployments.
+  const seenAt = Math.max(metricUpdatedAtSec(metric), Math.floor(Number(heartbeatAt) || 0));
   const label = targetLabel(target);
   const state = await getAlertState(env, target.id, ruleKey);
+  if (!seenAt) {
+    // No metrics row and no heartbeat at all: an active offline alert for this
+    // target can never observe a recovery, so clear it instead of pinning it
+    // forever (targets that are no longer enabled are swept separately).
+    if (state?.status === 'active') await markResolved(env, target.id, ruleKey, now);
+    return;
+  }
+  const isOffline = now - seenAt >= thresholdSec;
   if (isOffline) {
     const duration = formatDuration(now - seenAt);
     const text = [
@@ -596,6 +624,20 @@ async function enqueueActiveAlert(env, settings, messages, maxMessages, targetId
 async function clearIfActive(env, targetId, ruleKey, now) {
   const state = await getAlertState(env, targetId, ruleKey);
   if (state?.status === 'active') await markResolved(env, targetId, ruleKey, now);
+}
+
+// Alert rows are only revisited while their target is enabled. Once a target is
+// disabled or deleted nothing resolves its open rows, so sweep them every run.
+async function clearOrphanedAlertStates(env, targetRows, stateRows, now) {
+  const enabled = new Set((targetRows || []).map((row) => String(row?.id || '')).filter(Boolean));
+  let cleared = 0;
+  for (const row of stateRows || []) {
+    if (row?.status !== 'active') continue;
+    if (enabled.has(String(row.target_id || ''))) continue;
+    await markResolved(env, row.target_id, row.rule_key, now);
+    cleared += 1;
+  }
+  return cleared;
 }
 
 async function clearTrafficStates(env, targetId, now) {

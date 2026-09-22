@@ -1027,6 +1027,32 @@ mod tests {
         assert!(!should_count_network_interface("flannel.1"));
     }
 
+    #[test]
+    fn network_totals_dedupe_aggregate_members_and_honor_allowlist() {
+        let proc_net_dev = "Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\neth0: 100 0 0 0 0 0 0 0 200 0 0 0 0 0 0 0\neth1: 7 0 0 0 0 0 0 0 9 0 0 0 0 0 0 0\n";
+        // Bond/bridge members are reported by the aggregate interface too.
+        let mut excluded = std::collections::HashSet::new();
+        excluded.insert("eth1".to_string());
+        assert_eq!(
+            net_bytes_from_proc_excluding(proc_net_dev, &excluded, &[]),
+            (100, 200)
+        );
+        let allow = vec!["eth0".to_string()];
+        assert_eq!(
+            net_bytes_from_proc_excluding(proc_net_dev, &excluded, &allow),
+            (100, 200)
+        );
+        let allow_member = vec!["eth1".to_string()];
+        assert_eq!(
+            net_bytes_from_proc_excluding(proc_net_dev, &excluded, &allow_member),
+            (0, 0),
+            "an allowlisted member is still skipped while its aggregate is counted"
+        );
+        // rx and tx are summed independently, never mixed into each other.
+        let split = "Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\neth0: 11 0 0 0 0 0 0 0 99 0 0 0 0 0 0 0\n";
+        assert_eq!(net_bytes_from_proc(split), (11, 99));
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn recognizes_common_gpu_vendors() {

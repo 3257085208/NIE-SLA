@@ -1,11 +1,11 @@
 ﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean, publicCachePrivacyVersion, sanitizePublicAgentMetrics } from './utils.js';
-import { summarizeTraffic, summarizeTrafficWithPending, trafficSettingsFromTarget } from './traffic.js';
+import { summarizeTraffic, summarizeTrafficWithPending, trafficSettingsFromTarget, hasTrafficBaseline } from './traffic.js';
 import { ApiError, requireAgentForId, requireAnyAgent, safeJson, json } from './auth.js';
 import { readR2Json, readR2JsonStrict, writeR2Json } from './storage.js';
 import { rateLimitByIp } from './ratelimit.js';
 import { recordAgentAvailability } from './agent-availability.js';
 import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn, ensureAgentProxyChecksColumn } from './admin/schema.js';
-import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry, readBufferedAgentLatestState } from './telemetry-buffer.js';
+import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry, readBufferedAgentLatestState, touchBufferedAgentLastSeen } from './telemetry-buffer.js';
 import { bufferedAgentStateEnabled, newerAgentMetricRow } from './agent-state.js';
 import { getPingIntervalSec } from './ping-config.js';
 import { getAdaptiveReportInterval } from './adaptive-report.js';
@@ -315,8 +315,17 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   if (options.wss !== true) {
     const trafficTask = persistAgentTraffic(env, agentId, metrics, ts)
       .catch((err) => console.error('persistAgentTraffic failed:', String(err?.message || err)));
-    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(trafficTask);
-    else await trafficTask;
+    // The offline alert must track real report arrivals, not the 900s-throttled
+    // D1 state mirror, so the HTTP fallback records its own heartbeat.
+    const heartbeatTask = touchBufferedAgentLastSeen(env, agentId, ts)
+      .catch((err) => console.error('touch buffered Agent last-seen failed:', String(err?.message || err)));
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(trafficTask);
+      ctx.waitUntil(heartbeatTask);
+    } else {
+      await trafficTask;
+      await heartbeatTask;
+    }
   }
 
   const reportIntervalSec = await getAdaptiveReportInterval(env);
@@ -732,8 +741,11 @@ async function dailyTrafficSum(env, agentId, periodStart, periodEnd) {
 }
 
 function rawTrafficDelta(raw, previous) {
+  // NULL/empty baseline means "never counted before", not "counted 0 bytes":
+  // adopting the current counter must not credit the whole boot-lifetime total.
+  if (!hasTrafficBaseline(previous)) return 0;
   const last = Number(previous);
-  return Number.isFinite(last) && raw >= last ? Math.floor(raw - last) : 0;
+  return raw >= last ? Math.floor(raw - last) : 0;
 }
 
 function dayInTrafficPeriod(day, settings) {
@@ -783,6 +795,14 @@ export async function rebuildAgentTrafficPeriod(env, agentId, target = null, ts 
   const pendingTx = includeActive && Number.isFinite(currentTxRaw) ? rawTrafficDelta(currentTxRaw, latest?.last_tx_bytes) : 0;
   const activeRx = includeActive ? Math.max(0, Number(latest?.day_rx_bytes || 0) || 0) + pendingRx : 0;
   const activeTx = includeActive ? Math.max(0, Number(latest?.day_tx_bytes || 0) || 0) + pendingTx : 0;
+  // Never persist a NULL baseline: without one the next Agent report would be
+  // counted from scratch. Adopt the latest counter we know about instead.
+  const baselineRx = hasTrafficBaseline(latest?.last_rx_bytes)
+    ? latest.last_rx_bytes
+    : (Number.isFinite(currentRxRaw) ? Math.floor(currentRxRaw) : null);
+  const baselineTx = hasTrafficBaseline(latest?.last_tx_bytes)
+    ? latest.last_tx_bytes
+    : (Number.isFinite(currentTxRaw) ? Math.floor(currentTxRaw) : null);
   const latestUpdatedAt = Number(latest?.updated_at || 0) || 0;
   const updatedAt = Math.max(ts, latestUpdatedAt + (latest && latest.month !== settings.month ? 1 : 0));
   await env.DB.prepare(`INSERT INTO agent_traffic_monthly
@@ -799,8 +819,8 @@ export async function rebuildAgentTrafficPeriod(env, agentId, target = null, ts 
       updated_at = excluded.updated_at`)
     .bind(
       id, settings.month, Math.floor(daily.rx + activeRx), Math.floor(daily.tx + activeTx),
-      pendingRx > 0 ? Math.floor(currentRxRaw) : (latest?.last_rx_bytes ?? null),
-      pendingTx > 0 ? Math.floor(currentTxRaw) : (latest?.last_tx_bytes ?? null),
+      pendingRx > 0 ? Math.floor(currentRxRaw) : baselineRx,
+      pendingTx > 0 ? Math.floor(currentTxRaw) : baselineTx,
       latest?.active_day || dayFromSec(ts, env), activeRx, activeTx, updatedAt,
     ).run();
   return summarizeTraffic({

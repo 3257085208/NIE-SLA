@@ -23,14 +23,25 @@ const LEGACY_BUFFER_PREFIX = 'hour:';
 const EXPORT_PREFIX = 'export:';
 export const AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream';
 const LATEST_STATE_PREFIX = 'latest:state:';
+const LAST_SEEN_PREFIX = 'last:seen:';
 const STORAGE_LIST_PAGE_LIMIT = 500;
 const FLUSH_GRACE_SEC = 600;
 const MAX_MEM_REPORTS = 5_000;
 const LATEST_PERSIST_THROTTLE_SEC = 300;
+// The latest state is persisted at most once per LATEST_PERSIST_THROTTLE_SEC and
+// is skipped entirely by the HTTP fallback path, so it cannot serve as an
+// "Agent last reported" clock. The heartbeat is written on every accepted
+// report (in memory) and persisted at this cadence, which keeps the durable
+// value well inside the 600s default alert threshold.
+const LAST_SEEN_PERSIST_INTERVAL_SEC = 120;
 const AGENT_LIFECYCLE_PREFIX = 'agent:lifecycle:';
 
 function latestStateKey(agentId) {
   return `${LATEST_STATE_PREFIX}${sanitizeAgentId(agentId)}`;
+}
+
+function lastSeenKey(agentId) {
+  return `${LAST_SEEN_PREFIX}${sanitizeAgentId(agentId)}`;
 }
 
 function agentLifecycleKey(agentId) {
@@ -43,6 +54,7 @@ export class TelemetryBuffer {
     this.state = state;
     this.env = env;
     this.memLatest = new Map();
+    this.memLastSeen = new Map();
     this.memReports = [];
     this.latestPersistAt = new Map();
     this.msgWindows = new Map();
@@ -90,13 +102,21 @@ export class TelemetryBuffer {
       if (!agentId) return Response.json({ ok: false, error: 'Agent ID 无效' }, { status: 400 });
       await this.markAgentDeleted(agentId);
       this.memLatest.delete(agentId);
+      this.memLastSeen.delete(agentId);
       this.latestPersistAt.delete(agentId);
       this.memReports = this.memReports.filter((report) => sanitizeAgentId(String(report?.agent_id || '')) !== agentId);
       await this.state.storage.delete(latestStateKey(agentId));
+      await this.state.storage.delete(lastSeenKey(agentId));
       for (const socket of this.state.getWebSockets?.(`agent:${agentId}`) || []) {
         try { socket.close?.(1000, 'agent deleted'); } catch (_) {}
       }
       return Response.json({ ok: true, agent_id: agentId });
+    }
+    if (request.method === 'POST' && url.pathname === '/last-seen') {
+      const body = await request.json().catch(() => ({}));
+      const agentId = sanitizeAgentId(body?.agent_id || url.searchParams.get('agent_id') || '');
+      if (!agentId) return Response.json({ ok: false, error: 'Agent ID 无效' }, { status: 400 });
+      return Response.json(await this.recordAgentLastSeen(agentId, body?.seen_at));
     }
     if (request.method === 'GET' && url.pathname === '/fleet/latest') {
       return Response.json(await this.readFleetLatestStates());
@@ -180,6 +200,8 @@ export class TelemetryBuffer {
         socket.close?.(1000, 'agent deleted or superseded');
         return;
       }
+      const reportTs = nowSec();
+      await this.recordAgentLastSeen(agentId, reportTs);
       const latestState = result?.latest_state;
       let acceptedState = null;
       if (latestState) {
@@ -191,7 +213,6 @@ export class TelemetryBuffer {
           this.memLatest.set(latestState.agent_id || agentId, previousState);
         }
       }
-      const reportTs = nowSec();
       this.memReports.push({
         agent_id: agentId,
         lifecycle_epoch: lifecycleEpoch,
@@ -357,6 +378,30 @@ export class TelemetryBuffer {
     return drained;
   }
 
+  // Authoritative "Agent last reported" clock. Reports arrive through two
+  // transports: WSS (recorded here on every accepted message) and the HTTP
+  // fallback (recorded through the internal /last-seen route). Both keep the
+  // in-memory value exact and persist it in bounded steps so an evicted DO
+  // still answers within the alert threshold instead of falling back to the
+  // 300s-throttled latest state or the 900s-throttled D1 mirror.
+  async recordAgentLastSeen(rawAgentId, seenAt = null) {
+    const agentId = sanitizeAgentId(rawAgentId);
+    if (!agentId) return { ok: false, error: 'Agent ID 无效' };
+    const at = Math.floor(Number(seenAt) || 0) || nowSec();
+    if (Number(this.memLastSeen.get(agentId) || 0) < at) this.memLastSeen.set(agentId, at);
+    // Best effort: a storage hiccup must never fail telemetry ingestion.
+    try {
+      const key = lastSeenKey(agentId);
+      const stored = Number(await this.state.storage.get(key) || 0);
+      if (at > stored && (stored === 0 || at - stored >= LAST_SEEN_PERSIST_INTERVAL_SEC)) {
+        await this.state.storage.put(key, at);
+      }
+    } catch (error) {
+      console.error('agent last-seen persist failed:', String(error?.message || error));
+    }
+    return { ok: true, agent_id: agentId, last_seen: at };
+  }
+
   async persistLatestState(agentId, state) {
     const now = nowSec();
     if (now - Number(this.latestPersistAt.get(agentId) || 0) < LATEST_PERSIST_THROTTLE_SEC) return;
@@ -504,6 +549,8 @@ export class TelemetryBuffer {
       deleted += 1;
     }
     await this.state.storage.delete(`migrated:${agentId}`).catch(() => {});
+    await this.state.storage.delete(lastSeenKey(agentId)).catch(() => {});
+    this.memLastSeen.delete(agentId);
     this.migratedAgents.delete(agentId);
     return { ok: true, agent_id: agentId, deleted };
   }
@@ -527,7 +574,19 @@ export class TelemetryBuffer {
         states[agentId] = value;
       }
     }
-    return { ok: true, states };
+    const lastSeenRows = await this.listStorageEntries(LAST_SEEN_PREFIX);
+    const lastSeen = {};
+    for (const [key, value] of lastSeenRows) {
+      const agentId = sanitizeAgentId(String(key).slice(LAST_SEEN_PREFIX.length));
+      const at = Math.floor(Number(value) || 0);
+      if (agentId && at > 0) lastSeen[agentId] = at;
+    }
+    // The in-memory heartbeat is always at least as fresh as its persisted copy.
+    for (const [agentId, at] of this.memLastSeen || []) {
+      const id = sanitizeAgentId(agentId);
+      if (id && Number(at) > Number(lastSeen[id] || 0)) lastSeen[id] = Math.floor(Number(at));
+    }
+    return { ok: true, states, last_seen: lastSeen };
   }
 
   async readControlSnapshot(agentId = '') {
@@ -802,13 +861,35 @@ export async function readBufferedAgentLatestState(env, agentId) {
   return body?.state && typeof body.state === 'object' && !Array.isArray(body.state) ? body.state : null;
 }
 
-export async function readFleetLatestAgentStates(env) {
-  if (!env.TELEMETRY_BUFFER) return {};
+export async function readFleetLatestSnapshot(env) {
+  if (!env.TELEMETRY_BUFFER) return { states: {}, lastSeen: {} };
   const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
   const response = await stub.fetch('https://nie-sla.internal/fleet/latest', { headers: internalRequestHeaders(env) });
-  if (!response.ok) return {};
+  if (!response.ok) return { states: {}, lastSeen: {} };
   const body = await response.json().catch(() => ({}));
-  return body?.states && typeof body.states === 'object' && !Array.isArray(body.states) ? body.states : {};
+  return {
+    states: body?.states && typeof body.states === 'object' && !Array.isArray(body.states) ? body.states : {},
+    lastSeen: body?.last_seen && typeof body.last_seen === 'object' && !Array.isArray(body.last_seen) ? body.last_seen : {},
+  };
+}
+
+export async function readFleetLatestAgentStates(env) {
+  return (await readFleetLatestSnapshot(env)).states;
+}
+
+// HTTP-fallback reports never touch the DO latest state, so record their
+// arrival as a heartbeat. Best effort: a failed touch must not fail the report.
+export async function touchBufferedAgentLastSeen(env, agentId, seenAt = nowSec()) {
+  if (!env.TELEMETRY_BUFFER) return false;
+  const id = sanitizeAgentId(agentId);
+  if (!id) return false;
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const response = await stub.fetch('https://nie-sla.internal/last-seen', {
+    method: 'POST',
+    headers: internalRequestHeaders(env),
+    body: JSON.stringify({ agent_id: id, seen_at: Math.floor(Number(seenAt) || 0) || nowSec() }),
+  });
+  return response.ok;
 }
 
 export async function deleteBufferedAgentLatestState(env, agentId) {
