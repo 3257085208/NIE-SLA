@@ -664,7 +664,10 @@ async function loadDash() {
   loading("dStats");
   loading("dVpsSla");
   try {
-    const d = await api("/api/status?days=30");
+    // The 30-day status build can take well over the 12s default on a cold
+    // cache (China -> Cloudflare latency included), which showed up as
+    // "API 请求超时" on the dashboard cards.
+    const d = await apiAdmin("/api/status?days=30", {}, 30_000);
     renderStats(d);
     renderIncidents(d.incidents || []);
     renderVpsSla(d);
