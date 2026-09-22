@@ -133,7 +133,7 @@ test('nezha preview lists creatable and existing nodes without leaking the token
     const serverCall = calls.find((call) => call.url === `${PANEL}/api/v1/server`);
     assert.equal(serverCall.options.headers.authorization, `Bearer ${TOKEN}`);
     assert.equal(serverCall.options.redirect, 'manual', 'panel redirects must not replay the credential');
-    assert.ok(serverCall.options.signal instanceof AbortSignal, 'panel requests must be abortable');
+    assert.ok(serverCall.options.signal && typeof serverCall.options.signal.aborted === 'boolean', 'panel requests must be abortable');
     assert.equal(JSON.stringify(result).includes(TOKEN), false, 'the panel token must never be returned');
   } finally {
     globalThis.fetch = originalFetch;

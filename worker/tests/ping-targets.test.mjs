@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { webcrypto } from 'node:crypto';
 import { ensureV6Schema } from '../src/admin/schema.js';
-import { submitAgentPings } from '../src/admin/ping-targets.js';
+import { submitAgentPings, createPingTarget, updatePingTarget, getPingTargets, normalizePingExpectedStatus } from '../src/admin/ping-targets.js';
 
 globalThis.crypto ||= webcrypto;
 
@@ -106,6 +106,65 @@ function historyCount() {
   assert.equal(result.stored, 25);
   assert.equal(result.dropped, 0);
   assert.equal(result.d1_rows, 25);
+}
+
+// Agent-side HTTP ping targets store an optional exact expected status; empty
+// or invalid values fall back to NULL, which keeps the legacy 2xx/3xx rule.
+{
+  const created = await createPingTarget(new Request('https://example.test/api/ping-targets', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      id: 'web-expected',
+      name: 'Web Expected',
+      target: 'https://example.com/health',
+      expected_status: '200, 301,301,999,abc',
+    }),
+  }), env);
+  assert.equal(created.ok, true);
+  assert.equal(
+    sqlite.prepare(`SELECT expected_status FROM ping_targets WHERE id = 'web-expected'`).get().expected_status,
+    '200,301',
+    'expected status must be deduplicated and limited to 100..599',
+  );
+
+  const cleared = await updatePingTarget('web-expected', new Request('https://example.test/api/ping-targets/web-expected', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ expected_status: '' }),
+  }), env);
+  assert.equal(cleared.ok, true);
+  assert.equal(
+    sqlite.prepare(`SELECT expected_status FROM ping_targets WHERE id = 'web-expected'`).get().expected_status,
+    null,
+    'an empty expected status must clear the exact match',
+  );
+
+  await updatePingTarget('web-expected', new Request('https://example.test/api/ping-targets/web-expected', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ expected_status: '404' }),
+  }), env);
+  await updatePingTarget('web-expected', new Request('https://example.test/api/ping-targets/web-expected', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: 'Web Expected 2' }),
+  }), env);
+  assert.equal(
+    sqlite.prepare(`SELECT expected_status FROM ping_targets WHERE id = 'web-expected'`).get().expected_status,
+    '404',
+    'an update that omits expected_status must keep the stored value',
+  );
+
+  const listed = await getPingTargets(env, { enabledOnly: false });
+  const row = listed.targets.find(target => target.id === 'web-expected');
+  assert.equal(row.expected_status, '404', 'the Agent payload must expose the expected status');
+  assert.equal(row.protocol, 'http');
+
+  assert.equal(normalizePingExpectedStatus(undefined), undefined);
+  assert.equal(normalizePingExpectedStatus(''), null);
+  assert.equal(normalizePingExpectedStatus('200,200'), '200');
+  assert.equal(normalizePingExpectedStatus([200, 404]), '200,404');
 }
 
 console.log('ping target window tests passed');

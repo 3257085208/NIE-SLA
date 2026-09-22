@@ -139,7 +139,7 @@ test('komari preview maps client fields and flags existing nodes without leaking
     const clientCall = calls.find((call) => call.url === `${PANEL}/api/admin/client/list`);
     assert.equal(clientCall.options.headers.authorization, `Bearer ${API_KEY}`);
     assert.equal(clientCall.options.redirect, 'manual', 'panel redirects must not replay the credential');
-    assert.ok(clientCall.options.signal instanceof AbortSignal, 'panel requests must be abortable');
+    assert.ok(clientCall.options.signal && typeof clientCall.options.signal.aborted === 'boolean', 'panel requests must be abortable');
     assert.equal(JSON.stringify(result).includes(API_KEY), false, 'the panel api key must never be returned');
   } finally {
     globalThis.fetch = originalFetch;

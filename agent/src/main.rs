@@ -344,12 +344,23 @@ struct PingTarget {
     target: String,
     enabled: bool,
     protocol: PingProtocol,
+    /// Exact HTTP status codes accepted by an agent-side http(s) ping. Empty
+    /// keeps the legacy "any 2xx/3xx" behaviour.
+    expected_status: Vec<u16>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PingProtocol {
     Tcp,
     Http,
+}
+
+#[derive(Debug)]
+enum HttpProbeError {
+    /// Network/transport failure: historically silent, rendered as ok=false.
+    Transport,
+    /// Response received but the status did not match the expected codes.
+    UnexpectedStatus(String),
 }
 
 #[derive(Clone, Debug)]
@@ -1681,6 +1692,7 @@ fn parse_control_ping_plan(value: &serde_json::Value) -> Option<PingPlan> {
                 target,
                 enabled,
                 protocol,
+                expected_status: parse_expected_status(item.get("expected_status")),
             })
         })
         .filter(|target| target.enabled)
@@ -1762,6 +1774,7 @@ fn fetch_ping_targets(cfg: &Config, http: &HttpClient) -> Result<PingPlan> {
                 target,
                 enabled,
                 protocol,
+                expected_status: parse_expected_status(item.get("expected_status")),
             })
         })
         .filter(|t| t.enabled)
@@ -2191,18 +2204,22 @@ impl HttpClient {
         }
     }
 
-    fn probe(&self, url: &str) -> Option<u128> {
+    fn probe(&self, url: &str, expected: &[u16]) -> std::result::Result<u128, HttpProbeError> {
         let started = Instant::now();
         let response = match self.probe_ipv4.get(url).call() {
             Err(err) if should_try_other_ip_family(&err) => self.probe_ipv6.get(url).call(),
             result => result,
         };
-        response.ok().and_then(|value| {
-            let status = value.status().as_u16();
-            (200..400)
-                .contains(&status)
-                .then(|| started.elapsed().as_millis())
-        })
+        // Transport failures keep their historical silent-failure shape.
+        let value = response.map_err(|_| HttpProbeError::Transport)?;
+        let status = value.status().as_u16();
+        if http_status_matches(status, expected) {
+            Ok(started.elapsed().as_millis())
+        } else {
+            Err(HttpProbeError::UnexpectedStatus(unexpected_status_message(
+                status, expected,
+            )))
+        }
     }
 }
 
@@ -2607,15 +2624,87 @@ fn ping_target_selected(id: &str, selector: &str) -> bool {
 
 fn ping_target(target: &PingTarget, http: &HttpClient) -> PingResult {
     let ts = now_sec();
-    let latency_ms = match target.protocol {
-        PingProtocol::Tcp => tcp_ping_target(&target.target),
-        PingProtocol::Http => http.probe(&target.target),
+    // TCP failures keep their historical shape (no error text, no log line).
+    // Agent-side HTTP status mismatches carry the observed status code so an
+    // operator can see "unexpected HTTP 404 (expected 200)" in the Agent log.
+    let (latency_ms, error) = match target.protocol {
+        PingProtocol::Tcp => (tcp_ping_target(&target.target), None),
+        PingProtocol::Http => match http.probe(&target.target, &target.expected_status) {
+            Ok(latency) => (Some(latency), None),
+            Err(HttpProbeError::UnexpectedStatus(error)) => (None, Some(error)),
+            Err(HttpProbeError::Transport) => (None, None),
+        },
     };
+    if let Some(error) = &error {
+        eprintln!(
+            "{{\"ok\":false,\"ping_error\":{},\"target_id\":{}}}",
+            json_string(error),
+            json_string(&target.id)
+        );
+    }
     PingResult {
         target_id: target.id.clone(),
         ts,
         latency_ms,
         ok: latency_ms.is_some(),
+    }
+}
+
+/// Accepts the Worker's comma-separated string ("200,301") or an array of
+/// numbers, keeps only valid 100..599 codes, and deduplicates. An empty result
+/// means "no expectation" and preserves the legacy any-2xx/3xx rule.
+fn parse_expected_status(value: Option<&serde_json::Value>) -> Vec<u16> {
+    fn push(statuses: &mut Vec<u16>, code: u64) {
+        if !(100..=599).contains(&code) {
+            return;
+        }
+        if let Ok(code) = u16::try_from(code) {
+            if !statuses.contains(&code) {
+                statuses.push(code);
+            }
+        }
+    }
+    let mut statuses: Vec<u16> = Vec::new();
+    match value {
+        Some(serde_json::Value::String(text)) => {
+            for part in text.split(',') {
+                if let Ok(code) = part.trim().parse::<u64>() {
+                    push(&mut statuses, code);
+                }
+            }
+        }
+        Some(serde_json::Value::Array(items)) => {
+            for item in items {
+                if let Some(code) = item.as_u64() {
+                    push(&mut statuses, code);
+                }
+            }
+        }
+        _ => {}
+    }
+    statuses
+}
+
+fn http_status_matches(status: u16, expected: &[u16]) -> bool {
+    if expected.is_empty() {
+        (200..400).contains(&status)
+    } else {
+        expected.contains(&status)
+    }
+}
+
+fn unexpected_status_message(status: u16, expected: &[u16]) -> String {
+    if expected.is_empty() {
+        format!("unexpected HTTP {status} (expected 2xx/3xx)")
+    } else {
+        format!(
+            "unexpected HTTP {status} (expected {})",
+            expected
+                .iter()
+                .map(u16::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
     }
 }
 
@@ -3207,6 +3296,52 @@ mod tests {
             strip_ascii_case_prefix("TCP://example.com:443", "tcp://"),
             Some("example.com:443")
         );
+    }
+
+    #[test]
+    fn agent_http_ping_honours_expected_status_with_a_2xx_3xx_default() {
+        assert!(http_status_matches(200, &[]));
+        assert!(http_status_matches(301, &[]));
+        assert!(http_status_matches(399, &[]));
+        assert!(!http_status_matches(199, &[]));
+        assert!(!http_status_matches(400, &[]));
+        assert!(!http_status_matches(404, &[]));
+
+        assert!(http_status_matches(404, &[200, 404]));
+        assert!(!http_status_matches(200, &[404]));
+        assert!(!http_status_matches(500, &[200, 301]));
+
+        assert_eq!(
+            parse_expected_status(Some(&serde_json::json!("200, 301,301"))),
+            vec![200, 301]
+        );
+        assert_eq!(
+            parse_expected_status(Some(&serde_json::json!([200, 999, "x", 201]))),
+            vec![200, 201]
+        );
+        assert!(parse_expected_status(Some(&serde_json::json!(""))).is_empty());
+        assert!(parse_expected_status(Some(&serde_json::json!("abc"))).is_empty());
+        assert!(parse_expected_status(None).is_empty());
+
+        assert_eq!(
+            unexpected_status_message(404, &[]),
+            "unexpected HTTP 404 (expected 2xx/3xx)"
+        );
+        assert_eq!(
+            unexpected_status_message(404, &[200, 301]),
+            "unexpected HTTP 404 (expected 200,301)"
+        );
+
+        let plan = parse_control_ping_plan(&serde_json::json!({
+            "ping_interval_sec": 20,
+            "ping_targets": [
+                {"id": "web", "target": "https://example.com/health", "protocol": "http", "expected_status": "404"},
+                {"id": "dns", "target": "1.1.1.1:53", "protocol": "tcp"}
+            ]
+        }))
+        .expect("control plan");
+        assert_eq!(plan.targets[0].expected_status, vec![404]);
+        assert!(plan.targets[1].expected_status.is_empty());
     }
 
     #[test]

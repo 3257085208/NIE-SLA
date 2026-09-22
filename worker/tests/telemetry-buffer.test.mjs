@@ -406,8 +406,9 @@ assert.equal(controlQueries, firstControlQueries, 'a cached control snapshot mus
 assert.equal(firstControl.ping_targets[0].protocol, 'tcp');
 assert.equal(firstControl.proxy_canary_port, 443, 'WSS control must use the HTTPS canary default');
 // The ping interval may be served by the shared config cache, so the first
-// snapshot issues 3-4 D1 reads depending on whether that cache is warm.
-assert.ok(firstControlQueries >= 3 && firstControlQueries <= 4, `control snapshot D1 reads ${firstControlQueries}`);
+// snapshot issues 2-3 D1 reads depending on whether that cache is warm.
+// (The report interval is viewer-gated and no longer reads app_meta/D1.)
+assert.ok(firstControlQueries >= 2 && firstControlQueries <= 3, `control snapshot D1 reads ${firstControlQueries}`);
 
 const pagedStorage = memoryStorage();
 const pagedBuffer = new TelemetryBuffer({ storage: pagedStorage }, testEnv());

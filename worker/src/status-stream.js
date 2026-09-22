@@ -33,6 +33,13 @@ export class StatusStream {
       const body = await request.json().catch(() => ({}));
       return json(await this.broadcast(body?.events));
     }
+    if (request.method === 'GET' && url.pathname === '/viewers') {
+      // Cheap live-viewer count for viewer-gated adaptive reporting. Callers
+      // must cache this (see adaptive-report.js): one DO read per short TTL,
+      // not one per Agent upload.
+      this.sweepExpiredSockets();
+      return json({ ok: true, viewers: (this.state.getWebSockets?.() || []).length, generated_at: nowSec() });
+    }
     return new Response(null, { status: 404 });
   }
 

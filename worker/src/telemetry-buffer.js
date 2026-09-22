@@ -8,7 +8,7 @@ import { readR2JsonResult } from './storage.js';
 import { encodeJsonBody, httpMetadataFor } from './r2-body.js';
 import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
 import { getPingIntervalSec } from './ping-config.js';
-import { getAgentReportInterval } from './admin/settings.js';
+import { getAdaptiveReportInterval } from './adaptive-report.js';
 import { pingTargetProtocol } from './ping-target-protocol.js';
 import { getCachedProxyControl, getProxyControlRows } from './admin/proxy-targets.js';
 import { decodeAgentMetricsProtobuf } from './telemetry-protobuf.js';
@@ -538,15 +538,20 @@ export class TelemetryBuffer {
     const ttl = Math.max(60, Math.min(3600, Number(this.env.PROBE_CONTROL_CACHE_SEC || 300)));
     const materialize = async (internal) => {
       if (!internal) return null;
-      const { proxy_targets_internal: _proxyRows, ...control } = internal;
+      // report_interval_sec is viewer-gated and must not be frozen inside the
+      // DO-storage control snapshot; it is computed fresh on every ack from the
+      // short-TTL viewer cache. Drop any value cached by an older build.
+      const { proxy_targets_internal: _proxyRows, report_interval_sec: _staleReportInterval, ...control } = internal;
       let proxyTargets = [];
       try {
         proxyTargets = await getCachedProxyControl(this.env, _proxyRows || [], scopedAgentId);
       } catch (error) {
         console.error('read WSS proxy control failed:', String(error?.message || error));
       }
+      const reportIntervalSec = await getAdaptiveReportInterval(this.env);
       return {
         ...control,
+        ...(reportIntervalSec == null ? {} : { report_interval_sec: reportIntervalSec }),
         proxy_targets: proxyTargets,
         proxy_canary_host: String(this.env.PROXY_CANARY_HOST || 'example.com').trim() || 'example.com',
         proxy_canary_port: Math.max(1, Math.min(65535, Number(this.env.PROXY_CANARY_PORT || 443) || 443)),
@@ -554,12 +559,13 @@ export class TelemetryBuffer {
     };
     if (cached?.control && Number(cached.fetched_at || 0) + ttl > now) return materialize(cached.control);
     try {
-      const rows = await this.env.DB?.prepare(`SELECT id, target, enabled FROM ping_targets WHERE enabled = 1 ORDER BY name LIMIT 500`).all();
+      const rows = await this.env.DB?.prepare(`SELECT id, target, enabled, expected_status FROM ping_targets WHERE enabled = 1 ORDER BY name LIMIT 500`).all();
       const targets = (rows?.results || []).map(row => ({
         id: String(row.id || '').slice(0, 128),
         target: String(row.target || '').slice(0, 2048),
         enabled: Number(row.enabled || 0) === 1,
         protocol: pingTargetProtocol(row.target),
+        expected_status: row.expected_status == null || row.expected_status === '' ? null : String(row.expected_status).slice(0, 128),
       })).filter(row => row.id && row.target && ['tcp', 'http'].includes(row.protocol));
       let trafficCorrections = {};
       try {
@@ -577,8 +583,7 @@ export class TelemetryBuffer {
         // The proxy tables are additive; keep existing Agent control working
         // while an older database is being upgraded or has no proxy targets.
       }
-      const reportInterval = await getAgentReportInterval(this.env);
-      const control = { ping_interval_sec: await getPingIntervalSec(this.env), ping_targets: targets, proxy_targets_internal: proxyTargetsInternal, traffic_corrections: trafficCorrections, report_interval_sec: reportInterval };
+      const control = { ping_interval_sec: await getPingIntervalSec(this.env), ping_targets: targets, proxy_targets_internal: proxyTargetsInternal, traffic_corrections: trafficCorrections };
       await this.state.storage.put(cacheKey, { fetched_at: now, control });
       return materialize(control);
     } catch (error) {

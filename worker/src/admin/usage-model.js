@@ -175,6 +175,10 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
 }
 
 export async function estimateUsageFromEnv(env, hours = 24) {
+  return estimateUsage({ ...(await usageInputsFromEnv(env)), hours });
+}
+
+export async function usageInputsFromEnv(env) {
   const one = async (sql, ...binds) => {
     try {
       const row = await env.DB.prepare(sql).bind(...binds).first();
@@ -196,5 +200,98 @@ export async function estimateUsageFromEnv(env, hours = 24) {
     one(`SELECT COUNT(*) AS n FROM latency_agents WHERE enabled = 1 AND COALESCE(last_seen_at, 0) >= CAST(strftime('%s','now') AS INTEGER) - 1800`),
     one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND t.traffic_enabled = 1 AND ${onlineFilter}`, offlineAfterSec),
   ]);
-  return estimateUsage({ agents, wssAgents, targets, pingTargets, latencyNodes, trafficAgents, hours });
+  return { agents, wssAgents, targets, pingTargets, latencyNodes, trafficAgents };
+}
+
+export const CAPACITY_QUOTAS = ['workers_calls', 'do_requests', 'd1_rows_read', 'd1_rows_written', 'r2_class_a', 'r2_class_b'];
+
+function capacityEstimateAt(base, perNode, extra) {
+  return estimateUsage({
+    agents: base.agents + perNode.agents * extra,
+    wssAgents: base.wssAgents + perNode.wssAgents * extra,
+    targets: base.targets + perNode.targets * extra,
+    pingTargets: base.pingTargets + perNode.pingTargets * extra,
+    latencyNodes: base.latencyNodes + perNode.latencyNodes * extra,
+    trafficAgents: base.trafficAgents + perNode.trafficAgents * extra,
+    hours: base.hours,
+  });
+}
+
+function maxExtraNodesFor(key, base, perNode, target) {
+  const valueAt = (extra) => capacityEstimateAt(base, perNode, extra).estimates[key];
+  if (valueAt(0) > target) return 0;
+  const ceiling = 100_000;
+  let hi = 8;
+  while (hi < ceiling && valueAt(hi) <= target) hi *= 2;
+  if (hi > ceiling) hi = ceiling;
+  if (valueAt(ceiling) <= target) return ceiling;
+  let lo = 0;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (valueAt(mid) <= target) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+export function estimateCapacity(inputs = {}, options = {}) {
+  const base = {
+    agents: Math.max(0, Number(inputs.agents) || 0),
+    wssAgents: Math.max(0, Number(inputs.wssAgents) || 0),
+    targets: Math.max(0, Number(inputs.targets) || 0),
+    pingTargets: Math.max(0, Number(inputs.pingTargets) || 0),
+    latencyNodes: Math.max(0, Number(inputs.latencyNodes) || 0),
+    trafficAgents: Math.max(0, Number(inputs.trafficAgents) || 0),
+    hours: Math.max(0.01, Number(inputs.hours) || 24),
+  };
+  const perNode = {
+    agents: 1,
+    wssAgents: base.agents > 0 && base.wssAgents >= base.agents * 0.5 ? 1 : 0,
+    targets: 1,
+    pingTargets: 0,
+    latencyNodes: 0,
+    trafficAgents: 0,
+    ...(options.perNode || {}),
+  };
+  const current = capacityEstimateAt(base, perNode, 0);
+  const quotas = {};
+  for (const key of CAPACITY_QUOTAS) {
+    const limit = CAL.freeTier[key];
+    const used = current.estimates[key];
+    const remaining = Math.max(0, limit - used);
+    quotas[key] = {
+      limit,
+      used,
+      remaining: round(remaining),
+      headroom_pct: round((remaining / limit) * 100),
+      extra_nodes_80: maxExtraNodesFor(key, base, perNode, limit * 0.8),
+      extra_nodes_100: maxExtraNodesFor(key, base, perNode, limit),
+    };
+  }
+  return {
+    model_version: MODEL_VERSION,
+    window_hours: round(base.hours),
+    inputs: {
+      agents: base.agents,
+      wss_agents: base.wssAgents,
+      targets: base.targets,
+      ping_targets: base.pingTargets,
+      latency_nodes: base.latencyNodes,
+      traffic_agents: base.trafficAgents,
+    },
+    per_node: {
+      agents: perNode.agents,
+      wss_agents: perNode.wssAgents,
+      targets: perNode.targets,
+      ping_targets: perNode.pingTargets,
+      latency_nodes: perNode.latencyNodes,
+      traffic_agents: perNode.trafficAgents,
+    },
+    quotas,
+    notes: [
+      '每新增一台 VPS 按 1 个 Agent + 1 个探针目标估算；当前舰队以 WSS 上报为主时，新节点也按 1 个 WSS Agent 计。',
+      'extra_nodes_80 / extra_nodes_100 表示保持当前配置与上报频率不变时，估算值不超过免费额度 80% / 100% 的可新增台数。',
+      `容量由 ${MODEL_VERSION} 点估计线性外推，实际以 Cloudflare 账单为准。`,
+    ],
+  };
 }

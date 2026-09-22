@@ -268,11 +268,15 @@ export async function ensureV6Schema(env) {
     name TEXT NOT NULL,
     target TEXT NOT NULL,
     color TEXT NOT NULL DEFAULT '#159754',
+    expected_status TEXT,
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER,
     updated_at INTEGER
   )`).run();
   await runOptionalSchemaChange(env, `ALTER TABLE ping_targets ADD COLUMN color TEXT NOT NULL DEFAULT '#159754'`);
+  // Agent-side HTTP(S) ping targets may require an exact status match; NULL or
+  // an empty string keeps the legacy "any 2xx/3xx" behaviour.
+  await runOptionalSchemaChange(env, `ALTER TABLE ping_targets ADD COLUMN expected_status TEXT`);
 
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS ping_history (
     target_id TEXT NOT NULL,

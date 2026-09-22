@@ -40,6 +40,23 @@ const USAGE_LABELS = {
   r2_class_b: ["R2 B 类", 10_000_000],
 };
 
+const ALERT_CHANNELS = [
+  ["telegram", "Telegram"],
+  ["email", "电子邮件"],
+  ["webhook", "通用 Webhook"],
+  ["bark", "Bark"],
+  ["gotify", "Gotify"],
+  ["feishu", "飞书"],
+  ["dingtalk", "钉钉"],
+  ["wecom", "企业微信"],
+  ["serverchan", "ServerChan"],
+];
+
+function alertChannelLabel(channel) {
+  const found = ALERT_CHANNELS.find(([value]) => value === channel);
+  return found ? found[1] : String(channel || "通知");
+}
+
 let usageEstimateData = null;
 
 let usageActualConfigured = null;
@@ -129,6 +146,42 @@ async function loadUsageEstimate() {
     }).join("");
     const notes = (data.notes || []).map((note) => `<small>${escapeHtml(note)}</small>`).join("<br>");
     box.innerHTML = `<div class="usage-model-box"><small>模型 ${escapeHtml(data.model_version)} · 24h 窗口 · 当前规模估算</small><div class="usage-rows">${rows}</div>${notes}</div>`;
+  } catch (error) {
+    box.innerHTML = `<div class="error">加载失败：${escapeHtml(error?.message || "未知错误")}</div>`;
+  }
+}
+
+async function loadUsageStorage() {
+  const box = byId("sUsageStorage");
+  if (!box) return;
+  try {
+    const data = await apiAdmin("/api/admin/usage-storage", {}, 30_000);
+    if (!data?.ok) throw new Error(data?.error || "无数据");
+    const d1 = data.d1 || {};
+    const r2 = data.r2 || {};
+    const tableRows = (d1.tables || []).map((item) => {
+      const value = item.rows == null ? "读取失败" : Number(item.rows).toLocaleString();
+      return `<div class="usage-row"><span class="usage-label"><code>${escapeHtml(item.table)}</code></span><span class="usage-value">${value}</span></div>`;
+    }).join("");
+    const d1Errors = (d1.errors || []).map((note) => `<small class="muted">${escapeHtml(note)}</small>`).join("<br>");
+    const r2Text = r2.available
+      ? `${Number(r2.objects || 0).toLocaleString()} 个对象 · ${escapeHtml(fmtBytes(Number(r2.bytes || 0)))}${r2.truncated ? `（达到 ${Number(r2.list_limit || 10000).toLocaleString()} 个统计上限，未完整列举）` : ""}`
+      : `不可用：${escapeHtml(r2.error || "未绑定 ARCHIVE")}`;
+    const quotas = data.capacity?.quotas || {};
+    const capacityRows = Object.entries(quotas).map(([key, quota]) => {
+      const [label] = USAGE_LABELS[key] || [key, 0];
+      return `<div class="usage-row"><span class="usage-label">${escapeHtml(label)}</span><span class="usage-value">还能加 <b>${Number(quota.extra_nodes_80 || 0).toLocaleString()}</b> 台（80%）· ${Number(quota.extra_nodes_100 || 0).toLocaleString()} 台（100%）</span></div>`;
+    }).join("");
+    const capacityText = capacityRows
+      ? `<small>容量预估：${escapeHtml(data.capacity?.model_version || "")} · 在保持当前配置与频率下，各免费额度还可新增的 VPS 台数</small><div class="usage-rows">${capacityRows}</div>`
+      : `<small class="muted">容量预估暂不可用${data.capacity_error ? `：${escapeHtml(data.capacity_error)}` : ""}</small>`;
+    box.innerHTML = `<div class="usage-model-box">
+      <small>D1 表行数：共 ${Number(d1.total_rows || 0).toLocaleString()} 行 · ${d1.database_size_available ? `库文件约 ${escapeHtml(fmtBytes(Number(d1.database_bytes || 0)))}` : "库文件大小不可用"}</small>
+      <details><summary>逐表行数（${Number(d1.table_count || 0)} 张表）</summary><div class="usage-rows">${tableRows || "<small>暂无</small>"}</div>${d1Errors}</details>
+      <small>R2 归档：${r2Text}</small>
+      ${capacityText}
+      <p class="hint">台数按“每台新增 1 个 Agent + 1 个探针目标”外推；建议以 80% 水位为准。完整说明见 <a href="https://nie-sla.pages.dev/development/usage-model/" target="_blank" rel="noopener noreferrer">用量计算模型文档</a>。</p>
+    </div>`;
   } catch (error) {
     box.innerHTML = `<div class="error">加载失败：${escapeHtml(error?.message || "未知错误")}</div>`;
   }
@@ -1951,7 +2004,9 @@ function targetModalHtml(target, isEdit) {
       "ftcp",
     )}
     ${formField("URL", `<input id="mUrl" value="${escapeHtml(target.url || "")}">`, "fhttp")}
-    ${formField("状态码", `<input id="mStatus" value="${escapeHtml(target.expected_status || "200,301,302")}">`, "fhttp")}
+    ${formField("请求方法", `<select id="mMethod"><option value="GET"${selectedAttr(String(target.method || "GET").toUpperCase() !== "HEAD")}>GET</option><option value="HEAD"${selectedAttr(String(target.method || "GET").toUpperCase() === "HEAD")}>HEAD</option></select>`, "fhttp")}
+    ${formField("期望状态码", `<input id="mStatus" value="${escapeHtml(target.expected_status || "200,301,302")}" placeholder="逗号分隔，如 200,301"><p class="hint">留空默认接受 2xx/3xx；填写后必须精确匹配。</p>`, "fhttp")}
+    ${formField("超时（毫秒）", `<input id="mTimeout" type="number" min="500" max="30000" step="100" value="${escapeHtml(target.timeout_ms || 3000)}"><p class="hint">500–30000，Cloudflare 与 Agent 探测共用。</p>`, "fhttp")}
 
     <div class="form-grid">
       ${inputField("标签", "mTags", target.tags || "", 'placeholder="逗号分隔"')}
@@ -2098,6 +2153,8 @@ async function saveTarget(edit) {
   } else {
     b.url = byId("mUrl").value.trim();
     b.expected_status = byId("mStatus").value.trim() || "200,301,302";
+    b.method = byId("mMethod")?.value || "GET";
+    b.timeout_ms = Number(byId("mTimeout")?.value) || 3000;
     if (!b.url) return toast("需要 URL", "err");
   }
   const oldText = btn?.textContent || "保存";
@@ -3122,6 +3179,7 @@ function pingModal(p = null) {
     ${inputField("名称", "pName", ping.name || "")}
     ${formField("曲线颜色", `<input id="pColor" type="color" value="${configuredChartColor(ping.color, '#159754')}">`)}
     ${inputField("目标", "pTarget", ping.target || "", 'placeholder="host:port"')}
+    ${formField("期望状态码", `<input id="pExpected" value="${escapeHtml(ping.expected_status || "")}" placeholder="逗号分隔，如 200,301"><p class="hint">仅 http(s) 目标生效；留空默认接受 2xx/3xx。</p>`)}
     <div class="ma">
       <button class="btn" data-close>取消</button>
       <button class="btn btn-primary" id="savePing">保存</button>
@@ -3133,7 +3191,8 @@ async function savePing(edit) {
   const id = byId("pId").value.trim(),
     name = byId("pName").value.trim(),
     color = configuredChartColor(byId("pColor")?.value, '#159754'),
-    target = byId("pTarget").value.trim();
+    target = byId("pTarget").value.trim(),
+    expectedStatus = (byId("pExpected")?.value || "").trim();
   if (!name || !target) return toast("名称和目标必填", "err");
   try {
     await api(
@@ -3142,7 +3201,7 @@ async function savePing(edit) {
         : "/api/ping-targets",
       {
         method: edit ? "PATCH" : "POST",
-        body: JSON.stringify({ id: id || undefined, name, target, color }),
+        body: JSON.stringify({ id: id || undefined, name, target, color, expected_status: expectedStatus }),
       },
     );
     toast("已保存", "ok");
@@ -3181,6 +3240,7 @@ async function loadSettings() {
   loadAppUpdate();
   loadUsageEstimate();
   loadUsageActual();
+  loadUsageStorage();
   loadRetention();
   loadTotp();
   loadEncryption();
@@ -3860,6 +3920,7 @@ async function loadAlerts() {
     byId("saveAlerts").onclick = saveAlerts;
     byId("testTelegramAlert").onclick = () => testAlert("telegram");
     byId("testEmailAlert").onclick = () => testAlert("email");
+    byId("testAnyAlert").onclick = () => testAlert(byId("aTestChannel")?.value || "telegram");
     byId("runAlertCheck").onclick = runAlertCheck;
   } catch (e) {
     errBox("sAlerts", e);
@@ -3914,6 +3975,74 @@ function alertSettingsHtml(d) {
         ${formField("邮件正文模板", `<textarea id="aEmailTemplate" class="alert-template" rows="8">${escapeHtml(d.email_template || "")}</textarea>`)}
         <p class="hint">多个收件人用英文逗号分隔；发件域名必须已在 Resend 验证。</p>
       </fieldset>
+      <fieldset class="alert-channel">
+        <legend>通用 Webhook</legend>
+        <label class="switch-line">
+          <input type="checkbox" id="aWebhookEnabled"${checkedAttr(d.webhook_enabled)}>
+          <span>发送通用 Webhook 通知</span>
+        </label>
+        <div class="form-grid">
+          ${formField("Webhook 地址", `<input id="aWebhookUrl" value="${escapeHtml(d.webhook_url || "")}" placeholder="https://example.com/hook">`)}
+          ${formField("请求方法", `<select id="aWebhookMethod"><option value="POST"${selectedAttr(d.webhook_method === "POST")}>POST</option><option value="GET"${selectedAttr(d.webhook_method === "GET")}>GET</option></select>`)}
+        </div>
+        ${formField("Headers JSON（可选，可放鉴权信息）", `<textarea id="aWebhookHeaders" class="alert-template" rows="3" placeholder='{"Authorization":"Bearer token"}'>${escapeHtml(d.webhook_headers || "")}</textarea>`)}
+        ${formField("Body 模板", `<textarea id="aWebhookTemplate" class="alert-template" rows="6">${escapeHtml(d.webhook_template || "")}</textarea>`)}
+        <p class="hint">Body 模板支持占位符 <code>{{event}}</code> <code>{{target}}</code> <code>{{message}}</code> <code>{{status}}</code> <code>{{time}}</code> <code>{{url}}</code>；GET 请求会把渲染结果作为 <code>text</code> 查询参数。</p>
+      </fieldset>
+      <fieldset class="alert-channel">
+        <legend>Bark（iOS 推送）</legend>
+        <label class="switch-line">
+          <input type="checkbox" id="aBarkEnabled"${checkedAttr(d.bark_enabled)}>
+          <span>发送 Bark 通知</span>
+        </label>
+        <div class="form-grid">
+          ${formField("Device Key", `<input id="aBarkKey" type="password" placeholder="${escapeHtml(d.bark_device_key_set ? "已配置；留空不修改" : "未配置，请填写 Device Key")}">`)}
+          ${formField("服务器地址", `<input id="aBarkServer" value="${escapeHtml(d.bark_server || "")}" placeholder="https://api.day.app">`)}
+        </div>
+      </fieldset>
+      <fieldset class="alert-channel">
+        <legend>Gotify</legend>
+        <label class="switch-line">
+          <input type="checkbox" id="aGotifyEnabled"${checkedAttr(d.gotify_enabled)}>
+          <span>发送 Gotify 通知</span>
+        </label>
+        <div class="form-grid">
+          ${formField("服务器地址", `<input id="aGotifyUrl" value="${escapeHtml(d.gotify_url || "")}" placeholder="https://gotify.example.com">`)}
+          ${formField("App Token", `<input id="aGotifyToken" type="password" placeholder="${escapeHtml(d.gotify_token_set ? "已配置；留空不修改" : "未配置，请填写 App Token")}">`)}
+        </div>
+      </fieldset>
+      <fieldset class="alert-channel">
+        <legend>飞书（自定义机器人）</legend>
+        <label class="switch-line">
+          <input type="checkbox" id="aFeishuEnabled"${checkedAttr(d.feishu_enabled)}>
+          <span>发送飞书通知</span>
+        </label>
+        ${formField("Webhook 地址", `<input id="aFeishuWebhook" type="password" placeholder="${escapeHtml(d.feishu_webhook_set ? "已配置；留空不修改" : "未配置，请填写飞书机器人 Webhook")}">`)}
+      </fieldset>
+      <fieldset class="alert-channel">
+        <legend>钉钉（自定义机器人）</legend>
+        <label class="switch-line">
+          <input type="checkbox" id="aDingTalkEnabled"${checkedAttr(d.dingtalk_enabled)}>
+          <span>发送钉钉通知</span>
+        </label>
+        ${formField("Webhook 地址", `<input id="aDingTalkWebhook" type="password" placeholder="${escapeHtml(d.dingtalk_webhook_set ? "已配置；留空不修改" : "未配置，请填写钉钉机器人 Webhook")}">`)}
+      </fieldset>
+      <fieldset class="alert-channel">
+        <legend>企业微信（群机器人）</legend>
+        <label class="switch-line">
+          <input type="checkbox" id="aWeComEnabled"${checkedAttr(d.wecom_enabled)}>
+          <span>发送企业微信通知</span>
+        </label>
+        ${formField("Webhook 地址", `<input id="aWeComWebhook" type="password" placeholder="${escapeHtml(d.wecom_webhook_set ? "已配置；留空不修改" : "未配置，请填写企业微信机器人 Webhook")}">`)}
+      </fieldset>
+      <fieldset class="alert-channel">
+        <legend>ServerChan（方糖）</legend>
+        <label class="switch-line">
+          <input type="checkbox" id="aServerChanEnabled"${checkedAttr(d.serverchan_enabled)}>
+          <span>发送 ServerChan 通知</span>
+        </label>
+        ${formField("SendKey", `<input id="aServerChanKey" type="password" placeholder="${escapeHtml(d.serverchan_sendkey_set ? "已配置；留空不修改" : "未配置，请填写 SendKey（也可填完整 .send 地址）")}">`)}
+      </fieldset>
       <p class="hint alert-placeholder-hint">模板占位符：<code>{{title}}</code> <code>{{message}}</code> <code>{{site_name}}</code> <code>{{time}}</code> <code>{{alert_count}}</code> <code>{{channel}}</code>。正文必须包含且只能包含一个 <code>{{message}}</code>，其余占位符也不要重复。</p>
       <div class="form-grid">
         ${formField("离线超过 N 分钟", `<input id="aOffline" type="number" min="1" step="1" value="${escapeHtml(d.offline_minutes)}">`)}
@@ -3945,10 +4074,14 @@ function alertSettingsHtml(d) {
       </div>
       ${formField("流量剩余 GB", `<input id="aTrafficGb" type="number" min="0" step="0.1" value="${escapeHtml(d.traffic_remaining_gb)}">`)}
 
+      <div class="form-grid">
+        ${formField("发送测试通知的渠道", `<select id="aTestChannel">${ALERT_CHANNELS.map(([value, label]) => `<option value="${value}">${escapeHtml(label)}</option>`).join("")}</select>`)}
+      </div>
       <div class="ma alert-actions">
         <button class="btn" id="runAlertCheck">立即检查</button>
         <button class="btn btn-blue" id="testTelegramAlert">测试 Telegram</button>
         <button class="btn btn-blue" id="testEmailAlert">测试邮件</button>
+        <button class="btn btn-blue" id="testAnyAlert">发送测试通知</button>
         <button class="btn btn-primary" id="saveAlerts">保存报警设置</button>
       </div>
     </div>`;
@@ -3972,6 +4105,19 @@ function alertSettingsPayload() {
     email_format: byId("aEmailFormat")?.value || "text",
     email_subject_template: byId("aEmailSubjectTemplate")?.value || "",
     email_template: byId("aEmailTemplate")?.value || "",
+    webhook_enabled: !!byId("aWebhookEnabled")?.checked,
+    webhook_url: byId("aWebhookUrl")?.value.trim() || "",
+    webhook_method: byId("aWebhookMethod")?.value || "POST",
+    webhook_headers: byId("aWebhookHeaders")?.value || "",
+    webhook_template: byId("aWebhookTemplate")?.value || "",
+    bark_enabled: !!byId("aBarkEnabled")?.checked,
+    bark_server: byId("aBarkServer")?.value.trim() || "https://api.day.app",
+    gotify_enabled: !!byId("aGotifyEnabled")?.checked,
+    gotify_url: byId("aGotifyUrl")?.value.trim() || "",
+    feishu_enabled: !!byId("aFeishuEnabled")?.checked,
+    dingtalk_enabled: !!byId("aDingTalkEnabled")?.checked,
+    wecom_enabled: !!byId("aWeComEnabled")?.checked,
+    serverchan_enabled: !!byId("aServerChanEnabled")?.checked,
     offline_minutes: Number(byId("aOffline")?.value) || 10,
     repeat_minutes: Number(byId("aRepeat")?.value) || 0,
     notify_online: !!byId("aNotifyOnline")?.checked,
@@ -3992,6 +4138,17 @@ function alertSettingsPayload() {
   if (token) payload.telegram_bot_token = token;
   const resendKey = (byId("aResendKey")?.value || "").trim();
   if (resendKey) payload.resend_api_key = resendKey;
+  for (const [id, field] of [
+    ["aBarkKey", "bark_device_key"],
+    ["aGotifyToken", "gotify_token"],
+    ["aFeishuWebhook", "feishu_webhook"],
+    ["aDingTalkWebhook", "dingtalk_webhook"],
+    ["aWeComWebhook", "wecom_webhook"],
+    ["aServerChanKey", "serverchan_sendkey"],
+  ]) {
+    const value = (byId(id)?.value || "").trim();
+    if (value) payload[field] = value;
+  }
   return payload;
 }
 
@@ -4025,7 +4182,7 @@ async function testAlert(channel) {
   try {
     if ((await saveAlerts()) === false) return;
     await api("/api/alerts/test", { method: "POST", body: JSON.stringify({ channel }) });
-    toast(channel === "email" ? "测试邮件已发送" : "测试 Telegram 已发送", "ok");
+    toast(`${alertChannelLabel(channel)} 测试通知已发送`, "ok");
   } catch (e) {
     toast(e.message, "err");
   }

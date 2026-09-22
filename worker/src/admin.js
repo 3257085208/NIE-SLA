@@ -50,7 +50,8 @@ export { listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatenc
 export { AGENT_TASK_ACTIONS, createAgentTask, createAgentTasks, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, normalizeTaskResult, cleanupFinishedAgentTasks } from './admin/agent-tasks.js';
 export { GEOIP_PROVIDERS, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, validateCustomGeoIpUrl } from './admin/agent-location.js';
 export { exportBackup, previewBackup, restoreBackup, createRestoreSnapshot } from './admin/backup.js';
-export { estimateUsageFromEnv, estimateUsage, MODEL_VERSION as USAGE_MODEL_VERSION } from './admin/usage-model.js';
+export { estimateUsageFromEnv, estimateUsage, estimateCapacity, usageInputsFromEnv, MODEL_VERSION as USAGE_MODEL_VERSION } from './admin/usage-model.js';
+export { getStorageUsage, D1_STORAGE_TABLES } from './admin/usage-storage.js';
 export { getUsageActualConfig, saveUsageActualConfig, fetchActualUsage } from './admin/usage-actual.js';
 export { getFleetVersions } from './admin/fleet-versions.js';
 export { listTrafficCorrections, saveTrafficCorrection, getTrafficCorrectionsMap, getTrafficCorrection } from './admin/traffic-corrections.js';

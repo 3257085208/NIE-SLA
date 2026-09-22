@@ -65,6 +65,10 @@ assert.match(adminSource, /formField\("机器类型"/, 'target editor must label
 assert.doesNotMatch(adminSource, /formField\("线路类型"/, 'target editor must not expose the old line type label');
 assert.match(adminSource, /currencyOptionsHtml\(target\.currency \|\| "USD"\)/, 'currency must use the supported selector');
 assert.match(adminSource, /id="mNoPublicIp"/, 'VPS editor must expose the no-public-IP option');
+assert.match(adminSource, /id="mMethod"/, 'HTTP target editor must expose the request method');
+assert.match(adminSource, /期望状态码/, 'HTTP target editor must label the expected status field');
+assert.match(adminSource, /id="mTimeout"/, 'HTTP target editor must expose the probe timeout');
+assert.match(adminSource, /id="pExpected"/, 'Ping target editor must expose the expected status');
 assert.match(adminSource, /const cfDetails = noPublicIp[\s\S]*\? ""/, 'no-public-IP targets must hide Cloudflare status in admin');
 assert.match(adminSource, /\/api\/latency-agents/, 'admin must manage independent Latency nodes');
 assert.match(adminSource, /install-command\?node_id=/, 'Latency nodes must have an independent installer command');

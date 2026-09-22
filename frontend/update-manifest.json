@@ -1,15 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.95",
-  "agent_version": "v1.1.95",
-  "source_ref": "app-v1.1.95",
-  "sums_sha256": "52aa678ac7ec5a1aed150d384a2aa05780488a39511fa40dd74b1a61cda7c930",
-  "published_at": "2026-09-22T08:30:00Z",
-  "title": "NIE-SLA 1.1.95",
+  "version": "1.1.96",
+  "agent_version": "v1.1.96",
+  "source_ref": "app-v1.1.96",
+  "sums_sha256": "421cf4af3379b3d28a55f97b6ebb9dc37ba5c99e7ba5770e1330bc415eaf5fd0",
+  "published_at": "2026-09-22T12:30:00Z",
+  "title": "NIE-SLA 1.1.96",
   "changelog": [
-    "迁移向导：后台「探针 → 从其它面板导入」支持从 NeZha / Komari / NodeGet 拉取节点、预览去重后批量导入为目标，并为每台节点生成一条安装命令。",
-    "一键替换旧探针：安装器新增 --replace-agent <auto|nezha|komari|nodeget>（迁移命令自动带上），会停止并禁用旧的第三方探针服务（不删除文件）；真机验证通过。",
-    "文档：新增《从其它面板迁移》中文指南与 FAQ 条目。"
+    "通知：新增通用 Webhook（支持 URL/方法/自定义头/正文模板 {{event}} {{target}} {{message}} {{status}} {{time}} {{url}}）与 Bark、Gotify、飞书、钉钉、企业微信、ServerChan 七个通道，保留 Telegram 与邮件；测试通知可任选通道。",
+    "容量与存储：后台新增「存储用量与容量预估」——D1 各表行数与库体积、R2 对象数与容量，并按当前拓扑估算各免费额度在 80%/100% 水位下还能增加多少台节点。",
+    "自适应上报：有访客查看公开页时节点加速上报（默认 60 秒），无人查看时降速（默认 300 秒），节省 DO/D1/R2 消耗；可用 ADAPTIVE_REPORT_ENABLED=false 关闭。",
+    "网站监控：目标表单补齐请求方法/期望状态码/超时；Agent 侧 HTTP 探测现在校验期望状态码（不匹配会在日志中给出 unexpected HTTP <code>）。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

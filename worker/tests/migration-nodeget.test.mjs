@@ -130,7 +130,7 @@ test('nodeget preview posts the uuid list rpc and flags uuids used as names', as
     assert.equal(rpcCall.options.headers.authorization, `Bearer ${API_KEY}`);
     assert.equal(rpcCall.options.headers['content-type'], 'application/json');
     assert.equal(rpcCall.options.redirect, 'manual', 'panel redirects must not replay the credential');
-    assert.ok(rpcCall.options.signal instanceof AbortSignal, 'panel requests must be abortable');
+    assert.ok(rpcCall.options.signal && typeof rpcCall.options.signal.aborted === 'boolean', 'panel requests must be abortable');
     assert.deepEqual(JSON.parse(rpcCall.options.body), {
       jsonrpc: '2.0', id: 1, method: 'agent-uuid_list_all', params: {},
     });

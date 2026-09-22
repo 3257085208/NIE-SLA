@@ -8,12 +8,18 @@ import { readFleetLatestAgentStates } from './telemetry-buffer.js';
 const SETTINGS_KEY = 'alert_settings';
 const TG_TOKEN_KEY = 'alert_telegram_bot_token';
 const RESEND_KEY = 'alert_resend_api_key';
+const CHANNEL_SECRETS_KEY = 'alert_channel_secrets';
 const ALERT_STATE_CACHE = Symbol('alert_state_cache');
 const SECRET_PREFIX = 'enc:v1:';
 const DEFAULT_TELEGRAM_TEMPLATE = '{{title}}\n{{message}}\n\n{{site_name}} · {{time}}';
 const DEFAULT_EMAIL_SUBJECT_TEMPLATE = '{{site_name}} · {{title}}';
 const DEFAULT_EMAIL_TEMPLATE = '{{message}}\n\n站点：{{site_name}}\n时间：{{time}}';
+const DEFAULT_WEBHOOK_TEMPLATE = '{{event}}\n目标：{{target}}\n状态：{{status}}\n时间：{{time}}\n{{message}}';
 const TEMPLATE_KEYS = ['title', 'message', 'site_name', 'time', 'alert_count', 'channel'];
+const WEBHOOK_TEMPLATE_KEYS = ['event', 'target', 'message', 'status', 'time', 'url'];
+const CHANNEL_SECRET_FIELDS = ['bark_device_key', 'gotify_token', 'feishu_webhook', 'dingtalk_webhook', 'wecom_webhook', 'serverchan_sendkey'];
+const CHANNEL_SECRET_SETTING_KEYS = [...CHANNEL_SECRET_FIELDS, 'webhook_headers'];
+const SEND_TIMEOUT_MS = 8000;
 const DEFAULT_SETTINGS = {
   enabled: false,
   telegram_enabled: true,
@@ -30,6 +36,18 @@ const DEFAULT_SETTINGS = {
   email_format: 'text',
   email_subject_template: DEFAULT_EMAIL_SUBJECT_TEMPLATE,
   email_template: DEFAULT_EMAIL_TEMPLATE,
+  webhook_enabled: false,
+  webhook_url: '',
+  webhook_method: 'POST',
+  webhook_template: DEFAULT_WEBHOOK_TEMPLATE,
+  bark_enabled: false,
+  bark_server: 'https://api.day.app',
+  gotify_enabled: false,
+  gotify_url: '',
+  feishu_enabled: false,
+  dingtalk_enabled: false,
+  wecom_enabled: false,
+  serverchan_enabled: false,
   offline_minutes: 10,
   repeat_minutes: 360,
   notify_online: true,
@@ -72,6 +90,13 @@ const BOOLEAN_FIELDS = new Set([
   'telegram_disable_web_preview',
   'telegram_silent',
   'email_enabled',
+  'webhook_enabled',
+  'bark_enabled',
+  'gotify_enabled',
+  'feishu_enabled',
+  'dingtalk_enabled',
+  'wecom_enabled',
+  'serverchan_enabled',
   'notify_online',
 ]);
 
@@ -80,6 +105,7 @@ export async function getAlertSettings(env, options = {}) {
   const settings = normalizeAlertSettings(stored);
   const token = await telegramToken(env);
   const resendKey = await resendApiKey(env);
+  const channelSecrets = await readChannelSecrets(env);
   const chatId = telegramChatId(env, settings);
   const out = {
     ...settings,
@@ -91,11 +117,14 @@ export async function getAlertSettings(env, options = {}) {
     email_reply_to: emailReplyTo(env, settings),
     resend_api_key_set: Boolean(resendKey),
     resend_api_key_source: String(env.RESEND_API_KEY || '').trim() ? 'env' : (resendKey ? 'db' : 'none'),
+    webhook_headers: String(channelSecrets.webhook_headers || ''),
     last_result: await readAlertLastResult(env),
   };
+  for (const field of CHANNEL_SECRET_FIELDS) out[`${field}_set`] = Boolean(channelSecrets[field]);
   if (options.includeSecret) {
     out.telegram_bot_token = token;
     out.resend_api_key = resendKey;
+    for (const field of CHANNEL_SECRET_SETTING_KEYS) out[field] = String(channelSecrets[field] || '');
   }
   return out;
 }
@@ -104,6 +133,7 @@ export async function updateAlertSettings(request, env) {
   if (!env.DB) return { ok: false, error: '缺少 D1 的 DB 绑定' };
   const body = await safeJson(request);
   validateNotificationTemplates(body);
+  validateWebhookTemplateBody(body);
   const previous = await readStoredSettings(env);
   const next = normalizeAlertSettings({ ...previous, ...pickSettings(body) });
   await setMeta(env, SETTINGS_KEY, JSON.stringify(next));
@@ -118,6 +148,7 @@ export async function updateAlertSettings(request, env) {
     if (key) await setMeta(env, RESEND_KEY, await encryptSecret(key, env));
   }
   if (parseBoolean(body?.resend_api_key_clear, false)) await setMeta(env, RESEND_KEY, '');
+  await updateChannelSecrets(env, body);
   return { ok: true, ...(await getAlertSettings(env)) };
 }
 
@@ -131,10 +162,14 @@ export async function sendTestAlert(request, env) {
     body?.message ? `备注：${String(body.message).slice(0, 200)}` : '',
   ].filter(Boolean).join('\n');
   const channel = String(body?.channel || 'telegram').trim().toLowerCase();
-  const result = channel === 'email'
-    ? await sendEmail(env, settings, text, 'NIE-SLA 测试报警', 1)
-    : await sendTelegram(env, settings, text, 'NIE-SLA 测试报警', 1);
-  return { ok: result.ok, error: result.error || undefined };
+  const result = await sendAlertToChannel(channel, env, settings, {
+    text,
+    title: 'NIE-SLA 测试报警',
+    alertCount: 1,
+    target: '测试',
+    status: 'test',
+  });
+  return { ok: result.ok, error: result.error || undefined, channel };
 }
 
 export async function runAlertChecks(env, options = {}) {
@@ -209,20 +244,21 @@ export async function runAlertChecks(env, options = {}) {
   const sent = [];
   const errors = [];
   const batches = buildAlertBatches(messages);
-  let telegramMessages = 0;
-  let emailMessages = 0;
+  const channelCounts = {};
   for (const batch of batches) {
     const results = [];
     const title = `NIE-SLA 报警汇总（${batch.items.length} 条）`;
-    if (channels.includes('telegram')) {
-      const result = await sendTelegram(env, settings, batch.text, title, batch.items.length);
-      results.push({ channel: 'telegram', ...result });
-      if (result.ok) telegramMessages++;
-    }
-    if (channels.includes('email')) {
-      const result = await sendEmail(env, settings, batch.text, title, batch.items.length);
-      results.push({ channel: 'email', ...result });
-      if (result.ok) emailMessages++;
+    const targets = [...new Set(batch.items.map((item) => String(item.targetId || '')).filter(Boolean))].join(', ');
+    for (const channel of channels) {
+      const result = await sendAlertToChannel(channel, env, settings, {
+        text: batch.text,
+        title,
+        alertCount: batch.items.length,
+        target: targets,
+        status: 'active',
+      });
+      results.push({ channel, ...result });
+      if (result.ok) channelCounts[channel] = (channelCounts[channel] || 0) + 1;
     }
     if (results.some((result) => result.ok)) {
       for (const item of batch.items) {
@@ -236,7 +272,16 @@ export async function runAlertChecks(env, options = {}) {
       }
     }
   }
-  return finishAlertRun(env, { ok: errors.length === 0, checked: (targetRows.results || []).length, queued: messages.length, sent: sent.length, telegram_messages: telegramMessages, email_messages: emailMessages, errors });
+  return finishAlertRun(env, {
+    ok: errors.length === 0,
+    checked: (targetRows.results || []).length,
+    queued: messages.length,
+    sent: sent.length,
+    telegram_messages: channelCounts.telegram || 0,
+    email_messages: channelCounts.email || 0,
+    channel_messages: channelCounts,
+    errors,
+  });
 }
 
 function buildAlertBatches(messages, maxChars = 2400) {
@@ -658,10 +703,286 @@ async function sendEmail(env, settings, text, title = 'NIE-SLA 报警', alertCou
   }
 }
 
-function configuredAlertChannels(env, settings) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = SEND_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function errorMessage(error) {
+  if (error?.name === 'AbortError') return `请求超时（${Math.round(SEND_TIMEOUT_MS / 1000)} 秒）`;
+  return String(error?.message || error);
+}
+
+function truncateText(value, max) {
+  const text = String(value ?? '');
+  return text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
+}
+
+async function responseSnippet(response) {
+  try { return (await response.text()).slice(0, 200); } catch (_) { return ''; }
+}
+
+function isHttpUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch (_) {
+    return false;
+  }
+}
+
+function publicSiteUrl(env) {
+  return String(env.PUBLIC_SITE_URL || env.PUBLIC_SITE_ORIGIN || '').trim().replace(/\/+$/, '');
+}
+
+export function renderWebhookTemplate(template, context = {}) {
+  return String(template ?? '').replace(/\{\{\s*(event|target|message|status|time|url)\s*\}\}/g, (_, key) => String(context?.[key] ?? ''));
+}
+
+function webhookContext(env, payload = {}) {
+  return {
+    event: String(payload.title || 'NIE-SLA 报警'),
+    target: String(payload.target || ''),
+    message: String(payload.text || ''),
+    status: String(payload.status || 'active'),
+    time: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }),
+    url: publicSiteUrl(env),
+  };
+}
+
+function parseWebhookHeaders(raw) {
+  try {
+    const parsed = JSON.parse(String(raw || '') || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [key, value] of Object.entries(parsed).slice(0, 20)) {
+      const name = String(key || '').trim();
+      if (!name || /[\r\n]/.test(name)) continue;
+      out[name] = String(value ?? '').replace(/[\r\n]/g, ' ');
+    }
+    return out;
+  } catch (_) {
+    return {};
+  }
+}
+
+function validateWebhookHeaders(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(String(raw || ''));
+  } catch (_) {
+    throw new ApiError(400, 'Webhook Headers 必须是合法的 JSON 对象');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ApiError(400, 'Webhook Headers 必须是 JSON 对象');
+  const entries = Object.entries(parsed);
+  if (entries.length > 20) throw new ApiError(400, 'Webhook Headers 最多 20 项');
+  for (const [key, value] of entries) {
+    if (!String(key || '').trim() || value === null || typeof value === 'object') {
+      throw new ApiError(400, 'Webhook Headers 的键和值都必须是字符串');
+    }
+  }
+}
+
+async function sendAlertToChannel(channel, env, settings, payload = {}) {
+  switch (channel) {
+    case 'telegram': return sendTelegram(env, settings, payload.text, payload.title, payload.alertCount);
+    case 'email': return sendEmail(env, settings, payload.text, payload.title, payload.alertCount);
+    case 'webhook': return sendWebhook(env, settings, payload);
+    case 'bark': return sendBark(env, settings, payload);
+    case 'gotify': return sendGotify(env, settings, payload);
+    case 'feishu': return sendFeishu(env, settings, payload);
+    case 'dingtalk': return sendDingTalk(env, settings, payload);
+    case 'wecom': return sendWeCom(env, settings, payload);
+    case 'serverchan': return sendServerChan(env, settings, payload);
+    default: return { ok: false, error: `未知通知渠道：${String(channel || '')}` };
+  }
+}
+
+async function sendWebhook(env, settings, payload = {}) {
+  const url = String(settings.webhook_url || '').trim();
+  if (!isHttpUrl(url)) return { ok: false, error: '缺少或无效的 Webhook 地址' };
+  const method = normalizeWebhookMethod(settings.webhook_method);
+  try {
+    const body = renderWebhookTemplate(
+      settings.webhook_template || DEFAULT_WEBHOOK_TEMPLATE,
+      webhookContext(env, payload),
+    ).slice(0, 20_000);
+    const headers = parseWebhookHeaders(settings.webhook_headers);
+    const options = { method, headers };
+    let target = url;
+    if (method === 'GET') {
+      target = `${url}${url.includes('?') ? '&' : '?'}text=${encodeURIComponent(body)}`;
+    } else {
+      if (!Object.keys(headers).some((key) => key.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json';
+      options.body = body;
+    }
+    const response = await fetchWithTimeout(target, options);
+    if (response.ok) return { ok: true };
+    return { ok: false, error: `Webhook HTTP ${response.status}: ${await responseSnippet(response)}` };
+  } catch (error) {
+    return { ok: false, error: `Webhook 请求失败：${errorMessage(error)}` };
+  }
+}
+
+async function sendBark(env, settings, payload = {}) {
+  const deviceKey = String(settings.bark_device_key || '').trim();
+  if (!deviceKey) return { ok: false, error: '缺少 Bark Device Key' };
+  const base = String(settings.bark_server || 'https://api.day.app').trim().replace(/\/+$/, '');
+  if (!isHttpUrl(base)) return { ok: false, error: 'Bark 服务器地址无效' };
+  try {
+    const response = await fetchWithTimeout(`${base}/push`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        device_key: deviceKey,
+        title: String(payload.title || 'NIE-SLA 报警'),
+        body: truncateText(payload.text, 2000),
+      }),
+    });
+    if (!response.ok) return { ok: false, error: `Bark HTTP ${response.status}: ${await responseSnippet(response)}` };
+    const data = await response.json().catch(() => null);
+    if (data && data.code != null && Number(data.code) !== 200) {
+      return { ok: false, error: `Bark 返回错误：${String(data.message || data.code)}` };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: `Bark 请求失败：${errorMessage(error)}` };
+  }
+}
+
+async function sendGotify(env, settings, payload = {}) {
+  const token = String(settings.gotify_token || '').trim();
+  const base = String(settings.gotify_url || '').trim().replace(/\/+$/, '');
+  if (!token || !isHttpUrl(base)) return { ok: false, error: '缺少 Gotify 服务器地址或 Token' };
+  try {
+    const response = await fetchWithTimeout(`${base}/message?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        title: String(payload.title || 'NIE-SLA 报警'),
+        message: truncateText(payload.text, 4000),
+        priority: 5,
+      }),
+    });
+    if (!response.ok) return { ok: false, error: `Gotify HTTP ${response.status}: ${await responseSnippet(response)}` };
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: `Gotify 请求失败：${errorMessage(error)}` };
+  }
+}
+
+async function sendFeishu(env, settings, payload = {}) {
+  const url = String(settings.feishu_webhook || '').trim();
+  if (!isHttpUrl(url)) return { ok: false, error: '缺少飞书 Webhook 地址' };
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        msg_type: 'text',
+        content: { text: `${String(payload.title || 'NIE-SLA 报警')}\n${truncateText(payload.text, 4000)}` },
+      }),
+    });
+    if (!response.ok) return { ok: false, error: `飞书 HTTP ${response.status}: ${await responseSnippet(response)}` };
+    const data = await response.json().catch(() => null);
+    const code = data?.code ?? data?.StatusCode;
+    if (code != null && Number(code) !== 0) {
+      return { ok: false, error: `飞书返回错误：${String(data?.msg || data?.StatusMessage || code)}` };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: `飞书请求失败：${errorMessage(error)}` };
+  }
+}
+
+async function sendDingTalk(env, settings, payload = {}) {
+  const url = String(settings.dingtalk_webhook || '').trim();
+  if (!isHttpUrl(url)) return { ok: false, error: '缺少钉钉 Webhook 地址' };
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        msgtype: 'text',
+        text: { content: `${String(payload.title || 'NIE-SLA 报警')}\n${truncateText(payload.text, 4000)}` },
+      }),
+    });
+    if (!response.ok) return { ok: false, error: `钉钉 HTTP ${response.status}: ${await responseSnippet(response)}` };
+    const data = await response.json().catch(() => null);
+    if (data && data.errcode != null && Number(data.errcode) !== 0) {
+      return { ok: false, error: `钉钉返回错误：${String(data.errmsg || data.errcode)}` };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: `钉钉请求失败：${errorMessage(error)}` };
+  }
+}
+
+async function sendWeCom(env, settings, payload = {}) {
+  const url = String(settings.wecom_webhook || '').trim();
+  if (!isHttpUrl(url)) return { ok: false, error: '缺少企业微信 Webhook 地址' };
+  try {
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        msgtype: 'text',
+        text: { content: `${String(payload.title || 'NIE-SLA 报警')}\n${truncateText(payload.text, 4000)}` },
+      }),
+    });
+    if (!response.ok) return { ok: false, error: `企业微信 HTTP ${response.status}: ${await responseSnippet(response)}` };
+    const data = await response.json().catch(() => null);
+    if (data && data.errcode != null && Number(data.errcode) !== 0) {
+      return { ok: false, error: `企业微信返回错误：${String(data.errmsg || data.errcode)}` };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: `企业微信请求失败：${errorMessage(error)}` };
+  }
+}
+
+async function sendServerChan(env, settings, payload = {}) {
+  const sendKey = String(settings.serverchan_sendkey || '').trim();
+  if (!sendKey) return { ok: false, error: '缺少 ServerChan SendKey' };
+  const url = /^https?:\/\//i.test(sendKey) ? sendKey : `https://sctapi.ftqq.com/${encodeURIComponent(sendKey)}.send`;
+  if (!isHttpUrl(url)) return { ok: false, error: 'ServerChan SendKey 无效' };
+  try {
+    const body = new URLSearchParams({
+      title: String(payload.title || 'NIE-SLA 报警'),
+      desp: truncateText(payload.text, 4000),
+    });
+    const response = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    if (!response.ok) return { ok: false, error: `ServerChan HTTP ${response.status}: ${await responseSnippet(response)}` };
+    const data = await response.json().catch(() => null);
+    if (data && data.code != null && Number(data.code) !== 0) {
+      return { ok: false, error: `ServerChan 返回错误：${String(data.message || data.code)}` };
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: `ServerChan 请求失败：${errorMessage(error)}` };
+  }
+}
+
+export function configuredAlertChannels(env, settings) {
   const channels = [];
   if (settings.telegram_enabled && settings.telegram_bot_token && telegramChatId(env, settings)) channels.push('telegram');
   if (settings.email_enabled && settings.resend_api_key && emailFrom(env, settings) && emailTo(env, settings).length) channels.push('email');
+  if (settings.webhook_enabled && isHttpUrl(settings.webhook_url)) channels.push('webhook');
+  if (settings.bark_enabled && String(settings.bark_device_key || '').trim() && isHttpUrl(settings.bark_server || 'https://api.day.app')) channels.push('bark');
+  if (settings.gotify_enabled && String(settings.gotify_token || '').trim() && isHttpUrl(settings.gotify_url)) channels.push('gotify');
+  if (settings.feishu_enabled && isHttpUrl(settings.feishu_webhook)) channels.push('feishu');
+  if (settings.dingtalk_enabled && isHttpUrl(settings.dingtalk_webhook)) channels.push('dingtalk');
+  if (settings.wecom_enabled && isHttpUrl(settings.wecom_webhook)) channels.push('wecom');
+  if (settings.serverchan_enabled && String(settings.serverchan_sendkey || '').trim()) channels.push('serverchan');
   return channels;
 }
 
@@ -689,6 +1010,7 @@ function sanitizeAlertErrors(errors) {
     error: String(item?.error || '')
       .replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot<redacted>')
       .replace(/re_[A-Za-z0-9_-]+/g, 're_<redacted>')
+      .replace(/([?&](?:key|token|access_token|secret|sendkey|device_key)=)[^&\s"']+/gi, '$1<redacted>')
       .slice(0, 300),
   }));
 }
@@ -733,6 +1055,63 @@ async function resendApiKey(env) {
   }
   try { await setMeta(env, RESEND_KEY, await encryptSecret(stored, env)); } catch (_) {}
   return stored;
+}
+
+async function readChannelSecrets(env) {
+  const stored = String(await getMeta(env, CHANNEL_SECRETS_KEY) || '').trim();
+  if (!stored) return {};
+  if (stored.startsWith(SECRET_PREFIX)) {
+    try {
+      const decrypted = await decryptSecret(stored.slice(SECRET_PREFIX.length), env);
+      if (decrypted.needsMigration && primarySecretMaterial(env)) {
+        await setMeta(env, CHANNEL_SECRETS_KEY, await encryptSecret(decrypted.secret, env));
+      }
+      const parsed = JSON.parse(decrypted.secret);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch (_) { return {}; }
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    if (primarySecretMaterial(env)) await setMeta(env, CHANNEL_SECRETS_KEY, await encryptSecret(stored, env));
+    return parsed;
+  } catch (_) { return {}; }
+}
+
+async function updateChannelSecrets(env, body) {
+  const secrets = await readChannelSecrets(env);
+  let changed = false;
+  for (const field of CHANNEL_SECRET_FIELDS) {
+    if (parseBoolean(body?.[`${field}_clear`], false)) {
+      if (secrets[field] !== undefined) {
+        delete secrets[field];
+        changed = true;
+      }
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(body || {}, field)) continue;
+    const value = String(body[field] ?? '').trim();
+    if (!value || value === secrets[field]) continue;
+    secrets[field] = value.slice(0, 1000);
+    changed = true;
+  }
+  if (Object.prototype.hasOwnProperty.call(body || {}, 'webhook_headers')) {
+    const raw = String(body.webhook_headers ?? '').trim();
+    if (!raw) {
+      if (secrets.webhook_headers !== undefined) {
+        delete secrets.webhook_headers;
+        changed = true;
+      }
+    } else {
+      validateWebhookHeaders(raw);
+      if (secrets.webhook_headers !== raw) {
+        secrets.webhook_headers = raw.slice(0, 4000);
+        changed = true;
+      }
+    }
+  }
+  if (changed) await setMeta(env, CHANNEL_SECRETS_KEY, await encryptSecret(JSON.stringify(secrets), env));
+  return secrets;
 }
 
 function emailFrom(env, settings) {
@@ -794,6 +1173,11 @@ function pickSettings(body) {
     'email_format',
     'email_subject_template',
     'email_template',
+    'webhook_url',
+    'webhook_method',
+    'webhook_template',
+    'bark_server',
+    'gotify_url',
   ]) {
     if (Object.prototype.hasOwnProperty.call(body || {}, key)) out[key] = body[key];
   }
@@ -819,6 +1203,8 @@ function normalizeStringSetting(key, value, fallback) {
   if (key === 'telegram_template') return normalizeBodyTemplate(text, fallback, 1500);
   if (key === 'email_subject_template') return (text.trim() || fallback).slice(0, 300);
   if (key === 'email_template') return normalizeBodyTemplate(text, fallback, 12_000);
+  if (key === 'webhook_method') return normalizeWebhookMethod(text);
+  if (key === 'webhook_template') return normalizeWebhookTemplate(text, fallback);
   return text.trim().slice(0, key === 'email_to' ? 1000 : 320);
 }
 
@@ -826,6 +1212,31 @@ function validateNotificationTemplates(body) {
   validateTemplateField(body, 'telegram_template', 1500, true);
   validateTemplateField(body, 'email_subject_template', 300, false);
   validateTemplateField(body, 'email_template', 12_000, true);
+}
+
+function validateWebhookTemplateBody(body) {
+  if (!Object.prototype.hasOwnProperty.call(body || {}, 'webhook_template')) return;
+  const template = String(body.webhook_template ?? '').replace(/\r/g, '').trim();
+  if (!template) return;
+  if (template.length > 4000) throw new ApiError(400, 'Webhook 模板过长');
+  const placeholders = [...template.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)].map((match) => match[1]);
+  const unknown = placeholders.find((name) => !WEBHOOK_TEMPLATE_KEYS.includes(name));
+  if (unknown) throw new ApiError(400, `未知 Webhook 占位符：{{${unknown}}}`);
+}
+
+function normalizeWebhookTemplate(value, fallback) {
+  const template = String(value || '').trim();
+  if (!template) return fallback;
+  try {
+    validateWebhookTemplateBody({ webhook_template: template });
+    return template;
+  } catch (_) {
+    return fallback;
+  }
+}
+
+function normalizeWebhookMethod(value) {
+  return String(value || '').trim().toUpperCase() === 'GET' ? 'GET' : 'POST';
 }
 
 function validateTemplateField(body, key, maxLength, requireMessage) {
@@ -1074,7 +1485,7 @@ export async function migrateAlertEncryption(env) {
   if (!primarySecretMaterial(env)) throw new Error('缺少 ALERT_ENCRYPTION_KEY 或 TOTP_ENCRYPTION_KEY');
   let total = 0;
   let migrated = 0;
-  for (const key of [TG_TOKEN_KEY, RESEND_KEY]) {
+  for (const key of [TG_TOKEN_KEY, RESEND_KEY, CHANNEL_SECRETS_KEY]) {
     const stored = String(await getMeta(env, key) || '').trim();
     if (!stored) continue;
     total += 1;

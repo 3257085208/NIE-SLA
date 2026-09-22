@@ -1759,7 +1759,7 @@ dependencies = [
 
 [[package]]
 name = "nie-sla-agent"
-version = "1.1.95"
+version = "1.1.96"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

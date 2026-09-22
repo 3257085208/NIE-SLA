@@ -23,6 +23,18 @@ function normalizeEnabled(value, fallback) {
   throw new ApiError(400, 'enabled 必须是布尔值或 true/false');
 }
 
+// Optional exact HTTP status match for Agent-side http(s) ping targets.
+// undefined means "not provided" (update keeps the stored value); anything
+// invalid or empty becomes null, which keeps the legacy 2xx/3xx default.
+export function normalizePingExpectedStatus(value) {
+  if (value === undefined) return undefined;
+  const codes = String(value ?? '')
+    .split(',')
+    .map(part => Number(String(part).trim()))
+    .filter(code => Number.isInteger(code) && code >= 100 && code <= 599);
+  return [...new Set(codes)].join(',') || null;
+}
+
 const MAX_PING_HOURS_PER_BATCH = 25;
 const MAX_PING_AGE_SEC = 7 * 86400;
 const MAX_PING_FUTURE_SEC = 300;
@@ -54,8 +66,9 @@ export async function createPingTarget(request, env) {
   const id = sanitizeAgentId(body?.id || name);
   const color = normalizeChartColor(body?.color, '#159754');
   if (body?.color !== undefined && !/^#[0-9a-f]{6}$/i.test(String(body.color).trim())) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
+  const expectedStatus = normalizePingExpectedStatus(body?.expected_status) ?? null;
   const now = nowSec();
-  await env.DB.prepare(`INSERT INTO ping_targets (id, name, target, color, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, target=excluded.target, color=excluded.color, updated_at=excluded.updated_at`).bind(id, name, target, color, now, now).run();
+  await env.DB.prepare(`INSERT INTO ping_targets (id, name, target, color, expected_status, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, target=excluded.target, color=excluded.color, expected_status=excluded.expected_status, updated_at=excluded.updated_at`).bind(id, name, target, color, expectedStatus, now, now).run();
   return { ok: true, id };
 }
 
@@ -69,7 +82,10 @@ export async function updatePingTarget(id, request, env) {
   const color = body?.color !== undefined ? normalizeChartColor(body.color, '') : normalizeChartColor(existing.color, '#159754');
   if (!color) throw new ApiError(400, '颜色必须是 #RRGGBB 格式');
   const enabled = normalizeEnabled(body?.enabled, existing.enabled);
-  await env.DB.prepare(`UPDATE ping_targets SET name = ?, target = ?, color = ?, enabled = ?, updated_at = ? WHERE id = ?`).bind(name, target, color, enabled, nowSec(), id).run();
+  const expectedStatus = body?.expected_status !== undefined
+    ? normalizePingExpectedStatus(body.expected_status)
+    : (existing.expected_status ?? null);
+  await env.DB.prepare(`UPDATE ping_targets SET name = ?, target = ?, color = ?, expected_status = ?, enabled = ?, updated_at = ? WHERE id = ?`).bind(name, target, color, expectedStatus, enabled, nowSec(), id).run();
   return { ok: true, id };
 }
 

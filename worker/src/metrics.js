@@ -8,7 +8,7 @@ import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn, ensure
 import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry, readBufferedAgentLatestState } from './telemetry-buffer.js';
 import { bufferedAgentStateEnabled, newerAgentMetricRow } from './agent-state.js';
 import { getPingIntervalSec } from './ping-config.js';
-import { getAgentReportInterval } from './admin/settings.js';
+import { getAdaptiveReportInterval } from './adaptive-report.js';
 import { getRetentionHours } from './admin/retention.js';
 import { getTrafficCorrection } from './admin/traffic-corrections.js';
 import { normalizePublicProxyChecks } from './admin/proxy-targets.js';
@@ -319,12 +319,13 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
     else await trafficTask;
   }
 
+  const reportIntervalSec = await getAdaptiveReportInterval(env);
   const result = {
     ok: true,
     agent_id: agentId,
     server_time: ts,
     ping_interval_sec: await getPingIntervalSec(env),
-    report_interval_sec: await getAgentReportInterval(env),
+    ...(reportIntervalSec == null ? {} : { report_interval_sec: reportIntervalSec }),
     traffic_correction: await getTrafficCorrection(env, agentId),
   };
   if (options.returnLatestState && latestState) result.latest_state = latestState;
