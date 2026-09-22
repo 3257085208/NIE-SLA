@@ -8,7 +8,20 @@
   "assets": {
     "directory": "./dist-one-click",
     "binding": "ASSETS",
-    "run_worker_first": true,
+    "run_worker_first": [
+      "/*",
+      "!/assets/*",
+      "!/bin/*",
+      "!/js/*",
+      "!/index.html",
+      "!/404.html",
+      "!/*.sh",
+      "!/cftz",
+      "!/VERSION",
+      "!/release-build-id.txt",
+      "!/_headers",
+      "!/.DS_Store"
+    ],
     "not_found_handling": "404-page"
   },
   "triggers": {

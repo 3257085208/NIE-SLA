@@ -61,7 +61,12 @@ assert.ok(verified >= 3, 'expected Agent binaries for multiple platforms');
 const wrangler = parseJsonc(await readFile(path.join(root, 'wrangler.jsonc'), 'utf8'));
 const packageJson = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
 assert.equal(wrangler.assets?.directory, './dist-one-click');
-assert.equal(wrangler.assets?.run_worker_first, true);
+const runWorkerFirst = wrangler.assets?.run_worker_first;
+assert.ok(Array.isArray(runWorkerFirst), 'one-click assets must use negative globs so static files bypass the Worker instead of billing every request');
+assert.equal(runWorkerFirst[0], '/*');
+for (const pattern of ['!/assets/*', '!/bin/*', '!/js/*', '!/index.html', '!/404.html', '!/*.sh', '!/cftz', '!/VERSION']) {
+  assert.ok(runWorkerFirst.includes(pattern), `one-click run_worker_first must exclude ${pattern}`);
+}
 assert.equal(wrangler.assets?.not_found_handling, '404-page');
 assert.deepEqual(wrangler.compatibility_flags, ['global_fetch_strictly_public']);
 const databaseId = wrangler.d1_databases?.[0]?.database_id || '';
