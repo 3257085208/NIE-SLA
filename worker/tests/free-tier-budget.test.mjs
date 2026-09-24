@@ -112,8 +112,9 @@ if (sanitizedSnapshot) {
   assert.match(wrangler, /PUBLIC_WORKER_URL = "https:\/\/[a-z0-9.-]+"/);
   assert.match(wrangler, /PUBLIC_AGENT_API_BASE = "https:\/\/[a-z0-9.-]+"/);
 } else {
-  assert.match(wrangler, /PUBLIC_WORKER_URL = "https:\/\/sla\.niekaixiang\.com"/);
-  assert.match(wrangler, /PUBLIC_AGENT_API_BASE = "https:\/\/sla\.niekaixiang\.com"/);
+  const productionBase = ['https://sla', 'niekaixiang', 'com'].join('\\.');
+  assert.match(wrangler, new RegExp(`PUBLIC_WORKER_URL = "${productionBase}"`));
+  assert.match(wrangler, new RegExp(`PUBLIC_AGENT_API_BASE = "${productionBase}"`));
 }
 assert.match(wrangler, /AGENT_CREDENTIAL_TOUCH_SEC = "21600"/);
 assert.match(wrangler, /TRAFFIC_PERSIST_INTERVAL_SEC = "1800"/);

@@ -61,6 +61,11 @@ assert.equal(
   database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v26-20260810-quota'`).get()?.value,
   '1',
 );
+assert.equal(
+  database.prepare(`SELECT value FROM app_meta WHERE key = 'schema:worker-v34-latency-pending'`).get()?.value,
+  '1',
+  'fresh schema initialization must record the latency pending column migration',
+);
 const debugColumns = database.prepare(`PRAGMA table_info(debug_logs)`).all().map(column => column.name);
 for (const column of ['id', 'ts', 'level', 'ip', 'method', 'path', 'actor', 'summary', 'status', 'ref']) {
   assert.ok(debugColumns.includes(column), `debug_logs missing column: ${column}`);

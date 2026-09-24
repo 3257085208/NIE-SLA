@@ -80,9 +80,17 @@ export async function fetchActualUsage(env, hours = 24) {
   const sumOf = (group) => (Array.isArray(group) ? group[0]?.sum : group?.sum) || {};
   const sumAll = (group, key) => (Array.isArray(group) ? group : [group])
     .reduce((total, item) => total + Number(item?.sum?.[key] || 0), 0);
-  const ownD1Ids = String(env.USAGE_D1_DATABASE_IDS || '279ad7f9-0b69-49aa-90eb-c42321eda6c3')
+  // Never hard-code a deployment's D1 database id here: this module ships to
+  // the public repository. USAGE_D1_DATABASE_IDS is optional; when it is not
+  // configured the account-wide D1 total is reported (the D1 free quota itself
+  // is account-level), or the single database when the account owns exactly one.
+  const configuredD1Ids = String(env.USAGE_D1_DATABASE_IDS || '')
     .split(',').map((value) => value.trim()).filter(Boolean);
   const d1Groups = Array.isArray(account.d1) ? account.d1 : [account.d1];
+  const singleD1Id = d1Groups.length === 1 ? String(d1Groups[0]?.dimensions?.databaseId || '') : '';
+  const ownD1Ids = configuredD1Ids.length
+    ? configuredD1Ids
+    : (singleD1Id ? [singleD1Id] : []);
   const d1Total = { rowsWritten: 0, rowsRead: 0, readQueries: 0, writeQueries: 0 };
   const d1Own = { rowsWritten: 0, rowsRead: 0, readQueries: 0, writeQueries: 0 };
   const d1ByDatabase = [];
@@ -101,7 +109,7 @@ export async function fetchActualUsage(env, hours = 24) {
       for (const key of Object.keys(d1Own)) d1Own[key] += Number(sum[key] || 0);
     }
   }
-  const d1 = d1Own;
+  const d1 = ownD1Ids.length ? d1Own : d1Total;
   const durable = sumOf(account.durableObjects);
   const r2ClassA = new Set(['PutObject', 'CopyObject', 'ListObjects', 'ListObjectsV2', 'ListBuckets', 'HeadBucket', 'DeleteObject', 'DeleteObjects', 'CreateMultipartUpload', 'CompleteMultipartUpload', 'UploadPart', 'UploadPartCopy']);
   let r2A = 0;
@@ -125,7 +133,7 @@ export async function fetchActualUsage(env, hours = 24) {
       r2_class_b: r2B,
       r2_requests: r2A + r2B,
     },
-    d1_scope: 'own',
+    d1_scope: configuredD1Ids.length ? 'configured' : (singleD1Id ? 'single' : 'account'),
     d1_database_ids: ownD1Ids,
     d1_by_database: d1ByDatabase,
     actual_account: {

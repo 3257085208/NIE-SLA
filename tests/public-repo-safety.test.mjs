@@ -13,12 +13,16 @@ const textFiles = tracked.filter((file) =>
   && !/(?:^|\/)vendor\//.test(file)
   && !/(?:^|\/)Cargo\.lock$/.test(file)
   && !/(?:^|\/)bin\//.test(file));
-const hiddenImageHost = new RegExp(['img', 'nkx', 'moe'].join('\\.'), 'i');
+const hiddenImageHost = /img(?:\\?\.)nkx(?:\\?\.)moe/i;
 const publicNqBrokerUrl = ['https://api-sla', 'niekaixiang', 'com/api/nq/image-broker'].join('.');
 const publicNqBrokerPlaceholder = ['https://nq-public-broker', 'invalid/api/nq/image-broker'].join('.');
 
+// The scan is the only file allowed to contain the literal production domain
+// (its own patterns would otherwise match themselves).
+const selfFile = 'tests/public-repo-safety.test.mjs';
+
 const checks = [
-  ['production domain', /(?:niekaixiang\.com|nkx\.workers\.dev)/i],
+  ['production domain', /niekaixiang(?:\\?\.)com|nkx(?:\\?\.)workers(?:\\?\.)dev/i],
   ['private image host', hiddenImageHost],
   ['Agent token', /\bnst_[a-f0-9]{32,}\b/i],
   ['GitHub token', /\b(?:ghp|github_pat)_[A-Za-z0-9_]{20,}\b/],
@@ -28,12 +32,45 @@ const checks = [
   ['Unix home path', /\/home\/(?!user(?:\/|\b)|runner(?:\/|\b))[A-Za-z0-9._-]+\//],
 ];
 
+// Placeholder ids used across tests. Anything else is treated as a real
+// deployment identifier and fails closed.
+const uuidPattern = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+const accountIdPattern = /(?:accountTag|account_tag|accountId|account_id|ACCOUNT_ID|ACCOUNT_TAG)\s*[:=]\s*['"]([0-9a-f]{32})['"]/gi;
+
+function isPlaceholderUuid(value) {
+  const lower = value.toLowerCase();
+  // All-same-character placeholders (00000000-0000-..., 11111111-1111-...).
+  if (/^([0-9a-f])\1{7}-\1{4}-\1{4}-\1{4}-\1{12}$/.test(lower)) return true;
+  // Repeated-character v4 shapes (11111111-1111-4111-8111-111111111111).
+  if (/^([0-9a-f])\1{7}-\1{4}-4\1{3}-[89ab]\1{3}-\1{12}$/.test(lower)) return true;
+  // Zeroed test fixtures (00000000-0000-4000-8000-0000000000NN).
+  if (/^[0-9a-f]{8}-0{4}-4000-8000-0{8}[0-9a-f]{4}$/.test(lower)) return true;
+  return false;
+}
+
+function isPlaceholderAccountId(value) {
+  return /^([0-9a-f])\1{31}$/.test(value.toLowerCase());
+}
+
 const findings = [];
 for (const file of textFiles) {
+  if (file === selfFile) continue;
   const source = readFileSync(path.join(root, file), 'utf8')
     .replaceAll(publicNqBrokerUrl, publicNqBrokerPlaceholder);
   for (const [name, pattern] of checks) {
     if (pattern.test(source)) findings.push(`${name}: ${file}`);
+  }
+  if (!deploymentValidation) {
+    for (const match of source.matchAll(uuidPattern)) {
+      if (!isPlaceholderUuid(match[0])) {
+        findings.push(`deployment UUID ${match[0].slice(0, 8)}…: ${file}`);
+      }
+    }
+    for (const match of source.matchAll(accountIdPattern)) {
+      if (!isPlaceholderAccountId(match[1])) {
+        findings.push(`deployment account id ${match[1].slice(0, 8)}…: ${file}`);
+      }
+    }
   }
   if (/wrangler\.(?:toml|jsonc?)$/i.test(file)) {
     const ids = [...source.matchAll(/database_id["']?\s*(?:=|:)\s*"([0-9a-f-]{36})"/gi)].map((match) => match[1]);

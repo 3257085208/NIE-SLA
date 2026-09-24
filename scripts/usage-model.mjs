@@ -1340,7 +1340,7 @@ function parseArgs(argv) {
 
 function usageText() {
   return [
-    'NIE-SLA site-only usage model v1.3',
+    `NIE-SLA site-only usage model ${MODEL_VERSION.replace(/^usage-model-/, '')}`,
     '',
     'Estimate:',
     '  node agent/scripts/usage-model.mjs [--status-file FILE] [--logs-file FILE]',

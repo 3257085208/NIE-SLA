@@ -25,6 +25,7 @@
       .not-found-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
       .not-found-actions a { display: inline-flex; align-items: center; min-height: 42px; padding: 0 16px; border: 1px solid var(--line); color: var(--ink); background: var(--paper); text-decoration: none; }
       .not-found-actions a:first-child { color: #fff; background: var(--green); border-color: var(--green); }
+      .not-found-note { display: inline-flex; align-items: center; min-height: 42px; padding: 0 16px; border: 1px dashed var(--line); color: var(--muted); background: var(--paper); }
       .not-found-mark { display: grid; place-items: center; width: min(100%, 300px); aspect-ratio: 1; margin-left: auto; color: var(--green); background: #e8f7ef; border: 1px solid #b8dfc6; border-radius: 50%; font-size: 90px; font-weight: 700; }
       @media (max-width: 640px) { .not-found-shell { width: min(100% - 28px, 520px); padding-top: 14px; } .not-found-main { grid-template-columns: 1fr; gap: 22px; min-height: auto; padding: 18vh 0 12vh; } .not-found-mark { width: 150px; margin: 0; font-size: 48px; order: -1; } }
     </style>
@@ -33,7 +34,7 @@
     <div class="not-found-shell">
       <header class="not-found-header"><a class="not-found-brand" href="/">NIE-SLA</a><span aria-hidden="true">状态监控</span></header>
       <main class="not-found-main">
-        <div><div class="not-found-code">404</div><h1>页面不存在</h1><p>请求的地址无对应页面，可能已经移动或暂时不可用。</p><div class="not-found-actions"><a href="/">返回状态页</a><a href="/admin.html">管理入口</a></div></div>
+        <div><div class="not-found-code">404</div><h1>页面不存在</h1><p>请求的地址无对应页面，可能已经移动或暂时不可用。</p><div class="not-found-actions"><a href="/">返回状态页</a><span class="not-found-note">管理入口：部署时设置的后台路径</span></div></div>
         <div class="not-found-mark" aria-hidden="true">?</div>
       </main>
     </div>

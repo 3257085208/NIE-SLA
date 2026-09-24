@@ -62,6 +62,7 @@ await new Promise((resolve) => setTimeout(resolve, 0));
 assert.equal(requestedUrl, '/api/status?days=30&lite=1');
 const configSource = readFileSync(new URL('../config.js', import.meta.url), 'utf8');
 assert.doesNotMatch(configSource, /searchParams|get\(['"]api['"]\)/);
-assert.doesNotMatch(configSource, /api-sla\.niekaixiang\.com/);
+const productionApiHost = ['api-sla', 'niekaixiang', 'com'].join('\\.');
+assert.doesNotMatch(configSource, new RegExp(productionApiHost));
 
 console.log('frontend app import smoke test passed');

@@ -36,8 +36,13 @@ const adminApiSource = await readFile(path.join(root, 'js', 'admin', 'api.js'), 
 const nqOptionsSource = await readFile(path.join(root, 'js', 'admin', 'nq-options.js'), 'utf8');
 assert.match(notFoundHtml, /<title>页面不存在 - NIE-SLA<\/title>/, '404 responses must retain the branded page title');
 assert.match(notFoundHtml, /class="not-found-code">404<\/div>/, '404 responses must visibly identify the status code');
-assert.match(notFoundHtml, /href="\/">返回状态页<\/a>[\s\S]*href="\/admin\.html">管理入口<\/a>/, '404 responses must retain both recovery links');
+assert.match(notFoundHtml, /href="\/">返回状态页<\/a>[\s\S]*not-found-note">管理入口：部署时设置的后台路径<\/span>/, '404 responses must retain the recovery link and a non-dead admin entry hint');
+assert.doesNotMatch(notFoundHtml, /href="\/admin\.html"/, '404 page must not link to the legacy admin path that 404s on custom ADMIN_PATH deployments');
 assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260919-update22"/, 'admin must import the configurable NodeQuality option helpers');
+assert.match(adminSource, /import \{ createOnboarding \} from "\.\/admin\/onboarding\.js\?v=20260919-update22"/, 'admin must import the first-run onboarding module');
+assert.match(adminHtml, /id="onboarding"[\s\S]*id="onboardingCard" role="dialog"/, 'admin must ship the onboarding overlay dialog');
+assert.match(adminHtml, /id="openOnboardingBtn"/, 'security settings must expose the onboarding entry');
+assert.match(adminSource, /onboarding\.maybeAutoOpen\(\)/, 'the onboarding wizard must auto-open for first-run deployments only');
 assert.match(adminSource, /const hasSettings = Array\.isArray\(theme\.settings\)/, 'theme cards must derive their settings state from the API payload');
 assert.match(adminSource, /data-theme-action="settings"/, 'theme cards must always expose a settings action');
 assert.match(adminSource, /\/api\/themes\/\$\{encodeURIComponent\(theme\.id\)\}\/config/, 'theme settings must use the protected theme config endpoint');

@@ -222,7 +222,7 @@
             </section>
             <section class="settings-panel" id="settings-security" data-settings-panel="security" hidden>
               <div class="settings-panel-grid">
-                <div class="settings-card-stack"><div class="card"><h3>TOTP</h3><div id="sTotp">检查中...</div></div><div class="card"><h3>后台入口</h3><div id="sAdminPath">加载中...</div></div></div>
+                <div class="settings-card-stack"><div class="card"><h3>TOTP</h3><div id="sTotp">检查中...</div></div><div class="card"><h3>后台入口</h3><div id="sAdminPath">加载中...</div></div><div class="card"><h3>新手向导</h3><p class="hint">重新打开首次部署向导：环境自检、接入第一台 VPS、基础安全建议。</p><button class="btn" id="openOnboardingBtn" type="button">打开新手向导</button></div></div>
                 <div class="settings-card-stack"><div class="card"><h3>管理员账号</h3><div id="sAccount">检查中...</div></div><div class="card"><h3>数据加密密钥</h3><div id="sEncryption">检查中...</div></div><div class="card"><h3>用量模型只读凭据</h3><div id="sUsageSummaryAccess">检查中...</div></div></div>
               </div>
             </section>
@@ -241,6 +241,7 @@
       </div>
     </div>
     <div class="overlay" id="overlay" aria-hidden="true"><div class="modal" id="modal"></div></div>
+    <div class="onboarding" id="onboarding" hidden aria-hidden="true"><div class="onboarding-card" id="onboardingCard" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle"></div></div>
     <div class="toast" id="toast"></div>
     <script src="/config.js?v=20260919-update22"></script>
     <script src="/vendor/chart.umd.min.js?v=4.4.9"></script>

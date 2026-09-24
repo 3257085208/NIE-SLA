@@ -1,5 +1,6 @@
 import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260919-update22";
 import { createAdminClient } from "./admin/api.js?v=20260919-update22";
+import { createOnboarding } from "./admin/onboarding.js?v=20260919-update22";
 import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260919-update22";
 import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260919-update22";
 import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260919-update22";
@@ -266,6 +267,7 @@ const {
   hasSession,
   saveSession,
 } = adminClient;
+const onboarding = createOnboarding({ apiPublic, nav, toast });
 let githubTicket = "";
 let appUpdateInfo = null;
 // 外部 Latency 节点超过该时长未上报即在后台标注为离线（与 Worker 默认 stale 窗口一致）。
@@ -351,6 +353,7 @@ function showApp() {
   byId("loginPage").style.display = "none";
   byId("app").style.display = "block";
   nav("dash");
+  onboarding.maybeAutoOpen();
 }
 function loading(id, t = "加载中...") {
   byId(id).innerHTML = '<div class="loading">' + escapeHtml(t) + "</div>";
@@ -4671,7 +4674,7 @@ byId("pTable").onclick = (e) => {
 byId("proxyTable").onclick = (e) => {
   const b = e.target.closest("button[data-a]");
   if (!b) return;
-  if (b.dataset.a === "proxy-reload") return loadPings();
+  if (b.dataset.a === "proxy-reload") return loadProxyTargets();
   const row = b.closest("tr");
   const proxy = proxyTargets[Number(row?.dataset?.i)];
   if (!proxy) return;
@@ -4681,6 +4684,7 @@ byId("proxyTable").onclick = (e) => {
 };
 byId("savePingInterval").onclick = savePingInterval;
 if (byId("saveRetention")) byId("saveRetention").onclick = saveRetention;
+if (byId("openOnboardingBtn")) byId("openOnboardingBtn").onclick = () => onboarding.open("mode");
 byId("latencyTable").onclick = (e) => {
   const button = e.target.closest("button[data-a]");
   if (!button) return;

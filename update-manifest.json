@@ -1,14 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.98",
-  "agent_version": "v1.1.98",
-  "source_ref": "app-v1.1.98",
-  "sums_sha256": "8e70e54024e41e36ddaa886567f480b3cdb42a980125ae343eb7bacf44268a9e",
-  "published_at": "2026-09-22T18:00:00Z",
-  "title": "NIE-SLA 1.1.98",
+  "version": "1.1.100",
+  "agent_version": "v1.1.100",
+  "source_ref": "app-v1.1.100",
+  "sums_sha256": "1f02465306b7daa57eb2aa1da3d21cd5ea6f7339e1dbc2ae391014305a037a46",
+  "published_at": "2026-09-24T04:48:43Z",
+  "title": "NIE-SLA 1.1.100",
   "changelog": [
-    "流量统计：修复启用流量统计或变更周期重置日后，下一份上报会把 Agent 自开机以来的累计计数器整份计入当期、导致用量虚高（如 1.60 TB vs 实际 28 GB）；现在无有效基线时不再计入全量，只从当前计数器建立基线后累计增量。",
-    "离线告警：离线判定改用每个 Agent 的真实上报心跳（WSS 与 HTTP 回退、含 Durable Object 内部心跳），不再依赖被 900 秒节流的状态镜像，修复在线节点被按 600 秒阈值误报离线；目标被禁用或删除后残留的活跃告警会自动清除。"
+    "首次部署：后台新增新手向导（环境自检 → 接入第一台 VPS → 验证心跳 → 安全建议）；老用户在向导首屏可直接跳过，之后可在 设置 → 安全 中重新打开。",
+    "安全与稳定性：fflate 升级到 0.8.3（修复 ZIP64 解析风险）、h2 与 rustls 升级到修复版本；修复代理页「重试管理」按钮、404 管理入口死链、重装误报旧版 Agent、无 root 模式 cron 看护失效、rootless 更新早期失败无法自动回滚。",
+    "容量与用量：后台容量估算改用实时遥测快照输入（不再读取已停写的状态表）；文档容量口径更新为 2026-09 实测（免费额度建议 ≤50 台，模型上限约 65 台）。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

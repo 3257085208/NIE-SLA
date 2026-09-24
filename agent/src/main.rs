@@ -441,6 +441,20 @@ fn run() -> Result<()> {
         }
         return manager::run_update_watchdog(version);
     }
+    // Rootless rollback must run before any fallible initialization below
+    // (Config::parse, instance locks, collector/queue setup). If the freshly
+    // installed binary fails on one of those early steps, a supervised restart
+    // loop would never reach a later rollback check and the node would stay
+    // dead until manual intervention.
+    #[cfg(target_os = "linux")]
+    match rollback_stale_pending_update() {
+        Ok(true) => {
+            eprintln!("{{\"ok\":true,\"update_rollback\":\"restored previous agent binary\"}}");
+            restart_after_update(&std::env::current_exe().unwrap_or_default())?;
+        }
+        Ok(false) => {}
+        Err(error) => eprintln!("stale Agent update rollback failed: {error:#}"),
+    }
     let cfg = Config::parse()?;
     if cfg.token.is_empty() {
         return Err(anyhow!("NIE_SLA_AGENT_TOKEN or --token is required"));
@@ -525,16 +539,6 @@ fn run() -> Result<()> {
     geoip::spawn_geoip_worker(cfg.clone(), http.clone());
     let mut last_report = Instant::now();
     let mut first_report = true;
-    #[cfg(target_os = "linux")]
-    match rollback_stale_pending_update() {
-        Ok(true) => {
-            eprintln!("{{\"ok\":true,\"update_rollback\":\"restored previous agent binary\"}}");
-            flush_sample_queue(&queue_tx)?;
-            restart_after_update(&std::env::current_exe().unwrap_or_default())?;
-        }
-        Ok(false) => {}
-        Err(error) => eprintln!("stale Agent update rollback failed: {error:#}"),
-    }
     let mut uploading = false;
     let mut last_upload_failed = false;
     let mut last_successful_upload = Instant::now();

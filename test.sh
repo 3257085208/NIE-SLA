@@ -3,9 +3,24 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-FRONTEND_ROOT="${NIE_SLA_FRONTEND_ROOT:-$ROOT/../frontend}"
+# Production frontend resolution order:
+#   1. explicit NIE_SLA_FRONTEND_ROOT
+#   2. in-repo frontend/ (desensitized public snapshot layout)
+#   3. sibling ../frontend (private workspace layout)
+# The deprecated agent/frontend copy carries DEPRECATED.md and is still rejected.
+FRONTEND_ROOT="${NIE_SLA_FRONTEND_ROOT:-}"
+if [[ -z "$FRONTEND_ROOT" ]]; then
+  if [[ -d "$ROOT/frontend" && ! -f "$ROOT/frontend/DEPRECATED.md" ]]; then
+    FRONTEND_ROOT="$ROOT/frontend"
+  elif [[ -d "$ROOT/../frontend" ]]; then
+    FRONTEND_ROOT="$ROOT/../frontend"
+  else
+    echo "生产 Frontend 不存在：请设置 NIE_SLA_FRONTEND_ROOT，或保留同级 ../frontend（私有工作区）/ 仓库内 frontend/（公开快照）" >&2
+    exit 1
+  fi
+fi
 if [[ ! -d "$FRONTEND_ROOT" ]]; then
-  echo "生产 Frontend 不存在：$FRONTEND_ROOT；拒绝使用 agent/frontend 旧快照替代" >&2
+  echo "生产 Frontend 不存在：$FRONTEND_ROOT" >&2
   exit 1
 fi
 FRONTEND_ROOT="$(cd "$FRONTEND_ROOT" && pwd -P)"
@@ -119,6 +134,7 @@ run_check "Ping target protocol tests" node "$ROOT/worker/tests/ping-target-prot
 run_check "time-series export tests" node "$ROOT/worker/tests/timeseries-export.test.mjs"
 run_check "compact Ping series tests" node "$ROOT/worker/tests/ping-series.test.mjs"
 run_check "legacy chart color schema migration" node "$ROOT/worker/tests/schema-color-migration.test.mjs"
+run_check "latency pending schema migration" node "$ROOT/worker/tests/schema-latency-pending-migration.test.mjs"
 run_check "debug operation log retention and safety" node "$ROOT/worker/tests/debug-logs.test.mjs"
 run_check "usage summary read-only access credential tests" node "$ROOT/worker/tests/usage-summary-access.test.mjs"
 run_check "usage summary read-only access route tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/usage-summary-access-route.test.mjs"
@@ -143,9 +159,16 @@ run_check "NIE-SLA branding migration guard" node "$ROOT/tests/branding-migratio
 
 # Release gate: replay the online-update chain against a real deployment shape
 # (no .github CI files, older preserved wrangler.jsonc, reusable-workflow
-# wrapper). Runs against the sibling public repository when it is present.
-PUBLIC_ROOT="$(cd "$FRONTEND_ROOT/.." 2>/dev/null && pwd -P)/public"
-if [[ -f "$PUBLIC_ROOT/tests/deployment-update-sim.test.mjs" && -f "$PUBLIC_ROOT/.github/workflows/nie-sla-update.yml" ]]; then
+# wrapper). The public repository is the sibling ../public in the private
+# workspace, and the repository itself when running from the public snapshot.
+FRONTEND_PARENT="$(cd "$FRONTEND_ROOT/.." 2>/dev/null && pwd -P)"
+PUBLIC_ROOT=""
+if [[ -f "$FRONTEND_PARENT/tests/deployment-update-sim.test.mjs" ]]; then
+  PUBLIC_ROOT="$FRONTEND_PARENT"
+elif [[ -f "$FRONTEND_PARENT/public/tests/deployment-update-sim.test.mjs" ]]; then
+  PUBLIC_ROOT="$FRONTEND_PARENT/public"
+fi
+if [[ -n "$PUBLIC_ROOT" && -f "$PUBLIC_ROOT/.github/workflows/nie-sla-update.yml" ]]; then
   run_shell "deployment update simulation" "cd '$PUBLIC_ROOT' && node tests/deployment-update-sim.test.mjs"
 fi
 

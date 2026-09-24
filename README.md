@@ -4,7 +4,7 @@
 
 **运行在 Cloudflare 上的状态页与 VPS 探针**
 
-**Stable · 1.1.98**
+**Stable · 1.1.100**
 
 Worker Static Assets + D1 + R2 + Durable Objects + Rust Agent
 
@@ -52,7 +52,7 @@ flowchart LR
 2. 登录并授权 GitHub、Cloudflare。
 3. 填写后台账号、后台密码、后台路径和独立长期加密密钥。
 4. 等待构建完成，打开 Worker 地址。
-5. 访问 `Worker 地址 + 后台路径`，登录后按界面引导添加 VPS。
+5. 访问 `Worker 地址 + 后台路径`；首次登录会自动弹出新手向导（环境自检 → 接入第一台 VPS → 验证心跳 → 安全建议），老用户在向导首屏选「我已熟悉」即可跳过，之后可在 设置 → 安全 重新打开。
 
 不需要填写 Agent Token。每台 VPS 的 Token 在后台首次生成部署命令时随机创建。`TOTP_ENCRYPTION_KEY` 使用至少 32 位随机值并长期保持不变；TOTP 默认关闭。
 

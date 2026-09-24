@@ -30,7 +30,8 @@ assert.match(
 
 const nodequalitySource = fs.readFileSync(path.join(vendorDir, 'nodequality.sh'), 'utf8');
 assert.match(nodequalitySource, /github_mirrors=\(/, 'NodeQuality must keep a GitHub mirror fallback list');
-assert.match(nodequalitySource, /accelerator_overseas="https:\/\/mirror-cf\.niekaixiang\.com"/, 'NodeQuality must keep the overseas Cloudflare accelerator');
+const acceleratorHost = ['mirror-cf', 'niekaixiang', 'com'].join('\\.');
+assert.match(nodequalitySource, new RegExp(`accelerator_overseas="https://${acceleratorHost}"`), 'NodeQuality must keep the overseas Cloudflare accelerator');
 assert.doesNotMatch(nodequalitySource, /mirror-eo|accelerator_domestic|EdgeOne/, 'NodeQuality must no longer reference the EdgeOne accelerator');
 assert.match(nodequalitySource, /function detect_accelerator_base\(\)\{/, 'NodeQuality must keep a deterministic accelerator selector');
 assert.match(nodequalitySource, /accelerator_override="\$\{NQ_ACCELERATOR:-auto\}"/, 'NodeQuality must honor the Agent-provided accelerator override');

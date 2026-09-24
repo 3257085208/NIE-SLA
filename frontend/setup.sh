@@ -168,12 +168,31 @@ verify_agent_version() {
   ok "Agent 版本：$actual"
 }
 
+# The installer itself creates /usr/local/bin/nstatus-metrics as a compatibility
+# symlink to the current binary. Treating that symlink as a legacy install made
+# every re-install report "legacy nstatus-metrics detected" and offer an
+# unnecessary purge. Only a real leftover file (or a symlink pointing somewhere
+# else) counts as legacy.
+is_own_compat_symlink() {
+  local candidate="$1" link_target resolved target
+  [[ -L "$candidate" ]] || return 1
+  link_target="$(readlink "$candidate" 2>/dev/null || true)"
+  [[ "$link_target" == "${WORK_DIR}/${BIN_NAME}" ]] && return 0
+  resolved="$(readlink -f "$candidate" 2>/dev/null || true)"
+  target="$(readlink -f "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || true)"
+  [[ -n "$resolved" && "$resolved" == "$target" ]] && return 0
+  return 1
+}
+
 legacy_install_detected() {
   if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep -q '^nstatus-metrics'; then
     return 0
   fi
   [[ -d "$LEGACY_WORK_DIR" || -d "$LEGACY_STATE_DIR" || -d "$LEGACY_MANAGER_STATE_DIR" ]] && return 0
-  [[ -f "/usr/local/bin/${LEGACY_SERVICE_NAME}" || -f "/etc/init.d/${LEGACY_SERVICE_NAME}" ]] && return 0
+  if [[ -e "/usr/local/bin/${LEGACY_SERVICE_NAME}" ]] && ! is_own_compat_symlink "/usr/local/bin/${LEGACY_SERVICE_NAME}"; then
+    return 0
+  fi
+  [[ -f "/etc/init.d/${LEGACY_SERVICE_NAME}" ]] && return 0
   return 1
 }
 
@@ -515,10 +534,14 @@ remove_rootless_watchdog() {
 # alive after logout even when linger cannot be enabled.
 install_rootless_watchdog() {
   local watchdog="${STATE_DIR}/watchdog.sh"
+  # Bracket the first path character ([/]opt/...) so the grep pattern can never
+  # match the grep process' own argv, which previously made the watchdog exit 0
+  # even when the Agent was dead, disabling the only rootless auto-restart path.
+  local bin_pattern="[/]$(printf '%s' "${WORK_DIR#/}/${BIN_NAME}")"
   cat > "$watchdog" <<EOF
 #!/bin/sh
 BIN=$(shell_quote "${WORK_DIR}/${BIN_NAME}")
-if ps -eo args 2>/dev/null | grep -F -q -- "\$BIN"; then exit 0; fi
+if ps -eo args 2>/dev/null | grep -q -- $(shell_quote "$bin_pattern"); then exit 0; fi
 cd $(shell_quote "$STATE_DIR") || exit 1
 set -a; . $(shell_quote "$ENV_FILE"); set +a
 nohup "\$BIN" >> $(shell_quote "${STATE_DIR}/${SERVICE_NAME}.log") 2>&1 &

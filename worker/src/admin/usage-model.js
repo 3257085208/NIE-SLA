@@ -1,4 +1,6 @@
-import { parseBoolean } from '../utils.js';
+import { parseBoolean, nowSec } from '../utils.js';
+import { bufferedAgentStateEnabled, agentStateTimestamp } from '../agent-state.js';
+import { readFleetLatestAgentStates } from '../telemetry-buffer.js';
 
 export const MODEL_VERSION = 'usage-model-embedded-v1.4.2';
 
@@ -196,6 +198,18 @@ export async function estimateUsageFromEnv(env, hours = 24) {
   return estimateUsage({ ...(await usageInputsFromEnv(env)), hours });
 }
 
+// WSS capability heuristic kept in sync with scripts/usage-model.mjs: WS
+// transport landed in v1.1.16, so newer versions are treated as WSS agents.
+function versionAtLeast(value, minimum) {
+  const parse = (input) => String(input || '').replace(/^v/i, '').split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const current = parse(value);
+  const floor = parse(minimum);
+  for (let index = 0; index < 3; index += 1) {
+    if ((current[index] || 0) !== (floor[index] || 0)) return (current[index] || 0) > (floor[index] || 0);
+  }
+  return true;
+}
+
 export async function usageInputsFromEnv(env) {
   const one = async (sql, ...binds) => {
     try {
@@ -210,14 +224,55 @@ export async function usageInputsFromEnv(env) {
   // was the main source of the old overestimation.
   const offlineAfterSec = Math.max(120, Math.min(3600, Number(env.AGENT_OFFLINE_AFTER_SEC || 1800)));
   const onlineFilter = `s.updated_at IS NOT NULL AND CAST(strftime('%s', s.updated_at) AS INTEGER) >= CAST(strftime('%s','now') AS INTEGER) - ?`;
-  const [agents, wssAgents, targets, pingTargets, latencyNodes, trafficAgents] = await Promise.all([
-    one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND ${onlineFilter}`, offlineAfterSec),
-    one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND s.capabilities LIKE '%"protocol"%' AND ${onlineFilter}`, offlineAfterSec),
-    one('SELECT COUNT(*) AS n FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0'),
-    one('SELECT COUNT(*) AS n FROM ping_targets WHERE enabled = 1'),
-    one(`SELECT COUNT(*) AS n FROM latency_agents WHERE enabled = 1 AND COALESCE(last_seen_at, 0) >= CAST(strftime('%s','now') AS INTEGER) - 1800`),
-    one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND t.traffic_enabled = 1 AND ${onlineFilter}`, offlineAfterSec),
-  ]);
+  // Production disables the D1 latest-state mirror, so agent_metrics_state is
+  // not maintained there. Read the buffered fleet snapshot (TelemetryBuffer DO)
+  // first and keep the D1 rows as the fallback instead of silently feeding the
+  // model zeros.
+  let bufferedStates = null;
+  if (bufferedAgentStateEnabled(env)) {
+    try {
+      const states = await readFleetLatestAgentStates(env);
+      if (states && Object.keys(states).length) bufferedStates = states;
+    } catch (_) {
+      bufferedStates = null;
+    }
+  }
+  let agents = 0;
+  let wssAgents = 0;
+  let targets = 0;
+  let pingTargets = 0;
+  let latencyNodes = 0;
+  let trafficAgents = 0;
+  if (bufferedStates) {
+    const targetRows = await env.DB.prepare('SELECT id, traffic_enabled, no_public_ip FROM targets WHERE enabled = 1')
+      .all().catch(() => ({ results: [] }));
+    const enabledTargets = targetRows.results || [];
+    const targetById = new Map(enabledTargets.map((row) => [String(row.id), row]));
+    const freshAfter = nowSec() - offlineAfterSec;
+    for (const [agentId, state] of Object.entries(bufferedStates)) {
+      const updatedAt = agentStateTimestamp(state?.updated_at);
+      if (!updatedAt || updatedAt < freshAfter) continue;
+      const target = targetById.get(String(agentId));
+      if (!target) continue;
+      agents += 1;
+      if (versionAtLeast(state?.agent_version, '1.1.16')) wssAgents += 1;
+      if (Number(target.traffic_enabled || 0) === 1) trafficAgents += 1;
+    }
+    targets = enabledTargets.filter((row) => Number(row.no_public_ip || 0) === 0).length;
+    [pingTargets, latencyNodes] = await Promise.all([
+      one('SELECT COUNT(*) AS n FROM ping_targets WHERE enabled = 1'),
+      one(`SELECT COUNT(*) AS n FROM latency_agents WHERE enabled = 1 AND COALESCE(last_seen_at, 0) >= CAST(strftime('%s','now') AS INTEGER) - 1800`),
+    ]);
+  } else {
+    [agents, wssAgents, targets, pingTargets, latencyNodes, trafficAgents] = await Promise.all([
+      one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND ${onlineFilter}`, offlineAfterSec),
+      one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND s.capabilities LIKE '%"protocol"%' AND ${onlineFilter}`, offlineAfterSec),
+      one('SELECT COUNT(*) AS n FROM targets WHERE enabled = 1 AND COALESCE(no_public_ip, 0) = 0'),
+      one('SELECT COUNT(*) AS n FROM ping_targets WHERE enabled = 1'),
+      one(`SELECT COUNT(*) AS n FROM latency_agents WHERE enabled = 1 AND COALESCE(last_seen_at, 0) >= CAST(strftime('%s','now') AS INTEGER) - 1800`),
+      one(`SELECT COUNT(*) AS n FROM agent_metrics_state s JOIN targets t ON t.id = s.agent_id WHERE t.enabled = 1 AND t.traffic_enabled = 1 AND ${onlineFilter}`, offlineAfterSec),
+    ]);
+  }
   // Production disables the latest_status mirror; the estimate must follow
   // the deployment flag instead of assuming the default-on path.
   const latestStatusToD1 = parseBoolean(env.PROBE_LATEST_STATUS_TO_D1 ?? true, true);

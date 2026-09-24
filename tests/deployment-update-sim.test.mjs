@@ -60,7 +60,7 @@ const OLD_CONFIG = {
   workers_dev: true,
   assets: { directory: './dist-one-click', binding: 'ASSETS', run_worker_first: true, not_found_handling: '404-page' },
   triggers: { crons: ['* * * * *'] },
-  d1_databases: [{ binding: 'DB', database_name: 'nie-sla-db', database_id: '279ad7f9-0b69-49aa-90eb-c42321eda6c3' }],
+  d1_databases: [{ binding: 'DB', database_name: 'nie-sla-db', database_id: '11111111-1111-4111-8111-111111111111' }],
   r2_buckets: [{ binding: 'ARCHIVE', bucket_name: 'nie-sla-archive' }],
   durable_objects: {
     bindings: [
