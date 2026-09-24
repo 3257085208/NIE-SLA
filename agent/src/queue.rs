@@ -1,5 +1,5 @@
 use super::{json_string, sample_json, QueueCommand, SamplePoint, QUEUE_FLUSH_SEC};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
@@ -22,9 +22,30 @@ pub(super) fn default_queue_file() -> String {
         .to_string()
 }
 
+// Parsing the queue builds a JSON DOM several times the file size before the
+// sample structs are materialized. A very large queue (for example a legacy
+// queue copied over by the installer) could push a small VPS into OOM, so
+// anything beyond this bound is parked aside instead of being loaded.
+const MAX_QUEUE_LOAD_BYTES: u64 = 24 * 1024 * 1024;
+
 pub(super) fn load_sample_queue(path: &Path) -> Result<VecDeque<SamplePoint>> {
     if !path.exists() {
         return Ok(VecDeque::new());
+    }
+    let size = fs::metadata(path)
+        .with_context(|| format!("stat sample queue {}", path.display()))?
+        .len();
+    if size > MAX_QUEUE_LOAD_BYTES {
+        let parked = path.with_extension("json.oversized");
+        let _ = fs::remove_file(&parked);
+        let _ = fs::rename(path, &parked);
+        return Err(anyhow!(
+            "sample queue {} is too large to load ({} bytes, limit {}); parked as {}",
+            path.display(),
+            size,
+            MAX_QUEUE_LOAD_BYTES,
+            parked.display()
+        ));
     }
     let data = fs::read(path).with_context(|| format!("read sample queue {}", path.display()))?;
     let values: serde_json::Value = serde_json::from_slice(&data)
@@ -333,6 +354,22 @@ mod tests {
         let error = load_sample_queue(&path).unwrap_err().to_string();
         assert!(error.contains("parse sample queue"));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn oversized_queue_is_parked_instead_of_loaded() {
+        let dir = env::temp_dir().join(format!("nstatus-queue-oversized-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("samples-queue.json");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(MAX_QUEUE_LOAD_BYTES + 1).unwrap();
+        drop(file);
+        let error = load_sample_queue(&path).unwrap_err().to_string();
+        assert!(error.contains("too large"), "unexpected error: {error}");
+        assert!(!path.exists(), "oversized queue must be moved aside");
+        assert!(dir.join("samples-queue.json.oversized").is_file());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -975,7 +975,8 @@ function trafficCell(t, s = {}) {
     resetDay = Number(tr.reset_day);
   const percentText = percent != null && Number.isFinite(percent) ? ` · ${percent}%` : "";
   const reset = Number.isInteger(resetDay) && resetDay >= 1 && resetDay <= 31 ? ` · ${resetDay}日重置` : "";
-  return `<span class="tag tag-on">已启用</span><br><small class="hint">${escapeHtml(fmtBytes(total))}${quota ? " / " + escapeHtml(fmtBytes(quota)) : ""}${escapeHtml(percentText)}${escapeHtml(reset)}</small>`;
+  const quotaText = quota ? " / " + escapeHtml(fmtBytes(quota)) : " · 无限流量";
+  return `<span class="tag tag-on">已启用</span><br><small class="hint">${escapeHtml(fmtBytes(total))}${quotaText}${escapeHtml(percentText)}${escapeHtml(reset)}</small>`;
 }
 async function loadTargets() {
   loading(
@@ -1773,7 +1774,7 @@ function bulkTargetModal() {
       </div></fieldset>
       <fieldset class="bulk-section"><legend>流量</legend><div class="bulk-edit-grid">
         ${bulkField("traffic_enabled", "流量统计", `<select id="bulkTrafficEnabled" disabled>${bulkBooleanOptions()}</select>`)}
-        ${bulkField("traffic_quota_gb", "每月流量上限 GB", '<input id="bulkTrafficQuota" type="number" min="0" max="1048576" step="0.1" value="0" disabled>')}
+        ${bulkField("traffic_quota_gb", "每月流量上限 GB", '<input id="bulkTrafficQuota" type="number" min="0" max="1048576" step="0.1" value="0" disabled><label class="switch-line"><input type="checkbox" id="bulkTrafficUnlimited" disabled><span>无限流量（勾选后忽略上面的数值）</span></label>')}
         ${bulkField("traffic_mode", "流量计费方式", `<select id="bulkTrafficMode" disabled>${trafficModeOptions("total")}</select>`)}
         ${bulkField("traffic_reset_day", "流量重置日", '<input id="bulkTrafficResetDay" type="number" min="1" max="31" step="1" value="1" disabled>', "修改后按每日记录重算当前周期")}
       </div></fieldset>
@@ -1834,7 +1835,7 @@ function saveBulkTargets() {
     if (enabled.has("currency")) changes.currency = byId("bulkCurrency").value;
     if (enabled.has("billing_cycle")) changes.billing_cycle = byId("bulkBilling").value;
     if (enabled.has("traffic_enabled")) changes.traffic_enabled = byId("bulkTrafficEnabled").value === "true";
-    if (enabled.has("traffic_quota_gb")) changes.traffic_quota_gb = bulkNullableNumber("bulkTrafficQuota", "流量上限", 1048576) ?? 0;
+    if (enabled.has("traffic_quota_gb")) changes.traffic_quota_gb = byId("bulkTrafficUnlimited")?.checked ? 0 : (bulkNullableNumber("bulkTrafficQuota", "流量上限", 1048576) ?? 0);
     if (enabled.has("traffic_mode")) changes.traffic_mode = byId("bulkTrafficMode").value;
     if (enabled.has("traffic_reset_day")) {
       const day = Number(byId("bulkTrafficResetDay").value);
@@ -2054,7 +2055,7 @@ function targetModalHtml(target, isEdit) {
     )}
 
     <div class="form-grid fvps">
-      ${formField("本 VPS 每月流量上限 GB", `<input id="mTrafficQuota" type="number" min="0" step="0.1" value="${escapeHtml(target.traffic_quota_gb || 0)}">`)}
+      ${formField("本 VPS 每月流量上限 GB", `<input id="mTrafficQuota" type="number" min="0" step="0.1" value="${escapeHtml(target.traffic_quota_gb || 0)}"><label class="switch-line"><input type="checkbox" id="mTrafficUnlimited"${Number(target.traffic_quota_gb || 0) > 0 ? "" : " checked"}><span>无限流量（不设上限、不触发流量告警）</span></label>`)}
       ${formField("流量重置日（每月）", `<input id="mTrafficResetDay" type="number" min="1" max="31" step="1" value="${escapeHtml(target.traffic_reset_day ?? 1)}"><p class="hint">填写 1–31；短月份自动使用当月最后一天。</p>`)}
     </div>
     ${formField("流量计费方式", `<select id="mTrafficMode">${trafficModeOptions(target.traffic_mode)}</select>`, "fvps")}
@@ -2111,6 +2112,14 @@ function targetModal(target = null) {
   byId("mType").onchange = toggleTargetTypeFields;
   byId("mNoPublicIp").onchange = toggleNoPublicIpFields;
   byId("mProvider").onchange = toggleCustomProvider;
+  const unlimitedToggle = byId("mTrafficUnlimited");
+  if (unlimitedToggle) {
+    unlimitedToggle.onchange = () => {
+      const quota = byId("mTrafficQuota");
+      if (quota) quota.disabled = unlimitedToggle.checked;
+    };
+    unlimitedToggle.onchange();
+  }
   toggleCustomProvider();
   toggleTargetTypeFields();
   byId("saveTarget").onclick = () => saveTarget(isEdit);
@@ -2146,7 +2155,9 @@ async function saveTarget(edit) {
     billing_cycle: byId("mBilling")?.value || "",
     currency: byId("mCurrency")?.value || "USD",
     traffic_enabled: byId("mType").value === "tcp" && !!byId("mTrafficEnabled")?.checked,
-    traffic_quota_gb: byId("mType").value === "tcp" ? Number(byId("mTrafficQuota")?.value) || 0 : 0,
+    traffic_quota_gb: byId("mType").value === "tcp"
+      ? (byId("mTrafficUnlimited")?.checked ? 0 : Number(byId("mTrafficQuota")?.value) || 0)
+      : 0,
     traffic_mode: byId("mTrafficMode")?.value || "total",
     traffic_reset_day: byId("mType").value === "tcp" ? trafficResetDay : 1,
     alert_enabled: !!byId("mAlertEnabled")?.checked,
@@ -2259,7 +2270,7 @@ function installModeModal(target, command, rootlessCommand) {
       ${rootlessCommand ? `
       <div class="install-mode-card">
         <h4>无 root 版<span class="install-mode-tag install-mode-tag-quiet">安全</span></h4>
-        <p>仅遥测与 Ping，零特权操作：安装在用户目录，不创建系统服务、不含任务 Manager，自动更新同样可用。</p>
+        <p>仅遥测与 Ping，零特权操作：安装在用户目录，不创建系统服务、不含任务 Manager，自动更新同样可用。请以普通用户身份登录后执行（root 用户请选完整版）。</p>
         <button type="button" class="btn" data-copy-cmd="${escapeAttr(rootlessCommand)}">复制无 root 命令</button>
       </div>` : ""}
     </div>

@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.100",
-  "agent_version": "v1.1.100",
-  "source_ref": "app-v1.1.100",
-  "sums_sha256": "1f02465306b7daa57eb2aa1da3d21cd5ea6f7339e1dbc2ae391014305a037a46",
-  "published_at": "2026-09-24T04:48:43Z",
-  "title": "NIE-SLA 1.1.100",
+  "version": "1.1.101",
+  "agent_version": "v1.1.101",
+  "source_ref": "app-v1.1.101",
+  "sums_sha256": "b9684e466f72f224e386c7e2f297d5d5741e7b12627bc91a8bafca6b4331b463",
+  "published_at": "2026-09-24T10:55:16Z",
+  "title": "NIE-SLA 1.1.101",
   "changelog": [
-    "首次部署：后台新增新手向导（环境自检 → 接入第一台 VPS → 验证心跳 → 安全建议）；老用户在向导首屏可直接跳过，之后可在 设置 → 安全 中重新打开。",
-    "安全与稳定性：fflate 升级到 0.8.3（修复 ZIP64 解析风险）、h2 与 rustls 升级到修复版本；修复代理页「重试管理」按钮、404 管理入口死链、重装误报旧版 Agent、无 root 模式 cron 看护失效、rootless 更新早期失败无法自动回滚。",
-    "容量与用量：后台容量估算改用实时遥测快照输入（不再读取已停写的状态表）；文档容量口径更新为 2026-09 实测（免费额度建议 ≤50 台，模型上限约 65 台）。"
+    "无 root 版安全加固：拒绝以 root 执行 --rootless；无 root 版即使以 root 运行也不会执行 NodeQuality / IP 解锁 / 回程等固定任务。",
+    "流量设置新增「无限流量」选项；IP 解锁报告不再显示脚本噪声；卸载支持 uninstall --rootless。",
+    "稳定性：超过 24 MiB 的采样队列不再加载而是备份为 .oversized，修复旧版大队列迁移在小内存 VPS 首次启动造成约 300 MB 内存峰值。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

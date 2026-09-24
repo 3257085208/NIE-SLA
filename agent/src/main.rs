@@ -487,7 +487,19 @@ fn run() -> Result<()> {
     if cfg.task_runner_only {
         return manager::run(&cfg, &http);
     }
-    manager::bootstrap_if_root();
+    // Rootless installs have no privileged manager service; a root-owned
+    // process there is the explicit force flag path and must not try to
+    // enable a manager unit that does not exist.
+    let rootless_requested = matches!(
+        env_compat("NIE_SLA_ROOTLESS", "NSTATUS_ROOTLESS", "")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes"
+    );
+    if !rootless_requested {
+        manager::bootstrap_if_root();
+    }
     let disk_rows: DiskRowsCache = Arc::new(Mutex::new(Vec::new()));
     spawn_disk_worker(disk_rows.clone());
     let mut collector = Collector::new(disk_rows);

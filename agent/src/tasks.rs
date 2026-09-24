@@ -1035,6 +1035,23 @@ fn unlock_services_from_json(value: &Value) -> Option<Vec<Value>> {
 fn json_text(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(text)) => text.trim().chars().take(80).collect(),
+        Some(Value::Object(map)) => {
+            // Structured fields occasionally nest the scalar, e.g.
+            // {"dataType":"...","value":"US"}; never emit raw JSON here.
+            for key in ["value", "Value", "text", "Text", "name", "Name"] {
+                if let Some(inner) = map.get(key) {
+                    let text = match inner {
+                        Value::String(text) => text.trim().to_string(),
+                        other if !other.is_null() => other.to_string(),
+                        _ => String::new(),
+                    };
+                    if !text.is_empty() {
+                        return text.chars().take(80).collect();
+                    }
+                }
+            }
+            String::new()
+        }
         Some(value) if !value.is_null() => value.to_string().chars().take(80).collect(),
         _ => String::new(),
     }
@@ -1186,7 +1203,30 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 #[cfg(target_os = "linux")]
+fn rootless_mode_requested() -> bool {
+    ["NIE_SLA_ROOTLESS", "NSTATUS_ROOTLESS"].iter().any(|key| {
+        std::env::var(key)
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes"
+                )
+            })
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(target_os = "linux")]
 fn ensure_privileged_fixed_task_context() -> Result<()> {
+    // A rootless install must never run privileged fixed tasks, even when the
+    // process happens to run as root (forced install): the user opted out of
+    // the privileged manager, and the Worker treats these nodes as
+    // telemetry-only.
+    if rootless_mode_requested() {
+        return Err(anyhow!(
+            "rootless installs cannot run fixed tasks; reinstall the full Agent to use NodeQuality, IP unlock or backroute"
+        ));
+    }
     if unsafe { libc::geteuid() } != 0 {
         return Err(anyhow!(
             "NodeQuality and IP unlock tasks require the privileged Agent manager"
@@ -1913,8 +1953,22 @@ fn unlock_row_values(line: &str) -> Vec<String> {
         .unwrap_or(line);
     after
         .split_whitespace()
-        .map(|part| part.trim().trim_matches('\u{feff}').to_string())
-        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let part = part.trim().trim_matches('\u{feff}');
+            // Some IP.Check.Place builds leak raw script fragments such as
+            // `{dataType:a.MinervaValueDataType.STRING,` into a value row.
+            // Blank the cell instead of keeping the garbage, and keep the
+            // slot so the remaining values stay aligned with their services.
+            if part.contains('{')
+                || part.contains('}')
+                || part.contains("dataType")
+                || part.contains("Minerva")
+            {
+                String::new()
+            } else {
+                part.to_string()
+            }
+        })
         .collect()
 }
 
@@ -2289,6 +2343,31 @@ mod tests {
         assert_eq!(result.result["services"].as_array().unwrap().len(), 7);
         assert!(result.excerpt.contains("服务商"));
         assert!(result.result["report"].as_str().unwrap().contains("服务商"));
+    }
+
+    #[test]
+    fn unlock_grid_blanks_script_noise_tokens() {
+        let output = "服务商： TikTok Disney+ Netflix Youtube AmazonPV Reddit ChatGPT\n状态： 解锁 屏蔽 解锁 解锁 解锁 解锁 解锁\n地区： {dataType:a.MinervaValueDataType.STRING, [US] [] [US] [US] [US] [US] [US]\n方式： 原生 DNS 原生 原生 原生 原生 原生";
+        let services = parse_unlock_services(output);
+        assert_eq!(services.len(), 7);
+        assert_eq!(services[0]["region"], "");
+        assert_eq!(services[1]["region"], "[US]");
+        assert!(!services.iter().any(|service| service["region"]
+            .as_str()
+            .unwrap_or("")
+            .contains("dataType")));
+    }
+
+    #[test]
+    fn json_text_extracts_nested_scalar_values() {
+        let value: Value = serde_json::json!({
+            "Status": {"dataType": "STRING", "value": "Yes"},
+            "Region": {"value": "US"},
+            "Type": "Native"
+        });
+        assert_eq!(json_text(value.get("Status")), "Yes");
+        assert_eq!(json_text(value.get("Region")), "US");
+        assert_eq!(json_text(value.get("Type")), "Native");
     }
 
     #[test]

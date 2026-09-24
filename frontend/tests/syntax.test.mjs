@@ -42,6 +42,10 @@ assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/a
 assert.match(adminSource, /import \{ createOnboarding \} from "\.\/admin\/onboarding\.js\?v=20260919-update22"/, 'admin must import the first-run onboarding module');
 assert.match(adminHtml, /id="onboarding"[\s\S]*id="onboardingCard" role="dialog"/, 'admin must ship the onboarding overlay dialog');
 assert.match(adminHtml, /id="openOnboardingBtn"/, 'security settings must expose the onboarding entry');
+assert.match(adminSource, /id="mTrafficUnlimited"/, 'target traffic settings must offer the unlimited quota option');
+assert.match(adminSource, /id="bulkTrafficUnlimited"/, 'bulk traffic settings must offer the unlimited quota option');
+assert.match(adminSource, /请以普通用户身份登录后执行/, 'the rootless install card must explain the unprivileged requirement');
+assert.match(appSource, /无限流量/, 'the public VPS detail must label unlimited traffic');
 assert.match(adminSource, /onboarding\.maybeAutoOpen\(\)/, 'the onboarding wizard must auto-open for first-run deployments only');
 assert.match(adminSource, /apiPublic\("\/api\/status\?days=1&lite=1", 8_000\)/, 'dashboard basic cards must render from the cheap public snapshot before the full 30-day build');
 assert.match(adminSource, /const hasSettings = Array\.isArray\(theme\.settings\)/, 'theme cards must derive their settings state from the API payload');

@@ -384,7 +384,12 @@ migrate_legacy_state() {
   if [[ -d "$LEGACY_STATE_DIR" && ! -L "$LEGACY_STATE_DIR" ]]; then
     for name in samples-queue.json; do
       if [[ -f "${LEGACY_STATE_DIR}/${name}" && ! -L "${LEGACY_STATE_DIR}/${name}" && ! -e "${STATE_DIR}/${name}" ]]; then
-        cp -p "${LEGACY_STATE_DIR}/${name}" "${STATE_DIR}/${name}"
+        legacy_size="$(wc -c < "${LEGACY_STATE_DIR}/${name}" 2>/dev/null || echo 0)"
+        if [[ "${legacy_size:-0}" -le 8388608 ]]; then
+          cp -p "${LEGACY_STATE_DIR}/${name}" "${STATE_DIR}/${name}"
+        else
+          warn "旧版采样队列过大（${legacy_size} 字节），已跳过迁移以避免首次启动内存峰值；原文件保留在 ${LEGACY_STATE_DIR}/${name}"
+        fi
       fi
     done
   fi
@@ -830,6 +835,9 @@ do_uninstall() {
   esac
   need_root
   title "卸载 NIE-SLA Agent"
+  if [[ -d "$HOME/nie-sla-agent" ]] || { command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -q 'nie-sla-agent-watchdog'; }; then
+    warn "检测到当前用户的 rootless 安装：请改用 NIE_SLA_ROOTLESS=1 bash $0 uninstall（或 uninstall --rootless）卸载它"
+  fi
   case "$(detect_init)" in
     systemd)
       systemctl stop "$SERVICE_NAME" 2>/dev/null || true
@@ -861,7 +869,14 @@ do_uninstall() {
 NON_INTERACTIVE=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    uninstall) do_uninstall; exit 0 ;;
+    uninstall)
+      shift
+      # Accept `uninstall --rootless` as well as the documented
+      # `NIE_SLA_ROOTLESS=1 ... uninstall` form.
+      for arg in "$@"; do
+        case "$arg" in --rootless) export NIE_SLA_ROOTLESS="${NIE_SLA_ROOTLESS:-1}" ;; esac
+      done
+      do_uninstall; exit 0 ;;
     --api) NIE_SLA_API_BASE="$2"; shift 2 ;;
     --token|--token=*)
       err "--token 已停用：命令行密钥会留在 ps 与 shell 历史中；请改用 NIE_SLA_AGENT_TOKEN=... 环境变量或交互输入"
@@ -889,6 +904,19 @@ esac
 
 if [[ "$ROOTLESS_MODE" != "true" ]]; then
   need_root
+elif [[ "$(id -u 2>/dev/null || echo 1)" == "0" ]]; then
+  # Rootless means "run as an unprivileged user". Installing as root would
+  # hand the Agent (and anyone who compromises it) full root, silently losing
+  # the isolation the mode promises.
+  if [[ "${NIE_SLA_ALLOW_ROOT_ROOTLESS:-}" == "1" ]]; then
+    warn "以 root 运行无 root 版：Agent 进程将拥有完整 root 权限，仅在明确知情时继续"
+  else
+    err "检测到以 root 执行 --rootless：无 root 版的目的是以普通用户身份运行。"
+    err "以 root 安装会让 Agent 获得完整 root 权限，失去“无 root”的隔离意义。"
+    err "请用普通用户登录后重试（保留 --rootless）；若希望以 root 安装，请去掉 --rootless 使用完整版。"
+    err "确需强制（不推荐）：设置 NIE_SLA_ALLOW_ROOT_ROOTLESS=1。"
+    exit 2
+  fi
 fi
 
 API_BASE="${NIE_SLA_API_BASE:-${NSTATUS_API_BASE:-}}"
