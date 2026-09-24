@@ -1,5 +1,7 @@
 use super::{json_string, sample_json, QueueCommand, SamplePoint, QUEUE_FLUSH_SEC};
 use anyhow::{anyhow, Context, Result};
+use serde::de::{SeqAccess, Visitor};
+use serde::Deserializer;
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
@@ -22,11 +24,40 @@ pub(super) fn default_queue_file() -> String {
         .to_string()
 }
 
-// Parsing the queue builds a JSON DOM several times the file size before the
-// sample structs are materialized. A very large queue (for example a legacy
-// queue copied over by the installer) could push a small VPS into OOM, so
-// anything beyond this bound is parked aside instead of being loaded.
-const MAX_QUEUE_LOAD_BYTES: u64 = 24 * 1024 * 1024;
+// Even a streaming parse keeps the whole queue in memory as sample structs;
+// this bound only stops absurd files (for example a legacy queue copied over
+// by the installer) from being read at all. The streaming visitor below
+// means the transient memory cost no longer scales with the file size.
+const MAX_QUEUE_LOAD_BYTES: u64 = 64 * 1024 * 1024;
+
+struct QueueStreamVisitor {
+    queue: VecDeque<SamplePoint>,
+    dropped: usize,
+}
+
+impl<'de> Visitor<'de> for QueueStreamVisitor {
+    type Value = (VecDeque<SamplePoint>, usize);
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("an array of sample points")
+    }
+
+    fn visit_seq<A>(mut self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        // Elements are decoded and converted one at a time; the intermediate
+        // JSON value is dropped immediately, so peak memory stays bounded by
+        // the largest single sample instead of the whole file.
+        while let Some(value) = seq.next_element::<serde_json::Value>()? {
+            match sample_from_json(&value) {
+                Some(sample) => self.queue.push_back(sample),
+                None => self.dropped += 1,
+            }
+        }
+        Ok((self.queue, self.dropped))
+    }
+}
 
 pub(super) fn load_sample_queue(path: &Path) -> Result<VecDeque<SamplePoint>> {
     if !path.exists() {
@@ -47,20 +78,29 @@ pub(super) fn load_sample_queue(path: &Path) -> Result<VecDeque<SamplePoint>> {
             parked.display()
         ));
     }
-    let data = fs::read(path).with_context(|| format!("read sample queue {}", path.display()))?;
-    let values: serde_json::Value = serde_json::from_slice(&data)
-        .with_context(|| format!("parse sample queue {}", path.display()))?;
-    let values = values
-        .as_array()
-        .with_context(|| format!("sample queue {} is not an array", path.display()))?;
-    let mut queue = VecDeque::with_capacity(values.len());
-    let mut dropped = 0usize;
-    for value in values {
-        match sample_from_json(value) {
-            Some(sample) => queue.push_back(sample),
-            None => dropped += 1,
-        }
-    }
+    let file =
+        fs::File::open(path).with_context(|| format!("read sample queue {}", path.display()))?;
+    let mut deserializer = serde_json::Deserializer::from_reader(std::io::BufReader::new(file));
+    let (queue, dropped) = deserializer
+        .deserialize_seq(QueueStreamVisitor {
+            queue: VecDeque::new(),
+            dropped: 0,
+        })
+        .map_err(|error| {
+            let message = error.to_string();
+            if message.contains("invalid type") {
+                anyhow!(
+                    "sample queue {} is not an array: {}",
+                    path.display(),
+                    message
+                )
+            } else {
+                anyhow!("parse sample queue {}: {}", path.display(), message)
+            }
+        })?;
+    deserializer
+        .end()
+        .map_err(|error| anyhow!("parse sample queue {}: {}", path.display(), error))?;
     if dropped > 0 {
         // A damaged entry must not vanish silently: visibility matters more
         // than the (bounded) extra log line.
@@ -79,9 +119,21 @@ pub(super) fn save_sample_queue(path: &Path, samples: &VecDeque<SamplePoint>) ->
             .with_context(|| format!("create sample queue directory {}", parent.display()))?;
     }
     let (temp, mut file) = create_queue_temp_file(path, parent)?;
-    let values: Vec<_> = samples.iter().map(sample_json).collect();
     let write_result = (|| -> Result<()> {
-        file.write_all(&serde_json::to_vec(&values)?)
+        // Stream the array element by element instead of building a full
+        // serde_json::Value DOM first: the previous collect() created a
+        // multi-hundred-megabyte transient allocation for large backlogs.
+        file.write_all(b"[")
+            .with_context(|| format!("write sample queue {}", temp.display()))?;
+        for (index, sample) in samples.iter().enumerate() {
+            if index > 0 {
+                file.write_all(b",")
+                    .with_context(|| format!("write sample queue {}", temp.display()))?;
+            }
+            serde_json::to_writer(&mut file, &sample_json(sample))
+                .with_context(|| format!("write sample queue {}", temp.display()))?;
+        }
+        file.write_all(b"]")
             .with_context(|| format!("write sample queue {}", temp.display()))?;
         file.sync_all()
             .with_context(|| format!("fsync sample queue {}", temp.display()))?;

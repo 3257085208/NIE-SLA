@@ -422,7 +422,17 @@ pub(super) fn rollback_stale_pending_update() -> Result<bool> {
     if !path.is_file() {
         return Ok(false);
     }
-    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    // Marker files are tiny; anything larger is corruption and must not be
+    // parsed into memory on every single start.
+    let oversized = std::fs::metadata(&path)
+        .map(|meta| meta.len() > 4096)
+        .unwrap_or(false);
+    let raw = if oversized {
+        let _ = remove_file_durable(&path);
+        String::new()
+    } else {
+        std::fs::read_to_string(&path).unwrap_or_default()
+    };
     let recorded: u64 = serde_json::from_str::<serde_json::Value>(&raw)
         .ok()
         .and_then(|value| value.get("at").and_then(|item| item.as_u64()))

@@ -40,7 +40,7 @@ print_brand_banner() {
 }
 
 DEFAULT_SHA256SUMS_SHA256=""
-DEFAULT_CFTZ_SHA256="4da4b2a42f679a4f93225158436d8b9d4dc2dd7afac2ff80190d5330238391a6"
+DEFAULT_CFTZ_SHA256="57442117223ccf4a50a6125d2c3ac763d744a200b3d236f11f59c66a217a67db"
 DEFAULT_EXPECTED_VERSION=""
 BIN_NAME="nie-sla-agent"
 SERVICE_NAME="nie-sla-agent"
@@ -235,6 +235,34 @@ stop_existing_agent() {
     pkill -x "$BIN_NAME" 2>/dev/null || true
     pkill -x "$LEGACY_SERVICE_NAME" 2>/dev/null || true
   fi
+  stop_other_rootless_installs
+}
+
+# A full install must not silently coexist with other users' rootless installs:
+# both would report to the same target and only one of them can run tasks.
+# Disable their auto-start (cron watchdog / linger) and stop the processes so
+# the node has exactly one Agent. Their files are left untouched.
+stop_other_rootless_installs() {
+  [[ "$(id -u 2>/dev/null || echo 1)" == "0" ]] || return 0
+  local home user tmp
+  for home in /home/* /root; do
+    [[ "$home" == "$HOME" || ! -d "$home/nie-sla-agent" ]] && continue
+    user="$(basename "$home")"
+    warn "检测到用户 $user 的无 root 版安装：已停用其自启动并停止进程，避免与本机完整版重复上报（文件保留）"
+    if command -v crontab >/dev/null 2>&1; then
+      tmp="$(mktemp)"
+      if crontab -u "$user" -l >"$tmp" 2>/dev/null; then
+        if grep -q 'nie-sla-agent-watchdog' "$tmp"; then
+          grep -v 'nie-sla-agent-watchdog' "$tmp" | crontab -u "$user" - >/dev/null 2>&1 || true
+        fi
+      fi
+      rm -f "$tmp"
+    fi
+    if command -v loginctl >/dev/null 2>&1; then
+      loginctl disable-linger "$user" >/dev/null 2>&1 || true
+    fi
+    pkill -u "$user" -f "${home}/nie-sla-agent/${BIN_NAME}" 2>/dev/null || true
+  done
 }
 
 # ---------- 替换第三方探针（--replace-agent）：只停止/禁用旧服务，绝不删除文件 ----------
@@ -415,7 +443,15 @@ secure_install_permissions() {
   agent_group="$(id -gn "$AGENT_USER" 2>/dev/null || printf '%s' "$AGENT_USER")"
   mkdir -p "$WORK_DIR" "$STATE_DIR" "$MANAGER_STATE_DIR"
   if [[ -f "${WORK_DIR}/samples-queue.json" && ! -e "${STATE_DIR}/samples-queue.json" ]]; then
-    mv "${WORK_DIR}/samples-queue.json" "${STATE_DIR}/samples-queue.json"
+    # Legacy versions kept the queue next to the binary. Apply the same size
+    # guard as migrate_legacy_state: an oversized queue must not be carried
+    # over, or the first start parses it into a multi-hundred-megabyte DOM.
+    legacy_size="$(wc -c < "${WORK_DIR}/samples-queue.json" 2>/dev/null || echo 0)"
+    if [[ "${legacy_size:-0}" -le 8388608 ]]; then
+      mv "${WORK_DIR}/samples-queue.json" "${STATE_DIR}/samples-queue.json"
+    else
+      warn "旧版采样队列过大（${legacy_size} 字节），已跳过迁移以避免首次启动内存峰值；原文件保留在 ${WORK_DIR}/samples-queue.json"
+    fi
   fi
   chown root:root "$WORK_DIR" "${WORK_DIR}/${BIN_NAME}"
   chmod 0755 "$WORK_DIR" "${WORK_DIR}/${BIN_NAME}"
@@ -445,7 +481,10 @@ write_env_file() {
     if [[ "$ROOTLESS_MODE" == "true" ]]; then
       # Rootless installs have no privileged manager, so the telemetry process
       # owns its own verified updates (lock + marker live in the state dir).
+      # The ROOTLESS marker must reach the runtime environment: the Agent uses
+      # it to refuse fixed tasks and to skip manager bootstrap.
       printf 'NIE_SLA_PRIVILEGED_UPDATER=0\n'
+      printf 'NIE_SLA_ROOTLESS=1\n'
     else
       printf 'NIE_SLA_PRIVILEGED_UPDATER=1\n'
     fi
@@ -837,6 +876,10 @@ do_uninstall() {
   title "卸载 NIE-SLA Agent"
   if [[ -d "$HOME/nie-sla-agent" ]] || { command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -q 'nie-sla-agent-watchdog'; }; then
     warn "检测到当前用户的 rootless 安装：请改用 NIE_SLA_ROOTLESS=1 bash $0 uninstall（或 uninstall --rootless）卸载它"
+    for other_home in /home/* /root; do
+      [[ "$other_home" == "$HOME" || ! -d "$other_home/nie-sla-agent" ]] && continue
+      warn "检测到 $(basename "$other_home") 用户的无 root 版安装：请该用户执行 NIE_SLA_ROOTLESS=1 bash setup.sh uninstall，或由 root 删除 $other_home/nie-sla-agent 并清理其 cron 看护"
+    done
   fi
   case "$(detect_init)" in
     systemd)
@@ -962,7 +1005,33 @@ download_to "$BIN_URL" "$TMPBIN"
 verify_binary_checksum "$TMPBIN" "${BIN_NAME}-linux-${ARCH}" "$TMPSUMS"
 chmod +x "$TMPBIN"
 verify_agent_version "$TMPBIN"
+# Download and verify cftz before touching the running installation: a cftz
+# failure used to leave the previous service stopped and third-party probes
+# disabled, breaking monitoring until a manual retry.
+CFTZ_URL="${CFTZ_URL_BASE%/}/cftz?v=${CACHE_KEY}"
+CFTZ_TMP="$(mktemp)"
+download_to "$CFTZ_URL" "$CFTZ_TMP" >/dev/null 2>&1 || { err "cftz 下载失败"; exit 1; }
+CFTZ_EXPECTED_SHA256="${NIE_SLA_CFTZ_SHA256:-${NSTATUS_CFTZ_SHA256:-$DEFAULT_CFTZ_SHA256}}"
+if [[ ! "$CFTZ_EXPECTED_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+  err "cftz 缺少有效的 SHA-256"
+  exit 1
+fi
+CFTZ_ACTUAL_SHA256="$(sha256_file "$CFTZ_TMP")"
+if [[ "${CFTZ_ACTUAL_SHA256,,}" != "${CFTZ_EXPECTED_SHA256,,}" ]]; then
+  err "cftz 的 SHA-256 不匹配"
+  exit 1
+fi
 if [[ "$ROOTLESS_MODE" == "true" ]]; then
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 'nie-sla-agent*.service' 2>/dev/null | grep -q '^nie-sla-agent'; then
+    warn "检测到系统级 nie-sla-agent 安装：无 root 版会与它并存并重复上报同一目标。"
+    warn "如需切换为无 root 版，请先执行完整版卸载：bash $0 uninstall"
+  fi
+  # Stop any previous rootless process before replacing the binary; otherwise
+  # the old version keeps running (nohup survives, and the watchdog sees a
+  # live process and exits without restarting the new binary).
+  remove_rootless_watchdog 2>/dev/null || true
+  pkill -f "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || true
+  sleep 1
   mkdir -p "$WORK_DIR" "$INSTALL_DIR" "$STATE_DIR"
 else
   if legacy_install_detected; then
@@ -995,19 +1064,7 @@ if [[ "$ROOTLESS_MODE" != "true" ]]; then
   ln -sf "${WORK_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${LEGACY_SERVICE_NAME}"
 fi
 
-CFTZ_URL="${CFTZ_URL_BASE%/}/cftz?v=${CACHE_KEY}"
-CFTZ_TMP="$(mktemp)"
-download_to "$CFTZ_URL" "$CFTZ_TMP" >/dev/null 2>&1 || { err "cftz 下载失败"; exit 1; }
-CFTZ_EXPECTED_SHA256="${NIE_SLA_CFTZ_SHA256:-${NSTATUS_CFTZ_SHA256:-$DEFAULT_CFTZ_SHA256}}"
-if [[ ! "$CFTZ_EXPECTED_SHA256" =~ ^[0-9A-Fa-f]{64}$ ]]; then
-  err "cftz 缺少有效的 SHA-256"
-  exit 1
-fi
-CFTZ_ACTUAL_SHA256="$(sha256_file "$CFTZ_TMP")"
-if [[ "${CFTZ_ACTUAL_SHA256,,}" != "${CFTZ_EXPECTED_SHA256,,}" ]]; then
-  err "cftz 的 SHA-256 不匹配"
-  exit 1
-fi
+# cftz was downloaded and verified before the service was stopped.
 install -m 0755 "$CFTZ_TMP" "$CFTZ_BIN" 2>/dev/null || { cp "$CFTZ_TMP" "$CFTZ_BIN"; chmod 0755 "$CFTZ_BIN"; }
 rm -f "$CFTZ_TMP"
 

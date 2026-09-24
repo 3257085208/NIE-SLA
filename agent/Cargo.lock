@@ -1759,7 +1759,7 @@ dependencies = [
 
 [[package]]
 name = "nie-sla-agent"
-version = "1.1.101"
+version = "1.1.102"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1767,6 +1767,7 @@ dependencies = [
  "meow-common",
  "meow-proxy",
  "meow-transport",
+ "serde",
  "serde_json",
  "sha2",
  "sysinfo",

@@ -1,6 +1,13 @@
 # 更新日志
 
 NIE-SLA 从 `1.0.38` 起使用正式稳定版本。应用、Worker 与 Rust Agent 共用同一个 `X.Y.Z`，正常迭代共同增加补丁位 `0.0.1`。
+## 1.1.102 - 2026-09-24
+
+- 无 root 版防护修复：`NIE_SLA_ROOTLESS` 标记现在写入运行环境（此前防护因变量缺失而不生效）；无 root 版即使被强制以 root 安装也不会执行 NodeQuality / IP 解锁 / 回程任务，也不会启动特权 Manager；以 root 执行 `--rootless` 默认被拒绝。
+- 安装边界：无 root 版安装检测到系统完整版会提示，并先停用其他用户 rootless 的 cron/linger 自启动以避免双实例重复上报；`cftz` 下载与校验提前到停旧服务之前，失败不再中断监控；`samples-queue.json` 的两条迁移路径都加上 8 MiB 大小限制。
+- 稳定性：采样队列改为流式读写（大文件不再被解析为整棵 JSON DOM）；Agent 自身内存（RSS）随上报采集并在详情显示；Agent API 响应体上限 4 MiB；待回传任务结果与更新标记加上大小上限；macOS 安装器修复 uninstall 命令、补齐 SHA-256 校验并收紧 plist 权限。
+- 修复：IP 解锁结果过滤上游脚本噪声（Rust 与 Worker 双端），不再显示 `{dataType:...}` 类垃圾。
+
 ## 1.1.101 - 2026-09-24
 
 - 无 root 版安全加固：以 root 执行 `--rootless` 会被拒绝并给出正确用法（确需强制用 `NIE_SLA_ALLOW_ROOT_ROOTLESS=1`）；无 root 版即使以 root 运行也拒绝执行 NodeQuality / IP 解锁 / 回程等固定任务。

@@ -1,15 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.101",
-  "agent_version": "v1.1.101",
-  "source_ref": "app-v1.1.101",
-  "sums_sha256": "b9684e466f72f224e386c7e2f297d5d5741e7b12627bc91a8bafca6b4331b463",
-  "published_at": "2026-09-24T10:55:16Z",
-  "title": "NIE-SLA 1.1.101",
+  "version": "1.1.102",
+  "agent_version": "v1.1.102",
+  "source_ref": "app-v1.1.102",
+  "sums_sha256": "a9fd2950c5e35c135508261bc6f817e6573ecc2d2a405c0437d76c36eea4f9aa",
+  "published_at": "2026-09-24T13:49:15Z",
+  "title": "NIE-SLA 1.1.102",
   "changelog": [
-    "无 root 版安全加固：拒绝以 root 执行 --rootless；无 root 版即使以 root 运行也不会执行 NodeQuality / IP 解锁 / 回程等固定任务。",
-    "流量设置新增「无限流量」选项；IP 解锁报告不再显示脚本噪声；卸载支持 uninstall --rootless。",
-    "稳定性：超过 24 MiB 的采样队列不再加载而是备份为 .oversized，修复旧版大队列迁移在小内存 VPS 首次启动造成约 300 MB 内存峰值。"
+    "无 root 版防护修复：NIE_SLA_ROOTLESS 标记现在写入运行环境，无 root 版即使被强制以 root 安装也不会执行 NodeQuality / IP 解锁 / 回程任务或启动特权 Manager；以 root 执行 --rootless 默认被拒绝。",
+    "安装边界：无 root 版安装检测到系统完整版会提示，并先停用其他用户 rootless 的自启动以避免双实例重复上报；cftz 下载校验提前到停旧服务之前，失败不再中断监控。",
+    "稳定性：采样队列改为流式读写，超大旧队列不再被加载；Agent 自身内存随上报采集并在详情显示；API 响应体加上限；macOS 安装器修复卸载命令、补齐 SHA-256 校验并收紧 plist 权限。",
+    "修复：IP 解锁结果过滤上游脚本噪声（Rust 与 Worker 双端），不再显示 {dataType:...} 类垃圾。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

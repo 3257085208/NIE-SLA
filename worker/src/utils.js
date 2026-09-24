@@ -686,6 +686,17 @@ export async function sha256Hex(value) {
   return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// External tools (IP.Check.Place and friends) occasionally leak script
+// fragments such as `{dataType:a.MinervaValueDataType.STRING,` into a value
+// cell. Strip control characters and reject such fragments before anything
+// reaches storage or the public payload.
+export function cleanExternalCell(value, maxLength = 80) {
+  const text = String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (!text) return '';
+  if (text.includes('{') || text.includes('}') || text.includes('dataType') || text.includes('Minerva')) return '';
+  return text.slice(0, maxLength);
+}
+
 export function bytesToBase64(bytes) {
   let binary = '';
   for (let i = 0; i < bytes.length; i += 0x8000) {

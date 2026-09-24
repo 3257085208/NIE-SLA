@@ -1,5 +1,5 @@
 import { ApiError, safeJson } from '../auth.js';
-import { nowSec, sanitizeAgentId } from '../utils.js';
+import { cleanExternalCell, nowSec, sanitizeAgentId } from '../utils.js';
 import { nodeQualityUnlockData, normalizeNodeQualityReport, normalizeNodeQualityReportUrl, sanitizeAnsiContent } from '../nodequality.js';
 import { uploadNodeQualityReportImages } from '../nq-image-host.js';
 import { bufferedAgentStateEnabled, newerAgentMetricRow } from '../agent-state.js';
@@ -537,10 +537,10 @@ function normalizeAgentNodeQualityReport(result, finishedAt) {
 
 function normalizeUnlockService(item) {
   if (!item || typeof item !== 'object') return null;
-  const name = String(item.name || item.id || '').trim().slice(0, 40);
-  const status = String(item.status || '').trim().slice(0, 80);
-  const region = String(item.region || '').trim().slice(0, 40);
-  const method = String(item.method || '').trim().slice(0, 40);
+  const name = cleanExternalCell(item.name || item.id, 40);
+  const status = cleanExternalCell(item.status, 80);
+  const region = cleanExternalCell(item.region, 40);
+  const method = cleanExternalCell(item.method, 40);
   if (!name || (!status && !region && !method)) return null;
   const id = String(item.id || name).toLowerCase().replace(/[^a-z0-9_+-]/g, '_').slice(0, 40);
   return { id, name, status, region, method };

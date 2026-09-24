@@ -213,6 +213,13 @@ export function normalizeAgentProxyChecks(value, fallbackTs = nowSec()) {
   });
 }
 
+export function normalizeAgentProcess(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const rss = Number(value.rss_bytes);
+  if (!Number.isFinite(rss) || rss < 0 || rss > 16 * 1024 * 1024 * 1024) return null;
+  return { rss_bytes: Math.round(rss) };
+}
+
 export function normalizeAgentCapabilities(value, observedAt = nowSec()) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Number(value.protocol) !== 1) return null;
   const mode = ['manager', 'compatibility', 'telemetry_only'].includes(String(value.mode || ''))
@@ -270,6 +277,7 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   const agentLabel = String(body?.agent_label || agentId).trim().slice(0, 64) || agentId;
   const agentVersion = String(body?.agent_version || '').trim().slice(0, 32) || null;
   const capabilities = normalizeAgentCapabilities(body?.capabilities);
+  const agentProcess = normalizeAgentProcess(body?.agent_process);
   const metrics = body?.metrics;
   if (!metrics || typeof metrics !== 'object') throw new ApiError(400, '必须提供 metrics 对象');
   const rawSamples = Array.isArray(metrics.samples) ? metrics.samples : [];
@@ -300,7 +308,7 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   let latestState = null;
   let mapped = null;
   try {
-    const persisted = await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples: telemetrySamples, pings: telemetryPings, proxyChecks: telemetryProxyChecks, ts }, options);
+    const persisted = await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, agentProcess, metrics, state, vpsInfo, rawSamples: telemetrySamples, pings: telemetryPings, proxyChecks: telemetryProxyChecks, ts }, options);
     if (persisted && typeof persisted === 'object' && 'latest_state' in persisted && options.wss === true) {
       latestState = persisted.latest_state;
       mapped = { points: persisted.mapped_points || [], pings: persisted.mapped_pings || [], proxyChecks: persisted.mapped_proxy_checks || [] };
@@ -447,7 +455,7 @@ export async function getAgentMetrics(env, url, ctx = null) {
   const until = includeHistory && latestTs > 0 ? Math.min(requestedUntil, latestTs + 600) : requestedUntil;
   const since = requestedUntil - hours * 3600;
   const historyByTs = new Map();
-  const r2 = includeHistory ? await loadAgentMetricsR2History(env, agentId, since, until, historyByTs, fields, ctx) : { loaded: false, count: 0 };
+  const r2 = includeHistory ? await loadAgentMetricsR2History(env, agentId, since, until, historyByTs, fields, ctx, maxPoints) : { loaded: false, count: 0 };
   const d1Fallback = includeHistory && parseBoolean(env.AGENT_METRICS_D1_FALLBACK ?? !env.ARCHIVE, !env.ARCHIVE);
   if (includeHistory && d1Fallback) {
     await loadAgentMetricsD1History(env, agentId, since, historyByTs);
@@ -929,8 +937,25 @@ async function loadAgentMetricsD1History(env, agentId, since, historyByTs) {
   } catch (_) {}
 }
 
-async function loadAgentMetricsR2History(env, agentId, since, until, historyByTs, fields = null, ctx = null) {
+async function loadAgentMetricsR2History(env, agentId, since, until, historyByTs, fields = null, ctx = null, budget = 0) {
   if (!env.ARCHIVE) return { loaded: false, count: 0 };
+  // The public history endpoint bounds its response with compactMetricPoints,
+  // but the raw points were accumulated in memory first: a 168-hour window of
+  // a one-second-sampling agent builds a ~600k-point map before compression.
+  // Bucket points during accumulation so peak memory stays near the final
+  // response budget (2x maxPoints keeps thin windows untouched in practice).
+  const maxBudget = Number(budget) > 0 ? Number(budget) : 0;
+  const bucketSec = maxBudget
+    ? Math.max(1, Math.ceil(Math.max(1, Number(until) - Number(since)) / (maxBudget * 2)))
+    : 0;
+  const bucketSeen = maxBudget ? new Set() : null;
+  const keepPoint = (ts) => {
+    if (!maxBudget) return true;
+    const bucket = Math.floor(ts / bucketSec);
+    if (bucketSeen.has(bucket)) return false;
+    bucketSeen.add(bucket);
+    return true;
+  };
   const counts = await mapWithConcurrency(historyHours(since, until), 24, async (hour) => {
     let localCount = 0;
     const telemetry = await readR2Json(env, agentTelemetryHourKey(env, agentId, hour), null);
@@ -939,7 +964,7 @@ async function loadAgentMetricsR2History(env, agentId, since, until, historyByTs
     const points = metricPointsFromPayload(payload, fields);
     for (const point of points) {
       const ts = Number(point?.ts || 0);
-      if (ts >= since && ts <= until) {
+      if (ts >= since && ts <= until && keepPoint(ts)) {
         historyByTs.set(ts, selectMetricFields(point, fields));
         localCount++;
       }
@@ -949,7 +974,7 @@ async function loadAgentMetricsR2History(env, agentId, since, until, historyByTs
   const buffered = await readBufferedAgentTelemetry(env, agentId, since, until).catch(() => ({ points: [] }));
   for (const point of buffered.points || []) {
     const ts = Number(point?.ts || 0);
-    if (ts >= since && ts <= until) historyByTs.set(ts, selectMetricFields(point, fields));
+    if (ts >= since && ts <= until && keepPoint(ts)) historyByTs.set(ts, selectMetricFields(point, fields));
   }
   const count = counts.reduce((a, b) => a + b, 0) + (buffered.points?.length || 0);
   return { loaded: count > 0, count };
@@ -1757,7 +1782,7 @@ function normalizeOkInt(value) {
 }
 
 async function persistAgentMetrics(env, data, options = {}) {
-  const { agentId, agentLabel, agentVersion, capabilities, metrics, state, vpsInfo, rawSamples, pings, proxyChecks, ts } = data;
+  const { agentId, agentLabel, agentVersion, capabilities, agentProcess, metrics, state, vpsInfo, rawSamples, pings, proxyChecks, ts } = data;
   const rawPings = mapPings(pings, ts);
   const rawProxyChecks = normalizeAgentProxyChecks(proxyChecks, ts);
   const wssFast = options.wss === true;
@@ -1779,8 +1804,10 @@ async function persistAgentMetrics(env, data, options = {}) {
   }
   const previousVpsInfo = parseJsonSafe(previousState?.vps_info);
   const previousCapabilities = parseJsonSafe(previousState?.capabilities);
+  const previousAgentProcess = parseJsonSafe(previousState?.agent_process);
   const effectiveVpsInfo = vpsInfo || (Object.keys(previousVpsInfo).length ? previousVpsInfo : null);
   const effectiveCapabilities = capabilities || (Object.keys(previousCapabilities).length ? previousCapabilities : null);
+  const effectiveAgentProcess = agentProcess || (Object.keys(previousAgentProcess).length ? previousAgentProcess : null);
   const updatedAt = new Date().toISOString();
   const hostname = String(metrics.hostname || previousState?.hostname || '').slice(0, 128);
   const latestState = {
@@ -1795,6 +1822,7 @@ async function persistAgentMetrics(env, data, options = {}) {
     pings: statePings,
     proxy_checks: stateProxyChecks,
     capabilities: effectiveCapabilities,
+    agent_process: effectiveAgentProcess,
   };
   if (!options.skipStateD1) await writeAgentMetricState(env, latestState);
 

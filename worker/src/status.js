@@ -1,4 +1,4 @@
-import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, statusCacheKey, sanitizePublicStatusPayload, parseExpectedStatus, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA, LEGACY_STATUS_SNAPSHOT_SCHEMA } from './utils.js';
+import { clamp, nowSec, parseBoolean, sanitizeAgentId, agentStatusFields, dayFromSec, dateAddLocal, timezoneOffsetMin, timezoneLabel, publicMaskIps, publicHidePorts, publicHost, publicUrl, publicError, publicCheckPoint, publicCachePrivacyVersion, statusCacheKey, sanitizePublicStatusPayload, parseExpectedStatus, cleanExternalCell, REGION_LABELS, DEFAULT_STATUS_DAYS, STATUS_SNAPSHOT_SCHEMA, LEGACY_STATUS_SNAPSHOT_SCHEMA } from './utils.js';
 import { json } from './auth.js';
 import { validateAdminSession } from './totp.js';
 import { readR2JsonResult, readR2State, getSummaryRowsFromState, getStatusSnapshotGeneratedAt, getAgentSeriesForTarget, dailyPointsFromChecks, verifyR2Json } from './storage.js';
@@ -287,11 +287,11 @@ function publicUnlockData(value, nqValue = null) {
 function parseUnlockPayload(value) {
   const parsed = parseJsonSafe(value);
   const services = Array.isArray(parsed?.services) ? parsed.services.slice(0, 20).map(service => ({
-    id: String(service?.id || '').slice(0, 40),
-    name: String(service?.name || service?.id || '').slice(0, 40),
-    status: String(service?.status || '').slice(0, 80),
-    region: String(service?.region || '').slice(0, 40),
-    method: String(service?.method || '').slice(0, 40),
+    id: cleanExternalCell(service?.id, 40),
+    name: cleanExternalCell(service?.name || service?.id, 40),
+    status: cleanExternalCell(service?.status, 80),
+    region: cleanExternalCell(service?.region, 40),
+    method: cleanExternalCell(service?.method, 40),
   })).filter(service => service.name && (service.status || service.region || service.method)) : [];
   if (!services.length) return null;
   return {
@@ -329,6 +329,11 @@ function publicAgentSummary(row, traffic = null) {
     : [];
   if (temperatureSensors.length) vpsInfo.temperature_sensors = temperatureSensors;
   else delete vpsInfo.temperature_sensors;
+  const agentProcessRaw = parseJsonSafe(row.agent_process);
+  const agentProcessRss = Number(agentProcessRaw.rss_bytes);
+  const agentProcess = Number.isFinite(agentProcessRss) && agentProcessRss >= 0
+    ? { rss_bytes: Math.round(agentProcessRss) }
+    : null;
   return {
     updated_at: row.updated_at || null,
     agent_version: row.agent_version || null,
@@ -352,6 +357,7 @@ function publicAgentSummary(row, traffic = null) {
     temperature_sensors: temperatureSensors,
     traffic,
     proxy_checks: normalizePublicProxyChecks(parseJsonSafe(row.proxy_checks)),
+    agent_process: agentProcess,
   };
 }
 

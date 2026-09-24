@@ -1558,6 +1558,7 @@ fn submit(
         "agent_label": cfg.agent_label,
         "agent_version": format!("v{}", AGENT_VERSION),
         "capabilities": manager::reported_capabilities(cfg),
+        "agent_process": { "rss_bytes": platform::self_process_rss_bytes() },
         "metrics": metrics_json(&metrics),
     });
     let url = format!("{}/api/agent/metrics", cfg.api.trim_end_matches('/'));
@@ -2145,9 +2146,7 @@ impl HttpClient {
                     .call()
             })
             .map_err(|err| http_error("GET", url, err))?;
-        res.body_mut()
-            .read_to_string()
-            .with_context(|| format!("HTTP GET failed while reading {}", url))
+        read_api_response(res.body_mut(), "GET", url)
     }
 
     fn post_json(&self, url: &str, token: &str, body: &str) -> Result<String> {
@@ -2160,9 +2159,7 @@ impl HttpClient {
                     .send(body)
             })
             .map_err(|err| http_error("POST", url, err))?;
-        res.body_mut()
-            .read_to_string()
-            .with_context(|| format!("HTTP POST failed while reading {}", url))
+        read_api_response(res.body_mut(), "POST", url)
     }
 
     fn get_public(&self, url: &str) -> Result<String> {
@@ -2447,6 +2444,18 @@ fn auth_header(token: &str) -> String {
 
 fn http_error(method: &str, url: &str, err: ureq::Error) -> anyhow::Error {
     anyhow!("HTTP {} failed for {}: {}", method, url, err)
+}
+
+// API responses are normally small JSON documents. Bound the read so a
+// misbehaving endpoint (or a compromised API host) cannot stream an
+// arbitrarily large body into memory before parsing.
+const API_RESPONSE_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+fn read_api_response(body: &mut ureq::Body, method: &str, url: &str) -> Result<String> {
+    body.with_config()
+        .limit(API_RESPONSE_MAX_BYTES)
+        .read_to_string()
+        .with_context(|| format!("HTTP {method} failed while reading {url}"))
 }
 
 fn spawn_ping_worker(
@@ -2939,9 +2948,7 @@ mod tests {
         };
         let resolver = PublicDownloadResolver;
         let private: Uri = "https://127.0.0.1/".parse().unwrap();
-        assert!(resolver
-            .resolve(&private, &config, timeout.clone())
-            .is_err());
+        assert!(resolver.resolve(&private, &config, timeout).is_err());
         let public: Uri = "https://1.1.1.1/".parse().unwrap();
         let resolved = resolver.resolve(&public, &config, timeout).unwrap();
         assert_eq!(resolved.len(), 1);

@@ -153,7 +153,15 @@ secure_install_permissions() {
     agent_group="$(id -gn "$AGENT_USER" 2>/dev/null || printf '%s' "$AGENT_USER")"
     mkdir -p "$WORK_DIR" "$STATE_DIR"
     if [[ -f "${WORK_DIR}/samples-queue.json" && ! -e "${STATE_DIR}/samples-queue.json" ]]; then
-        mv "${WORK_DIR}/samples-queue.json" "${STATE_DIR}/samples-queue.json"
+        # Same size guard as setup.sh: never carry an oversized legacy queue
+        # into the new state directory (first start would parse it into a
+        # multi-hundred-megabyte DOM).
+        legacy_size="$(wc -c < "${WORK_DIR}/samples-queue.json" 2>/dev/null || echo 0)"
+        if [[ "${legacy_size:-0}" -le 8388608 ]]; then
+            mv "${WORK_DIR}/samples-queue.json" "${STATE_DIR}/samples-queue.json"
+        else
+            warn "旧版采样队列过大（${legacy_size} 字节），已跳过迁移；原文件保留在 ${WORK_DIR}/samples-queue.json"
+        fi
     fi
     chown root:root "$WORK_DIR"
     chmod 0755 "$WORK_DIR"

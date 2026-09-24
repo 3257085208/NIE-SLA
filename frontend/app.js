@@ -1896,6 +1896,7 @@ function renderVPSInfo() {
   const net = latest.net || {};
   const diskio = latest.diskio || {};
   const traffic = latest.traffic || selectedTarget?.agent_metrics?.traffic || {};
+  const agentProcess = latest.agent_process || selectedTarget?.agent_metrics?.agent_process || {};
   if ((!info.cpu_model && !info.os && !latest.hostname) && !uptimeSec) {
     bar.hidden = true;
     bar.innerHTML = '';
@@ -1939,6 +1940,7 @@ function renderVPSInfo() {
     networkItems.push(vpsItem('累计发送', fmtBytes(traffic.tx_bytes || 0)));
     networkItems.push(vpsItem('计费周期流量', `${fmtBytes(traffic.total_bytes || 0)}${traffic.quota_bytes ? ' / ' + fmtBytes(traffic.quota_bytes) : ' · 无限流量'}${traffic.percent != null ? ' · ' + traffic.percent + '%' : ''}${traffic.reset_day ? ' · ' + traffic.reset_day + '日重置' : ''}`));
   }
+  if (Number(agentProcess.rss_bytes) > 0) networkItems.push(vpsItem('Agent 内存', fmtBytes(Number(agentProcess.rss_bytes))));
   networkItems.push(vpsItem('当前接收', fmtBytesPerSec(net.rx_bytes_sec || 0)));
   networkItems.push(vpsItem('当前发送', fmtBytesPerSec(net.tx_bytes_sec || 0)));
   networkItems.push(vpsItem('磁盘读', fmtBytesPerSec(diskio.read_bytes_sec || 0)));

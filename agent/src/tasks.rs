@@ -134,6 +134,14 @@ fn read_pending_task_result(path: &Path) -> Result<Option<(String, Value)>> {
     if !path.exists() || path.is_symlink() {
         return Ok(None);
     }
+    // Bound the read like the sample queue: a leftover oversized file must
+    // not be parsed into a multi-hundred-megabyte DOM on every poll.
+    let size = fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+    if size > 4 * 1024 * 1024 {
+        eprintln!("pending task result oversized ({size} bytes); quarantining");
+        let _ = fs::rename(path, path.with_extension("oversized"));
+        return Ok(None);
+    }
     // A corrupt pending file must not block every future poll before a task is
     // even claimed: quarantine it and let the channel recover.
     let data = match fs::read(path) {
@@ -854,6 +862,9 @@ fn run_backroute(
     if !cfg!(target_os = "linux") {
         return Err(anyhow!("回程检测目前仅支持 Linux"));
     }
+    // Mirror the nodequality / ip_unlock privilege gate: every fixed task is
+    // privileged work and rootless installs must refuse it as well.
+    ensure_privileged_fixed_task_context()?;
     let total_deadline =
         std::time::Instant::now() + Duration::from_secs(backroute_timeout_sec(timeout_sec));
     let mut asn_resolver = AsnResolver::new();

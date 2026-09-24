@@ -78,6 +78,29 @@ fn interfaces_allowlist() -> &'static [String] {
     })
 }
 
+// The Agent's own resident set is reported with every metrics payload so a
+// memory regression (like the legacy-queue load spike) is visible in the
+// panel instead of only being discoverable with a manual ps on the node.
+#[cfg(target_os = "linux")]
+pub(super) fn self_process_rss_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            return rest
+                .split_whitespace()
+                .next()
+                .and_then(|value| value.parse::<u64>().ok())
+                .map(|kb| kb.saturating_mul(1024));
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+pub(super) fn self_process_rss_bytes() -> Option<u64> {
+    None
+}
+
 #[cfg(target_os = "linux")]
 pub(super) fn net_bytes() -> (u64, u64) {
     let Ok(text) = std::fs::read_to_string("/proc/net/dev") else {

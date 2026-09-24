@@ -5,9 +5,9 @@ import { getOrCreateAgentToken } from '../agent-credentials.js';
 import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
 
-const INSTALLER_SHA256 = 'bd2470fde91cdb57224bdd8fe9032dd7d988f5b5b3e70596f703a16ef11c7b05';
-const SETUP_SHA256 = '733fdb18968b29afa502559199dd4874f8e7d0160eba82e930cec781e0dbad2b';
-const CFTZ_SHA256 = '4da4b2a42f679a4f93225158436d8b9d4dc2dd7afac2ff80190d5330238391a6';
+const INSTALLER_SHA256 = '8745f72aa26aa1c2674a1c294166a8596651f13da5be8b441d08466661607d7b';
+const SETUP_SHA256 = '45550e1b65458c9240d82f2d797163b109654f80d40c08a9eaaa8c4266d1608b';
+const CFTZ_SHA256 = '57442117223ccf4a50a6125d2c3ac763d744a200b3d236f11f59c66a217a67db';
 const INSTALL_TICKET_PREFIX = 'nsi_';
 const INSTALL_TICKET_BYTES = 24;
 const INSTALL_TICKET_TTL_SEC = 600;

@@ -418,8 +418,24 @@ fn restart_all_services() -> Result<()> {
 }
 
 pub(crate) fn reported_capabilities(cfg: &Config) -> Value {
-    if let Some(value) = read_fresh_heartbeat(&heartbeat_path(cfg)) {
-        return value;
+    // A rootless install must never inherit the privileged manager
+    // capabilities of another installation on the same host: the heartbeat
+    // file lives at a fixed system path, so a full install running next to a
+    // rootless one would otherwise make the rootless node look privileged.
+    let rootless = ["NIE_SLA_ROOTLESS", "NSTATUS_ROOTLESS"].iter().any(|key| {
+        std::env::var(key)
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes"
+                )
+            })
+            .unwrap_or(false)
+    });
+    if !rootless {
+        if let Some(value) = read_fresh_heartbeat(&heartbeat_path(cfg)) {
+            return value;
+        }
     }
     json!({
         "protocol": 1,

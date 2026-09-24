@@ -28,6 +28,17 @@ TOKEN="${NIE_SLA_AGENT_TOKEN:-${NSTATUS_AGENT_TOKEN:-}}"
 AGENT_ID="${NIE_SLA_AGENT_ID:-${NSTATUS_AGENT_ID:-$(hostname)}}"
 AGENT_LABEL="${NIE_SLA_AGENT_LABEL:-$AGENT_ID}"
 
+# Must be defined before the argument parser can call it (bash executes the
+# script top to bottom; previously `uninstall` failed with command not found).
+do_uninstall_mac() {
+  launchctl bootout "system/$PLIST_LABEL" 2>/dev/null || true
+  rm -f "$PLIST_PATH"
+  rm -rf "$WORK_DIR" "$STATE_DIR"
+  rm -f "$INSTALL_DIR/$BIN_NAME"
+  ok "macOS 卸载完成"
+  exit 0
+}
+
 NON_INTERACTIVE=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -44,15 +55,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-do_uninstall_mac() {
-  launchctl bootout "system/$PLIST_LABEL" 2>/dev/null || true
-  rm -f "$PLIST_PATH"
-  rm -rf "$WORK_DIR" "$STATE_DIR"
-  rm -f "$INSTALL_DIR/$BIN_NAME"
-  ok "macOS 卸载完成"
-  exit 0
-}
-
 if [[ -z "$API_BASE" ]]; then read -r -p "API base URL: " API_BASE </dev/tty; fi
 if [[ -z "$TOKEN" ]]; then read -rs -p "Agent Token: " TOKEN </dev/tty; echo; fi
 if [[ -z "$AGENT_ID" ]]; then read -r -p "Target ID [$(hostname)]: " AGENT_ID </dev/tty; AGENT_ID="${AGENT_ID:-$(hostname)}"; fi
@@ -63,13 +65,26 @@ mkdir -p "$WORK_DIR" "$STATE_DIR" "$INSTALL_DIR"
 
 BIN_URL="${DOWNLOAD_BASE}/bin/${BIN_NAME}-macos-${MAC_ARCH}"
 TMPBIN="$(mktemp)"
-trap 'rm -f "$TMPBIN"' EXIT
+TMPSUMS="$(mktemp)"
+trap 'rm -f "$TMPBIN" "$TMPSUMS"' EXIT
 
 curl -fsSL "$BIN_URL" -o "$TMPBIN"
-shasum -a 256 "$TMPBIN" > /dev/null
+# Verify against the published SHA256SUMS like the Linux installer does;
+# previously the checksum was computed and thrown away.
+if curl -fsSL "${DOWNLOAD_BASE}/bin/SHA256SUMS" -o "$TMPSUMS" 2>/dev/null; then
+  EXPECTED_SHA="$(awk -v name="${BIN_NAME}-macos-${MAC_ARCH}" '$2 == name { print $1 }' "$TMPSUMS" | head -1)"
+  ACTUAL_SHA="$(shasum -a 256 "$TMPBIN" | awk '{print $1}')"
+  if [[ -z "$EXPECTED_SHA" || "${ACTUAL_SHA,,}" != "${EXPECTED_SHA,,}" ]]; then
+    err "Agent 二进制的 SHA-256 校验失败"
+    exit 1
+  fi
+else
+  err "无法下载 bin/SHA256SUMS，拒绝安装未校验的二进制"
+  exit 1
+fi
 chmod +x "$TMPBIN"
-ACTUAL_VER="$("$TMPBIN" --version 2>&1)" || true
-info_ver="$ACTUAL_VER"
+ACTUAL_VER="$("$TMPBIN" --version 2>&1)" || { err "Agent --version 执行失败"; exit 1; }
+[[ "$ACTUAL_VER" == v* ]] || { err "Agent 版本输出异常: $ACTUAL_VER"; exit 1; }
 
 install -m 0755 "$TMPBIN" "${WORK_DIR}/${BIN_NAME}"
 
@@ -114,6 +129,10 @@ cat > "$PLIST_PATH" <<PLISTEOF
 </dict>
 </plist>
 PLISTEOF
+# The plist embeds the Agent token; keep it root-only instead of the default
+# world-readable mode.
+chown root:wheel "$PLIST_PATH"
+chmod 0600 "$PLIST_PATH"
 
 launchctl bootstrap system "$PLIST_PATH" 2>/dev/null || launchctl load "$PLIST_PATH"
 

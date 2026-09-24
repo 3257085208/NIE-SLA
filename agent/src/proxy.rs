@@ -942,7 +942,7 @@ fn parse_reality_public_key(value: &str) -> Option<[u8; 32]> {
     {
         return None;
     }
-    while normalized.len() % 4 != 0 {
+    while !normalized.len().is_multiple_of(4) {
         normalized.push('=');
     }
     let bytes = BASE64_STANDARD.decode(normalized).ok()?;
@@ -952,7 +952,7 @@ fn parse_reality_public_key(value: &str) -> Option<[u8; 32]> {
 fn parse_reality_short_id(value: &str) -> Option<[u8; 8]> {
     let normalized = value.trim();
     if normalized.len() > 16
-        || normalized.len() % 2 != 0
+        || !normalized.len().is_multiple_of(2)
         || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return None;
