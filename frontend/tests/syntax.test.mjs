@@ -43,6 +43,7 @@ assert.match(adminSource, /import \{ createOnboarding \} from "\.\/admin\/onboar
 assert.match(adminHtml, /id="onboarding"[\s\S]*id="onboardingCard" role="dialog"/, 'admin must ship the onboarding overlay dialog');
 assert.match(adminHtml, /id="openOnboardingBtn"/, 'security settings must expose the onboarding entry');
 assert.match(adminSource, /onboarding\.maybeAutoOpen\(\)/, 'the onboarding wizard must auto-open for first-run deployments only');
+assert.match(adminSource, /apiPublic\("\/api\/status\?days=1&lite=1", 8_000\)/, 'dashboard basic cards must render from the cheap public snapshot before the full 30-day build');
 assert.match(adminSource, /const hasSettings = Array\.isArray\(theme\.settings\)/, 'theme cards must derive their settings state from the API payload');
 assert.match(adminSource, /data-theme-action="settings"/, 'theme cards must always expose a settings action');
 assert.match(adminSource, /\/api\/themes\/\$\{encodeURIComponent\(theme\.id\)\}\/config/, 'theme settings must use the protected theme config endpoint');

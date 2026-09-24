@@ -64,6 +64,7 @@ function makeOnboarding(overrides = {}) {
     apiPublic: overrides.apiPublic || (async () => ({ targets: [] })),
     nav: overrides.nav || (() => {}),
     toast: overrides.toast || (() => {}),
+    autoOpenDelayMs: 0,
   });
 }
 
@@ -123,7 +124,7 @@ test('maybeAutoOpen opens for a fresh deployment without targets', async () => {
   resetOnboarding();
   const onboarding = makeOnboarding({ apiPublic: async () => ({ targets: [] }) });
   await onboarding.maybeAutoOpen();
-  await new Promise((resolve) => setTimeout(resolve, 600));
+  await new Promise((resolve) => setTimeout(resolve, 80));
   assert.equal(root.hidden, false, 'fresh deployments see the mode chooser');
   assert.match(card.innerHTML, /欢迎使用 NIE-SLA/);
   onboarding.close();

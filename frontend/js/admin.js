@@ -719,16 +719,24 @@ function themeSettingFieldHtml(setting, value) {
 async function loadDash() {
   loading("dStats");
   loading("dVpsSla");
+  // The 30-day status build can take well over the 12s default on a cold
+  // cache (China -> Cloudflare latency included). Render the basic cards from
+  // the cheaper 1-day public snapshot first, then upgrade to the full 30-day
+  // payload; the SLA card keeps its loading state until the full data lands.
+  let quickShown = false;
   try {
-    // The 30-day status build can take well over the 12s default on a cold
-    // cache (China -> Cloudflare latency included), which showed up as
-    // "API 请求超时" on the dashboard cards.
+    const quick = await apiPublic("/api/status?days=1&lite=1", 8_000);
+    renderStats(quick);
+    renderIncidents(quick.incidents || []);
+    quickShown = true;
+  } catch (_) {}
+  try {
     const d = await apiAdmin("/api/status?days=30", {}, 30_000);
     renderStats(d);
     renderIncidents(d.incidents || []);
     renderVpsSla(d);
   } catch (e) {
-    errBox("dStats", e);
+    if (!quickShown) errBox("dStats", e);
     errBox("dVpsSla", e);
   }
 }

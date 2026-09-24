@@ -25,7 +25,7 @@ export function resetOnboarding() {
   } catch (_) {}
 }
 
-export function createOnboarding({ apiPublic, nav, toast }) {
+export function createOnboarding({ apiPublic, nav, toast, autoOpenDelayMs = 3_000 }) {
   let step = "mode";
   let check = null;
   let verifying = false;
@@ -293,9 +293,13 @@ export function createOnboarding({ apiPublic, nav, toast }) {
   async function maybeAutoOpen() {
     const state = readOnboardingState();
     if (state?.completed) return;
+    // Wait until the dashboard's first renders are done so the lightweight
+    // onboarding probe never competes with the initial status build.
+    const delay = Math.max(0, Number(autoOpenDelayMs) || 0);
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     let total = null;
     try {
-      const status = await apiPublic("/api/status?days=1&lite=1", 15000);
+      const status = await apiPublic("/api/status?days=1&lite=1", 15_000);
       total = Array.isArray(status?.targets) ? status.targets.length : null;
     } catch (_) {
       total = null;
@@ -304,7 +308,8 @@ export function createOnboarding({ apiPublic, nav, toast }) {
       writeOnboardingState({ completed: true, autoSkippedAt: Date.now() });
       return;
     }
-    setTimeout(() => open("mode"), 500);
+    if (delay) setTimeout(() => open("mode"), 300);
+    else open("mode");
   }
 
   return { open, close, maybeAutoOpen, reset: resetOnboarding };
