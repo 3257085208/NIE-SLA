@@ -1,9 +1,9 @@
-import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260919-update22';
+import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260925-visual1';
 import {
   billingCycleSuffix,
   isLifetimeBilling,
   normalizeBillingCycle,
-} from './js/shared/billing.js?v=20260919-update22';
+} from './js/shared/billing.js?v=20260925-visual1';
 import {
   cssEscape,
   clampNumber,
@@ -18,11 +18,11 @@ import {
   normalizeCityName,
   pad,
   timeAgoSec,
-} from './js/shared/format.js?v=20260919-update22';
-import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260919-update22';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260919-update22';
-import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260919-update22';
-import { countryByCode } from './js/shared/target-catalogs.js?v=20260919-update22';
+} from './js/shared/format.js?v=20260925-visual1';
+import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260925-visual1';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260925-visual1';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260925-visual1';
+import { countryByCode } from './js/shared/target-catalogs.js?v=20260925-visual1';
 import {
   clampChartRange,
   countChartGaps,
@@ -30,15 +30,15 @@ import {
   filterChecksByRange,
   hexToRgba,
   trimEmptyPointEdges,
-} from './js/shared/chart-data.js?v=20260919-update22';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260919-update22';
-import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260919-update22';
-import { unlockState } from './js/shared/unlock.js?v=20260919-update22';
-import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260919-update22';
-import { targetSlaPercentage } from './js/shared/sla.js?v=20260919-update22';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260919-update22';
-import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260919-update22';
-import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260919-update22';
+} from './js/shared/chart-data.js?v=20260925-visual1';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260925-visual1';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260925-visual1';
+import { unlockState } from './js/shared/unlock.js?v=20260925-visual1';
+import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260925-visual1';
+import { targetSlaPercentage } from './js/shared/sla.js?v=20260925-visual1';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260925-visual1';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260925-visual1';
+import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260925-visual1';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -203,6 +203,24 @@ if (els.serviceSearch) {
   els.serviceSearch.addEventListener('input', () => {
     state.filteredText = els.serviceSearch.value.trim().toLowerCase();
     if (state.data) renderGroups(state.data);
+  });
+}
+
+const checksPanel = document.querySelector('.checks-panel');
+const checksToggle = document.querySelector('#checksToggle');
+function setChecksCollapsed(collapsed) {
+  if (!checksPanel) return;
+  checksPanel.classList.toggle('collapsed', collapsed);
+  if (checksToggle) {
+    checksToggle.textContent = collapsed ? '展开' : '收起';
+    checksToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
+  writeStorage('localStorage', 'nie-sla.checksCollapsed', collapsed ? '1' : '0');
+}
+if (checksPanel && checksToggle) {
+  setChecksCollapsed(readMigratedStorage('localStorage', 'nie-sla.checksCollapsed', 'nstatus.checksCollapsed', '0') === '1');
+  checksToggle.addEventListener('click', () => {
+    setChecksCollapsed(!checksPanel.classList.contains('collapsed'));
   });
 }
 
@@ -1246,7 +1264,10 @@ function renderProxyService(t) {
   const total = proxyDisplayDuration(check, 'total_ms');
   const handshake = proxyDisplayDuration(check, 'handshake_ms');
   const firstByte = proxyDisplayDuration(check, 'first_byte_ms');
-  const totalHtml = total != null ? `<strong title="本次真实代理链路总耗时">${total} ms</strong>` : '<strong title="本次真实代理链路总耗时">-</strong>';
+  const totalLevel = total != null ? latencyLevelClass(Number(total)) : '';
+  const totalHtml = total != null
+    ? `<strong class="${totalLevel.trim()}" title="本次真实代理链路总耗时${totalLevel ? '（延迟偏高）' : ''}">${total} ms</strong>`
+    : '<strong title="本次真实代理链路总耗时">-</strong>';
   const handshakeText = handshake == null ? '-' : `${handshake} ms`;
   const firstByteText = firstByte == null ? '-' : `${firstByte} ms`;
   const note = checked
@@ -1381,10 +1402,20 @@ function proxyStatusBadgeHtml(target) {
   return `<span class="meta-badge meta-proxy ${className}" title="${escapeAttr(title)}">${escapeHtml(label)}</span>`;
 }
 
+function latencyLevelClass(ms) {
+  if (!Number.isFinite(ms)) return '';
+  if (ms >= 1000) return ' latency-bad';
+  if (ms >= 500) return ' latency-warn';
+  return '';
+}
+
 function serviceCloudflareLatencyHtml(target) {
   const latency = Number(target?.latency_ms);
-  const value = Number(target?.ok) === 1 && Number.isFinite(latency) ? `${Math.round(latency)} ms` : '-';
-  return `<strong title="Cloudflare 延迟">${escapeHtml(value)}</strong>`;
+  const known = Number(target?.ok) === 1 && Number.isFinite(latency);
+  const value = known ? `${Math.round(latency)} ms` : '-';
+  const level = known ? latencyLevelClass(latency) : '';
+  const hint = level ? '（延迟偏高）' : '';
+  return `<strong class="${level.trim()}" title="Cloudflare 延迟${hint}">${escapeHtml(value)}</strong>`;
 }
 
 function pingTargetColor(seed) {

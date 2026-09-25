@@ -805,6 +805,24 @@ fn backroute_script_command(target_ip: &str) -> Command {
     command
 }
 
+/// Keep at most `limit` bytes but consume the whole pipe: a capped read that
+/// stops early would leave the child blocked on a full pipe while we wait
+/// forever for it to exit.
+fn read_capped_and_drain(pipe: impl Read, limit: u64) -> Vec<u8> {
+    let mut reader = pipe.take(limit);
+    let mut kept = Vec::new();
+    let _ = reader.read_to_end(&mut kept);
+    let mut inner = reader.into_inner();
+    let mut sink = [0u8; 8192];
+    loop {
+        match inner.read(&mut sink) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => continue,
+        }
+    }
+    kept
+}
+
 fn run_backroute_script(target_ip: &str) -> Result<String> {
     const BACKROUTE_OUTPUT_MAX_BYTES: u64 = 1024 * 1024;
     let mut child = backroute_script_command(target_ip)
@@ -819,18 +837,16 @@ fn run_backroute_script(target_ip: &str) -> Result<String> {
     // Bounded reads: wait_with_output() would buffer an unbounded amount of
     // script output in memory (this is the only root-run task with no 1 MiB
     // cap elsewhere).
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    if let Some(pipe) = child.stdout.take() {
-        let _ = pipe
-            .take(BACKROUTE_OUTPUT_MAX_BYTES)
-            .read_to_end(&mut stdout);
-    }
-    if let Some(pipe) = child.stderr.take() {
-        let _ = pipe
-            .take(BACKROUTE_OUTPUT_MAX_BYTES)
-            .read_to_end(&mut stderr);
-    }
+    let stdout = child
+        .stdout
+        .take()
+        .map(|pipe| read_capped_and_drain(pipe, BACKROUTE_OUTPUT_MAX_BYTES))
+        .unwrap_or_default();
+    let stderr = child
+        .stderr
+        .take()
+        .map(|pipe| read_capped_and_drain(pipe, BACKROUTE_OUTPUT_MAX_BYTES))
+        .unwrap_or_default();
     let status = child.wait().context("等待固定回程检测脚本")?;
     let text = format!(
         "{}{}",

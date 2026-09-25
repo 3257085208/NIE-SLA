@@ -1,16 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.103",
-  "agent_version": "v1.1.103",
-  "source_ref": "app-v1.1.103",
-  "sums_sha256": "8a30771ec54883b79f0917685f09a38d0280dd13776eb50b6defdd42b98e35ce",
-  "published_at": "2026-09-25T03:22:27Z",
-  "title": "NIE-SLA 1.1.103",
+  "version": "1.1.104",
+  "agent_version": "v1.1.104",
+  "source_ref": "app-v1.1.104",
+  "sums_sha256": "6c85669704f25bf459cce80f10452292d29002d0a914ed5986b97c0786cfcd20",
+  "published_at": "2026-09-25T03:52:00Z",
+  "title": "NIE-SLA 1.1.104",
   "changelog": [
-    "资源与内存：采样队列改为流式读写；遥测 DO、探针历史、延迟结果、R2 读取与 gzip 解压全部加上字节或点数上限；Agent 自身内存(RSS)随上报采集，超过 256MB 触发告警；telemetry systemd 单元加 MemoryHigh/MemoryMax 护栏。",
-    "更新与安装边界：更新在写入待确认标记前失败不再留下无标记的新二进制；无 init 环境卸载会停止进程并跨 init 清理；旧队列迁移改为临时文件+改名；安装失败时给出排查指令与被停用旧探针的提醒。",
-    "数据质量：解锁/回程/延迟文本统一清洗控制字符；状态码、期望状态、IPv6、IPIP 结构等加校验；广告横幅仅在尾部截断（AS9929 等正文行不再误伤）；AS 号支持空格写法；Webhook JSON 值自动转义。",
-    "安装器：install.sh 支持 NIE_SLA_ROOTLESS 环境变量；卸载命令改为可直接复制的一行；rootless 安装路径断言与状态目录 0700。"
+    "修复：回程检测脚本在输出超过 1 MiB 时不再可能因管道写满而卡住（读取到上限后继续排空输出）。",
+    "修复：cftz 安装路径在服务未真正启动时不再误报成功，改为失败退出并提示排查。",
+    "界面：公开状态页降噪——日状态条统一为低饱和色板（异常黄/红更突出）、延迟数值按 500/1000ms 分级着色、位置/价格/线路徽章中性化、卡片间距微调；「最近检查」新增收起/展开并记忆状态；测试用目标已从公开页下线。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -576,7 +576,10 @@ do_install() {
     secure_install_permissions
 
     write_service_unit
-    start_service
+    if ! start_service; then
+        err "服务启动失败：请用 cftz log 或系统日志排查"
+        exit 1
+    fi
     ok "服务已启动"
 
     echo
