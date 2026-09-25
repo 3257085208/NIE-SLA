@@ -98,7 +98,7 @@ window.addEventListener('message', event => {
   const record = canvasRecord && event.source === canvasRecord.window ? canvasRecord : null;
   if (!record || !event.data || typeof event.data !== 'object') return;
   const type = String(event.data.type || '');
-  if (type === 'nie-sla:ready' || type === 'nstatus:ready') sendThemeStatus();
+  if (type === 'nie-sla:ready' || type === 'nstatus:ready') sendThemeStatusTo(record);
   if (type === 'nie-sla:resize' || type === 'nstatus:resize') {
     if (event.data.fit_viewport === true) {
       record.fitViewport = true;
@@ -117,13 +117,24 @@ window.addEventListener('resize', () => {
 });
 
 function sendThemeStatus() {
-  if (!canvasRecord?.window || !latestStatus) return;
-  const config = canvasRecord.theme.config && typeof canvasRecord.theme.config === 'object' ? canvasRecord.theme.config : {};
-  const message = { api_version: 'v1', payload: latestStatus, config, theme: { id: canvasRecord.theme.id, revision: canvasRecord.theme.revision } };
-  canvasRecord.window.postMessage({ type: 'nie-sla:status', ...message }, '*');
-  canvasRecord.window.postMessage({ type: 'nstatus:status', ...message }, '*');
-  canvasRecord.window.postMessage({ type: 'nie-sla:config', config, theme: { id: canvasRecord.theme.id } }, '*');
-  canvasRecord.window.postMessage({ type: 'nstatus:config', config, theme: { id: canvasRecord.theme.id } }, '*');
+  sendThemeStatusTo(canvasRecord);
+}
+
+// The theme iframe only starts listening after its bundle boots, while the
+// host handshake fires as soon as the frame loads; whichever side is late
+// used to lose the one-shot message and the theme stayed on defaults. Send
+// through an explicit record (not just the global one) so every trigger —
+// ready, status publish, and each theme-request response — can re-deliver.
+function sendThemeStatusTo(record) {
+  if (!record?.window) return;
+  const config = record.theme?.config && typeof record.theme.config === 'object' ? record.theme.config : {};
+  const themeMeta = { id: record.theme?.id, revision: record.theme?.revision };
+  record.window.postMessage({ type: 'nie-sla:config', config, theme: themeMeta }, '*');
+  record.window.postMessage({ type: 'nstatus:config', config, theme: themeMeta }, '*');
+  if (!latestStatus) return;
+  const message = { api_version: 'v1', payload: latestStatus, config, theme: themeMeta };
+  record.window.postMessage({ type: 'nie-sla:status', ...message }, '*');
+  record.window.postMessage({ type: 'nstatus:status', ...message }, '*');
 }
 
 async function handleThemeRequest(record, message) {
@@ -152,6 +163,10 @@ async function handleThemeRequest(record, message) {
     sendThemeResponse(record, requestId, true, payload, '');
   } catch (error) {
     sendThemeResponse(record, requestId, false, null, String(error?.message || error).slice(0, 240));
+  } finally {
+    // A theme request proves the iframe is listening now: re-send the current
+    // config/status so a late boot never leaves the theme on its defaults.
+    sendThemeStatusTo(record);
   }
 }
 
@@ -166,10 +181,24 @@ function sendThemeResponse(record, requestId, ok, payload, error) {
   record.window?.postMessage({ type: 'nstatus:response', ...response }, '*');
 }
 
+function themeAssetVersion() {
+  try {
+    return new URL(import.meta.url).searchParams.get('v') || '';
+  } catch (_) {
+    return '';
+  }
+}
+
 function themeFileUrl(theme, path) {
   const encodedPath = String(path || '').split('/').map(encodeURIComponent).join('/');
   const revision = `@${encodeURIComponent(theme.revision)}`;
-  return `/api/themes/file/${encodeURIComponent(theme.id)}/${revision}/${encodedPath}`;
+  // The entry URL carries the frontend asset key so a redeploy always
+  // re-fetches the theme entry document; theme-internal bundle references
+  // carry their own in-file ?v= markers for content changes that keep the
+  // same revision (builtin themes track the app version).
+  const version = themeAssetVersion();
+  const suffix = version ? `?v=${encodeURIComponent(version)}` : '';
+  return `/api/themes/file/${encodeURIComponent(theme.id)}/${revision}/${encodedPath}${suffix}`;
 }
 
 function clampCanvasHeight(value) {
