@@ -806,6 +806,7 @@ fn backroute_script_command(target_ip: &str) -> Command {
 }
 
 fn run_backroute_script(target_ip: &str) -> Result<String> {
+    const BACKROUTE_OUTPUT_MAX_BYTES: u64 = 1024 * 1024;
     let mut child = backroute_script_command(target_ip)
         .spawn()
         .context("启动固定回程检测脚本")?;
@@ -815,17 +816,31 @@ fn run_backroute_script(target_ip: &str) -> Result<String> {
         .ok_or_else(|| anyhow!("无法打开回程检测脚本 stdin"))?;
     stdin.write_all(BACKROUTE_SCRIPT.as_bytes())?;
     drop(stdin);
-    let output = child.wait_with_output().context("等待固定回程检测脚本")?;
+    // Bounded reads: wait_with_output() would buffer an unbounded amount of
+    // script output in memory (this is the only root-run task with no 1 MiB
+    // cap elsewhere).
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    if let Some(pipe) = child.stdout.take() {
+        let _ = pipe
+            .take(BACKROUTE_OUTPUT_MAX_BYTES)
+            .read_to_end(&mut stdout);
+    }
+    if let Some(pipe) = child.stderr.take() {
+        let _ = pipe
+            .take(BACKROUTE_OUTPUT_MAX_BYTES)
+            .read_to_end(&mut stderr);
+    }
+    let status = child.wait().context("等待固定回程检测脚本")?;
     let text = format!(
         "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&stdout),
+        String::from_utf8_lossy(&stderr)
     );
-    if !output.status.success() {
+    if !status.success() {
         return Err(anyhow!(
             "回程检测脚本执行失败（exit {}）：{}",
-            output
-                .status
+            status
                 .code()
                 .map(|code| code.to_string())
                 .unwrap_or_else(|| "signal".to_string()),
@@ -1238,7 +1253,10 @@ fn ensure_privileged_fixed_task_context() -> Result<()> {
             "rootless installs cannot run fixed tasks; reinstall the full Agent to use NodeQuality, IP unlock or backroute"
         ));
     }
-    if unsafe { libc::geteuid() } != 0 {
+    // Require both real and effective UID to be 0: a setuid bit (for example
+    // added by mistake) would otherwise let an unprivileged user run fixed
+    // tasks with euid 0.
+    if unsafe { libc::getuid() } != 0 || unsafe { libc::geteuid() } != 0 {
         return Err(anyhow!(
             "NodeQuality and IP unlock tasks require the privileged Agent manager"
         ));
@@ -2012,6 +2030,16 @@ pub(crate) fn strip_ansi_codes(input: &str) -> String {
                     break;
                 }
             }
+        } else if ch == '\u{1b}' && chars.peek() == Some(&']') {
+            // OSC sequence: ESC ] ... (BEL | ESC \)
+            chars.next();
+            let mut last_was_escape = false;
+            for code in chars.by_ref() {
+                if code == '\u{7}' || (last_was_escape && code == '\\') {
+                    break;
+                }
+                last_was_escape = code == '\u{1b}';
+            }
         } else if ch == '\r' {
             if chars.peek() != Some(&'\n') {
                 out.truncate(line_start);
@@ -2058,8 +2086,14 @@ fn ip_unlock_report_text(value: &str) -> String {
             let plain = strip_ansi_codes(raw_line);
             let line = plain.trim();
             if line.starts_with("TERM environment variable not set.") || is_report_ad_banner(line) {
-                end = index;
-                break;
+                // Only treat a banner as the ad footer when it is near the
+                // tail: legitimate report rows like `AS9929` or `CMIN2` are
+                // 6+ uppercase characters and previously cut the report at
+                // the first such row, dropping every later result.
+                if index >= lines.len().saturating_sub(6) {
+                    end = index;
+                    break;
+                }
             }
         }
     }

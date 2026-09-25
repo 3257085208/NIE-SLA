@@ -28,6 +28,9 @@ export const DEFAULT_PUBLIC_WORKER_URL = '';
 
 
 export function clamp(n, min, max) {
+  if (Number.isNaN(n)) return min;
+  if (n === Infinity) return max;
+  if (n === -Infinity) return min;
   if (!Number.isFinite(n)) return min;
   return Math.max(min, Math.min(max, Math.floor(n)));
 }
@@ -390,7 +393,9 @@ function normalizeExpectedStatus(value) {
 
 export function parseExpectedStatus(value) {
   if (!value) return [];
-  return String(value).split(',').map(x => Number(x.trim())).filter(x => Number.isInteger(x));
+  // Mirror the write-path validation: only real HTTP status codes are
+  // meaningful, so a polluted historical value cannot widen the match set.
+  return String(value).split(',').map(x => Number(x.trim())).filter(x => Number.isInteger(x) && x >= 100 && x <= 599);
 }
 
 

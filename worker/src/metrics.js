@@ -75,7 +75,10 @@ function normalizeAgentStats(value) {
 
 export function normalizeAgentVpsInfo(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const text = (key, max) => String(value[key] || '').trim().slice(0, max);
+  const text = (key, max) => String(value[key] || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, max);
   const out = {
     cpu_model: text('cpu_model', 256),
     cpu_cores: Math.floor(boundedMetric(value.cpu_cores, 0, 4096)),
@@ -1809,7 +1812,9 @@ async function persistAgentMetrics(env, data, options = {}) {
   const effectiveCapabilities = capabilities || (Object.keys(previousCapabilities).length ? previousCapabilities : null);
   const effectiveAgentProcess = agentProcess || (Object.keys(previousAgentProcess).length ? previousAgentProcess : null);
   const updatedAt = new Date().toISOString();
-  const hostname = String(metrics.hostname || previousState?.hostname || '').slice(0, 128);
+  const hostname = String(metrics.hostname || previousState?.hostname || '')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .slice(0, 128);
   const latestState = {
     schema: 'nie-sla-agent-metrics-v1',
     agent_id: agentId,

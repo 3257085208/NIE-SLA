@@ -39,11 +39,33 @@ export async function decodeJsonBody(object) {
   return null;
 }
 
+// A gzip object can decompress many times larger than its stored size; cap
+// the decompressed bytes so a crafted archive cannot exhaust Worker memory.
+const R2_BODY_MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
+
 export async function parseJsonBytes(bytes) {
   if (bytes.byteLength >= 2 && bytes[0] === GZIP_MAGIC_0 && bytes[1] === GZIP_MAGIC_1 && typeof DecompressionStream === 'function') {
     const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-    const text = await new Response(stream).text();
-    return JSON.parse(text);
+    const reader = stream.getReader();
+    const chunks = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > R2_BODY_MAX_DECOMPRESSED_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new Error('r2_body_decompressed_too_large');
+      }
+      chunks.push(value);
+    }
+    const merged = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      merged.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return JSON.parse(new TextDecoder().decode(merged));
   }
   return JSON.parse(new TextDecoder().decode(bytes));
 }

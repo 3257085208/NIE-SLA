@@ -491,30 +491,34 @@ function lineFromBackrouteAsns(asns) {
   return '';
 }
 
+function cleanRouteText(value, max) {
+  return String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max);
+}
+
 function normalizeBackrouteRoute(value) {
   if (typeof value === 'string') {
-    const text = value.trim().slice(0, MAX_IP_UNLOCK_REPORT_CHARS);
+    const text = cleanRouteText(value, MAX_IP_UNLOCK_REPORT_CHARS);
     const match = text.match(/^(电信|联通|移动)\(([^)]+)\):\s*(?:经由|线路)\s*([^|\n]+)/u);
     if (!match) return text ? { raw: text } : null;
     return {
       carrier: match[1],
-      target: match[2].trim().slice(0, 64),
+      target: cleanRouteText(match[2], 64),
       line: normalizeBackrouteLine(match[3], match[1]),
     };
   }
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const carrier = String(value.carrier || '').trim().slice(0, 12);
+  const carrier = cleanRouteText(value.carrier, 12);
   if (!BACKROUTE_CARRIERS.has(carrier)) return null;
-  const target = String(value.target || '').trim().slice(0, 64);
+  const target = cleanRouteText(value.target, 64);
   const asns = normalizeBackrouteAsns(value.asns);
   const line = normalizeBackrouteLine(value.line || lineFromBackrouteAsns(asns), carrier);
-  const confidence = ['high', 'medium', 'low'].includes(String(value.confidence || '').trim())
-    ? String(value.confidence).trim()
+  const confidence = ['high', 'medium', 'low'].includes(cleanRouteText(value.confidence, 8))
+    ? cleanRouteText(value.confidence, 8)
     : null;
   const hops = Array.isArray(value.hops)
-    ? value.hops.map((item) => String(item || '').trim().slice(0, 240)).filter(Boolean).slice(0, 24)
+    ? value.hops.map((item) => cleanRouteText(item, 240)).filter(Boolean).slice(0, 24)
     : [];
-  const raw = value.raw ? String(value.raw).trim().slice(0, 240) : '';
+  const raw = value.raw ? cleanRouteText(value.raw, 240) : '';
   if (!target && !raw) return null;
   return {
     carrier,

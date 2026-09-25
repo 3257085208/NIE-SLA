@@ -195,9 +195,16 @@ export class ProbeHistoryBuffer {
       incoming.set(day, list);
     }
     if (!incoming.size) return { accepted: false, days: 0, points: 0 };
+    const configuredLimit = Number(this.env.PROBE_HISTORY_MAX_POINTS_PER_DAY || 10_000);
+    const perKeyLimit = Number.isFinite(configuredLimit)
+      ? Math.min(100_000, Math.max(100, Math.floor(configuredLimit)))
+      : 10_000;
     for (const [day, points] of incoming) {
       const key = `${targetId}|${day}`;
-      this.memDays.set(key, (this.memDays.get(key) || []).concat(points));
+      const merged = (this.memDays.get(key) || []).concat(points);
+      // The per-day point cap was previously only applied at flush time, so
+      // the in-memory day buffer could grow without bound between alarms.
+      this.memDays.set(key, merged.length > perKeyLimit ? merged.slice(-perKeyLimit) : merged);
     }
     return { accepted: true, days: incoming.size, points: [...incoming.values()].reduce((sum, rows) => sum + rows.length, 0) };
   }

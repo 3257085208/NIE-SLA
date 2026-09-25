@@ -483,6 +483,11 @@ fn read_fresh_heartbeat(path: &Path) -> Option<Value> {
     if SystemTime::now().duration_since(modified).ok()?.as_secs() > HEARTBEAT_MAX_AGE_SEC {
         return None;
     }
+    // The heartbeat is a tiny JSON object; bound the read so a leftover or
+    // corrupted file cannot be parsed into memory on every metrics report.
+    if metadata.len() > 64 * 1024 {
+        return None;
+    }
     let value: Value = serde_json::from_slice(&fs::read(path).ok()?).ok()?;
     if value.get("protocol").and_then(Value::as_u64) != Some(1)
         || value.get("mode").and_then(Value::as_str) != Some("manager")
@@ -571,9 +576,11 @@ fn reconcile_service_layout() -> Result<()> {
             Path::new("/etc/systemd/system/nie-sla-agent-update.timer"),
             recovery_timer.as_bytes(),
         )?;
-        if changed {
-            run_checked(Command::new("systemctl").arg("daemon-reload"))?;
-        }
+        // Reload unconditionally: if a previous run wrote the files but the
+        // reload failed, `changed` is false forever after and systemd would
+        // keep using the stale unit definitions.
+        let _ = changed;
+        run_checked(Command::new("systemctl").arg("daemon-reload"))?;
         let _ = Command::new("systemctl")
             .args(["enable", TELEMETRY_SERVICE, MANAGER_SERVICE])
             .status();
@@ -821,7 +828,7 @@ fn set_executable(_path: &Path) -> Result<()> {
 
 fn systemd_telemetry_unit() -> String {
     format!(
-        "[Unit]\nDescription=NIE-SLA VPS Metrics Agent\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nExecStart={AGENT_BINARY}\nRestart=on-failure\nRestartSec=15\nUser=nie-sla\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths={STATE_DIR}\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
+        "[Unit]\nDescription=NIE-SLA VPS Metrics Agent\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nWorkingDirectory={STATE_DIR}\nEnvironmentFile={ENV_FILE}\nExecStart={AGENT_BINARY}\nRestart=on-failure\nRestartSec=15\nUser=nie-sla\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths={STATE_DIR}\n# Hard guard rails: a normal telemetry process sits far below these bounds,\n# so a memory regression is contained and restarted instead of taking the\n# whole small VPS down with it.\nMemoryHigh=256M\nMemoryMax=384M\nStandardOutput=journal\nStandardError=journal\n\n[Install]\nWantedBy=multi-user.target\n"
     )
 }
 

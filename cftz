@@ -494,6 +494,12 @@ start_service() {
             rc-update add "$TASK_SERVICE_NAME" default 2>/dev/null || true
             rc-service "$SERVICE_NAME" start 2>/dev/null || true
             rc-service "$TASK_SERVICE_NAME" start 2>/dev/null || true
+            # rc-service start swallows errors; verify the telemetry service is
+            # actually running so a failed update still rolls back instead of
+            # reporting success while the node stays down.
+            if ! rc-service "$SERVICE_NAME" status 2>/dev/null; then
+                return 1
+            fi
             ;;
         *)       "${WORK_DIR}/${BIN_NAME}" & ;;
     esac

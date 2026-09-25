@@ -315,9 +315,17 @@ async function fetchPanelJson(base, token, path, { method = 'GET', body = null }
       await response.body?.cancel().catch(() => {});
       throw new ApiError(502, `面板返回错误（HTTP ${response.status}）`);
     }
+    const declaredLength = Number(response.headers.get('content-length') || 0);
+    if (declaredLength > 5 * 1024 * 1024) {
+      await response.body?.cancel().catch(() => {});
+      throw new ApiError(502, '面板返回数据过大');
+    }
     try {
-      return await response.json();
-    } catch (_) {
+      const text = await response.text();
+      if (text.length > 5 * 1024 * 1024) throw new ApiError(502, '面板返回数据过大');
+      return JSON.parse(text);
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
       throw new ApiError(502, '面板返回无效数据');
     }
   } catch (error) {
@@ -551,6 +559,12 @@ function fallbackSourceId(prefix, value) {
 
 function splitHostPort(ip) {
   const value = String(ip || '').trim();
+  // Bracketed IPv6 literal with a port, e.g. [2001:db8::1]:443.
+  const bracketed = value.match(/^\[([0-9a-f:]+)\]:(\d{1,5})$/i);
+  if (bracketed) {
+    const port = Number(bracketed[2]);
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) return { host: bracketed[1], port };
+  }
   const match = value.match(/^([^\s:/]+):(\d{1,5})$/);
   if (match) {
     const port = Number(match[2]);

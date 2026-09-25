@@ -3,7 +3,7 @@ set -eu
 
 BASE_URL="${NIE_SLA_AGENT_BASE_URL:-${NSTATUS_AGENT_BASE_URL:-https://status.example.com}}"
 BASE_URL="${BASE_URL%/}"
-DEFAULT_SETUP_SHA256="45550e1b65458c9240d82f2d797163b109654f80d40c08a9eaaa8c4266d1608b"
+DEFAULT_SETUP_SHA256="4936d711aadaefac81d1af4581cb2efe7830759b12020693b08978f5b0878cda"
 
 need_root() {
   if [ "$(id -u 2>/dev/null || echo 1)" != "0" ]; then
@@ -61,6 +61,10 @@ for arg in "$@"; do
     --rootless) ROOTLESS=true ;;
   esac
 done
+# Accept the documented environment form as well: `NIE_SLA_ROOTLESS=1 curl ... | sh`.
+case "${NIE_SLA_ROOTLESS:-${NSTATUS_ROOTLESS:-}}" in
+  1|true|TRUE|yes|YES) ROOTLESS=true ;;
+esac
 if [ "$ROOTLESS" = "true" ]; then
   export NIE_SLA_ROOTLESS="${NIE_SLA_ROOTLESS:-1}"
 else

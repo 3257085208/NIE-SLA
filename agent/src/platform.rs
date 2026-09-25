@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+use std::io::BufRead;
 #[cfg(any(target_os = "linux", test))]
 use std::path::Path;
 use std::process::Command;
@@ -245,16 +247,21 @@ pub(super) fn connection_counts() -> (u64, u64) {
 #[cfg(target_os = "linux")]
 fn count_conn_file(path: &str) -> u64 {
     // Listening sockets are not connections; counting them inflated the
-    // reported TCP/UDP connection totals.
-    std::fs::read_to_string(path)
-        .map(|value| {
-            value
-                .lines()
-                .skip(1)
-                .filter(|line| line.split_whitespace().nth(3) != Some("0A"))
-                .count() as u64
+    // reported TCP/UDP connection totals. Stream the file instead of reading
+    // it whole: a NAT/proxy host can have tens of MB of /proc/net/tcp* and
+    // this runs every sample second.
+    let Ok(file) = std::fs::File::open(path) else {
+        return 0;
+    };
+    std::io::BufReader::new(file)
+        .lines()
+        .skip(1)
+        .filter(|line| {
+            line.as_deref()
+                .map(|line| line.split_whitespace().nth(3) != Some("0A"))
+                .unwrap_or(false)
         })
-        .unwrap_or(0)
+        .count() as u64
 }
 
 #[cfg(not(target_os = "linux"))]

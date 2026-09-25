@@ -1,4 +1,4 @@
-import { assertPublicHttpUrl } from './utils.js';
+import { assertPublicHttpUrl, cleanExternalCell } from './utils.js';
 
 
 const MAX_REPORT_CHARS = 120_000;
@@ -327,6 +327,10 @@ function nqMediaRow(lines, labelPattern, starts) {
   const tokens = [...body.matchAll(/\S+/g)];
   let previousColumn = -1;
   for (const token of tokens) {
+    // Drop upstream script noise (`{dataType:...`) before it is assigned to
+    // a column, and never overwrite a column that already has a value: the
+    // second half of a spaced value previously replaced the first half.
+    if (cleanExternalCell(token[0], 80) === '') continue;
     const absoluteStart = bodyStart + token.index;
     let bestColumn = -1;
     let bestDistance = Infinity;
@@ -339,7 +343,7 @@ function nqMediaRow(lines, labelPattern, starts) {
       }
     });
     if (bestColumn < 0) break;
-    values[bestColumn] = token[0];
+    if (!values[bestColumn]) values[bestColumn] = token[0];
     previousColumn = bestColumn;
   }
   return values;
@@ -366,10 +370,11 @@ export function parseNqMediaServices(content = '') {
 }
 
 function normalizeNqMediaService(rawName, rawStatus, rawRegion, rawMethod) {
-  const name = String(rawName || '').trim().slice(0, 40);
-  const status = /^[-—]$/.test(String(rawStatus || '').trim()) ? '' : String(rawStatus || '').trim().slice(0, 80);
-  const region = /^[-—]$/.test(String(rawRegion || '').trim()) ? '' : String(rawRegion || '').trim().slice(0, 40);
-  const method = /^[-—]$/.test(String(rawMethod || '').trim()) ? '' : String(rawMethod || '').trim().slice(0, 40);
+  const pick = (value, max) => (/^[-—]$/.test(String(value || '').trim()) ? '' : cleanExternalCell(value, max));
+  const name = pick(rawName, 40);
+  const status = pick(rawStatus, 80);
+  const region = pick(rawRegion, 40);
+  const method = pick(rawMethod, 40);
   if (!name || (!status && !region && !method)) return null;
   const key = name.toLowerCase().replace(/[^a-z0-9+]/g, '');
   const canonical = NQ_MEDIA_PROVIDERS.get(key);

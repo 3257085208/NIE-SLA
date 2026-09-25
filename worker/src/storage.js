@@ -8,6 +8,11 @@ export async function readR2Json(env, key, fallback) {
   return result.ok ? (result.found ? result.value : fallback) : fallback;
 }
 
+// Archive objects are written by the Worker itself, but the S3-compatible
+// surface means someone holding R2 keys could place an oversized object.
+// Refuse absurd sizes before decoding them into memory.
+const R2_JSON_MAX_BYTES = 32 * 1024 * 1024;
+
 export async function readR2JsonResult(env, key) {
   if (!env.ARCHIVE) return { ok: false, error: 'missing_archive', key };
   let object;
@@ -15,6 +20,10 @@ export async function readR2JsonResult(env, key) {
     return { ok: false, error: String(error?.message || error), key };
   }
   if (!object) return { ok: true, found: false, value: null, key };
+  const objectSize = Number(object.size || 0);
+  if (objectSize > R2_JSON_MAX_BYTES) {
+    return { ok: false, error: `r2_object_too_large:${objectSize}`, key };
+  }
   try {
     const value = await decodeJsonBody(object);
     return { ok: true, found: true, value: value || null, key };

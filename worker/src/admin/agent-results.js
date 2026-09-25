@@ -36,10 +36,11 @@ function normalizeAgentResultPoint(item, target, agentId, agentLabel, submittedA
     : clamp(Number(target?.timeout_ms || 5000), 500, 30_000);
   const timedOut = Number.isFinite(rawLatency) && rawLatency > timeoutMs;
   const latency = Number.isFinite(rawLatency) && rawLatency >= 0 && !timedOut ? rawLatency : null;
-  const statusCode = item?.status_code == null ? null : Number(item.status_code);
+  const rawStatusCode = item?.status_code == null ? null : Number(item.status_code);
+  const statusCode = Number.isInteger(rawStatusCode) && rawStatusCode >= 100 && rawStatusCode <= 599 ? rawStatusCode : null;
   const ok = timedOut ? 0 : (item?.ok === undefined ? inferAgentResultOk(target, latency, statusCode) : normalizeOkInt(item.ok));
   const error = ok ? null : String(timedOut ? `连接超时（>${timeoutMs}ms）` : (item?.error || '检查失败')).slice(0, 500);
-  return publicCheckPoint({ checked_at: checkedAt, ok: ok ? 1 : 0, latency_ms: latency, status_code: Number.isFinite(statusCode) ? statusCode : null, error, probe_region: agentId, cf_colo: null, total: 1, ok_count: ok ? 1 : 0, bucket: true, agent_id: agentId, agent_label: agentLabel });
+  return publicCheckPoint({ checked_at: checkedAt, ok: ok ? 1 : 0, latency_ms: latency, status_code: statusCode, error, probe_region: agentId, cf_colo: null, total: 1, ok_count: ok ? 1 : 0, bucket: true, agent_id: agentId, agent_label: agentLabel });
 }
 
 function inferAgentResultOk(target, latency, statusCode) {

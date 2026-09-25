@@ -27,6 +27,17 @@ const LAST_SEEN_PREFIX = 'last:seen:';
 const STORAGE_LIST_PAGE_LIMIT = 500;
 const FLUSH_GRACE_SEC = 600;
 const MAX_MEM_REPORTS = 5_000;
+// A single report can carry up to ~220 KB; 5000 of them would exceed the DO
+// memory limit. Bound the in-memory buffer by estimated bytes as well.
+const MAX_MEM_REPORTS_BYTES = 32 * 1024 * 1024;
+const MAX_BUFFER_READ_POINTS = 20_000;
+
+function estimateReportBytes(report) {
+  const points = report?.points?.length || 0;
+  const pings = report?.pings?.length || 0;
+  const proxyChecks = report?.proxy_checks?.length || 0;
+  return 1024 + points * 96 + pings * 48 + proxyChecks * 96;
+}
 const LATEST_PERSIST_THROTTLE_SEC = 300;
 // The latest state is persisted at most once per LATEST_PERSIST_THROTTLE_SEC and
 // is skipped entirely by the HTTP fallback path, so it cannot serve as an
@@ -56,6 +67,7 @@ export class TelemetryBuffer {
     this.memLatest = new Map();
     this.memLastSeen = new Map();
     this.memReports = [];
+    this.memReportsBytes = 0;
     this.latestPersistAt = new Map();
     this.msgWindows = new Map();
     this.migratedAgents = new Set();
@@ -213,7 +225,7 @@ export class TelemetryBuffer {
           this.memLatest.set(latestState.agent_id || agentId, previousState);
         }
       }
-      this.memReports.push({
+      const report = {
         agent_id: agentId,
         lifecycle_epoch: lifecycleEpoch,
         ts: reportTs,
@@ -224,11 +236,20 @@ export class TelemetryBuffer {
         pings: result?.mapped_pings || [],
         proxy_checks: result?.mapped_proxy_checks || [],
         net: result?.net || null,
-      });
-      if (this.memReports.length > MAX_MEM_REPORTS) {
-        const dropped = this.memReports.length - MAX_MEM_REPORTS;
-        this.memReports.splice(0, dropped);
-        console.error(JSON.stringify({ diag: 'mem_reports_cap', dropped, agent_id: agentId }));
+      };
+      this.memReports.push(report);
+      this.memReportsBytes += estimateReportBytes(report);
+      let droppedReports = 0;
+      while (
+        this.memReports.length > MAX_MEM_REPORTS
+        || (this.memReportsBytes > MAX_MEM_REPORTS_BYTES && this.memReports.length > 1)
+      ) {
+        const droppedReport = this.memReports.shift();
+        this.memReportsBytes -= estimateReportBytes(droppedReport);
+        droppedReports += 1;
+      }
+      if (droppedReports > 0) {
+        console.error(JSON.stringify({ diag: 'mem_reports_cap', dropped: droppedReports, bytes: this.memReportsBytes, agent_id: agentId }));
       }
       await this.scheduleReportDrain();
       const { latest_state: _latestState, mapped_points: _p, mapped_pings: _q, mapped_proxy_checks: _r, net: _n, ...ack } = result || {};
@@ -678,7 +699,10 @@ export class TelemetryBuffer {
     points.sort((a, b) => Number(a.ts) - Number(b.ts));
     pings.sort((a, b) => Number(a.ts) - Number(b.ts) || String(a.target_id).localeCompare(String(b.target_id)));
     proxyChecks.sort((a, b) => Number(a.ts) - Number(b.ts) || String(a.target_id).localeCompare(String(b.target_id)));
-    return { ok: true, points, pings, proxy_checks: proxyChecks };
+    // Cap the response so a wide range cannot be materialized bindlessly;
+    // keeping the tail preserves the most recent points.
+    const tail = (list) => (list.length > MAX_BUFFER_READ_POINTS ? list.slice(-MAX_BUFFER_READ_POINTS) : list);
+    return { ok: true, points: tail(points), pings: tail(pings), proxy_checks: tail(proxyChecks) };
   }
 
   async flushCompletedHours(currentAt) {

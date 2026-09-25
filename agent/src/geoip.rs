@@ -253,6 +253,11 @@ fn parse_ipip(body: &str) -> Option<GeoLocation> {
     let data = value.get("data")?;
     let ip = data.get("ip")?.as_str()?;
     let location = data.get("location")?.as_array()?;
+    // The provider returns [country, province, city, ...]; reject unexpected
+    // shapes instead of silently assigning a wrong city.
+    if location.len() < 3 {
+        return None;
+    }
     let country = location.first().and_then(Value::as_str).unwrap_or("");
     let city = location.get(2).and_then(Value::as_str).unwrap_or("");
     location_from_fields(ip, if ip.contains(':') { 6 } else { 4 }, "", country, city)

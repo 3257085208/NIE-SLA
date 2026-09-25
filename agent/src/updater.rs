@@ -612,6 +612,11 @@ fn install_linux_update(policy: &UpdatePolicy, http: &HttpClient) -> Result<Path
         ));
     }
 
+    // Write the pending marker BEFORE touching the current binary: a crash
+    // between the two renames previously left a fresh binary with no marker,
+    // so the stale-update rollback could never fire.
+    mark_update_pending(&policy.latest_version)
+        .context("write update pending marker before install")?;
     if backup.exists() {
         fs::remove_file(&backup)
             .with_context(|| format!("remove old Agent backup {}", backup.display()))?;
@@ -620,57 +625,10 @@ fn install_linux_update(policy: &UpdatePolicy, http: &HttpClient) -> Result<Path
         .with_context(|| format!("backup Agent executable {}", current.display()))?;
     if let Err(err) = fs::rename(&temp, &current) {
         let _ = fs::rename(&backup, &current);
+        let _ = pending_marker_path().and_then(|path| remove_file_durable(&path).map(|_| ()));
         return Err(anyhow!("install Agent update: {}", err));
     }
-    if let Err(marker_error) = mark_update_pending(&policy.latest_version) {
-        let failed = current
-            .parent()
-            .map(|dir| dir.join(FAILED_FILE_NAME))
-            .ok_or_else(|| anyhow!("Agent executable has no parent directory"))?;
-        let rollback = rollback_install_swap(&current, &backup, &failed);
-        return match rollback {
-            Ok(()) => {
-                let marker_cleanup = current
-                    .parent()
-                    .map(|dir| dir.join(UPDATE_PENDING_MARKER))
-                    .ok_or_else(|| anyhow!("Agent executable has no parent directory"))
-                    .and_then(|path| remove_file_durable(&path).map(|_| ()))
-                    .map_err(|error| anyhow!("remove failed update marker: {}", error));
-                match marker_cleanup {
-                    Ok(()) => Err(anyhow!(
-                        "write update pending marker: {}; installed binary was rolled back",
-                        marker_error
-                    )),
-                    Err(cleanup_error) => Err(anyhow!(
-                        "write update pending marker: {}; installed binary was rolled back, but marker cleanup failed: {}",
-                        marker_error, cleanup_error
-                    )),
-                }
-            }
-            Err(rollback_error) => Err(anyhow!(
-                "write update pending marker: {}; rollback failed: {}",
-                marker_error,
-                rollback_error
-            )),
-        };
-    }
     Ok(current)
-}
-
-#[cfg(target_os = "linux")]
-fn rollback_install_swap(current: &Path, backup: &Path, failed: &Path) -> Result<()> {
-    if failed.exists() || failed.is_symlink() {
-        fs::remove_file(failed)
-            .with_context(|| format!("remove previous failed Agent binary {}", failed.display()))?;
-    }
-    fs::rename(current, failed)
-        .with_context(|| format!("retain unconfirmed Agent binary {}", failed.display()))?;
-    if let Err(error) = fs::rename(backup, current) {
-        let _ = fs::rename(failed, current);
-        let _ = sync_parent_directory(current);
-        return Err(error).context("restore previous Agent binary after marker failure");
-    }
-    sync_parent_directory(current)
 }
 
 #[cfg(not(target_os = "linux"))]

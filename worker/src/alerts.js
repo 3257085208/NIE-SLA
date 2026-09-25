@@ -529,6 +529,9 @@ async function collectMetricAlerts(env, settings, target, metric, now, messages,
     ['metric_net_tx', '上行', values.netTxBytesSec, Number(settings.net_tx_mb_s || 0) * 1024 * 1024, 'B/s', formatBytesPerSec],
     ['metric_process_count', '进程数', values.processCount, Number(settings.process_count || 0), '', (v) => String(Math.round(v))],
     ['metric_thread_count', '线程数', values.threadCount, Number(settings.thread_count || 0), '', (v) => String(Math.round(v))],
+    // Fixed threshold: the Agent's own RSS is a health signal, not a
+    // user-tunable metric. A normal process sits at ~10-40 MB.
+    ['metric_agent_rss', 'Agent 内存', values.agentRssBytes, 256 * 1024 * 1024, 'B', formatBytes],
   ];
   for (const [ruleKey, label, value, threshold, unit, formatter] of rules) {
     if (messages.length >= maxMessages) return;
@@ -537,7 +540,9 @@ async function collectMetricAlerts(env, settings, target, metric, now, messages,
       continue;
     }
     if (value > threshold) {
-      const thresholdText = unit === 'B/s' ? formatBytesPerSec(threshold) : `${threshold}${unit}`;
+      const thresholdText = unit === 'B/s'
+        ? formatBytesPerSec(threshold)
+        : unit === 'B' ? formatBytes(threshold) : `${threshold}${unit}`;
       const text = [
         `⚠️ VPS 指标超限：${targetLabel(target)}`,
         `项目：${label}`,
@@ -943,18 +948,25 @@ async function sendWebhook(env, settings, payload = {}) {
   if (!isHttpUrl(url)) return { ok: false, error: '缺少或无效的 Webhook 地址' };
   const method = normalizeWebhookMethod(settings.webhook_method);
   try {
-    const body = renderWebhookTemplate(
-      settings.webhook_template || DEFAULT_WEBHOOK_TEMPLATE,
-      webhookContext(env, payload),
-    ).slice(0, 20_000);
     const headers = parseWebhookHeaders(settings.webhook_headers);
     const options = { method, headers };
+    const context = webhookContext(env, payload);
     let target = url;
     if (method === 'GET') {
+      const body = renderWebhookTemplate(settings.webhook_template || DEFAULT_WEBHOOK_TEMPLATE, context).slice(0, 20_000);
       target = `${url}${url.includes('?') ? '&' : '?'}text=${encodeURIComponent(body)}`;
     } else {
-      if (!Object.keys(headers).some((key) => key.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json';
-      options.body = body;
+      const contentTypeKey = Object.keys(headers).find((key) => key.toLowerCase() === 'content-type');
+      if (!contentTypeKey) headers['content-type'] = 'application/json';
+      const contentType = String(contentTypeKey ? headers[contentTypeKey] : 'application/json');
+      if (contentType.includes('json')) {
+        // Escape placeholder values for JSON bodies: a target name containing
+        // a quote or newline previously produced invalid JSON.
+        for (const key of Object.keys(context)) {
+          context[key] = JSON.stringify(String(context[key] ?? '')).slice(1, -1);
+        }
+      }
+      options.body = renderWebhookTemplate(settings.webhook_template || DEFAULT_WEBHOOK_TEMPLATE, context).slice(0, 20_000);
     }
     const response = await fetchWithTimeout(target, options);
     if (response.ok) return { ok: true };
@@ -1626,8 +1638,10 @@ function metricValues(row) {
   const disk = parseJsonSafe(row?.disk);
   const net = parseJsonSafe(row?.net);
   const diskio = parseJsonSafe(row?.diskio);
+  const agentProcess = parseJsonSafe(row?.agent_process);
   return {
     cpuPercent: Number(row?.cpu_percent || 0),
+    agentRssBytes: Number(agentProcess.rss_bytes || 0),
     memoryPercent: Number(memory.percent || 0),
     diskPercent: Number(disk.percent || 0),
     load1: Number(load.load1 || 0),

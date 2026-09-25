@@ -40,7 +40,7 @@ print_brand_banner() {
 }
 
 DEFAULT_SHA256SUMS_SHA256=""
-DEFAULT_CFTZ_SHA256="57442117223ccf4a50a6125d2c3ac763d744a200b3d236f11f59c66a217a67db"
+DEFAULT_CFTZ_SHA256="112ef2902a37a9733db9b22a3eda6893c4baee4a54ef3326163556d38ea0394b"
 DEFAULT_EXPECTED_VERSION=""
 BIN_NAME="nie-sla-agent"
 SERVICE_NAME="nie-sla-agent"
@@ -213,6 +213,9 @@ purge_legacy_install() {
   rm -rf "$LEGACY_WORK_DIR" "$LEGACY_STATE_DIR" "$LEGACY_MANAGER_STATE_DIR"
   rm -f "/usr/local/bin/${LEGACY_SERVICE_NAME}"
   userdel "$LEGACY_TASK_USER" 2>/dev/null || deluser "$LEGACY_TASK_USER" 2>/dev/null || true
+  if [[ -d "$LEGACY_WORK_DIR" || -d "$LEGACY_STATE_DIR" ]] || { command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep -q '^nstatus-metrics'; }; then
+    warn "部分旧版残留未能清理，请手动检查 /opt/nstatus-metrics、/var/lib/nstatus-metrics 与 nstatus-metrics*.service"
+  fi
   ok "旧版 nstatus-metrics 已删除"
 }
 
@@ -414,7 +417,15 @@ migrate_legacy_state() {
       if [[ -f "${LEGACY_STATE_DIR}/${name}" && ! -L "${LEGACY_STATE_DIR}/${name}" && ! -e "${STATE_DIR}/${name}" ]]; then
         legacy_size="$(wc -c < "${LEGACY_STATE_DIR}/${name}" 2>/dev/null || echo 0)"
         if [[ "${legacy_size:-0}" -le 8388608 ]]; then
-          cp -p "${LEGACY_STATE_DIR}/${name}" "${STATE_DIR}/${name}"
+          # Copy through a temp file + rename so an interrupted copy cannot
+          # leave a half-written queue that the next run would skip.
+          local tmp_copy="${STATE_DIR}/${name}.tmp-$$"
+          if cp -p "${LEGACY_STATE_DIR}/${name}" "$tmp_copy" && [[ -s "$tmp_copy" ]]; then
+            mv -f "$tmp_copy" "${STATE_DIR}/${name}"
+          else
+            rm -f "$tmp_copy"
+            warn "旧版采样队列迁移失败，已跳过（原文件保留在 ${LEGACY_STATE_DIR}/${name}）"
+          fi
         else
           warn "旧版采样队列过大（${legacy_size} 字节），已跳过迁移以避免首次启动内存峰值；原文件保留在 ${LEGACY_STATE_DIR}/${name}"
         fi
@@ -470,6 +481,11 @@ secure_install_permissions() {
 write_env_file() {
   local api="$1" token="$2" agent_id="$3" label="$4" interval="$5" ping_targets="$6" ping_sec="$7"
   mkdir -p "$WORK_DIR"
+  # Write through a 0600 temp file and rename: the previous `> "$ENV_FILE"`
+  # left the token world-readable until the later chmod.
+  local tmp_env="${ENV_FILE}.tmp-$$"
+  (
+  umask 077
   {
     printf 'NIE_SLA_API_BASE=%s\n' "$(shell_quote "$api")"
     printf 'NIE_SLA_AGENT_TOKEN=%s\n' "$(shell_quote "$token")"
@@ -490,8 +506,10 @@ write_env_file() {
     fi
     printf 'NIE_SLA_PING_TARGETS=%s\n' "$(shell_quote "$ping_targets")"
     printf 'NIE_SLA_PING_SEC=%s\n' "$(shell_quote "$ping_sec")"
-  } > "$ENV_FILE"
-  chmod 0600 "$ENV_FILE"
+  } > "$tmp_env"
+  ) || { rm -f "$tmp_env"; err "写入 Agent 配置失败"; exit 1; }
+  chmod 0600 "$tmp_env"
+  mv -f "$tmp_env" "$ENV_FILE"
 }
 
 install_rootless_service() {
@@ -724,6 +742,7 @@ verify_rootless_agent_health() {
     waited=$((waited + 2))
   done
   err "Agent 未能在 ${HEALTH_CHECK_TIMEOUT_SEC}s 内完成首包上报，安装未通过健康检查"
+  err "排查：journalctl -u ${SERVICE_NAME} -n 50（OpenRC：/var/log/${SERVICE_NAME}.log）；--replace-agent 停用的旧探针不会自动恢复，需手动重新启用"
   systemctl --user status "$SERVICE_NAME" --no-pager -l 2>&1 | redact_agent_output >&2 || true
   journalctl --user -u "$SERVICE_NAME" --since "@${INSTALL_STARTED_AT}" --no-pager -o cat 2>/dev/null | tail -n 80 | redact_agent_output >&2 || true
   return 1
@@ -744,6 +763,7 @@ verify_systemd_agent_health() {
   done
 
   err "Agent 未能在 ${HEALTH_CHECK_TIMEOUT_SEC}s 内完成首包上报，安装未通过健康检查"
+  err "排查：journalctl -u ${SERVICE_NAME} -n 50（OpenRC：/var/log/${SERVICE_NAME}.log）；--replace-agent 停用的旧探针不会自动恢复，需手动重新启用"
   print_systemd_agent_diagnostics
   return 1
 }
@@ -770,6 +790,7 @@ verify_file_logged_agent_health() {
   done
 
   err "Agent 未能在 ${HEALTH_CHECK_TIMEOUT_SEC}s 内完成首包上报，安装未通过健康检查"
+  err "排查：journalctl -u ${SERVICE_NAME} -n 50（OpenRC：/var/log/${SERVICE_NAME}.log）；--replace-agent 停用的旧探针不会自动恢复，需手动重新启用"
   if [[ -f "$file" ]]; then tail -n 80 "$file" | redact_agent_output >&2 || true; fi
   return 1
 }
@@ -901,6 +922,17 @@ do_uninstall() {
       rm -f "/etc/periodic/hourly/${SERVICE_NAME}-update" "/etc/cron.hourly/${SERVICE_NAME}-update"
       ;;
   esac
+  # Unknown init (containers) previously fell through without stopping the
+  # processes; clean both init layouts so a systemd/OpenRC switch never
+  # leaves a service that comes back on boot.
+  if command -v pkill >/dev/null 2>&1; then
+    pkill -f "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || true
+    pkill -x "$BIN_NAME" 2>/dev/null || true
+  fi
+  rm -f "/etc/systemd/system/${SERVICE_NAME}.service" "/etc/systemd/system/${TASK_SERVICE_NAME}.service"
+  rm -f "/etc/systemd/system/${SERVICE_NAME}-update.service" "/etc/systemd/system/${SERVICE_NAME}-update.timer"
+  rm -f "/etc/init.d/${SERVICE_NAME}" "/etc/init.d/${TASK_SERVICE_NAME}"
+  rm -f "/etc/periodic/hourly/${SERVICE_NAME}-update" "/etc/cron.hourly/${SERVICE_NAME}-update"
   rm -f "${INSTALL_DIR}/${BIN_NAME}" "${INSTALL_DIR}/${LEGACY_SERVICE_NAME}" "$CFTZ_BIN"
   rm -rf "$WORK_DIR" "$STATE_DIR" "$MANAGER_STATE_DIR"
   userdel "$AGENT_USER" 2>/dev/null || deluser "$AGENT_USER" 2>/dev/null || true
@@ -1033,6 +1065,8 @@ if [[ "$ROOTLESS_MODE" == "true" ]]; then
   pkill -f "${WORK_DIR}/${BIN_NAME}" 2>/dev/null || true
   sleep 1
   mkdir -p "$WORK_DIR" "$INSTALL_DIR" "$STATE_DIR"
+  chmod 0700 "$STATE_DIR" 2>/dev/null || true
+  assert_safe_install_paths
 else
   if legacy_install_detected; then
     if [[ "$NON_INTERACTIVE" == "true" ]]; then
@@ -1125,7 +1159,7 @@ verify_agent_version "${WORK_DIR}/${BIN_NAME}"
 
 ok "安装完成"
 if [[ "$ROOTLESS_MODE" == "true" ]]; then
-  info "卸载: NIE_SLA_ROOTLESS=1 bash $0 uninstall"
+  info "卸载: curl -fsSL ${DOWNLOAD_BASE%/}/install.sh | sudo bash -s -- uninstall --rootless"
 else
   info "uninstall: curl -fsSL ${DOWNLOAD_BASE%/}/install.sh | sudo bash -s -- uninstall"
 fi

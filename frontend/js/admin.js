@@ -863,23 +863,22 @@ function renderVpsSla(data) {
       <div class="vps-sla-chart-head"><strong>每日整体 SLA</strong><span>虚线为 99% 参考值</span></div>
       <div class="vps-sla-chart-wrap"><canvas id="vpsSlaChart" role="img" aria-label="最近 30 天每日整体 SLA 趋势"></canvas></div>
     </div>
-    <div class="vps-sla-list">
-      ${rows.map(({ target, sla }) => {
-        const currentOnline = target.status_source === "agent"
-          ? target.agent_online === true
-          : Number(target.ok) === 1;
-        const currentKnown = target.status_source === "agent"
-          ? target.agent_online != null
-          : target.checked_at != null;
-        const currentClass = !currentKnown ? "unknown" : currentOnline ? "online" : "offline";
-        const currentLabel = !currentKnown ? "待检查" : currentOnline ? "当前在线" : "当前离线";
-        return `<div class="vps-sla-item">
-          <span class="vps-sla-state ${currentClass}" title="${currentLabel}"></span>
-          <strong title="${escapeHtml(target.name)}">${escapeHtml(target.name)}</strong>
-          <span class="vps-sla-value ${slaClassName(sla)}">${sla == null ? "暂无数据" : `${sla.toFixed(2)}%`}</span>
-        </div>`;
-      }).join("")}
+    <div class="vps-sla-list" id="vpsSlaList"></div>`;
+  renderRowsChunked(byId("vpsSlaList"), rows.map(({ target, sla }) => {
+    const currentOnline = target.status_source === "agent"
+      ? target.agent_online === true
+      : Number(target.ok) === 1;
+    const currentKnown = target.status_source === "agent"
+      ? target.agent_online != null
+      : target.checked_at != null;
+    const currentClass = !currentKnown ? "unknown" : currentOnline ? "online" : "offline";
+    const currentLabel = !currentKnown ? "待检查" : currentOnline ? "当前在线" : "当前离线";
+    return `<div class="vps-sla-item">
+      <span class="vps-sla-state ${currentClass}" title="${currentLabel}"></span>
+      <strong title="${escapeHtml(target.name)}">${escapeHtml(target.name)}</strong>
+      <span class="vps-sla-value ${slaClassName(sla)}">${sla == null ? "暂无数据" : `${sla.toFixed(2)}%`}</span>
     </div>`;
+  }));
   renderVpsSlaChart(dailySeries);
 }
 
@@ -1404,6 +1403,26 @@ function targetRowHtml(target, index) {
     </tr>`;
 }
 
+// Large fleets previously produced one multi-megabyte HTML string that was
+// parsed in a single innerHTML assignment, freezing the main thread. Render
+// in row batches above a threshold; small lists keep the exact old path.
+function renderRowsChunked(container, rows, chunkSize = 100) {
+  if (!container) return;
+  if (rows.length <= chunkSize) {
+    container.innerHTML = rows.join("");
+    return;
+  }
+  container.innerHTML = "";
+  let index = 0;
+  const step = () => {
+    const slice = rows.slice(index, index + chunkSize).join("");
+    if (slice) container.insertAdjacentHTML("beforeend", slice);
+    index += chunkSize;
+    if (index < rows.length) setTimeout(step, 0);
+  };
+  step();
+}
+
 function renderTargets() {
   if (!targets.length) {
     byId("tTable").innerHTML = '<div class="empty">暂无探针</div>';
@@ -1412,19 +1431,17 @@ function renderTargets() {
 
   const currentVpsIds = new Set(targets.filter(target => target.type === "tcp").map(target => target.id));
   let rowIndex = 0;
-  let rows = "";
+  const rows = [];
   if (adminGroupBy !== "group") {
     const grouped = groupByDimension(targets, adminGroupBy);
-    rows = Object.entries(grouped)
+    Object.entries(grouped)
       .sort((a, b) => a[0].localeCompare(b[0], "zh-CN"))
-      .map(([name, list]) => {
-        const head = `<tr class="group-sep"><td colspan="5"><strong>${escapeHtml(name)}</strong> · ${list.length}</td></tr>`;
-        const body = list.map((target) => targetRowHtml(target, rowIndex++)).join("");
-        return head + body;
-      })
-      .join("");
+      .forEach(([name, list]) => {
+        rows.push(`<tr class="group-sep"><td colspan="5"><strong>${escapeHtml(name)}</strong> · ${list.length}</td></tr>`);
+        for (const target of list) rows.push(targetRowHtml(target, rowIndex++));
+      });
   } else {
-    rows = targets.map((target, index) => targetRowHtml(target, index)).join("");
+    targets.forEach((target, index) => rows.push(targetRowHtml(target, index)));
   }
   byId("tTable").innerHTML = `
     ${targetBulkBarHtml(currentVpsIds.size)}
@@ -1444,9 +1461,10 @@ function renderTargets() {
             <th>操作</th>
           </tr>
         </thead>
-        <tbody>${rows}</tbody>
+        <tbody id="tTableBody"></tbody>
       </table>
     </div>`;
+  renderRowsChunked(byId("tTableBody"), rows);
   bindTargetSorting();
   bindAdminGroupBy();
   bindTargetBulkControls();
@@ -2260,7 +2278,7 @@ function installModeModal(target, command, rootlessCommand) {
   byId("modal").className = "modal install-mode-modal";
   byId("modal").innerHTML = `
     <h3>安装 Agent · ${escapeHtml(target.name || target.id)}</h3>
-    <p class="hint">命令含一次性凭据，10 分钟内有效；生成后请尽快在目标机器上执行。两个版本共用同一凭据，只需安装其中一个。</p>
+    <p class="hint">命令含一次性凭据，10 分钟内有效且只能使用一次；安装失败后需要回到这里重新生成。两个版本共用同一凭据，只需安装其中一个。</p>
     <div class="install-mode-options">
       <div class="install-mode-card">
         <h4>完整版<span class="install-mode-tag">推荐</span></h4>

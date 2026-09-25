@@ -82,8 +82,23 @@ function normalizeIp(value, family) {
   const text = String(value || '').trim().slice(0, 64);
   if (!text) return null;
   if (family === 4 && /^(?:\d{1,3}\.){3}\d{1,3}$/.test(text) && text.split('.').every(part => Number(part) <= 255)) return text;
-  if (family === 6 && text.includes(':') && /^[0-9a-f:]+$/i.test(text)) return text.toLowerCase();
+  if (family === 6 && isIpv6Literal(text)) return text.toLowerCase();
   return null;
+}
+
+function isIpv6Literal(text) {
+  if (!text.includes(':') || !/^[0-9a-f:]+$/i.test(text)) return false;
+  if ((text.match(/::/g) || []).length > 1) return false;
+  const [head, tail] = text.split('::');
+  if (tail === undefined) {
+    // No compression: exactly 8 groups, each 1-4 hex digits.
+    return text.split(':').length === 8 && text.split(':').every(group => group.length >= 1 && group.length <= 4);
+  }
+  const headGroups = head ? head.split(':') : [];
+  const tailGroups = tail ? tail.split(':') : [];
+  if (headGroups.some(group => group.length < 1 || group.length > 4)) return false;
+  if (tailGroups.some(group => group.length < 1 || group.length > 4)) return false;
+  return headGroups.length + tailGroups.length <= 7;
 }
 
 function cleanText(value, max) {

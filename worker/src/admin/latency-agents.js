@@ -19,6 +19,7 @@ const ARCHIVE_FLUSH_MIN_SEC = 300;
 // oldest overflow is bucketed into the D1 fallback table instead of growing
 // the pending JSON without bound.
 const PENDING_MAX_POINTS = 10_000;
+const PENDING_MAX_BYTES = 512 * 1024;
 const ARCHIVE_SCHEMA = 'nie-sla-latency-segment-v1';
 const LATENCY_SCRIPT_VERSION = 8;
 // Per-isolate throttle for the retention cleanup that used to run on every
@@ -254,7 +255,9 @@ export async function submitLatencyAgentResults(request, env, body = null) {
     const timedOut = Number.isFinite(rawLatency) && rawLatency > timeoutMs;
     const latency = Number.isFinite(rawLatency) && rawLatency >= 0 && !timedOut ? rawLatency : null;
     const ok = timedOut ? false : (result?.ok === undefined ? latency != null : parseBoolean(result.ok, false));
-    const error = ok ? null : String(timedOut ? `连接超时（>${timeoutMs}ms）` : (result?.error || '连接失败')).slice(0, 200);
+    const error = ok ? null : String(timedOut ? `连接超时（>${timeoutMs}ms）` : (result?.error || '连接失败'))
+      .replace(/[\u0000-\u001f\u007f]/g, ' ')
+      .slice(0, 200);
     accepted.push({ target_id: targetId, checked_at: checkedAt, latency_ms: latency, ok: ok ? 1 : 0, error, target_revision: Number(target.created_at || 0) });
   }
   let archived = false;
@@ -426,7 +429,7 @@ async function flushLatencyArchive(env, nodeId, points) {
   }
   const { keep, overflow } = capPendingResults(remaining);
   if (overflow.length) await writeLatencyD1Fallback(env, nodeId, overflow);
-  if (pending.length || keep.length) {
+  if (pending.length || keep.length || overflow.length) {
     await env.DB.prepare(`UPDATE latency_agents SET pending_results = ? WHERE id = ?`)
       .bind(JSON.stringify(keep), nodeId)
       .run();
@@ -449,8 +452,20 @@ async function retainLatencyPending(env, nodeId, points) {
 }
 
 function capPendingResults(points) {
-  if (points.length <= PENDING_MAX_POINTS) return { keep: points, overflow: [] };
-  return { keep: points.slice(points.length - PENDING_MAX_POINTS), overflow: points.slice(0, points.length - PENDING_MAX_POINTS) };
+  // Bound by count and by serialized bytes: 10k points can approach the D1
+  // row-size envelope, so overflow the oldest to the D1 fallback table.
+  const oversize = (list) => JSON.stringify(list).length > PENDING_MAX_BYTES;
+  if (points.length <= PENDING_MAX_POINTS && !oversize(points)) {
+    return { keep: points, overflow: [] };
+  }
+  let keepCount = Math.min(points.length, PENDING_MAX_POINTS);
+  let keep = points.slice(points.length - keepCount);
+  while (keepCount > 1 && oversize(keep)) {
+    keepCount -= Math.max(1, Math.floor(keepCount / 10));
+    keep = points.slice(points.length - keepCount);
+  }
+  const overflow = points.slice(0, points.length - keepCount);
+  return { keep, overflow };
 }
 
 function parsePendingResults(value) {

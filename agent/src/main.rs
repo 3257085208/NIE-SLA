@@ -49,6 +49,11 @@ const DEFAULT_UPDATE_CHECK_SEC: u64 = 3_600;
 const INITIAL_UPDATE_CHECK_SEC: u64 = 60;
 const REPORT_MAX_SAMPLES: usize = 900;
 const REPORT_MAX_PINGS: usize = 5_000;
+// Control-plane lists come from the Worker; bound them so a compromised or
+// misconfigured API cannot make the Agent materialize tens of thousands of
+// ping/proxy targets in one plan.
+const MAX_CONTROL_PING_TARGETS: usize = 500;
+const MAX_CONTROL_PROXY_TARGETS: usize = 200;
 const REPORT_MAX_PROXY_CHECKS: usize = 100;
 const MAX_PROXY_QUEUE_CAPACITY: usize = 1_000;
 const UPLOAD_STALL_SEC: u64 = 180;
@@ -1696,9 +1701,13 @@ fn parse_control_ping_plan(value: &serde_json::Value) -> Option<PingPlan> {
     }
     let parsed = targets
         .iter()
+        .take(MAX_CONTROL_PING_TARGETS)
         .filter_map(|item| {
-            let id = item.get("id")?.as_str()?.to_string();
-            let target = item.get("target")?.as_str()?.to_string();
+            let id: String = item.get("id")?.as_str()?.chars().take(64).collect();
+            if id.is_empty() {
+                return None;
+            }
+            let target: String = item.get("target")?.as_str()?.chars().take(255).collect();
             let enabled = item
                 .get("enabled")
                 .and_then(|v| v.as_bool())
@@ -1721,6 +1730,7 @@ fn parse_control_ping_plan(value: &serde_json::Value) -> Option<PingPlan> {
         .unwrap_or(DEFAULT_PING_SEC);
     let proxy_targets = proxy_values
         .iter()
+        .take(MAX_CONTROL_PROXY_TARGETS)
         .filter_map(|item| match proxy::ProxyTarget::from_json(item) {
             Ok(target) if target.is_enabled() => Some(target),
             _ => None,
