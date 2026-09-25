@@ -1,5 +1,5 @@
-import { escapeAttr, escapeHtml } from './html.js?v=20260925-visual1';
-import { clampNumber, fmtBytes } from './format.js?v=20260925-visual1';
+import { escapeAttr, escapeHtml } from './html.js?v=20260925-visual2';
+import { clampNumber, fmtBytes } from './format.js?v=20260925-visual2';
 
 export function trafficForTarget(target = {}) {
   return target?.agent_metrics?.traffic || target?.traffic || {};

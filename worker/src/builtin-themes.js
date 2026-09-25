@@ -31,7 +31,7 @@ export const BUILTIN_THEMES = [
     builtin: true,
     mode: "canvas",
     name: "NIE-SLA NodeGet Theme",
-    version: "1.4.44",
+    version: VERSION,
     description: "Complete port of NIE-Theme-NodeGet for NIE-SLA — pixel-identical cards, rings, maps, filters and latency panels adapted to SLA probe (status/metrics/pings/latency over iframe message bridge).",
     author: "MarkNKX",
     license: "AGPL-3.0",

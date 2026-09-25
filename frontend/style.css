@@ -198,9 +198,9 @@ button { border: 0; cursor: pointer; }
   cursor: pointer;
 }
 .service + .service {
-  margin-top: 7px;
-  padding-top: 14px;
-  border-top: 1px dashed #dde4ea;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px dashed #d7dde4;
 }
 .service:hover .service-name, .service.selected .service-name { color: var(--green-dark); }
 .service-name {
@@ -249,8 +249,8 @@ button { border: 0; cursor: pointer; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: #eef2f6;
-  color: #475569;
+  background: #e8f0fe;
+  color: #1a73e8;
 }
 .meta-proxy {
   border: 1px solid currentColor;
@@ -261,7 +261,7 @@ button { border: 0; cursor: pointer; }
 .meta-proxy-down { color: #c2413a; background: #fff1f1; }
 .meta-proxy-stale { color: #77869d; background: #f1f4f7; }
 .meta-proxy-pending { color: #8a6510; background: #fff9e8; }
-.meta-proxy-kind { color: #475569; background: #eef2f6; border: 1px solid #dde5ec; }
+.meta-proxy-kind { color: #2563eb; background: #eef4ff; border: 1px solid #c9dcff; }
 .meta-proxy-parent { color: #64748b; background: #f4f6f8; border: 1px solid #dce2e8; }
 .proxy-service-note { min-width: 0; color: var(--muted); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
 
@@ -279,7 +279,7 @@ button { border: 0; cursor: pointer; }
 .meta-expiry { background: #e8f7ef; color: #159754; }
 .meta-expiry-warn { background: #fef7e0; color: #b8860b; }
 .meta-expired { background: #fdf0f0; color: #e74c3c; }
-.meta-price { background: #eef2f6; color: #475569; }
+.meta-price { background: #f5f0ff; color: #7c3aed; }
 .service-status {
   justify-self: end;
   color: var(--green);
@@ -395,16 +395,14 @@ button { border: 0; cursor: pointer; }
   border-radius: inherit;
 }
 
-.daybar { height: 23px; background: var(--gray); border-radius: 3px; }
-/* Calm the normal range to a soft wash so yellow/red outliers are the only
-   thing that draws attention; per-day details stay available in the tooltip. */
-.daybar.full { background: #cfe8da; }
-.daybar.good { background: #d9ece2; }
-.daybar.fair { background: #efdfa9; }
-.daybar.warn { background: #e2b73a; }
-.daybar.poor { background: #e5a3a3; }
-.daybar.bad { background: #d96a6a; }
-.daybar.none { background: #e4e9ef; }
+.daybar { height: 23px; background: var(--gray); border-radius: 2px; }
+.daybar.full { background: var(--green); }
+.daybar.good { background: #94d8b1; }
+.daybar.fair { background: #eadb8a; }
+.daybar.warn { background: #d7bc55; }
+.daybar.poor { background: #e7a1a1; }
+.daybar.bad { background: #df6868; }
+.daybar.none { background: #d7dde4; }
 
 .inline-chart-panel {
   grid-column: 1 / -1;

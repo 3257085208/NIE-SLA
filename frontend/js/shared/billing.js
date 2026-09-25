@@ -1,4 +1,4 @@
-import { pad } from './format.js?v=20260925-visual1';
+import { pad } from './format.js?v=20260925-visual2';
 
 export function formatDateOnly(sec) {
   if (!sec) return '-';

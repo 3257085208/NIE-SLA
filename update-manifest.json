@@ -1,15 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.104",
-  "agent_version": "v1.1.104",
-  "source_ref": "app-v1.1.104",
-  "sums_sha256": "6c85669704f25bf459cce80f10452292d29002d0a914ed5986b97c0786cfcd20",
-  "published_at": "2026-09-25T03:52:00Z",
-  "title": "NIE-SLA 1.1.104",
+  "version": "1.1.105",
+  "agent_version": "v1.1.105",
+  "source_ref": "app-v1.1.105",
+  "sums_sha256": "29929aebffc31c82785563d00edc3ea9bbc73646742026000e3a184efc1e18ff",
+  "published_at": "2026-09-25T06:46:00Z",
+  "title": "NIE-SLA 1.1.105",
   "changelog": [
-    "修复：回程检测脚本在输出超过 1 MiB 时不再可能因管道写满而卡住（读取到上限后继续排空输出）。",
-    "修复：cftz 安装路径在服务未真正启动时不再误报成功，改为失败退出并提示排查。",
-    "界面：公开状态页降噪——日状态条统一为低饱和色板（异常黄/红更突出）、延迟数值按 500/1000ms 分级着色、位置/价格/线路徽章中性化、卡片间距微调；「最近检查」新增收起/展开并记忆状态；测试用目标已从公开页下线。"
+    "内置主题：NodeGet 主题更新至 1.4.45——「延迟监控」面板里的 Agent TCP Ping 组现在跟随「首页显示 IPv4 TCP Ping」开关，关闭后该组与整个面板不再显示。",
+    "内置主题：两个官方主题（原版、NodeGet）版本统一随应用版本发布，主题资源缓存随版本刷新。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -2,7 +2,7 @@
   "schema": "nie-sla-theme-v1",
   "id": "nodeget-nie-sla",
   "name": "NIE-SLA NodeGet Theme",
-  "version": "1.4.44",
+  "version": "1.4.45",
   "type": "theme",
   "mode": "canvas",
   "entry": "index.html",
