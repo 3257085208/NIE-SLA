@@ -2,6 +2,7 @@
 import { nowSec, clamp, parseBoolean, sha256Hex, assertPublicHttpUrl } from '../utils.js';
 import { ApiError, safeJson } from '../auth.js';
 import { getAdminPath, setAdminPath } from '../admin-path.js';
+import { readSharedConfig, invalidateSharedConfig } from '../config-cache.js';
 import { encryptSecretValue, decryptSecretValue, ENCRYPTED_SECRET_PREFIX } from '../totp.js';
 
 const EXCHANGE_RATE_TTL_SEC = 86400;
@@ -236,19 +237,27 @@ export async function getAgentPublicBase(env) {
   }
 }
 
+const AGENT_REPORT_INTERVAL_KEY = 'agent_report_interval';
+
 export async function getAgentReportInterval(env) {
-  try {
-    const raw = await getMeta(env, 'agent_report_interval');
-    const value = Number(raw);
-    if (Number.isFinite(value) && value >= 10 && value <= 3600) return Math.floor(value);
-  } catch (_) {}
-  return 300;
+  // Read-through cached: probe/report responses ask for this on every control
+  // fetch, so a D1 read per request would be wasteful; a one-minute TTL is
+  // fine for an admin-level setting.
+  return readSharedConfig(env, AGENT_REPORT_INTERVAL_KEY, 60, async () => {
+    try {
+      const raw = await getMeta(env, AGENT_REPORT_INTERVAL_KEY);
+      const value = Number(raw);
+      if (Number.isFinite(value) && value >= 10 && value <= 3600) return Math.floor(value);
+    } catch (_) {}
+    return 300;
+  });
 }
 
 export async function setAgentReportInterval(env, seconds) {
   const value = Number(seconds);
   if (!Number.isFinite(value) || value < 10 || value > 3600) throw new Error('上报间隔必须在 10-3600 秒之间');
-  await setMeta(env, 'agent_report_interval', String(Math.floor(value)));
+  await setMeta(env, AGENT_REPORT_INTERVAL_KEY, String(Math.floor(value)));
+  await invalidateSharedConfig(AGENT_REPORT_INTERVAL_KEY);
   return Math.floor(value);
 }
 

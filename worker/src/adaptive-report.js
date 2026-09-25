@@ -1,5 +1,6 @@
 import { internalRequestHeaders } from './auth.js';
 import { parseBoolean } from './utils.js';
+import { getAgentReportInterval } from './admin/settings.js';
 
 const DEFAULT_FAST_SEC = 60;
 const DEFAULT_IDLE_SEC = 300;
@@ -90,7 +91,12 @@ export async function readViewerCount(env, options = {}) {
 export async function getAdaptiveReportInterval(env) {
   if (!adaptiveReportEnabled(env)) return null;
   const viewers = await readViewerCount(env);
-  const fallback = viewers > 0 ? DEFAULT_FAST_SEC : DEFAULT_IDLE_SEC;
-  const configured = viewers > 0 ? env?.ADAPTIVE_FAST_SEC : env?.ADAPTIVE_IDLE_SEC;
-  return clampReportInterval(configured ?? fallback, fallback);
+  if (viewers > 0) return clampReportInterval(env?.ADAPTIVE_FAST_SEC ?? DEFAULT_FAST_SEC, DEFAULT_FAST_SEC);
+  // Idle cadence: an explicit env override wins, otherwise the admin-configured
+  // value from the settings page (stored in D1, default 300s) applies.
+  const envIdle = env?.ADAPTIVE_IDLE_SEC;
+  const configured = envIdle == null || String(envIdle).trim() === ''
+    ? await getAgentReportInterval(env).catch(() => DEFAULT_IDLE_SEC)
+    : envIdle;
+  return clampReportInterval(configured, DEFAULT_IDLE_SEC);
 }

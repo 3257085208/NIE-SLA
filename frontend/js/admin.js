@@ -1,24 +1,24 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260925-visual5";
-import { createAdminClient } from "./admin/api.js?v=20260925-visual5";
-import { createOnboarding } from "./admin/onboarding.js?v=20260925-visual5";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260925-visual5";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260925-visual5";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260925-visual5";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260925-visual5";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260925-visual6";
+import { createAdminClient } from "./admin/api.js?v=20260925-visual6";
+import { createOnboarding } from "./admin/onboarding.js?v=20260925-visual6";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260925-visual6";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260925-visual6";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260925-visual6";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260925-visual6";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260925-visual5";
+} from "./shared/target-catalogs.js?v=20260925-visual6";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260925-visual5";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260925-visual5";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260925-visual5";
-import { fmtBytes } from "./shared/format.js?v=20260925-visual5";
+} from "./shared/grouping.js?v=20260925-visual6";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260925-visual6";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260925-visual6";
+import { fmtBytes } from "./shared/format.js?v=20260925-visual6";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -242,6 +242,50 @@ async function saveRetention() {
     if (status) status.textContent = `已保存：保留 ${retentionLabel(saved)}`;
     toast(`数据保留已设为 ${retentionLabel(saved)}`);
     if (result?.external_storage_recommended || saved > 72) showRetentionStorageAdvice(saved);
+  } catch (error) {
+    if (status) status.textContent = `保存失败：${error?.message || "未知错误"}`;
+    toast(error?.message || "保存失败", "err");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "保存";
+    }
+  }
+}
+
+async function loadAgentReportInterval() {
+  const input = byId("agentReportInterval");
+  const status = byId("agentReportIntervalStatus");
+  if (!input) return;
+  try {
+    const result = await apiAdmin("/api/agent/report-interval", {}, 20_000);
+    const value = Math.max(10, Math.min(3600, Math.round(Number(result?.interval_sec) || 300)));
+    input.value = String(value);
+    if (status) status.textContent = "";
+  } catch (error) {
+    if (status) status.textContent = `读取失败：${error?.message || "未知错误"}`;
+  }
+}
+
+async function saveAgentReportInterval() {
+  const input = byId("agentReportInterval");
+  const status = byId("agentReportIntervalStatus");
+  const button = byId("saveAgentReportInterval");
+  if (!input) return;
+  const seconds = Math.max(10, Math.min(3600, Math.round(Number(input.value) || 300)));
+  if (button) {
+    button.disabled = true;
+    button.textContent = "保存中...";
+  }
+  try {
+    const result = await apiAdmin("/api/agent/report-interval", {
+      method: "POST",
+      body: JSON.stringify({ interval_sec: seconds }),
+    }, 30_000);
+    const saved = Math.max(10, Math.min(3600, Math.round(Number(result?.interval_sec) || seconds)));
+    input.value = String(saved);
+    if (status) status.textContent = `已保存：空闲上报间隔 ${saved} 秒（有访客时自动 60 秒）`;
+    toast(`Agent 上报间隔已设为 ${saved} 秒`);
   } catch (error) {
     if (status) status.textContent = `保存失败：${error?.message || "未知错误"}`;
     toast(error?.message || "保存失败", "err");
@@ -3282,6 +3326,7 @@ async function loadSettings() {
   loadUsageActual();
   loadUsageStorage();
   loadRetention();
+  loadAgentReportInterval();
   loadTotp();
   loadEncryption();
   loadUsageSummaryAccess();
@@ -4721,6 +4766,7 @@ byId("proxyTable").onclick = (e) => {
 };
 byId("savePingInterval").onclick = savePingInterval;
 if (byId("saveRetention")) byId("saveRetention").onclick = saveRetention;
+if (byId("saveAgentReportInterval")) byId("saveAgentReportInterval").onclick = saveAgentReportInterval;
 if (byId("openOnboardingBtn")) byId("openOnboardingBtn").onclick = () => onboarding.open("mode");
 byId("latencyTable").onclick = (e) => {
   const button = e.target.closest("button[data-a]");

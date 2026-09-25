@@ -1,5 +1,6 @@
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
 import { nowSec, sanitizeId, publicError } from './utils.js';
+import { readViewerCount } from './adaptive-report.js';
 
 const MAX_EVENTS = 100;
 const MAX_MESSAGE_BYTES = 180_000;
@@ -193,6 +194,12 @@ export async function publishStatusEvents(env, events) {
   if (!env.STATUS_STREAM) return { ok: true, skipped: true, reason: 'missing_binding' };
   const compact = compactStatusEvents(events);
   if (!compact.length) return { ok: true, skipped: true, reason: 'no_events' };
+  // Idle-host optimisation: with no live public viewers there is nothing to
+  // deliver, so skip the DO round-trip entirely. The viewer count is cached
+  // for a short TTL (shared with adaptive reporting), keeping this cheaper
+  // than one broadcast per event batch on an idle site.
+  const viewers = await readViewerCount(env).catch(() => 0);
+  if (!viewers) return { ok: true, skipped: true, reason: 'no_viewers', delivered: 0 };
   const id = env.STATUS_STREAM.idFromName('public-status-stream');
   const response = await env.STATUS_STREAM.get(id).fetch('https://nie-sla.internal/publish', {
     method: 'POST',

@@ -1,15 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.106",
-  "agent_version": "v1.1.106",
-  "source_ref": "app-v1.1.106",
-  "sums_sha256": "39038aeecf10e1d5ecf43c5e26a6270946cffd42d720ddc9a9298b6a4c7d6075",
-  "published_at": "2026-09-25T11:37:00Z",
-  "title": "NIE-SLA 1.1.106",
+  "version": "1.1.107",
+  "agent_version": "v1.1.107",
+  "source_ref": "app-v1.1.107",
+  "sums_sha256": "cd39274eb96d612c32ce19c9866694e87cb9f4531c3d7f12841a1a918e042858",
+  "published_at": "2026-09-25T12:15:00Z",
+  "title": "NIE-SLA 1.1.107",
   "changelog": [
-    "限流策略：公开只读接口（状态、检查、指标、代理检测、开发者 API、主题列表等）取消每 IP 内存限流，改由响应缓存与边缘承担；NQ 图片 broker 全局额度由 100 次/小时提高到 1000 次/小时（每 IP 仍 100 次/小时）。",
-    "连接策略：状态 WebSocket 由 20 提高到 120 次/分钟，Agent 指标 WebSocket 由 10 提高到 60 次/分钟，网络抖动重连不再容易触发 429。",
-    "安装器测试：3 项 rootless 检查改为引用 agent/setup.sh，兼容私有与公开快照两种布局。"
+    "空闲降载：公开状态流在没有前端访客时跳过广播请求，有人查看公开页时行为不变；观众计数复用 15 秒缓存。",
+    "上报节奏：后台新增「Agent 上报间隔」设置（10–3600 秒，默认 300），控制无访客时的空闲上报间隔；有人查看公开页时仍自动提升到 60 秒。此前该设置仅存库、并未生效。",
+    "后台界面：系统设置页新增对应设置卡片。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

@@ -8,7 +8,8 @@ import {
 } from '../src/adaptive-report.js';
 import { internalRequestHeaders } from '../src/auth.js';
 import { processAgentMetricsPayload } from '../src/metrics.js';
-import { StatusStream } from '../src/status-stream.js';
+import { StatusStream, publishStatusEvents } from '../src/status-stream.js';
+import { invalidateSharedConfig } from '../src/config-cache.js';
 import { TelemetryBuffer } from '../src/telemetry-buffer.js';
 
 globalThis.crypto ||= webcrypto;
@@ -280,6 +281,55 @@ const metricsPayload = {
   assert.equal((await response.json()).viewers, 2, 'the viewers endpoint must return the live socket count');
   const denied = await stream.fetch(new Request('https://nie-sla.internal/viewers'));
   assert.equal(denied.status, 401, 'the viewers endpoint must reject internal callers without the secret');
+}
+
+// 9. Idle cadence follows the admin-stored reporting interval (D1), with the
+// env override taking precedence.
+{
+  invalidateSharedConfig('agent_report_interval');
+  const storedDb = {
+    prepare() {
+      const statement = {
+        bind() { return statement; },
+        async first() { return { value: '120' }; },
+        async run() { return { meta: { changes: 1 } }; },
+      };
+      return statement;
+    },
+  };
+  resetAdaptiveReportCacheForTests();
+  const { env } = viewerEnv(0, { DB: storedDb });
+  assert.equal(await getAdaptiveReportInterval(env), 120, 'idle interval must follow the stored admin setting');
+  resetAdaptiveReportCacheForTests();
+  const { env: overrideEnv } = viewerEnv(0, { DB: storedDb, ADAPTIVE_IDLE_SEC: '600' });
+  assert.equal(await getAdaptiveReportInterval(overrideEnv), 600, 'ADAPTIVE_IDLE_SEC must override the stored value');
+  invalidateSharedConfig('agent_report_interval');
+}
+
+// 10. publishStatusEvents skips the DO round-trip while no public viewers are
+// connected, and broadcasts normally once a viewer is present.
+{
+  const events = [{ target_id: 't1', ok: 1, checked_at: Math.floor(Date.now() / 1000) }];
+  let broadcasts = 0;
+  const makeStream = (viewers) => ({
+    idFromName: () => 'stream-id',
+    get: () => ({
+      fetch: async (url) => {
+        if (String(url).includes('/viewers')) return Response.json({ ok: true, viewers });
+        broadcasts += 1;
+        return Response.json({ ok: true, delivered: 1, events: 1 });
+      },
+    }),
+  });
+  resetAdaptiveReportCacheForTests();
+  const idleResult = await publishStatusEvents({ INTERNAL_CRON_SECRET: INTERNAL_SECRET, STATUS_STREAM: makeStream(0) }, events);
+  assert.equal(idleResult.skipped, true, 'no viewers must skip broadcasting');
+  assert.equal(idleResult.reason, 'no_viewers');
+  assert.equal(broadcasts, 0, 'no DO broadcast while idle');
+  resetAdaptiveReportCacheForTests();
+  const activeResult = await publishStatusEvents({ INTERNAL_CRON_SECRET: INTERNAL_SECRET, STATUS_STREAM: makeStream(2) }, events);
+  assert.equal(activeResult.ok, true);
+  assert.equal(broadcasts, 1, 'a live viewer must receive exactly one broadcast');
 }
 
 console.log('adaptive report tests passed');
