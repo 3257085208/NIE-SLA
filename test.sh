@@ -230,9 +230,9 @@ run_shell "IP unlock dependencies stay task-local" "cd '$ROOT' && grep -q 'OPTIO
 run_shell "updates bypass stale edge cache" "cd '$ROOT' && grep -q 'bin/SHA256SUMS?v=' agent/src/updater.rs && grep -q 'bin/\${binary_name}?v=' cftz"
 run_shell "manager restarts stale telemetry" "cd '$ROOT' && grep -q 'write_telemetry_progress' agent/src/main.rs && grep -q 'crate::manager::TELEMETRY_PROGRESS' agent/src/main.rs && grep -q 'TELEMETRY_PROGRESS_MAX_AGE_SEC' agent/src/manager.rs && grep -q 'stale' agent/src/manager.rs"
 run_shell "sampling cannot block the report loop" "cd '$ROOT' && grep -q 'spawn_disk_worker' agent/src/main.rs && grep -q 'command_output_with_timeout' agent/src/platform.rs && grep -q 'GPU_PROBE_TIMEOUT' agent/src/platform.rs"
-run_shell "rootless marker reaches the runtime environment" "cd '$ROOT' && grep -q \"printf 'NIE_SLA_ROOTLESS=1\" setup.sh && grep -q 'rootless_mode_requested' agent/src/tasks.rs && grep -q 'rootless_requested' agent/src/main.rs"
-run_shell "rootless fixes are pinned in tests" "cd '$ROOT' && grep -q 'NIE_SLA_ALLOW_ROOT_ROOTLESS' setup.sh && grep -q 'is_own_compat_symlink' setup.sh && grep -q 'stop_other_rootless_installs' setup.sh"
-run_shell "uninstall accepts --rootless and verifies OpenRC status" "cd '$ROOT' && grep -q 'uninstall --rootless' setup.sh && grep -q 'rc-service \"\$SERVICE_NAME\" status' cftz"
+run_shell "rootless marker reaches the runtime environment" "cd '$ROOT' && grep -q \"printf 'NIE_SLA_ROOTLESS=1\" agent/setup.sh && grep -q 'rootless_mode_requested' agent/src/tasks.rs && grep -q 'rootless_requested' agent/src/main.rs"
+run_shell "rootless fixes are pinned in tests" "cd '$ROOT' && grep -q 'NIE_SLA_ALLOW_ROOT_ROOTLESS' agent/setup.sh && grep -q 'is_own_compat_symlink' agent/setup.sh && grep -q 'stop_other_rootless_installs' agent/setup.sh"
+run_shell "uninstall accepts --rootless and verifies OpenRC status" "cd '$ROOT' && grep -q 'uninstall --rootless' agent/setup.sh && grep -q 'rc-service \"\$SERVICE_NAME\" status' cftz"
 run_shell "queue loads are streamed and bounded" "cd '$ROOT' && grep -q 'QueueStreamVisitor' agent/src/queue.rs && grep -q 'MAX_QUEUE_LOAD_BYTES' agent/src/queue.rs && grep -q 'too large to load' agent/src/queue.rs"
 
 if command -v shellcheck >/dev/null 2>&1; then
