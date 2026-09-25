@@ -305,34 +305,46 @@ export async function migrateTurnstileEncryption(env) {
   return { migrated: 1 };
 }
 
+const PUBLIC_SETTINGS_CACHE_KEY = 'public_settings:v1';
+
 export async function getPublicSettings(env, { includeAdmin = false } = {}) {
-  let autoUpdate = null;
-  let appearanceSaved = null;
-  try { autoUpdate = await getMeta(env, 'agent_auto_update'); } catch (_) {}
-  try { appearanceSaved = await getMeta(env, 'frontend_appearance'); } catch (_) {}
-  let parsedAppearance = {};
-  try { parsedAppearance = appearanceSaved ? JSON.parse(appearanceSaved) : {}; } catch (_) {}
-  const { trafficPeriod } = await import('../traffic.js');
-  const settings = {
-    ok: true,
-    frontend_theme: 'classic',
-    agent_auto_update: parseBoolean(autoUpdate ?? env.AGENT_AUTO_UPDATE_DEFAULT, true),
-    appearance: normalizeFrontendAppearance(parsedAppearance, env),
-    traffic: trafficPeriod(env),
-  };
+  // The public status path reads this on every edge-cache miss; the settings
+  // change rarely and admin writes invalidate the cache, so a short
+  // read-through TTL removes two app_meta reads per public request without
+  // delaying appearance changes beyond the invalidation itself.
+  const settings = await readSharedConfig(env, PUBLIC_SETTINGS_CACHE_KEY, 30, async () => {
+    let autoUpdate = null;
+    let appearanceSaved = null;
+    try { autoUpdate = await getMeta(env, 'agent_auto_update'); } catch (_) {}
+    try { appearanceSaved = await getMeta(env, 'frontend_appearance'); } catch (_) {}
+    let parsedAppearance = {};
+    try { parsedAppearance = appearanceSaved ? JSON.parse(appearanceSaved) : {}; } catch (_) {}
+    const { trafficPeriod } = await import('../traffic.js');
+    return {
+      ok: true,
+      frontend_theme: 'classic',
+      agent_auto_update: parseBoolean(autoUpdate ?? env.AGENT_AUTO_UPDATE_DEFAULT, true),
+      appearance: normalizeFrontendAppearance(parsedAppearance, env),
+      traffic: trafficPeriod(env),
+    };
+  });
+  const result = { ...settings };
   if (includeAdmin) {
-    settings.admin_path = await getAdminPath(env);
-    settings.agent_public_base = await getAgentPublicBase(env);
+    result.admin_path = await getAdminPath(env);
+    result.agent_public_base = await getAgentPublicBase(env);
   }
-  return settings;
+  return result;
 }
 
 export async function getPublicAppearanceScript(env) {
-  let saved = null;
-  try { saved = await getMeta(env, 'frontend_appearance'); } catch (_) { return ''; }
-  let parsed = {};
-  try { parsed = saved ? JSON.parse(saved) : {}; } catch (_) {}
-  return normalizeFrontendAppearance(parsed, env).custom_script || '';
+  // Shares the cached public settings read so the per-visitor script request
+  // does not add another app_meta read.
+  try {
+    const settings = await getPublicSettings(env);
+    return settings.appearance.custom_script || '';
+  } catch (_) {
+    return '';
+  }
 }
 
 export async function updatePublicSettings(request, env) {
@@ -355,6 +367,7 @@ export async function updatePublicSettings(request, env) {
     await setMeta(env, 'frontend_appearance', JSON.stringify(appearance));
   }
   if (hasOwn(body, 'admin_path')) await setAdminPath(env, body.admin_path);
+  await invalidateSharedConfig(PUBLIC_SETTINGS_CACHE_KEY);
   return getPublicSettings(env, { includeAdmin: true });
 }
 

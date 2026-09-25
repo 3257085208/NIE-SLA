@@ -1,24 +1,24 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260925-visual6";
-import { createAdminClient } from "./admin/api.js?v=20260925-visual6";
-import { createOnboarding } from "./admin/onboarding.js?v=20260925-visual6";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260925-visual6";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260925-visual6";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260925-visual6";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260925-visual6";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260925-visual7";
+import { createAdminClient } from "./admin/api.js?v=20260925-visual7";
+import { createOnboarding } from "./admin/onboarding.js?v=20260925-visual7";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260925-visual7";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260925-visual7";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260925-visual7";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260925-visual7";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260925-visual6";
+} from "./shared/target-catalogs.js?v=20260925-visual7";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260925-visual6";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260925-visual6";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260925-visual6";
-import { fmtBytes } from "./shared/format.js?v=20260925-visual6";
+} from "./shared/grouping.js?v=20260925-visual7";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260925-visual7";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260925-visual7";
+import { fmtBytes } from "./shared/format.js?v=20260925-visual7";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(

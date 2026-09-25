@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { ensureV6Schema } from '../src/admin/schema.js';
+import { invalidateSharedConfig } from '../src/config-cache.js';
 import { createLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentTargets, getLatencyAgentUpdatePolicy, getPublicLatency, listLatencyAgents, submitLatencyAgentResults, updateLatencyAgent } from '../src/admin/latency-agents.js';
 
 globalThis.crypto ||= webcrypto;
@@ -38,6 +39,9 @@ assert.deepEqual(await getLatencyAgentUpdatePolicy(env), {
   script_sha256: 'a76f1e06835aa37965fe60b46bf7f94f6b65ef36083597ab11995ec00238958a',
 });
 database.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES ('agent_auto_update', 'false', ?)`).run(now);
+// Public settings are read through a short TTL cache; the admin write path
+// invalidates it, so mirror that here before asserting the new value.
+await invalidateSharedConfig('public_settings:v1');
 assert.equal((await getLatencyAgentUpdatePolicy(env)).auto_update, false);
 
 const listed = await listLatencyAgents(env);

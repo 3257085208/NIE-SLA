@@ -1,15 +1,17 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.107",
-  "agent_version": "v1.1.107",
-  "source_ref": "app-v1.1.107",
-  "sums_sha256": "cd39274eb96d612c32ce19c9866694e87cb9f4531c3d7f12841a1a918e042858",
-  "published_at": "2026-09-25T12:15:00Z",
-  "title": "NIE-SLA 1.1.107",
+  "version": "1.1.108",
+  "agent_version": "v1.1.108",
+  "source_ref": "app-v1.1.108",
+  "sums_sha256": "093b279281cd467485c4c71e448580e4d6532dde201effa669a52f98da6beca3",
+  "published_at": "2026-09-25T13:18:00Z",
+  "title": "NIE-SLA 1.1.108",
   "changelog": [
-    "空闲降载：公开状态流在没有前端访客时跳过广播请求，有人查看公开页时行为不变；观众计数复用 15 秒缓存。",
-    "上报节奏：后台新增「Agent 上报间隔」设置（10–3600 秒，默认 300），控制无访客时的空闲上报间隔；有人查看公开页时仍自动提升到 60 秒。此前该设置仅存库、并未生效。",
-    "后台界面：系统设置页新增对应设置卡片。"
+    "加载性能：公开状态页的 Chart.js（约 200 KB）移出关键路径，改为页面加载后自动注入（打开图表前即就绪），首屏更快。",
+    "缓存：带版本号的静态资源（/js、/vendor、style.css、admin.css）改为一年 immutable 长缓存，二次访问零请求；后台页面与 config.js 保持不缓存。",
+    "额度：公开设置（站点外观、自动更新开关）改为 30 秒读缓存并在后台写入时即时失效，减少每次公开请求的 D1 读取。",
+    "安全：依赖审计复核（Worker npm 0 漏洞；Rust 侧 idna 0.4.0 为上游 meow-anytls → trust-dns 传递依赖，待上游升级，已记录）。",
+    "以上改动不影响页面 UI、功能与数据新鲜度。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }
