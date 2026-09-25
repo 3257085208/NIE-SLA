@@ -19,7 +19,7 @@ assert.match(routesSource, /nodeQualityImageSource\(target, tabId\)/, 'the image
 // durable (D1 conditional inserts); the global cap also bounds how many
 // rate-limit rows a distributed sweep can create.
 assert.match(routesSource, /100, 3600, \{ keyPrefix: ['"]nq-broker:ip['"] \}/, 'the public broker needs a durable per-source hourly cap');
-assert.match(routesSource, /100, 3600, \{ keyPrefix: ['"]nq-broker['"] \}/, 'the public broker needs a durable global hourly cap');
+assert.match(routesSource, /1000, 3600, \{ keyPrefix: ['"]nq-broker['"] \}/, 'the public broker needs a durable global hourly cap');
 assert.doesNotMatch(routesSource, /nq-broker[^\n]*bestEffort/, 'broker limits must be durable, not in-isolation only');
 assert.match(routesSource, /safeJson\(request, 128 \* 1024\)/, 'the public broker request body must be bounded');
 

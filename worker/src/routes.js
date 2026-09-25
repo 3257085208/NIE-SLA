@@ -193,7 +193,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/status/ws' && m === 'GET') {
     if (String(request.headers.get('upgrade') || '').toLowerCase() !== 'websocket') return new Response('WebSocket upgrade required', { status: 426 });
     if (!env.STATUS_STREAM) return json({ ok: false, error: '缺少状态 Durable Object' }, 503, env);
-    if (!await rateLimitByIp(request, env, 20, 60, { bestEffort: true, keyPrefix: 'status-stream' })) return deny();
+    if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'status-stream' })) return deny();
     const origin = String(request.headers.get('origin') || '').trim().replace(/\/+$/, '');
     const allowedOrigin = resolveCorsOrigin(env).replace(/\/+$/, '');
     if (origin && allowedOrigin && origin !== allowedOrigin) return json({ ok: false, error: '来源不被允许' }, 403, env);
@@ -207,7 +207,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/agent/metrics/ws' && m === 'GET') {
     if (String(request.headers.get('upgrade') || '').toLowerCase() !== 'websocket') return new Response('WebSocket upgrade required', { status: 426 });
     if (!env.TELEMETRY_BUFFER) return json({ ok: false, error: '缺少遥测 Durable Object' }, 503, env);
-    if (!await rateLimitByIp(request, env, 10, 60, { bestEffort: true })) return deny();
+    if (!await rateLimitByIp(request, env, 60, 60, { bestEffort: true })) return deny();
     const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
     const identity = await requireAgentForId(request, env, agentId);
     if (!identity) throw new ApiError(401, '未授权');
@@ -224,28 +224,27 @@ async function dispatchStatic(env, url, request, ctx) {
   }
 
 
-  if (path === '/api/colo-echo' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return json({ ok: true, colo: request.cf?.colo || null, city: request.cf?.city || null, country: request.cf?.country || null, ts: Date.now() }, 200, env); }
-  if (path === '/api/status' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getStatusCached(request, env, url, ctx); }
-  if (path === '/api/checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return deny(); return getChecksCached(request, env, url, ctx); }
+  if (path === '/api/colo-echo' && m === 'GET') { return json({ ok: true, colo: request.cf?.colo || null, city: request.cf?.city || null, country: request.cf?.country || null, ts: Date.now() }, 200, env); }
+  if (path === '/api/status' && m === 'GET') { return getStatusCached(request, env, url, ctx); }
+  if (path === '/api/checks' && m === 'GET') { return getChecksCached(request, env, url, ctx); }
   if (path === '/api/appearance-script.js' && m === 'GET') {
-    if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true, keyPrefix: 'appearance-script' })) return new Response('/* rate limited */', { status: 429, headers: { 'cache-control': 'no-store', 'content-type': 'application/javascript; charset=utf-8', 'retry-after': '60', 'x-content-type-options': 'nosniff' } });
     await ensureV6Schema(env);
     return new Response(`${await getPublicAppearanceScript(env)}\n`, { status: 200, headers: { 'cache-control': 'no-store', 'content-type': 'application/javascript; charset=utf-8', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' } });
   }
-  if (path === '/api/agent/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'agent-metrics' })) return deny(); return getAgentMetricsCached(request, env, url, ctx); }
-  if (path === '/api/proxy-checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'proxy-checks' })) return deny(); return getAgentProxyChecksCached(request, env, url, ctx); }
-  if (path === '/api/agent/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true, keyPrefix: 'agent-pings' })) return deny(); return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  if (path === '/api/agent/metrics' && m === 'GET') { return getAgentMetricsCached(request, env, url, ctx); }
+  if (path === '/api/proxy-checks' && m === 'GET') { return getAgentProxyChecksCached(request, env, url, ctx); }
+  if (path === '/api/agent/pings' && m === 'GET') { return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
   if (path === '/api/latency' && m === 'GET') { if (!await allowPublicLatencyRequest(request, env)) return deny(60); await ensureV6Schema(env); return getPublicLatencyCached(env, url, ctx); }
-  if ((path === '/api/v1' || path === '/api/v1/manifest') && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(getDeveloperApiManifest(request, env, VERSION), 200, env, { 'cache-control': 'public, max-age=300' }), request, env); }
-  if (path === '/api/v1/status' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getStatusCached(request, env, developerApiUrl(url, '/api/status'), ctx), request, env); }
-  if (path === '/api/v1/checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getChecksCached(request, env, developerApiUrl(url, '/api/checks'), ctx), request, env); }
-  if (path === '/api/v1/metrics' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'v1-metrics' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getAgentMetricsCached(request, env, developerApiUrl(url, '/api/agent/metrics'), ctx), request, env); }
-  if (path === '/api/v1/proxy-checks' && m === 'GET') { if (!await rateLimitByIp(request, env, 120, 60, { bestEffort: true, keyPrefix: 'v1-proxy-checks' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(await getAgentProxyChecksCached(request, env, developerApiUrl(url, '/api/proxy-checks'), ctx), request, env); }
-  if (path === '/api/v1/pings' && m === 'GET') { if (!await rateLimitByIp(request, env, 300, 60, { bestEffort: true, keyPrefix: 'v1-pings' })) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
+  if ((path === '/api/v1' || path === '/api/v1/manifest') && m === 'GET') { return withDeveloperApiHeaders(json(getDeveloperApiManifest(request, env, VERSION), 200, env, { 'cache-control': 'public, max-age=300' }), request, env); }
+  if (path === '/api/v1/status' && m === 'GET') { return withDeveloperApiHeaders(await getStatusCached(request, env, developerApiUrl(url, '/api/status'), ctx), request, env); }
+  if (path === '/api/v1/checks' && m === 'GET') { return withDeveloperApiHeaders(await getChecksCached(request, env, developerApiUrl(url, '/api/checks'), ctx), request, env); }
+  if (path === '/api/v1/metrics' && m === 'GET') { return withDeveloperApiHeaders(await getAgentMetricsCached(request, env, developerApiUrl(url, '/api/agent/metrics'), ctx), request, env); }
+  if (path === '/api/v1/proxy-checks' && m === 'GET') { return withDeveloperApiHeaders(await getAgentProxyChecksCached(request, env, developerApiUrl(url, '/api/proxy-checks'), ctx), request, env); }
+  if (path === '/api/v1/pings' && m === 'GET') { return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/v1/latency' && m === 'GET') { if (!await allowPublicLatencyRequest(request, env)) return withDeveloperApiHeaders(deny(60), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(await getPublicLatencyCached(env, developerApiUrl(url, '/api/latency'), ctx), request, env); }
   if (path === '/api/agent/pings/batch' && m === 'GET') { if (!await allowPublicPingsBatchRequest(request, env)) return deny(); return json(await getAgentPingsBatch(env, url, ctx), 200, env, { 'cache-control': 'public, max-age=20' }); }
   if (path === '/api/v1/pings/batch' && m === 'GET') { if (!await allowPublicPingsBatchRequest(request, env)) return withDeveloperApiHeaders(deny(), request, env); return withDeveloperApiHeaders(json(await getAgentPingsBatch(env, developerApiUrl(url, '/api/agent/pings/batch'), ctx), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
-  if (path === '/api/themes' && m === 'GET') { if (!await rateLimitByIp(request, env, 600, 60, { bestEffort: true, keyPrefix: 'themes-api' })) return deny(); return json(await getPublicTheme(env), 200, env, { 'cache-control': 'public, max-age=20' }); }
+  if (path === '/api/themes' && m === 'GET') { return json(await getPublicTheme(env), 200, env, { 'cache-control': 'public, max-age=20' }); }
   if (path === '/api/nq/image-broker' && m === 'POST') {
     try {
       if (!['1', 'true'].includes(String(env.NQ_PUBLIC_BROKER_ENABLED || '').trim().toLowerCase())) {
@@ -255,7 +254,7 @@ async function dispatchStatic(env, url, request, ctx) {
       if (!contentType.startsWith('application/json')) throw new ApiError(415, 'NQ 图片服务只接受 JSON');
       const sourceIp = String(request.headers.get('cf-connecting-ip') || 'unknown').slice(0, 80);
       if (!await rateLimitByIp(request, env, 100, 3600, { keyPrefix: 'nq-broker:ip' })
-        || !await rateLimitGlobal(request, env, 100, 3600, { keyPrefix: 'nq-broker' })) {
+        || !await rateLimitGlobal(request, env, 1000, 3600, { keyPrefix: 'nq-broker' })) {
         throw new ApiError(429, '请求过于频繁，请稍后重试。');
       }
       return json(await createNodeQualityBrokerImages(env, await safeJson(request, 128 * 1024)), 200, env, { 'cache-control': 'no-store' });
