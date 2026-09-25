@@ -1,4 +1,4 @@
-import { escapeHtml } from './html.js?v=20260925-visual4';
+import { escapeHtml } from './html.js?v=20260925-visual5';
 export { escapeHtml };
 
 export function targetHasNodeQuality(target = {}) {

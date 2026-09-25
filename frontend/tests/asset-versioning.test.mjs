@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
-const assetVersion = '20260925-visual4';
+const assetVersion = '20260925-visual5';
 const isDuplicateCopy = (name) => /\s\d+(?:\.\d+)*\.js$/i.test(name);
 
 async function javascriptFiles(directory) {

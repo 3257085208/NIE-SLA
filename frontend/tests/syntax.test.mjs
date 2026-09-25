@@ -38,8 +38,8 @@ assert.match(notFoundHtml, /<title>页面不存在 - NIE-SLA<\/title>/, '404 res
 assert.match(notFoundHtml, /class="not-found-code">404<\/div>/, '404 responses must visibly identify the status code');
 assert.match(notFoundHtml, /href="\/">返回状态页<\/a>[\s\S]*not-found-note">管理入口：部署时设置的后台路径<\/span>/, '404 responses must retain the recovery link and a non-dead admin entry hint');
 assert.doesNotMatch(notFoundHtml, /href="\/admin\.html"/, '404 page must not link to the legacy admin path that 404s on custom ADMIN_PATH deployments');
-assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260925-visual4"/, 'admin must import the configurable NodeQuality option helpers');
-assert.match(adminSource, /import \{ createOnboarding \} from "\.\/admin\/onboarding\.js\?v=20260925-visual4"/, 'admin must import the first-run onboarding module');
+assert.match(adminSource, /import \{ nqOptionsHtml, readNqOptions \} from "\.\/admin\/nq-options\.js\?v=20260925-visual5"/, 'admin must import the configurable NodeQuality option helpers');
+assert.match(adminSource, /import \{ createOnboarding \} from "\.\/admin\/onboarding\.js\?v=20260925-visual5"/, 'admin must import the first-run onboarding module');
 assert.match(adminHtml, /id="onboarding"[\s\S]*id="onboardingCard" role="dialog"/, 'admin must ship the onboarding overlay dialog');
 assert.match(adminHtml, /id="openOnboardingBtn"/, 'security settings must expose the onboarding entry');
 assert.match(adminSource, /id="mTrafficUnlimited"/, 'target traffic settings must offer the unlimited quota option');
@@ -106,11 +106,11 @@ assert.match(adminCss, /@media \(max-width: 560px\)\s*\{\s*\.form-grid\s*\{\s*gr
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep\s*\{[\s\S]*grid-column:\s*1 \/ -1[\s\S]*width:\s*100%/, 'mobile target group headings must span the full card-list width');
 assert.match(adminCss, /\.targets-table tbody tr\.group-sep > td\s*\{[\s\S]*width:\s*100%/, 'mobile target group cells must override the desktop first-column width');
 assert.match(adminCss, /#tTable \.table-scroll\s*\{\s*overflow:\s*visible/, 'only the card-based target table may overflow on mobile');
-assert.match(adminHtml, /href="\/admin\.css\?v=20260925-visual4"/, 'custom admin paths must load CSS from the site root');
+assert.match(adminHtml, /href="\/admin\.css\?v=20260925-visual5"/, 'custom admin paths must load CSS from the site root');
 assert.match(adminHtml, /src="\/config\.js\?v=/, 'custom admin paths must load runtime config from the site root');
 assert.match(adminHtml, /src="\/vendor\/chart\.umd\.min\.js\?v=/, 'custom admin paths must load Chart.js from the site root');
-assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260925-visual4"/, 'admin login must install a startup failure guard');
-assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260925-visual4"/, 'custom admin paths must load the current admin module from the site root');
+assert.match(adminHtml, /src="\/js\/admin-bootstrap\.js\?v=20260925-visual5"/, 'admin login must install a startup failure guard');
+assert.match(adminHtml, /src="\/js\/admin\.js\?v=20260925-visual5"/, 'custom admin paths must load the current admin module from the site root');
 assert.match(adminSource, /id="runBulkBackroute"/, 'admin must render a bulk backroute button');
 assert.match(adminSource, /bulkTaskModal\("backroute"\)/, 'bulk backroute button must open the task confirmation');
 assert.match(adminSource, /manager_online === true/, 'admin must distinguish stale telemetry from a fully offline Agent');
@@ -164,7 +164,7 @@ assert.match(adminApiSource, /请求可能仍在服务端继续执行，请稍�
 assert.match(adminSource, /任务状态刷新失败[\s\S]*task-load-warning/, 'task polling failures must surface a visible warning');
 assert.match(adminSource, /async function queueAgentTask[\s\S]*catch \(error\) \{[\s\S]*await loadAgentTasks\(\)/, 'single-machine queue failures must refresh task state');
 assert.match(adminSource, /id="backupStatus"[\s\S]*正在加密 Agent Token/, 'protected backup must expose persistent progress next to its controls');
-assert.match(adminSource, /install-command\.js\?v=20260925-visual4/, 'Agent and Latency install clipboard fixes must use the current cache key');
+assert.match(adminSource, /install-command\.js\?v=20260925-visual5/, 'Agent and Latency install clipboard fixes must use the current cache key');
 assert.match(adminSource, /latencyInstallCommandFromPayload\(data, node\.id\);\s*await copyText\(command\)/, 'Latency deploy must validate and copy the one-time command without opening a dialog');
 assert.match(adminSource, /async function ensureProxyAgents\(\)[\s\S]*apiAdmin\("\/api\/targets"/, 'proxy editor must load TCP Agents before opening');
 assert.match(adminSource, /if \(link && proxyLinkParsedValue !== link\)[\s\S]*parseProxyLinkInput\(\)/, 'proxy save must auto-parse a pasted or changed link');
@@ -189,8 +189,8 @@ assert.match(adminSource, /修改流量重置日会立即切换当前统计周�
 assert.match(adminSource, /按已有的每日记录重新汇总/, 'reset-day warning must explain daily traffic recalculation');
 assert.doesNotMatch(adminSource, /新的基线重新累计/, 'reset-day changes must not discard recorded daily traffic');
 assert.doesNotMatch(adminSource, /流量会按到期日号|按照到期时间的日号每月重置/, 'traffic reset guidance must not depend on expiry');
-assert.match(indexHtml, /app\.js\?v=20260925-visual4/, 'frontend cache key must publish the current release');
-assert.match(indexHtml, /style\.css\?v=20260925-visual4/, 'frontend CSS cache key must publish the current release');
+assert.match(indexHtml, /app\.js\?v=20260925-visual5/, 'frontend cache key must publish the current release');
+assert.match(indexHtml, /style\.css\?v=20260925-visual5/, 'frontend CSS cache key must publish the current release');
 assert.match(indexHtml, /data-metric="proc">Proc<\/button>/, 'metric tabs must expose the process chart with the English metric label');
 assert.doesNotMatch(indexHtml, /data-metric="proc">进程<\/button>/, 'metric tab labels must not mix the process tab into the English metric naming set');
 assert.match(appSource, /if \(metric === 'proc'\)[\s\S]*process_count/, 'process chart must render process_count history samples');
@@ -250,7 +250,7 @@ assert.doesNotMatch(appSource, /wnam:\s*'美国西部'/, 'region labels must use
 assert.match(appSource, /function targetLocationLabel/, 'status page must format country + city labels');
 assert.match(appSource, /s\.source === 'agent'[\s\S]*Agent 在线率/, 'Agent availability bars must distinguish heartbeat uptime from probe counts');
 assert.match(appSource, /service-latency\$\{hasLatency \? '' : ' is-placeholder'\}/, 'targets without public latency must retain an invisible alignment slot');
-assert.match(appSource, /import \{ targetSlaPercentage \} from '\.\/js\/shared\/sla\.js\?v=20260925-visual4'/, 'VPS rows must calculate SLA with the tested shared helper');
+assert.match(appSource, /import \{ targetSlaPercentage \} from '\.\/js\/shared\/sla\.js\?v=20260925-visual5'/, 'VPS rows must calculate SLA with the tested shared helper');
 assert.match(appSource, /Array\.isArray\(target\?\.proxy_targets\)/, 'public cards must render configured proxy targets before the first result');
 assert.match(appSource, /待检测/, 'public cards must visibly identify a proxy target awaiting its first check');
 assert.match(appSource, /PROXY_ERROR_LABELS[\s\S]*unsupported:\s*'配置不完整或当前 Agent 不支持此组合'/, 'proxy failures must expose a user-readable unsupported explanation while retaining the code');
