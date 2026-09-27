@@ -1,14 +1,13 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.110",
-  "agent_version": "v1.1.110",
-  "source_ref": "app-v1.1.110",
-  "sums_sha256": "0102807695e5288cd24cec99b8569f3f9b86021fd99f68bbbbd1de784e0c5b2c",
-  "published_at": "2026-09-27T09:30:00Z",
-  "title": "NIE-SLA 1.1.110",
+  "version": "1.1.111",
+  "agent_version": "v1.1.111",
+  "source_ref": "app-v1.1.111",
+  "sums_sha256": "776900afee1e9dd2f198b573a36b2971f37130ab663ce0eb2253e7d411e444fa",
+  "published_at": "2026-09-27T09:50:00Z",
+  "title": "NIE-SLA 1.1.111",
   "changelog": [
-    "后台排序：VPS 编辑弹窗新增「排序序号」输入——数字越小越靠前；设为已占用的序号时，该位置及其后的探针依次后移，列表保持连续编号（与拖拽排序行为一致）。",
-    "后台排序：修正序号回显基准（显示为列表中的 1 起序号），排序插入与顺移行为不变。"
+    "后台编辑生效速度：修改 VPS（含排序、启用状态、名称等）或新建、删除后立即清除状态边缘缓存并删除 R2 状态快照，公开页不再最多等待约 150 秒，下一请求即用新数据重建。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

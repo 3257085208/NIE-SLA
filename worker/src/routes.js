@@ -475,7 +475,7 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/debug/logs' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listDebugLogs(env, url), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/targets' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listTargets(env), 200, env); }
   if (path === '/api/sync-targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await syncEnvTargets(env, { force: true }), 200, env); }
-  if (path === '/api/targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json({ ok: true, id: (await createTarget(request, env)).id }, 201, env); }
+  if (path === '/api/targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); const result = await createTarget(request, env); await clearStatusCaches(url, env); return json({ ok: true, id: result.id }, 201, env); }
   if (path === '/api/admin/migration/nezha/preview' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); if (!await rateLimitD1(env, `migration-preview:${debugClientIp(request)}`, 10, 60)) return deny(); return json(await previewNezhaMigration(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/admin/migration/nezha/import' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); if (!await rateLimitD1(env, `migration-import:${debugClientIp(request)}`, 5, 300)) return deny(); return json(await importNezhaMigration(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/admin/migration/komari/preview' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); if (!await rateLimitD1(env, `migration-preview:${debugClientIp(request)}`, 10, 60)) return deny(); return json(await previewKomariMigration(request, env), 200, env, { 'cache-control': 'no-store' }); }
@@ -513,8 +513,8 @@ async function dispatchStatic(env, url, request, ctx) {
 
 
   const targetMatch = path.match(/^\/api\/targets\/([^/]+)$/);
-  if (targetMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateTarget(pathParam(targetMatch[1]), request, env), 200, env); }
-  if (targetMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); return json(await deleteTarget(pathParam(targetMatch[1]), env), 200, env); }
+  if (targetMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updateTarget(pathParam(targetMatch[1]), request, env); await clearStatusCaches(url, env); return json(result, 200, env); }
+  if (targetMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); const result = await deleteTarget(pathParam(targetMatch[1]), env); await clearStatusCaches(url, env); return json(result, 200, env); }
 
   const pingMatch = path.match(/^\/api\/ping-targets\/([^/]+)$/);
   if (pingMatch && m === 'PATCH') { await withAdmin(request, env); return json(await updatePingTarget(pathParam(pingMatch[1]), request, env), 200, env); }
@@ -679,6 +679,11 @@ function archiveYesterdayLocal(env) {
 }
 
 async function clearStatusCaches(url, env) {
+  // Drop the R2 status snapshot as well: an edge-cache miss would otherwise
+  // still serve the previous target order/state for up to the snapshot's
+  // freshness window (~150s). The next public request rebuilds it from D1.
+  const snapshotKey = String(env?.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, '');
+  try { await env?.ARCHIVE?.delete?.(snapshotKey); } catch (_) {}
   if (!globalThis.caches?.default) return;
   const daysList = [1, 7, 30, 90];
   await Promise.all(daysList.flatMap((days) => [false, true].map((lite) => {

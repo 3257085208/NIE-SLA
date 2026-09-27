@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { statusCacheKey } from '../src/utils.js';
 
 const env = {};
@@ -26,5 +27,14 @@ assert.match(clamped.url, /days=90/, 'day windows are clamped to 90');
 
 const noise = statusCacheKey(new URL('https://status.example.com/api/status?fresh=0&lite=0&foo=bar'), env);
 assert.equal(noise.url, plain.url, 'unrelated query noise does not fragment the cache');
+
+// Admin mutations must invalidate both the edge cache and the R2 snapshot,
+// otherwise public requests keep the previous order/state until the snapshot
+// freshness window expires (~150s).
+const routesSource = readFileSync(new URL('../src/routes.js', import.meta.url), 'utf8');
+assert.match(routesSource, /env\?\.ARCHIVE\?\.delete\?\.\(snapshotKey\)/, 'cache clearing must drop the R2 status snapshot');
+assert.match(routesSource, /createTarget\(request, env\)[\s\S]{0,160}clearStatusCaches\(url, env\)/, 'target creation must invalidate status caches');
+assert.match(routesSource, /updateTarget\(pathParam\(targetMatch\[1\]\), request, env\)[\s\S]{0,160}clearStatusCaches\(url, env\)/, 'target updates must invalidate status caches');
+assert.match(routesSource, /deleteTarget\(pathParam\(targetMatch\[1\]\), env\)[\s\S]{0,160}clearStatusCaches\(url, env\)/, 'target deletion must invalidate status caches');
 
 console.log('status cache key tests passed');
