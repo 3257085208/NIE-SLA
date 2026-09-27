@@ -118,6 +118,7 @@ run_check "public status stream tests" node "$ROOT/worker/tests/status-stream.te
 run_check "Cloudflare free-tier budget tests" node "$ROOT/worker/tests/free-tier-budget.test.mjs"
 run_check "bulk VPS target update tests" node "$ROOT/worker/tests/target-bulk.test.mjs"
 run_check "VPS target creation defaults" node "$ROOT/worker/tests/target-create.test.mjs"
+run_check "VPS target manual rank shift" node "$ROOT/worker/tests/target-order-shift.test.mjs"
 run_check "NeZha migration preview and import tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/migration-nezha.test.mjs"
 run_check "Komari migration preview and import tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/migration-komari.test.mjs"
 run_check "NodeGet migration preview and import tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/migration-nodeget.test.mjs"

@@ -8,7 +8,7 @@ import { deleteAgentTelemetry, rebuildAgentTrafficPeriod } from '../metrics.js';
 import { ensureV6Schema, isMissingAgentCapabilitiesColumn } from './schema.js';
 import { setMeta } from './settings.js';
 import { syncEnvTargetsMaybe, syncEnvTargets } from './sync.js';
-import { normalizeTargetOrder } from './target-order.js';
+import { applyTargetSortOrder, normalizeTargetOrder } from './target-order.js';
 import { convertPriceToCny, getExchangeRates, normalizeCurrency } from './settings.js';
 import { nodeQualityUnlockData, normalizeNodeQualityReport, normalizeNodeQualityReportUrl, publicNodeQualitySummary } from '../nodequality.js';
 import { applyBulkTargetColumns, normalizeBulkTargetUpdate, normalizeLineType } from './target-bulk.js';
@@ -238,7 +238,17 @@ async function updateTargetRecord(id, body, existing, env, { updateMeta = true }
   const alertExpiryDays = body?.alert_expiry_days !== undefined ? normalizeNullableNumber(body.alert_expiry_days, 3650) : (existing.alert_expiry_days ?? null);
   const alertTrafficPercent = body?.alert_traffic_remaining_percent !== undefined ? normalizeNullableNumber(body.alert_traffic_remaining_percent, 100) : (existing.alert_traffic_remaining_percent ?? null);
   const alertTrafficGb = body?.alert_traffic_remaining_gb !== undefined ? normalizeNullableNumber(body.alert_traffic_remaining_gb, 1048576) : (existing.alert_traffic_remaining_gb ?? null);
+  // Manual Top-ID ordering: setting a rank inserts the target at that slot and
+  // shifts the occupants (and everything after them) one position down.
+  let nextSortOrder = null;
+  if (body?.sort_order !== undefined && body.sort_order !== null && String(body.sort_order).trim() !== '') {
+    const parsed = Math.floor(Number(body.sort_order));
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 500) return { ok: false, error: '排序序号必须在 1-500 之间' };
+    const current = existing.sort_order == null ? null : Number(existing.sort_order);
+    if (parsed !== current) nextSortOrder = parsed;
+  }
   await env.DB.prepare(`UPDATE targets SET name = ?, group_name = ?, type = ?, target_host = ?, target_port = ?, url = ?, method = ?, expected_status = ?, timeout_ms = ?, interval_sec = ?, probe_region = ?, enabled = ?, no_public_ip = ?, updated_at = ?, expires_at = ?, price = ?, billing_cycle = ?, tags = ?, location = ?, city = ?, currency = ?, traffic_enabled = ?, traffic_quota_gb = ?, traffic_mode = ?, traffic_reset_day = ?, alert_enabled = ?, alert_expiry_days = ?, alert_traffic_remaining_percent = ?, alert_traffic_remaining_gb = ?, provider = ?, line_type = ?, nq_report = ?, nq_updated_at = ?, nq_unlock_data = ?, nq_unlock_updated_at = ? WHERE id = ?`).bind(merged.name, merged.group_name, merged.type, merged.target_host, merged.target_port, merged.url, merged.method, merged.expected_status, merged.timeout_ms, merged.interval_sec, merged.probe_region, merged.enabled ? 1 : 0, merged.no_public_ip ? 1 : 0, now, expiresAt, price, billingCycle, tags, location, city, currency, trafficEnabled, trafficQuotaGb, trafficMode, trafficResetDay, alertEnabled, alertExpiryDays, alertTrafficPercent, alertTrafficGb, provider, lineType, nqReport, nqUpdatedAt, nqUnlockData, nqUnlockUpdatedAt, id).run();
+  if (nextSortOrder !== null) await applyTargetSortOrder(env, id, nextSortOrder);
   await syncTargetCompatibility(env, id);
   if (trafficResetDayChanged) {
     await rebuildAgentTrafficPeriod(env, sanitizeAgentId(id), {

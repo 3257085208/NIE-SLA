@@ -1,24 +1,24 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260925-visual7";
-import { createAdminClient } from "./admin/api.js?v=20260925-visual7";
-import { createOnboarding } from "./admin/onboarding.js?v=20260925-visual7";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260925-visual7";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260925-visual7";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260925-visual7";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260925-visual7";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260925-visual9";
+import { createAdminClient } from "./admin/api.js?v=20260925-visual9";
+import { createOnboarding } from "./admin/onboarding.js?v=20260925-visual9";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260925-visual9";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260925-visual9";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260925-visual9";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260925-visual9";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260925-visual7";
+} from "./shared/target-catalogs.js?v=20260925-visual9";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260925-visual7";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260925-visual7";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260925-visual7";
-import { fmtBytes } from "./shared/format.js?v=20260925-visual7";
+} from "./shared/grouping.js?v=20260925-visual9";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260925-visual9";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260925-visual9";
+import { fmtBytes } from "./shared/format.js?v=20260925-visual9";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -2066,6 +2066,7 @@ function targetModalHtml(target, isEdit) {
         </select>`,
       )}
       ${formField("分组", `<select id="mGroup">${targetGroupOptions(type, target.group_name)}</select>`)}
+      ${formField("排序序号", `<input id="mSort" type="number" min="1" max="500" value="${escapeHtml(target.sort_order == null ? "" : Number(target.sort_order) + 1)}" placeholder="留空保持不变"><p class="hint">数字越小越靠前；设为已占用的序号时，该位置及之后的探针会依次后移。</p>`)}
     </div>
 
     <div class="form-grid ftcp">
@@ -2227,6 +2228,14 @@ async function saveTarget(edit) {
     alert_traffic_remaining_percent: byId("mType").value === "tcp" ? nullableNumber("mAlertTrafficPercent") : null,
     alert_traffic_remaining_gb: byId("mType").value === "tcp" ? nullableNumber("mAlertTrafficGb") : null,
   };
+  if (edit) {
+    const sortRaw = (byId("mSort")?.value || "").trim();
+    if (sortRaw !== "") {
+      const sortValue = Math.floor(Number(sortRaw));
+      if (!Number.isFinite(sortValue) || sortValue < 1 || sortValue > 500) return toast("排序序号需要是 1–500 的整数", "err");
+      b.sort_order = sortValue;
+    }
+  }
   const id = byId("mId").value.trim();
   if (id && !edit) b.id = id;
   if (!b.name) return toast("名称不能为空", "err");
