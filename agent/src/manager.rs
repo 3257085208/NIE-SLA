@@ -138,6 +138,10 @@ pub(crate) fn run(cfg: &Config, http: &HttpClient) -> Result<()> {
                     "{{\"ok\":false,\"manager_update\":\"recovery_pending\",\"version\":{}}}",
                     serde_json::to_string(&version).unwrap_or_else(|_| "\"unknown\"".into())
                 ),
+                Ok(UpdateOutcome::TaskRunning(version)) => eprintln!(
+                    "{{\"ok\":false,\"manager_update\":\"deferred\",\"reason\":\"task_running\",\"version\":{}}}",
+                    serde_json::to_string(&version).unwrap_or_else(|_| "\"unknown\"".into())
+                ),
                 Err(error) => eprintln!(
                     "{{\"ok\":false,\"manager_update_error\":{},\"retry_sec\":{}}}",
                     serde_json::to_string(&error.to_string())

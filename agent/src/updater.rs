@@ -275,6 +275,12 @@ fn check_for_update(
         ));
     }
 
+    // Never restart the manager underneath a running fixed task: the task
+    // worker thread dies with the process and the server records the task as
+    // interrupted. Retry shortly after the task finishes instead.
+    if crate::tasks::task_in_progress() {
+        return Ok((UpdateOutcome::TaskRunning(policy.latest_version), 300));
+    }
     let executable = install_linux_update(&policy, http)?;
     Ok((
         UpdateOutcome::Installed {

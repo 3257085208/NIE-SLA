@@ -46,6 +46,24 @@ const BACKROUTE_SCRIPT: &str = include_str!("../scripts/backroute.sh");
 const NODEQUALITY_CAPTURE_BEGIN: &str = "__NIE_SLA_NQ_ARTIFACTS_V1_BEGIN__";
 const NODEQUALITY_CAPTURE_END: &str = "__NIE_SLA_NQ_ARTIFACTS_V1_END__";
 
+static TASK_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// True while a fixed task is executing on this host. The automatic updater
+/// consults this before restarting the manager, because a restart kills the
+/// task worker and interrupts the running task.
+pub(crate) fn task_in_progress() -> bool {
+    TASK_IN_PROGRESS.load(Ordering::Relaxed)
+}
+
+/// Clears the in-progress flag on every exit path, including panics.
+struct TaskRunGuard;
+
+impl Drop for TaskRunGuard {
+    fn drop(&mut self) {
+        TASK_IN_PROGRESS.store(false, Ordering::Relaxed);
+    }
+}
+
 pub(crate) fn runner_instance_id() -> &'static str {
     static RUNNER_INSTANCE_ID: OnceLock<String> = OnceLock::new();
     RUNNER_INSTANCE_ID.get_or_init(|| {
@@ -266,6 +284,8 @@ fn poll_once(cfg: &Config, http: &HttpClient) -> Result<()> {
     let options = task.get("options").cloned();
 
     let cancellation = TaskCancellation::new(cfg, http, task_id);
+    TASK_IN_PROGRESS.store(true, Ordering::Relaxed);
+    let _task_run_guard = TaskRunGuard;
     let outcome = execute_fixed_task(
         cfg,
         http,
@@ -2139,6 +2159,17 @@ mod tests {
     #[test]
     fn idle_task_polling_uses_the_cost_aware_interval() {
         assert_eq!(TASK_POLL_SEC, 600);
+    }
+
+    #[test]
+    fn task_run_guard_tracks_and_clears_in_progress() {
+        assert!(!task_in_progress());
+        TASK_IN_PROGRESS.store(true, Ordering::Relaxed);
+        {
+            let _guard = TaskRunGuard;
+            assert!(task_in_progress());
+        }
+        assert!(!task_in_progress());
     }
 
     #[test]

@@ -121,6 +121,7 @@ run_check "VPS target creation defaults" node "$ROOT/worker/tests/target-create.
 run_check "VPS target manual rank shift" node "$ROOT/worker/tests/target-order-shift.test.mjs"
 run_check "VPS target custom groups" node "$ROOT/worker/tests/target-group.test.mjs"
 run_check "Agent credential rotation on reinstall" node "$ROOT/worker/tests/agent-credential-rotate.test.mjs"
+run_shell "automatic updates yield to running fixed tasks" "cd '$ROOT' && grep -q 'fn task_in_progress' agent/src/tasks.rs && grep -q 'task_in_progress()' agent/src/updater.rs && grep -q 'TaskRunning' agent/src/manager.rs && grep -q 'TaskRunGuard' agent/src/tasks.rs"
 run_check "NeZha migration preview and import tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/migration-nezha.test.mjs"
 run_check "Komari migration preview and import tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/migration-komari.test.mjs"
 run_check "NodeGet migration preview and import tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/migration-nodeget.test.mjs"

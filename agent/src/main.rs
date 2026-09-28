@@ -321,6 +321,9 @@ enum UpdateOutcome {
     AvailableManual(String),
     Managed(String),
     PrivilegedRecovery(String),
+    /// Automatic update deferred because a fixed task is running; restarting
+    /// the manager now would interrupt it.
+    TaskRunning(String),
     Installed {
         version: String,
         executable: PathBuf,
@@ -692,6 +695,10 @@ fn run() -> Result<()> {
                     ),
                     Ok(UpdateOutcome::PrivilegedRecovery(version)) => println!(
                         "{{\"ok\":true,\"update\":\"awaiting_privileged_recovery\",\"version\":{}}}",
+                        json_string(&version)
+                    ),
+                    Ok(UpdateOutcome::TaskRunning(version)) => println!(
+                        "{{\"ok\":true,\"update\":\"deferred\",\"reason\":\"task_running\",\"version\":{}}}",
                         json_string(&version)
                     ),
                     Ok(UpdateOutcome::Installed {
