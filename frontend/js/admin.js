@@ -2006,10 +2006,16 @@ function targetRegionOptions(region = "auto") {
 }
 
 function targetGroupOptions(type = "tcp", current = "") {
-  const selected = /^web$/i.test(current) || (!current && type === "http") ? "Web" : "VPS";
-  return ["VPS", "Web"]
-    .map((value) => `<option value="${value}"${selectedAttr(selected === value)}>${value}</option>`)
+  const selected = String(current || "").trim() || ((!current && type === "http") ? "Web" : "VPS");
+  const names = new Set(["VPS", "Web"]);
+  for (const target of targets) {
+    const name = String(target?.group_name || "").trim();
+    if (name) names.add(name);
+  }
+  const options = [...names]
+    .map((value) => `<option value="${escapeHtml(value)}"></option>`)
     .join("");
+  return `<input id="mGroup" list="mGroupList" value="${escapeHtml(selected)}" maxlength="32" placeholder="选择或输入自定义分组"><datalist id="mGroupList">${options}</datalist>`;
 }
 
 function providerOptionsHtml(current = "") {
@@ -2204,7 +2210,7 @@ async function saveTarget(edit) {
   const b = {
     name: byId("mName").value.trim(),
     type: byId("mType").value,
-    group_name: byId("mGroup").value === "Web" ? "Web" : "VPS",
+    group_name: (byId("mGroup")?.value || "").trim().slice(0, 32) || (byId("mType").value === "http" ? "Web" : "VPS"),
     interval_sec: Number(byId("mInterval").value) || 300,
     probe_region: byId("mRegion")?.value || "auto",
     no_public_ip: byId("mType").value === "tcp" && !!byId("mNoPublicIp")?.checked,

@@ -349,7 +349,9 @@ export function normalizeTarget(input, allowPartial = false) {
   if (!['tcp', 'http'].includes(type)) throw new Error('类型必须是 TCP 或 HTTP');
   const name = String(input?.name || '').trim();
   if (!name) throw new Error('名称不能为空');
-  const groupName = String(input?.group_name || input?.group || 'Default').trim() || 'Default';
+  const groupName = String(input?.group_name || input?.group || 'Default')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim().slice(0, 32) || 'Default';
   const timeoutMs = clamp(Number(input?.timeout_ms || DEFAULT_TIMEOUT_MS), 500, 30000);
   const intervalSec = clamp(Number(input?.interval_sec || DEFAULT_INTERVAL_SEC), MIN_INTERVAL_SEC, 86400);
   const probeRegion = ALLOWED_REGIONS.has(String(input?.probe_region || 'auto')) ? String(input?.probe_region || 'auto') : 'auto';

@@ -44,6 +44,7 @@ assert.match(adminHtml, /id="onboarding"[\s\S]*id="onboardingCard" role="dialog"
 assert.match(adminHtml, /id="openOnboardingBtn"/, 'security settings must expose the onboarding entry');
 assert.match(adminSource, /id="mTrafficUnlimited"/, 'target traffic settings must offer the unlimited quota option');
 assert.match(adminSource, /id="mSort"/, 'target editor must expose a manual Top-ID rank field');
+assert.match(adminSource, /id="mGroupList"/, 'target editor must offer custom group name suggestions');
 assert.match(adminSource, /id="bulkTrafficUnlimited"/, 'bulk traffic settings must offer the unlimited quota option');
 assert.match(adminSource, /请以普通用户身份登录后执行/, 'the rootless install card must explain the unprivileged requirement');
 assert.match(appSource, /无限流量/, 'the public VPS detail must label unlimited traffic');
