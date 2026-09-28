@@ -55,7 +55,7 @@ assert.match(styleSource, /\.checks-panel\.collapsed #checks/, 'the collapsed pa
 assert.match(styleSource, /\.daybar\.full \{ background: var\(--green\)/, 'normal day bars must keep the original full-availability green');
 assert.match(styleSource, /\.daybar\.good \{ background: #94d8b1/, 'high-availability day bars must keep the original secondary green');
 assert.match(adminSource, /onboarding\.maybeAutoOpen\(\)/, 'the onboarding wizard must auto-open for first-run deployments only');
-assert.match(adminSource, /apiPublic\("\/api\/status\?days=1&lite=1", 8_000\)/, 'dashboard basic cards must render from the cheap public snapshot before the full 30-day build');
+assert.match(adminSource, /apiPublic\("\/api\/status\?days=1&lite=1", 25_000\)/, 'dashboard basic cards must render from the cheap public snapshot before the full 30-day build');
 assert.match(adminSource, /const hasSettings = Array\.isArray\(theme\.settings\)/, 'theme cards must derive their settings state from the API payload');
 assert.match(adminSource, /data-theme-action="settings"/, 'theme cards must always expose a settings action');
 assert.match(adminSource, /\/api\/themes\/\$\{encodeURIComponent\(theme\.id\)\}\/config/, 'theme settings must use the protected theme config endpoint');

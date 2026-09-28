@@ -1,6 +1,6 @@
 import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValidatedRedirects, sanitizeAgentId, sanitizeId, publicCachePrivacyVersion, publicMaskIps, timezoneOffsetMin } from './utils.js';
 import { requireAgentForId, requireAnyAgent, requireAnyLatencyAgent, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, internalRequestHeaders, resolveCorsOrigin } from './auth.js';
-import { getStatusCached, getChecksCached } from './status.js';
+import { getStatusCached, getChecksCached, writeStatusSnapshot } from './status.js';
 import { submitAgentMetrics, getAgentMetricsCached, getAgentProxyChecksCached, cleanupAgentMetricsR2 } from './metrics.js';
 import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, getAgentPingsBatch, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, listProxyTargets, createProxyTarget, updateProxyTarget, deleteProxyTarget, previewProxyLinks, getAgentProxyTargets, getStats, cleanupVolatileHistory, getPublicSettings, getPublicAppearanceScript, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation, estimateUsageFromEnv, getUsageActualConfig, saveUsageActualConfig, fetchActualUsage, getFleetVersions, listTrafficCorrections, saveTrafficCorrection, getFinanceSummary, getTurnstileConfig, getTurnstileSecret, saveTurnstileConfig, getAgentReportInterval, setAgentReportInterval, getMeta, getRetentionHours, updateRetentionConfig, RETENTION_MIN_HOURS, RETENTION_MAX_HOURS, listProbeHistoryDeadLetters, replayProbeHistoryDeadLetter, drainProbeHistoryDeadLetters, previewNezhaMigration, importNezhaMigration, previewKomariMigration, importKomariMigration, previewNodeGetMigration, importNodeGetMigration, getStorageUsage } from './admin.js';
 import { createUsageSummaryAccess, getDebugLogSummary, getUsageSummaryAccessStatus, revokeUsageSummaryAccess, usageSummaryBearerToken, validateUsageSummaryAccess } from './admin.js';
@@ -423,7 +423,7 @@ async function dispatchStatic(env, url, request, ctx) {
 
 
   if (path === '/api/settings' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await getPublicSettings(env, { includeAdmin: true }), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/settings' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updatePublicSettings(request, env); clearStatusCaches(url, env).catch(() => {}); return json(result, 200, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/settings' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updatePublicSettings(request, env); clearStatusCaches(url, env, ctx).catch(() => {}); return json(result, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/probe-history/dead-letter' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listProbeHistoryDeadLetters(env, url), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/probe-history/dead-letter/replay' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await replayProbeHistoryDeadLetter(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/probe-history/dead-letter/drain' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await drainProbeHistoryDeadLetters(request, env), 200, env, { 'cache-control': 'no-store' }); }
@@ -475,15 +475,15 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/debug/logs' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listDebugLogs(env, url), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/targets' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listTargets(env), 200, env); }
   if (path === '/api/sync-targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await syncEnvTargets(env, { force: true }), 200, env); }
-  if (path === '/api/targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); const result = await createTarget(request, env); await clearStatusCaches(url, env); return json({ ok: true, id: result.id }, 201, env); }
+  if (path === '/api/targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); const result = await createTarget(request, env); await clearStatusCaches(url, env, ctx); return json({ ok: true, id: result.id }, 201, env); }
   if (path === '/api/admin/migration/nezha/preview' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); if (!await rateLimitD1(env, `migration-preview:${debugClientIp(request)}`, 10, 60)) return deny(); return json(await previewNezhaMigration(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/admin/migration/nezha/import' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); if (!await rateLimitD1(env, `migration-import:${debugClientIp(request)}`, 5, 300)) return deny(); return json(await importNezhaMigration(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/admin/migration/komari/preview' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); if (!await rateLimitD1(env, `migration-preview:${debugClientIp(request)}`, 10, 60)) return deny(); return json(await previewKomariMigration(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/admin/migration/komari/import' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); if (!await rateLimitD1(env, `migration-import:${debugClientIp(request)}`, 5, 300)) return deny(); return json(await importKomariMigration(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/admin/migration/nodeget/preview' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); if (!await rateLimitD1(env, `migration-preview:${debugClientIp(request)}`, 10, 60)) return deny(); return json(await previewNodeGetMigration(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/admin/migration/nodeget/import' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); if (!await rateLimitD1(env, `migration-import:${debugClientIp(request)}`, 5, 300)) return deny(); return json(await importNodeGetMigration(request, env), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/targets/bulk' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await bulkUpdateTargets(request, env); if (result.ok) await clearStatusCaches(url, env); return json(result, result.ok ? 200 : 400, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/targets/order' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await reorderTargets(request, env); if (result.ok) await clearStatusCaches(url, env); return json(result, result.ok ? 200 : 400, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/targets/bulk' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await bulkUpdateTargets(request, env); if (result.ok) await clearStatusCaches(url, env, ctx); return json(result, result.ok ? 200 : 400, env, { 'cache-control': 'no-store' }); }
+  if (path === '/api/targets/order' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await reorderTargets(request, env); if (result.ok) await clearStatusCaches(url, env, ctx); return json(result, result.ok ? 200 : 400, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/usage-actual' && m === 'GET') { await withAdmin(request, env); const hours = clamp(Number(url.searchParams.get('hours') || 24), 1, 168); return json(await fetchActualUsage(env, hours), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/usage-actual/config' && m === 'GET') { await withAdmin(request, env); return json(await getUsageActualConfig(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/usage-actual/config' && m === 'POST') { await withAdmin(request, env); if (!await rateLimitD1(env, 'usage-actual-config', 10, 600)) return deny(); const body = await safeJson(request); return json(await saveUsageActualConfig(env, { apiToken: body?.api_token, accountTag: body?.account_tag }), 200, env, { 'cache-control': 'no-store' }); }
@@ -513,16 +513,16 @@ async function dispatchStatic(env, url, request, ctx) {
 
 
   const targetMatch = path.match(/^\/api\/targets\/([^/]+)$/);
-  if (targetMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updateTarget(pathParam(targetMatch[1]), request, env); await clearStatusCaches(url, env); return json(result, 200, env); }
-  if (targetMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); const result = await deleteTarget(pathParam(targetMatch[1]), env); await clearStatusCaches(url, env); return json(result, 200, env); }
+  if (targetMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updateTarget(pathParam(targetMatch[1]), request, env); await clearStatusCaches(url, env, ctx); return json(result, 200, env); }
+  if (targetMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); const result = await deleteTarget(pathParam(targetMatch[1]), env); await clearStatusCaches(url, env, ctx); return json(result, 200, env); }
 
   const pingMatch = path.match(/^\/api\/ping-targets\/([^/]+)$/);
   if (pingMatch && m === 'PATCH') { await withAdmin(request, env); return json(await updatePingTarget(pathParam(pingMatch[1]), request, env), 200, env); }
   if (pingMatch && m === 'DELETE') { await withAdmin(request, env); return json(await deletePingTarget(pathParam(pingMatch[1]), env), 200, env); }
 
   const proxyMatch = path.match(/^\/api\/proxy-targets\/([^/]+)$/);
-  if (proxyMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updateProxyTarget(pathParam(proxyMatch[1]), request, env); await clearStatusCaches(url, env); return json(result, 200, env, { 'cache-control': 'no-store' }); }
-  if (proxyMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); const result = await deleteProxyTarget(pathParam(proxyMatch[1]), env); await clearStatusCaches(url, env); return json(result, 200, env, { 'cache-control': 'no-store' }); }
+  if (proxyMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updateProxyTarget(pathParam(proxyMatch[1]), request, env); await clearStatusCaches(url, env, ctx); return json(result, 200, env, { 'cache-control': 'no-store' }); }
+  if (proxyMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); const result = await deleteProxyTarget(pathParam(proxyMatch[1]), env); await clearStatusCaches(url, env, ctx); return json(result, 200, env, { 'cache-control': 'no-store' }); }
 
   const latencyAgentMatch = path.match(/^\/api\/latency-agents\/([^/]+)$/);
   if (latencyAgentMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateLatencyAgent(pathParam(latencyAgentMatch[1]), request, env), 200, env); }
@@ -678,12 +678,17 @@ function archiveYesterdayLocal(env) {
   return d.toISOString().slice(0, 10);
 }
 
-async function clearStatusCaches(url, env) {
+async function clearStatusCaches(url, env, ctx = null) {
   // Drop the R2 status snapshot as well: an edge-cache miss would otherwise
   // still serve the previous target order/state for up to the snapshot's
-  // freshness window (~150s). The next public request rebuilds it from D1.
+  // freshness window (~150s). Rebuild it in the background right away so the
+  // next request finds a fresh snapshot instead of paying the full rebuild
+  // cost (and timing out the admin dashboard under concurrency).
   const snapshotKey = String(env?.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, '');
   try { await env?.ARCHIVE?.delete?.(snapshotKey); } catch (_) {}
+  if (ctx?.waitUntil) {
+    try { ctx.waitUntil(writeStatusSnapshot(env, { force: true }).catch(() => {})); } catch (_) {}
+  }
   if (!globalThis.caches?.default) return;
   const daysList = [1, 7, 30, 90];
   await Promise.all(daysList.flatMap((days) => [false, true].map((lite) => {

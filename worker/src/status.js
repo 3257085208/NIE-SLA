@@ -549,12 +549,14 @@ async function attachAgentState(payload, env) {
   }
 }
 
-export async function writeStatusSnapshot(env) {
+export async function writeStatusSnapshot(env, { force = false } = {}) {
   if (!env.ARCHIVE || !parseBoolean(env.STATUS_SNAPSHOT_TO_R2 ?? true, true)) return { ok: true, skipped: true, reason: 'disabled_or_missing_r2' };
   const every = clamp(Number(env.STATUS_SNAPSHOT_EVERY_SEC || 60), 30, 3600);
   const key = String(env.STATUS_SNAPSHOT_KEY || 'status/status.json').replace(/^\/+/, '');
   const last = await getStatusSnapshotGeneratedAt(env, key);
-  if (last && last > nowSec() - every) return { ok: true, skipped: true, reason: 'too_soon', last_write_at: last };
+  // Admin edits delete the snapshot; a forced rebuild lets the mutation path
+  // prewarm it in the background so the next public request is fast again.
+  if (!force && last && last > nowSec() - every) return { ok: true, skipped: true, reason: 'too_soon', last_write_at: last };
   const url = new URL('https://nie-sla.internal/api/status');
   url.searchParams.set('days', String(DEFAULT_STATUS_DAYS));
   const payload = await buildStatusPayload(env, url);

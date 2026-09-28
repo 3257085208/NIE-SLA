@@ -769,13 +769,13 @@ async function loadDash() {
   // payload; the SLA card keeps its loading state until the full data lands.
   let quickShown = false;
   try {
-    const quick = await apiPublic("/api/status?days=1&lite=1", 8_000);
+    const quick = await apiPublic("/api/status?days=1&lite=1", 25_000);
     renderStats(quick);
     renderIncidents(quick.incidents || []);
     quickShown = true;
   } catch (_) {}
   try {
-    const d = await apiAdmin("/api/status?days=30", {}, 30_000);
+    const d = await apiAdmin("/api/status?days=30", {}, 60_000);
     renderStats(d);
     renderIncidents(d.incidents || []);
     renderVpsSla(d);

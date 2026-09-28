@@ -1,13 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.112",
-  "agent_version": "v1.1.112",
-  "source_ref": "app-v1.1.112",
-  "sums_sha256": "d608e3096160173e65f18cb831636056cad6cff4e9fedf42a5410214a3127d9c",
-  "published_at": "2026-09-28T04:52:00Z",
-  "title": "NIE-SLA 1.1.112",
+  "version": "1.1.113",
+  "agent_version": "v1.1.113",
+  "source_ref": "app-v1.1.113",
+  "sums_sha256": "08a7cb97fa7adc06312a0766dffd1ab6c46f87860cac8be0014ff94298542203",
+  "published_at": "2026-09-28T05:41:00Z",
+  "title": "NIE-SLA 1.1.113",
   "changelog": [
-    "自定义分组：VPS 编辑弹窗的分组改为可输入框（带现有分组建议），可给探针指定任意自定义分组（最长 32 字符）；公开页与后台会按自定义分组展示与筛选。"
+    "后台稳定性：编辑 VPS（排序/分组/启用等）、新建、删除或修改设置后，系统会在后台自动预热公开状态快照，后台仪表盘与公开页不再因全量重算而出现 30 秒超时。",
+    "后台仪表盘请求超时放宽（快速卡片 8→25 秒、30 天卡片 30→60 秒），避免瞬时构建较慢时误报失败。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

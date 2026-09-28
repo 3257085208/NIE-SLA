@@ -33,8 +33,11 @@ assert.equal(noise.url, plain.url, 'unrelated query noise does not fragment the 
 // freshness window expires (~150s).
 const routesSource = readFileSync(new URL('../src/routes.js', import.meta.url), 'utf8');
 assert.match(routesSource, /env\?\.ARCHIVE\?\.delete\?\.\(snapshotKey\)/, 'cache clearing must drop the R2 status snapshot');
-assert.match(routesSource, /createTarget\(request, env\)[\s\S]{0,160}clearStatusCaches\(url, env\)/, 'target creation must invalidate status caches');
-assert.match(routesSource, /updateTarget\(pathParam\(targetMatch\[1\]\), request, env\)[\s\S]{0,160}clearStatusCaches\(url, env\)/, 'target updates must invalidate status caches');
-assert.match(routesSource, /deleteTarget\(pathParam\(targetMatch\[1\]\), env\)[\s\S]{0,160}clearStatusCaches\(url, env\)/, 'target deletion must invalidate status caches');
+assert.match(routesSource, /createTarget\(request, env\)[\s\S]{0,160}clearStatusCaches\(url, env, ctx\)/, 'target creation must invalidate status caches');
+assert.match(routesSource, /updateTarget\(pathParam\(targetMatch\[1\]\), request, env\)[\s\S]{0,160}clearStatusCaches\(url, env, ctx\)/, 'target updates must invalidate status caches');
+assert.match(routesSource, /deleteTarget\(pathParam\(targetMatch\[1\]\), env\)[\s\S]{0,160}clearStatusCaches\(url, env, ctx\)/, 'target deletion must invalidate status caches');
+assert.match(routesSource, /ctx\?\.waitUntil[\s\S]{0,120}writeStatusSnapshot\(env, \{ force: true \}\)/, 'cache clearing must prewarm the snapshot in the background');
+const statusSource = readFileSync(new URL('../src/status.js', import.meta.url), 'utf8');
+assert.match(statusSource, /writeStatusSnapshot\(env, \{ force = false \} = \{\}\)/, 'the snapshot writer must support a forced rebuild');
 
 console.log('status cache key tests passed');
