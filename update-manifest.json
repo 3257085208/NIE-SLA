@@ -1,14 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.113",
-  "agent_version": "v1.1.113",
-  "source_ref": "app-v1.1.113",
-  "sums_sha256": "08a7cb97fa7adc06312a0766dffd1ab6c46f87860cac8be0014ff94298542203",
-  "published_at": "2026-09-28T05:41:00Z",
-  "title": "NIE-SLA 1.1.113",
+  "version": "1.1.114",
+  "agent_version": "v1.1.114",
+  "source_ref": "app-v1.1.114",
+  "sums_sha256": "c46001e608975440507c30033db3b4d6faa90b01efc71ea72f73c0ebae193a73",
+  "published_at": "2026-09-28T06:40:00Z",
+  "title": "NIE-SLA 1.1.114",
   "changelog": [
-    "后台稳定性：编辑 VPS（排序/分组/启用等）、新建、删除或修改设置后，系统会在后台自动预热公开状态快照，后台仪表盘与公开页不再因全量重算而出现 30 秒超时。",
-    "后台仪表盘请求超时放宽（快速卡片 8→25 秒、30 天卡片 30→60 秒），避免瞬时构建较慢时误报失败。"
+    "修复：部分节点（凭据由旧加密密钥签发）点击「部署 Agent」时提示失败/长时间无反应（API 500）；现在生成安装命令时会自动为该节点重新签发凭据，并在后台先给出提示——旧 Agent 会在下次上报时失效，请用新命令重新安装。",
+    "查看/导出类读取仍保持保护性拒绝，不会静默轮换在线节点的凭据。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

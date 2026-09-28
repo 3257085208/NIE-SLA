@@ -2323,6 +2323,9 @@ async function deploy(t, trigger = null) {
       trigger.disabled = false;
       trigger.textContent = oldText;
     }
+    if (d?.credential_rotated) {
+      toast("该节点旧凭据已不可用，已重新生成：请使用新命令重新安装；旧 Agent 会在下次上报时失效", "err");
+    }
     installModeModal(t, command, rootlessCommand);
   } catch (e) {
     toast("安装命令生成失败：" + (e?.message || "未知错误"), "err");

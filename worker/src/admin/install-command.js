@@ -1,7 +1,7 @@
 
 import { ApiError } from '../auth.js';
 import { clamp, nowSec, sanitizeAgentId, sha256Hex } from '../utils.js';
-import { getOrCreateAgentToken } from '../agent-credentials.js';
+import { getOrCreateAgentTokenForReinstall } from '../agent-credentials.js';
 import { getAgentPublicBase, loadAgentRelease } from './settings.js';
 import { getPingIntervalSec, MAX_PING_INTERVAL_SEC, MIN_PING_INTERVAL_SEC } from '../ping-config.js';
 
@@ -24,7 +24,8 @@ export async function getAgentInstallCommand(env, url, request = null, options =
     return { ok: false, error: '该目标 ID 与其他目标生成了相同的 Agent ID，请先修改其中一个目标 ID' };
   }
   const label = String(target?.name || targetId).trim() || targetId;
-  const agentToken = await getOrCreateAgentToken(env, 'agent', agentId);
+  const credential = await getOrCreateAgentTokenForReinstall(env, 'agent', agentId);
+  const agentToken = credential?.token || '';
   if (!agentToken) return { ok: false, error: '生成 Agent 专用 Token 失败' };
   const installBase = await agentInstallBase(env, request);
   if (!installBase) return { ok: false, error: 'Agent 安装地址不可用。请从公开前端域名打开管理后台，或配置 PUBLIC_AGENT_INSTALL_BASE。' };
@@ -59,6 +60,7 @@ const expectedVersion = String(env.AGENT_LATEST_VERSION || '').trim() || String(
     credential_bound: true,
     credential_type: 'one_time_install_token',
     install_token_expires_at: expiresAt,
+    credential_rotated: Boolean(credential?.rotated),
     linux_command: linuxCommand,
     linux_command_rootless: linuxCommandRootless,
   };
@@ -89,7 +91,8 @@ export async function getAgentInstallScript(env, request) {
     throw new ApiError(409, '该目标 ID 与其他目标生成了相同的 Agent ID，请先修改其中一个目标 ID');
   }
 
-  const agentToken = await getOrCreateAgentToken(env, 'agent', agentId);
+  const credential = await getOrCreateAgentTokenForReinstall(env, 'agent', agentId);
+  const agentToken = credential?.token || '';
   if (!agentToken) throw new ApiError(500, '无法读取 Agent 专用 Token');
 
   const script = buildAgentInstallScript({

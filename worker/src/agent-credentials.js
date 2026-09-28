@@ -31,6 +31,40 @@ export async function getOrCreateAgentToken(env, subjectType, subjectId) {
   return decryptCredential(stored, env, subject);
 }
 
+// Re-install helper: returns the live credential, or issues a fresh one when
+// the stored ciphertext can no longer be decrypted (for example after the
+// deployment key was rotated during a migration). Only the install-command
+// paths use this — reading tokens for display keeps the protective failure.
+export async function getOrCreateAgentTokenForReinstall(env, subjectType, subjectId) {
+  try {
+    return { token: await getOrCreateAgentToken(env, subjectType, subjectId), rotated: false };
+  } catch (error) {
+    if (!/无法读取现有节点 Token/.test(String(error?.message || error))) throw error;
+    return await rotateAgentCredential(env, subjectType, subjectId);
+  }
+}
+
+// Issues a replacement credential for an existing subject and stores the new
+// hash + ciphertext (the previous token stops authenticating immediately).
+export async function rotateAgentCredential(env, subjectType, subjectId) {
+  const subject = normalizeSubject(subjectType, subjectId);
+  const token = randomToken();
+  const now = nowSec();
+  const ciphertext = await encryptToken(token, env, subject);
+  const tokenHash = await sha256Hex(token);
+  const updated = await env.DB.prepare(`UPDATE agent_credentials SET token_hash = ?, token_ciphertext = ?, updated_at = ? WHERE subject_type = ? AND subject_id = ?`)
+    .bind(tokenHash, ciphertext, now, subject.type, subject.id)
+    .run();
+  if (Number(updated?.meta?.changes || 0) === 0) {
+    await env.DB.prepare(`INSERT OR IGNORE INTO agent_credentials
+      (subject_type, subject_id, token_hash, token_ciphertext, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(subject.type, subject.id, tokenHash, ciphertext, now, now)
+      .run();
+  }
+  return { token, needsMigration: false, rotated: true };
+}
+
 export async function verifyAgentCredential(env, subjectType, subjectId, token) {
   const subject = normalizeSubject(subjectType, subjectId);
   const presented = String(token || '').trim();
