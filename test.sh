@@ -139,6 +139,8 @@ run_check "time-series export tests" node "$ROOT/worker/tests/timeseries-export.
 run_check "compact Ping series tests" node "$ROOT/worker/tests/ping-series.test.mjs"
 run_check "legacy chart color schema migration" node "$ROOT/worker/tests/schema-color-migration.test.mjs"
 run_check "latency pending schema migration" node "$ROOT/worker/tests/schema-latency-pending-migration.test.mjs"
+run_check "ping expected_status schema migration" node "$ROOT/worker/tests/schema-ping-expected-status-migration.test.mjs"
+run_shell "agent telemetry payload cap is shared across transports" "cd '$ROOT' && grep -q 'MAX_AGENT_PAYLOAD_BYTES = 1_000_000' worker/src/utils.js && grep -q 'MAX_AGENT_PAYLOAD_BYTES' worker/src/metrics.js && grep -q 'MAX_AGENT_PAYLOAD_BYTES' worker/src/telemetry-buffer.js && grep -q 'MAX_AGENT_PAYLOAD_BYTES' worker/src/telemetry-protobuf.js && ! grep -nE 'length > (200_000|220_000)' worker/src/metrics.js worker/src/telemetry-buffer.js"
 run_check "debug operation log retention and safety" node "$ROOT/worker/tests/debug-logs.test.mjs"
 run_check "usage summary read-only access credential tests" node "$ROOT/worker/tests/usage-summary-access.test.mjs"
 run_check "usage summary read-only access route tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/usage-summary-access-route.test.mjs"

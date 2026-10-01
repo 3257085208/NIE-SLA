@@ -51,6 +51,7 @@
 | `PING_HISTORY_RETENTION_HOURS` | `6` | D1 Ping 临时历史 |
 | `AGENT_CREDENTIAL_TOUCH_SEC` | `21600` | 每节点 Token 最近使用时间的最小写入间隔 |
 | `TRAFFIC_PERSIST_INTERVAL_SEC` | `1800` | 流量周期行最大落盘间隔；页面合并未落盘差值 |
+| `ADMIN_PASSWORD_ITERATIONS` | `50000` | 管理员密码 PBKDF2 迭代次数（50000-1000000，可选）。免费版保持默认以适配 10ms CPU 预算；付费版可提高，旧哈希会在下次成功登录时自动升级 |
 
 `TELEMETRY_BUFFER` Durable Object 绑定属于默认架构必需项。它不改变 Agent 的 5 分钟上传间隔；当前小时直接从缓冲读取，结束后按小时写入 R2。删除绑定会回退到兼容的逐上报 R2 写入，但不再适合 100 台免费额度预算。
 

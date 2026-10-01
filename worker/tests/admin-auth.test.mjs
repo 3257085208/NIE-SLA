@@ -414,4 +414,44 @@ async function encryptLegacySecret(secret, material) {
   assert.equal(authorize.searchParams.get('redirect_uri'), 'https://api.example/api/auth/github/callback');
 }
 
+{
+  // ADMIN_PASSWORD_ITERATIONS is an opt-in hardening knob: the default stays
+  // at the free-plan CPU budget, and a higher configured target upgrades the
+  // stored hash transparently on the next successful password login.
+  const custom = await createAdminCredentialRecord('owner', 'Abcdef1!x', { iterations: 200_000 });
+  assert.equal(custom.iterations, 200_000);
+
+  const env = { DB: memoryDb(), ADMIN_PASSWORD_ITERATIONS: '200000' };
+  env.DB.meta.set('admin_credentials_v1', JSON.stringify({
+    ...custom,
+    iterations: 200_000,
+  }));
+  const login = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
+    username: 'owner',
+    password: 'Abcdef1!x',
+  }), env);
+  assert.equal(login.session_valid, true);
+  assert.equal(JSON.parse(env.DB.meta.get('admin_credentials_v1')).iterations, 200_000);
+
+  // A legacy 50k record is upgraded on login when the operator opted in.
+  const legacy = await createAdminCredentialRecord('owner', 'Abcdef1!x', { iterations: 50_000 });
+  const upgradeEnv = { DB: memoryDb(), ADMIN_PASSWORD_ITERATIONS: '300000' };
+  upgradeEnv.DB.meta.set('admin_credentials_v1', JSON.stringify(legacy));
+  const upgraded = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
+    username: 'owner',
+    password: 'Abcdef1!x',
+  }), upgradeEnv);
+  assert.equal(upgraded.session_valid, true);
+  assert.equal(JSON.parse(upgradeEnv.DB.meta.get('admin_credentials_v1')).iterations, 300_000);
+  const relogin = await passwordLogin(jsonRequest('https://status.example/api/auth/login', {
+    username: 'owner',
+    password: 'Abcdef1!x',
+  }), upgradeEnv);
+  assert.equal(relogin.session_valid, true, 'upgraded hash must still verify');
+
+  // Out-of-range or malformed overrides fall back to the 50k default.
+  const fallback = await createAdminCredentialRecord('owner', 'Abcdef1!x', { iterations: 1 });
+  assert.equal(fallback.iterations, 50_000);
+}
+
 console.log('admin auth tests passed');

@@ -1,4 +1,6 @@
-const MAX_FRAME_BYTES = 220_000;
+import { MAX_AGENT_PAYLOAD_BYTES } from './utils.js';
+
+const MAX_FRAME_BYTES = MAX_AGENT_PAYLOAD_BYTES;
 
 // This decoder mirrors agent/src/telemetry_proto.rs.  It deliberately accepts
 // only the fields used by the Agent telemetry schema and skips unknown fields

@@ -1056,8 +1056,7 @@ fn ensure_script_success(output: &FixedScriptOutput) -> Result<()> {
 }
 
 fn parse_unlock_json(output: &str) -> Option<Vec<Value>> {
-    output
-        .match_indices('{')
+    json_object_starts(output)
         .take(MAX_JSON_PARSE_ATTEMPTS)
         .find_map(|(start, _)| {
             let value = serde_json::Deserializer::from_str(&output[start..])
@@ -1066,6 +1065,17 @@ fn parse_unlock_json(output: &str) -> Option<Vec<Value>> {
                 .ok()?;
             unlock_services_from_json(&value)
         })
+}
+
+// Stray braces (progress bars, Minerva noise, shell fragments) used to consume
+// the capped JSON parse budget before the real payload was reached. Only
+// braces that can actually start an object (optionally whitespace, then a
+// quoted key) are worth a parse attempt; the pre-filter itself is a cheap
+// linear scan over the already size-capped task output.
+fn json_object_starts(output: &str) -> impl Iterator<Item = (usize, &str)> + '_ {
+    output
+        .match_indices('{')
+        .filter(|(start, _)| output[*start + 1..].trim_start().starts_with('"'))
 }
 
 fn unlock_services_from_json(value: &Value) -> Option<Vec<Value>> {
@@ -1911,8 +1921,7 @@ fn normalize_nodequality_report_url(value: &str) -> Option<String> {
 }
 
 fn extract_nodequality_token(output: &str) -> Option<String> {
-    output
-        .match_indices('{')
+    json_object_starts(output)
         .take(MAX_JSON_PARSE_ATTEMPTS)
         .filter_map(|(start, _)| {
             serde_json::Deserializer::from_str(&output[start..])
@@ -2485,11 +2494,28 @@ mod tests {
     #[test]
     fn json_scan_attempts_are_capped() {
         let unlock = r#"{"Media":{"TikTok":{"Status":"Yes","Region":"US","Type":"Native"}}}"#;
-        let noisy = format!("{}{}", "{".repeat(MAX_JSON_PARSE_ATTEMPTS + 8), unlock);
+        // Stray brace noise must not consume the parse budget any more (P3),
+        // while object-shaped noise still caps the number of real attempts.
+        let stray = format!("{}{}", "{".repeat(MAX_JSON_PARSE_ATTEMPTS + 8), unlock);
+        assert!(parse_unlock_json(&stray).is_some());
+        let noisy = format!(
+            "{}{}",
+            r#"{"x":1}"#.repeat(MAX_JSON_PARSE_ATTEMPTS + 8),
+            unlock
+        );
         assert!(parse_unlock_json(&noisy).is_none());
 
         let token = r#"{"success":true,"data":{"token":"abcdefgh"}}"#;
-        let noisy_token = format!("{}{}", "{".repeat(MAX_JSON_PARSE_ATTEMPTS + 8), token);
+        let stray_token = format!("{}{}", "{".repeat(MAX_JSON_PARSE_ATTEMPTS + 8), token);
+        assert_eq!(
+            extract_nodequality_token(&stray_token).as_deref(),
+            Some("abcdefgh")
+        );
+        let noisy_token = format!(
+            "{}{}",
+            r#"{"x":1}"#.repeat(MAX_JSON_PARSE_ATTEMPTS + 8),
+            token
+        );
         assert!(extract_nodequality_token(&noisy_token).is_none());
 
         let early = format!("progress {{}}\n{unlock}");

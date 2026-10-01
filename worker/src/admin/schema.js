@@ -14,6 +14,7 @@ const AGENT_CONTACTS_SCHEMA_MARKER = 'schema:worker-v31-agent-contacts';
 const PROXY_TARGETS_SCHEMA_MARKER = 'schema:worker-v32-proxy-targets';
 const PROXY_LINKS_SCHEMA_MARKER = 'schema:worker-v33-proxy-links';
 const LATENCY_PENDING_SCHEMA_MARKER = 'schema:worker-v34-latency-pending';
+const PING_EXPECTED_STATUS_SCHEMA_MARKER = 'schema:worker-v35-ping-expected-status';
 
 function createAgentTasksTableSql(tableName = 'agent_tasks', ifNotExists = false) {
   return `CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
@@ -81,6 +82,7 @@ export async function ensureV6Schema(env) {
   const proxyTargetsInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(PROXY_TARGETS_SCHEMA_MARKER).first().catch(() => null);
   const proxyLinksInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(PROXY_LINKS_SCHEMA_MARKER).first().catch(() => null);
   const latencyPendingInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(LATENCY_PENDING_SCHEMA_MARKER).first().catch(() => null);
+  const pingExpectedStatusInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(PING_EXPECTED_STATUS_SCHEMA_MARKER).first().catch(() => null);
   const legacySchemaInstalled = installed?.value === '1'
     && nextProbeInstalled?.value === '1'
     && probeBufferInstalled?.value === '1'
@@ -90,10 +92,38 @@ export async function ensureV6Schema(env) {
     && proxyTargetsInstalled?.value === '1'
     && proxyLinksInstalled?.value === '1';
   if (legacySchemaInstalled) {
-    if (latencyPendingInstalled?.value !== '1') {
-      await runOptionalSchemaChange(env, `ALTER TABLE latency_agents ADD COLUMN pending_results TEXT`);
+    // Additive columns added after the v26-v34 markers already existed must be
+    // applied here too: production reads only these marker rows, so a column
+    // that lives in the full schema body below would otherwise never reach an
+    // already-migrated database (that is exactly how ping_targets.expected_status
+    // went missing: admin ping writes 500'd and the TelemetryBuffer WSS control
+    // snapshot failed with "no such column: expected_status").
+    for (const step of [
+      {
+        installed: latencyPendingInstalled,
+        marker: LATENCY_PENDING_SCHEMA_MARKER,
+        statement: `ALTER TABLE latency_agents ADD COLUMN pending_results TEXT`,
+      },
+      {
+        installed: pingExpectedStatusInstalled,
+        marker: PING_EXPECTED_STATUS_SCHEMA_MARKER,
+        statement: `ALTER TABLE ping_targets ADD COLUMN expected_status TEXT`,
+        table: 'ping_targets',
+      },
+    ]) {
+      if (step.installed?.value === '1') continue;
+      if (step.table) {
+        // Do not record a migration for a table that does not exist yet; the
+        // full schema body creates it on databases that are not fully legacy.
+        const table = await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)
+          .bind(step.table)
+          .first()
+          .catch(() => null);
+        if (!table?.name) continue;
+      }
+      await runOptionalSchemaChange(env, step.statement);
       await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
-        .bind(LATENCY_PENDING_SCHEMA_MARKER, nowSec()).run();
+        .bind(step.marker, nowSec()).run();
     }
     schemaEnsured = true;
     return;
@@ -522,6 +552,8 @@ export async function ensureV6Schema(env) {
     .bind(PROXY_LINKS_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
     .bind(LATENCY_PENDING_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+    .bind(PING_EXPECTED_STATUS_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   schemaEnsured = true;
   } catch (e) { schemaPromise = null; throw e; }
   })();

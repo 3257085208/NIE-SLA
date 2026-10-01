@@ -18,7 +18,13 @@ const PASSWORD_FAILURE_LIMIT = 10;
 const PASSWORD_FAILURE_WINDOW_SEC = 15 * 60;
 
 
-const PASSWORD_ITERATIONS = 50_000;
+// Free Workers plans get ~10 ms of CPU per request, so the default stays at
+// 50k PBKDF2 rounds (~7.5 ms locally). Paid deployments may raise the target
+// through ADMIN_PASSWORD_ITERATIONS (50k-1M); stored hashes are upgraded
+// transparently on the next successful password login.
+const PASSWORD_ITERATIONS_DEFAULT = 50_000;
+const PASSWORD_ITERATIONS_MIN = 50_000;
+const PASSWORD_ITERATIONS_MAX = 1_000_000;
 const MIN_PASSWORD_LENGTH = 9;
 const MAX_PASSWORD_LENGTH = 256;
 const PASSWORD_POLICY_MESSAGE = '密码至少 9 位，且必须包含大写字母、小写字母、数字和特殊符号';
@@ -60,6 +66,7 @@ export async function passwordLogin(request, env) {
     if (!await verifyActiveTOTP(env, code)) throw new ApiError(401, 'TOTP 验证码无效');
   }
 
+  await upgradePasswordHashIfNeeded(env, credentials, password);
   const session = await createAdminSession(env, { provider: 'password', subject: username });
   await clearRateLimitD1(env, accountKey);
   return loginResult(session, totp.totp_enabled, 'password', username);
@@ -105,7 +112,7 @@ export async function updateAdminAccount(request, env) {
     throw new ApiError(401, '需要有效的 TOTP 验证码');
   }
 
-  const record = await createAdminCredentialRecord(username, password);
+  const record = await createAdminCredentialRecord(username, password, { env });
   await setMeta(env, ADMIN_CREDENTIALS_KEY, JSON.stringify(record));
   const stored = await resolveAdminCredentials(env);
   if (!stored
@@ -137,16 +144,17 @@ export async function updateAdminAccount(request, env) {
   };
 }
 
-export async function createAdminCredentialRecord(username, password) {
+export async function createAdminCredentialRecord(username, password, options = {}) {
   const normalizedUsername = normalizeUsername(username);
   validateNewCredentials(normalizedUsername, String(password || ''), String(password || ''));
+  const iterations = passwordIterations(options);
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const passwordHash = await derivePasswordHash(password, salt, PASSWORD_ITERATIONS);
+  const passwordHash = await derivePasswordHash(password, salt, iterations);
   return {
     version: 1,
     username: normalizedUsername,
     algorithm: PASSWORD_ALGORITHM,
-    iterations: PASSWORD_ITERATIONS,
+    iterations,
     salt: bytesToBase64(salt),
     password_hash: bytesToBase64(passwordHash),
     updated_at: nowSec(),
@@ -301,6 +309,29 @@ async function verifyPassword(password, credentials) {
   return Boolean(credentials?.password) && constantTimeEqual(candidate, credentials.password);
 }
 
+function passwordIterations(options = {}) {
+  const requested = Math.floor(Number(options?.iterations ?? options?.env?.ADMIN_PASSWORD_ITERATIONS ?? 0));
+  if (Number.isFinite(requested) && requested >= PASSWORD_ITERATIONS_MIN && requested <= PASSWORD_ITERATIONS_MAX) {
+    return requested;
+  }
+  return PASSWORD_ITERATIONS_DEFAULT;
+}
+
+// Best-effort upgrade of an older hash after the operator raised
+// ADMIN_PASSWORD_ITERATIONS. A failure must never block a valid login.
+async function upgradePasswordHashIfNeeded(env, credentials, password) {
+  if (!env?.DB || credentials?.source !== 'db') return;
+  const stored = Math.floor(Number(credentials.iterations || 0));
+  const target = passwordIterations({ env });
+  if (!Number.isFinite(stored) || stored <= 0 || stored >= target) return;
+  try {
+    const record = await createAdminCredentialRecord(credentials.username, password, { env });
+    await setMeta(env, ADMIN_CREDENTIALS_KEY, JSON.stringify(record));
+  } catch (error) {
+    console.error('admin password hash upgrade failed:', String(error?.message || error));
+  }
+}
+
 async function derivePasswordHash(password, salt, iterations) {
   const key = await crypto.subtle.importKey(
     'raw',
@@ -322,8 +353,8 @@ function validCredentialRecord(record) {
     && record.algorithm === PASSWORD_ALGORITHM
     && normalizeUsername(record.username) === record.username
     && Number.isInteger(record.iterations)
-    && record.iterations >= 50_000
-    && record.iterations <= 1_000_000
+    && record.iterations >= PASSWORD_ITERATIONS_MIN
+    && record.iterations <= PASSWORD_ITERATIONS_MAX
     && /^[A-Za-z0-9+/]{20,}={0,2}$/.test(String(record.salt || ''))
     && /^[A-Za-z0-9+/]{40,}={0,2}$/.test(String(record.password_hash || ''));
 }

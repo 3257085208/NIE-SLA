@@ -49,6 +49,7 @@ The three `PUBLIC_STATUS_*_DETAILS` switches default to off. With Agent details 
 | `PING_HISTORY_RETENTION_HOURS` | `6` | D1 ping temporary history |
 | `AGENT_CREDENTIAL_TOUCH_SEC` | `21600` | min interval between token last-used writes |
 | `TRAFFIC_PERSIST_INTERVAL_SEC` | `1800` | max interval for traffic period rows; page merges unpersisted deltas |
+| `ADMIN_PASSWORD_ITERATIONS` | `50000` | admin password PBKDF2 rounds (50000-1000000, optional). Keep the default on free plans to stay inside the 10 ms CPU budget; paid plans can raise it and stored hashes upgrade on the next successful login |
 
 The `TELEMETRY_BUFFER` Durable Object binding is required for the default architecture. It does not change the 5-minute upload interval; the current hour is read from the buffer and merged to R2 at hour boundaries. Removing it falls back to per-upload R2 writes that no longer fit the 100-VPS free-tier budget.
 

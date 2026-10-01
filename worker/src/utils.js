@@ -1,5 +1,12 @@
 
 
+// Shared ceiling for one Agent telemetry report across every transport
+// (HTTP POST body, WebSocket text/binary frame and the protobuf decoder).
+// Large bare-metal hosts legitimately produce ~215 KB reports (900 samples
+// with many cores/disks/NICs); the old 200 KB/220 KB caps rejected those
+// forever, because a rejected upload never releases the queue it came from.
+export const MAX_AGENT_PAYLOAD_BYTES = 1_000_000;
+
 export const REGION_LABELS = {
   auto: '自动',
   apac: '亚太',

@@ -1,4 +1,4 @@
-import { escapeHtml } from "../shared/html.js?v=20260925-visual9";
+import { escapeHtml } from "../shared/html.js?v=20260925-visual11";
 
 const STORAGE_KEY = "nie-sla.onboarding.v1";
 

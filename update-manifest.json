@@ -1,13 +1,16 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.115",
-  "agent_version": "v1.1.115",
-  "source_ref": "app-v1.1.115",
-  "sums_sha256": "f7fe611d6d2afdbffc1e16033edf11d38461bc4d082f8e8d48eebe4e05ac6cd8",
-  "published_at": "2026-09-28T07:37:00Z",
-  "title": "NIE-SLA 1.1.115",
+  "version": "1.1.116",
+  "agent_version": "v1.1.116",
+  "source_ref": "app-v1.1.116",
+  "sums_sha256": "68e4f3e33331358e30e182c6bd3ec1c6fc716db23a20b1ba0d453014107c9e41",
+  "published_at": "2026-10-01T00:00:00Z",
+  "title": "NIE-SLA 1.1.116",
   "changelog": [
-    "任务稳定性：自动更新现在会检查是否有固定任务（NodeQuality / IP 解锁 / 回程）正在运行；任务运行期间自动推迟更新（约每 5 分钟重试），不再因更新重启 Manager 而中断正在跑的测试任务。"
+    "Agent 上报稳定性：修复大机型（单份上报超过 200KB）被 Worker 永久拒绝的问题——HTTP/WS/Protobuf 三路上限统一放宽到 1MB，队列不再因“拒绝→不释放”而卡死；此前受影响的大机器恢复上报。",
+    "Ping 探针：生产库补齐 ping_targets.expected_status 的 v35 迁移，修复后台新建/编辑 Ping 探针失败，以及 Agent 通过 WSS 上报时控制快照读取失败。",
+    "安全加固：管理员密码 PBKDF2 迭代次数可通过 ADMIN_PASSWORD_ITERATIONS 配置（默认保持 50000 以适配免费版 CPU，付费版可提高），旧哈希在下次成功登录时透明升级。",
+    "解析健壮性：IP 解锁/NodeQuality 输出解析先过滤杂散 { 噪声，真实 JSON 不再因解析配额被耗尽而丢失。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

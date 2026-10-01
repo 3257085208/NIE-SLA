@@ -1,4 +1,4 @@
-import { nowSec, sanitizeAgentId, clamp } from './utils.js';
+import { nowSec, sanitizeAgentId, clamp, MAX_AGENT_PAYLOAD_BYTES } from './utils.js';
 import { recordAgentAvailability } from './agent-availability.js';
 import { agentStateTimestamp, bufferedAgentStateEnabled } from './agent-state.js';
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
@@ -825,7 +825,7 @@ export class TelemetryBuffer {
 }
 
 function parseJsonMessage(text) {
-  if (text.length > 220_000) throw new Error('metrics 数据过大');
+  if (text.length > MAX_AGENT_PAYLOAD_BYTES) throw new Error('metrics 数据过大');
   return JSON.parse(text);
 }
 
@@ -836,7 +836,7 @@ function parseBinaryMessage(message) {
       ? new Uint8Array(message.buffer, message.byteOffset, message.byteLength)
       : null;
   if (!bytes) return decodeAgentMetricsProtobuf(message);
-  if (bytes.byteLength > 220_000) throw new Error('metrics 数据过大');
+  if (bytes.byteLength > MAX_AGENT_PAYLOAD_BYTES) throw new Error('metrics 数据过大');
   if (bytes[0] === 0x7b || bytes[0] === 0x5b) return parseJsonMessage(new TextDecoder().decode(bytes));
   return decodeAgentMetricsProtobuf(bytes);
 }

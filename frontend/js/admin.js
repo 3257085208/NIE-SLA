@@ -1,24 +1,24 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260925-visual9";
-import { createAdminClient } from "./admin/api.js?v=20260925-visual9";
-import { createOnboarding } from "./admin/onboarding.js?v=20260925-visual9";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260925-visual9";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260925-visual9";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260925-visual9";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260925-visual9";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260925-visual11";
+import { createAdminClient } from "./admin/api.js?v=20260925-visual11";
+import { createOnboarding } from "./admin/onboarding.js?v=20260925-visual11";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260925-visual11";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260925-visual11";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260925-visual11";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260925-visual11";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260925-visual9";
+} from "./shared/target-catalogs.js?v=20260925-visual11";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260925-visual9";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260925-visual9";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260925-visual9";
-import { fmtBytes } from "./shared/format.js?v=20260925-visual9";
+} from "./shared/grouping.js?v=20260925-visual11";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260925-visual11";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260925-visual11";
+import { fmtBytes } from "./shared/format.js?v=20260925-visual11";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -2007,15 +2007,7 @@ function targetRegionOptions(region = "auto") {
 
 function targetGroupOptions(type = "tcp", current = "") {
   const selected = String(current || "").trim() || ((!current && type === "http") ? "Web" : "VPS");
-  const names = new Set(["VPS", "Web"]);
-  for (const target of targets) {
-    const name = String(target?.group_name || "").trim();
-    if (name) names.add(name);
-  }
-  const options = [...names]
-    .map((value) => `<option value="${escapeHtml(value)}"></option>`)
-    .join("");
-  return `<input id="mGroup" list="mGroupList" value="${escapeHtml(selected)}" maxlength="32" placeholder="选择或输入自定义分组"><datalist id="mGroupList">${options}</datalist>`;
+  return `<input id="mGroup" value="${escapeHtml(selected)}" maxlength="32" placeholder="填写分组名称，完全相同的名称自动归为同一组">`;
 }
 
 function providerOptionsHtml(current = "") {
@@ -2071,7 +2063,7 @@ function targetModalHtml(target, isEdit) {
           <option value="http"${selectedAttr(type === "http")}>HTTP</option>
         </select>`,
       )}
-      ${formField("分组", `<select id="mGroup">${targetGroupOptions(type, target.group_name)}</select>`)}
+      ${formField("分组", targetGroupOptions(type, target.group_name))}
       ${formField("排序序号", `<input id="mSort" type="number" min="1" max="500" value="${escapeHtml(target.sort_order == null ? "" : Number(target.sort_order) + 1)}" placeholder="留空保持不变"><p class="hint">数字越小越靠前；设为已占用的序号时，该位置及之后的探针会依次后移。</p>`)}
     </div>
 
@@ -2154,7 +2146,13 @@ function targetModalHtml(target, isEdit) {
 function toggleTargetTypeFields() {
   const isTcp = byId("mType").value === "tcp";
   const group = byId("mGroup");
-  if (group) group.value = isTcp ? "VPS" : "Web";
+  if (group) {
+    // Follow the type default only while the field still holds a default
+    // value; a custom group name typed by the operator must survive a
+    // tcp/http switch.
+    const current = String(group.value || "").trim();
+    if (!current || current === "VPS" || current === "Web") group.value = isTcp ? "VPS" : "Web";
+  }
   document.querySelectorAll(".ftcp").forEach((item) => {
     item.style.display = isTcp ? "block" : "none";
   });

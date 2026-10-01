@@ -1,4 +1,4 @@
-﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean, publicCachePrivacyVersion, sanitizePublicAgentMetrics } from './utils.js';
+﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean, publicCachePrivacyVersion, sanitizePublicAgentMetrics, MAX_AGENT_PAYLOAD_BYTES } from './utils.js';
 import { summarizeTraffic, summarizeTrafficWithPending, trafficSettingsFromTarget, hasTrafficBaseline } from './traffic.js';
 import { ApiError, requireAgentForId, requireAnyAgent, safeJson, json } from './auth.js';
 import { readR2Json, readR2JsonStrict, writeR2Json } from './storage.js';
@@ -286,7 +286,7 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
   const rawSamples = Array.isArray(metrics.samples) ? metrics.samples : [];
   if (rawSamples.length > MAX_AGENT_SAMPLES_PER_REPORT) throw new ApiError(400, `too many samples; max ${MAX_AGENT_SAMPLES_PER_REPORT}`);
   const serialized = JSON.stringify(metrics);
-  if (serialized.length > 200_000) throw new ApiError(400, 'metrics 数据过大');
+  if (serialized.length > MAX_AGENT_PAYLOAD_BYTES) throw new ApiError(400, `metrics 数据过大（上限 ${MAX_AGENT_PAYLOAD_BYTES} 字节）`);
 
   const ts = nowSec();
 
