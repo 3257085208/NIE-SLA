@@ -3,7 +3,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 OUT_DIR="${1:-$ROOT/bin}"
-TOOLCHAIN="${RUST_TOOLCHAIN:-stable}"
+# Rust 1.99.0 regresses the armv6 musl link (undefined __aeabi_uread4);
+# keep the last known-good toolchain pinned and allow RUST_TOOLCHAIN to override.
+TOOLCHAIN="${RUST_TOOLCHAIN:-1.98.0}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target/local-release}"
 
 command -v cargo >/dev/null 2>&1 || { echo "cargo is required" >&2; exit 1; }

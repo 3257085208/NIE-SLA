@@ -1,16 +1,14 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.116",
-  "agent_version": "v1.1.116",
-  "source_ref": "app-v1.1.116",
-  "sums_sha256": "68e4f3e33331358e30e182c6bd3ec1c6fc716db23a20b1ba0d453014107c9e41",
-  "published_at": "2026-10-01T00:00:00Z",
-  "title": "NIE-SLA 1.1.116",
+  "version": "1.1.117",
+  "agent_version": "v1.1.117",
+  "source_ref": "app-v1.1.117",
+  "sums_sha256": "611b861c357f3d5ef27cf1b388ea949a598cc954654cd0e9e1d41353becd288e",
+  "published_at": "2026-10-05T08:00:00Z",
+  "title": "NIE-SLA 1.1.117",
   "changelog": [
-    "Agent 上报稳定性：修复大机型（单份上报超过 200KB）被 Worker 永久拒绝的问题——HTTP/WS/Protobuf 三路上限统一放宽到 1MB，队列不再因“拒绝→不释放”而卡死；此前受影响的大机器恢复上报。",
-    "Ping 探针：生产库补齐 ping_targets.expected_status 的 v35 迁移，修复后台新建/编辑 Ping 探针失败，以及 Agent 通过 WSS 上报时控制快照读取失败。",
-    "安全加固：管理员密码 PBKDF2 迭代次数可通过 ADMIN_PASSWORD_ITERATIONS 配置（默认保持 50000 以适配免费版 CPU，付费版可提高），旧哈希在下次成功登录时透明升级。",
-    "解析健壮性：IP 解锁/NodeQuality 输出解析先过滤杂散 { 噪声，真实 JSON 不再因解析配额被耗尽而丢失。"
+    "磁盘显示：修复 VPS 详情页的磁盘总量与各挂载点已用空间只在 Agent 启动时采集一次、之后长期不刷新（例如 Proxmox 主机的 /var/lib/vz 会一直显示数天前的旧数值）；现在每次上报都用实时磁盘数据刷新。",
+    "磁盘列表同时过滤 /dev/fuse（/etc/pve 等）与 overlay 伪文件系统，不再把它们当作磁盘展示。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

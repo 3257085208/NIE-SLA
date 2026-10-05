@@ -1138,7 +1138,14 @@ impl Collector {
         proxy_checks: &[proxy::ProxyCheckResult],
     ) -> Metrics {
         let latest = samples.last().cloned().unwrap_or_else(|| self.sample());
+        // Disk totals and per-mount usage change while the Agent runs, but the
+        // VpsInfo struct is only built once at startup. Refresh the dynamic
+        // disk fields from the 60s disk worker on every report; static fields
+        // (CPU model, memory size, OS, kernel) stay cached.
+        let live_disk = self.disk();
+        let live_disk_list = self.disk_list();
         if let Some(info) = vps_info.as_mut() {
+            refresh_vps_disk_fields(info, &live_disk, &live_disk_list);
             let thermal = platform::thermal_snapshot();
             info.cpu_temp_c = thermal.cpu_temp_c;
             info.gpu_temp_c = thermal.gpu_temp_c;
@@ -1166,7 +1173,7 @@ impl Collector {
             cpu_percent: latest.cpu,
             memory: self.memory(),
             load: load_info(),
-            disk: self.disk(),
+            disk: live_disk,
             net: NetInfo {
                 rx_bytes_sec: latest.net_rx,
                 tx_bytes_sec: latest.net_tx,
@@ -1296,6 +1303,8 @@ where
             || name.starts_with("loop")
             || name.starts_with("ram")
             || name.starts_with("zram")
+            || name.starts_with("fuse")
+            || name.starts_with("overlay")
         {
             continue;
         }
@@ -1322,6 +1331,17 @@ where
     let sum_total: u64 = rows.iter().map(|row| row.2).sum();
     let sum_avail: u64 = rows.iter().map(|row| row.3).sum();
     (disk_info(sum_total, sum_avail), entries)
+}
+
+/// Copies the live disk numbers into a cached `VpsInfo` so the dashboard shows
+/// current usage instead of the snapshot taken when the Agent started.
+fn refresh_vps_disk_fields(info: &mut VpsInfo, disk: &DiskInfo, disk_list: &[DiskEntry]) {
+    if disk.total_gb > 0.0 {
+        info.total_disk_gb = disk.total_gb;
+    }
+    if !disk_list.is_empty() {
+        info.disk_list = disk_list.to_vec();
+    }
 }
 
 impl DiskEntry {
@@ -3004,6 +3024,20 @@ mod tests {
                 false,
             ),
             (
+                "/dev/fuse".to_string(),
+                "/etc/pve".to_string(),
+                134_217_728,
+                134_148_096,
+                false,
+            ),
+            (
+                "overlay".to_string(),
+                "/var/lib/docker/rootfs/overlayfs/abc".to_string(),
+                20_939_620_352,
+                1_579_102_208,
+                false,
+            ),
+            (
                 "/dev/sdc".to_string(),
                 "/media/usb".to_string(),
                 8_000_000_000,
@@ -3050,6 +3084,36 @@ mod tests {
         let (info, entries) = consolidate_disk_rows(Vec::new());
         assert_eq!(info.total_gb, 0.0);
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn vps_disk_fields_refresh_from_live_disk_cache() {
+        let mut info = VpsInfo {
+            total_disk_gb: 7231.97,
+            disk_list: vec![DiskEntry {
+                device: "data/zd0".to_string(),
+                mount: "/var/lib/vz".to_string(),
+                total_gb: 7231.97,
+                used_gb: 99.82,
+            }],
+            ..VpsInfo::default()
+        };
+        let disk = DiskInfo {
+            total_gb: 7255.9,
+            used_gb: 263.26,
+            avail_gb: 6992.64,
+            percent: 3.63,
+        };
+        let disk_list = vec![DiskEntry {
+            device: "data/zd0".to_string(),
+            mount: "/var/lib/vz".to_string(),
+            total_gb: 7231.97,
+            used_gb: 244.9,
+        }];
+        refresh_vps_disk_fields(&mut info, &disk, &disk_list);
+        assert_eq!(info.total_disk_gb, 7255.9);
+        assert_eq!(info.disk_list.len(), 1);
+        assert_eq!(info.disk_list[0].used_gb, 244.9);
     }
 
     #[test]
