@@ -1,8 +1,8 @@
 import { ALLOWED_REGIONS, assertPublicHttpUrl, clamp, fetchPublicHttpsWithValidatedRedirects, sanitizeAgentId, sanitizeId, publicCachePrivacyVersion, publicMaskIps, timezoneOffsetMin } from './utils.js';
 import { requireAgentForId, requireAnyAgent, requireAnyLatencyAgent, requireLatencyAgentForId, requireProbeAgent, safeJson, json, corsPreflight, ApiError, internalRequestHeaders, resolveCorsOrigin } from './auth.js';
 import { getStatusCached, getChecksCached, writeStatusSnapshot } from './status.js';
-import { submitAgentMetrics, getAgentMetricsCached, getAgentProxyChecksCached, cleanupAgentMetricsR2 } from './metrics.js';
-import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, getAgentPingsBatch, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, listProxyTargets, createProxyTarget, updateProxyTarget, deleteProxyTarget, previewProxyLinks, getAgentProxyTargets, getStats, cleanupVolatileHistory, getPublicSettings, getPublicAppearanceScript, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation, estimateUsageFromEnv, getUsageActualConfig, saveUsageActualConfig, fetchActualUsage, getFleetVersions, listTrafficCorrections, saveTrafficCorrection, getFinanceSummary, getTurnstileConfig, getTurnstileSecret, saveTurnstileConfig, getAgentReportInterval, setAgentReportInterval, getMeta, getRetentionHours, updateRetentionConfig, RETENTION_MIN_HOURS, RETENTION_MAX_HOURS, listProbeHistoryDeadLetters, replayProbeHistoryDeadLetter, drainProbeHistoryDeadLetters, previewNezhaMigration, importNezhaMigration, previewKomariMigration, importKomariMigration, previewNodeGetMigration, importNodeGetMigration, getStorageUsage } from './admin.js';
+import { submitAgentMetrics, getAgentMetricsCached, cleanupAgentMetricsR2 } from './metrics.js';
+import { listTargets, createTarget, updateTarget, bulkUpdateTargets, reorderTargets, deleteTarget, getAgentTargets, submitAgentResults, probeNow, archiveDay, ensureV6Schema, shouldEnsureSchemaForRequest, syncEnvTargets, archiveYesterdayOncePerLocalDay, getPingTargets, submitAgentPings, getAgentPings, getAgentPingsBatch, createPingTarget, updatePingTarget, deletePingTarget, updatePingConfig, getAgentProxyTargets, getStats, cleanupVolatileHistory, getPublicSettings, getPublicAppearanceScript, updatePublicSettings, getAgentUpdatePolicy, getAgentInstallCommand, getAgentInstallScript, getLatencyHealth, listLatencyAgents, createLatencyAgent, updateLatencyAgent, deleteLatencyAgent, getLatencyAgentInstallCommand, getLatencyAgentInstallScript, getLatencyAgentUpdatePolicy, getLatencyAgentTargets, submitLatencyAgentResults, getPublicLatency, createAgentTask, listAgentTasks, claimAgentTask, completeAgentTask, cancelAgentTask, agentTaskCancelStatus, getGeoIpSettings, updateGeoIpSettings, getAgentRuntimeConfig, submitAgentLocation, exportBackup, previewBackup, restoreBackup, cleanupDebugLogs, debugClientIp, debugSummary, listDebugLogs, recordDebugLog, shouldLogDebugOperation, estimateUsageFromEnv, getUsageActualConfig, saveUsageActualConfig, fetchActualUsage, getFleetVersions, listTrafficCorrections, saveTrafficCorrection, getFinanceSummary, getTurnstileConfig, getTurnstileSecret, saveTurnstileConfig, getAgentReportInterval, setAgentReportInterval, getMeta, getRetentionHours, updateRetentionConfig, RETENTION_MIN_HOURS, RETENTION_MAX_HOURS, listProbeHistoryDeadLetters, replayProbeHistoryDeadLetter, drainProbeHistoryDeadLetters, previewNezhaMigration, importNezhaMigration, previewKomariMigration, importKomariMigration, previewNodeGetMigration, importNodeGetMigration, getStorageUsage } from './admin.js';
 import { createUsageSummaryAccess, getDebugLogSummary, getUsageSummaryAccessStatus, revokeUsageSummaryAccess, usageSummaryBearerToken, validateUsageSummaryAccess } from './admin.js';
 import { enrichCfContext } from './probe.js';
 import { rateLimitByIp, rateLimitGlobal, rateLimitD1 } from './ratelimit.js';
@@ -82,7 +82,6 @@ const ROUTES = [
   { method: 'GET', path: '/api/status/ws', rl: 'public' },
   { method: 'GET', path: '/api/checks', rl: 'public' },
   { method: 'GET', path: '/api/agent/metrics', rl: 'public' },
-  { method: 'GET', path: '/api/proxy-checks', rl: 'public' },
   { method: 'GET', path: '/api/agent/pings', rl: 'public' },
   { method: 'GET', path: '/api/latency', rl: 'public' },
   { method: 'GET', path: '/api/appearance-script.js', rl: 'public' },
@@ -91,7 +90,6 @@ const ROUTES = [
   { method: 'GET', path: '/api/v1/status', rl: 'public' },
   { method: 'GET', path: '/api/v1/checks', rl: 'public' },
   { method: 'GET', path: '/api/v1/metrics', rl: 'public' },
-  { method: 'GET', path: '/api/v1/proxy-checks', rl: 'public' },
   { method: 'GET', path: '/api/v1/pings', rl: 'public' },
   { method: 'GET', path: '/api/v1/latency', rl: 'public' },
   { method: 'GET', path: '/api/themes', rl: 'public' },
@@ -166,11 +164,6 @@ const ROUTES = [
   { method: 'PATCH', path: '/api/ping-config', rl: 'write' },
   { method: 'GET', path: '/api/retention-config', rl: 'write' },
   { method: 'PATCH', path: '/api/retention-config', rl: 'write' },
-  { method: 'GET', path: '/api/proxy-targets', rl: 'write' },
-  { method: 'POST', path: '/api/proxy-targets/parse', rl: 'write' },
-  { method: 'POST', path: '/api/proxy-targets', rl: 'write' },
-  { method: 'PATCH', path: '/api/proxy-targets/:id', rl: 'write' },
-  { method: 'DELETE', path: '/api/proxy-targets/:id', rl: 'write' },
   { method: 'GET', path: '/api/latency-agents', rl: 'write' },
   { method: 'POST', path: '/api/latency-agents', rl: 'write' },
   { method: 'GET', path: '/api/probe-history/dead-letter', rl: 'write' },
@@ -232,14 +225,12 @@ async function dispatchStatic(env, url, request, ctx) {
     return new Response(`${await getPublicAppearanceScript(env)}\n`, { status: 200, headers: { 'cache-control': 'no-store', 'content-type': 'application/javascript; charset=utf-8', 'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' } });
   }
   if (path === '/api/agent/metrics' && m === 'GET') { return getAgentMetricsCached(request, env, url, ctx); }
-  if (path === '/api/proxy-checks' && m === 'GET') { return getAgentProxyChecksCached(request, env, url, ctx); }
   if (path === '/api/agent/pings' && m === 'GET') { return json(await getAgentPings(env, url), 200, env, { 'cache-control': 'public, max-age=20' }); }
   if (path === '/api/latency' && m === 'GET') { if (!await allowPublicLatencyRequest(request, env)) return deny(60); await ensureV6Schema(env); return getPublicLatencyCached(env, url, ctx); }
   if ((path === '/api/v1' || path === '/api/v1/manifest') && m === 'GET') { return withDeveloperApiHeaders(json(getDeveloperApiManifest(request, env, VERSION), 200, env, { 'cache-control': 'public, max-age=300' }), request, env); }
   if (path === '/api/v1/status' && m === 'GET') { return withDeveloperApiHeaders(await getStatusCached(request, env, developerApiUrl(url, '/api/status'), ctx), request, env); }
   if (path === '/api/v1/checks' && m === 'GET') { return withDeveloperApiHeaders(await getChecksCached(request, env, developerApiUrl(url, '/api/checks'), ctx), request, env); }
   if (path === '/api/v1/metrics' && m === 'GET') { return withDeveloperApiHeaders(await getAgentMetricsCached(request, env, developerApiUrl(url, '/api/agent/metrics'), ctx), request, env); }
-  if (path === '/api/v1/proxy-checks' && m === 'GET') { return withDeveloperApiHeaders(await getAgentProxyChecksCached(request, env, developerApiUrl(url, '/api/proxy-checks'), ctx), request, env); }
   if (path === '/api/v1/pings' && m === 'GET') { return withDeveloperApiHeaders(json(await getAgentPings(env, developerApiUrl(url, '/api/agent/pings')), 200, env, { 'cache-control': 'public, max-age=20' }), request, env); }
   if (path === '/api/v1/latency' && m === 'GET') { if (!await allowPublicLatencyRequest(request, env)) return withDeveloperApiHeaders(deny(60), request, env); await ensureV6Schema(env); return withDeveloperApiHeaders(await getPublicLatencyCached(env, developerApiUrl(url, '/api/latency'), ctx), request, env); }
   if (path === '/api/agent/pings/batch' && m === 'GET') { if (!await allowPublicPingsBatchRequest(request, env)) return deny(); return json(await getAgentPingsBatch(env, url, ctx), 200, env, { 'cache-control': 'public, max-age=20' }); }
@@ -505,9 +496,6 @@ async function dispatchStatic(env, url, request, ctx) {
   if (path === '/api/ping-config' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updatePingConfig(request, env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/retention-config' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json({ ok: true, retention_hours: await getRetentionHours(env), min_hours: RETENTION_MIN_HOURS, max_hours: RETENTION_MAX_HOURS }, 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/retention-config' && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateRetentionConfig(request, env), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/proxy-targets' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listProxyTargets(env), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/proxy-targets/parse' && m === 'POST') { await withAdmin(request, env); return json(await previewProxyLinks(request), 200, env, { 'cache-control': 'no-store' }); }
-  if (path === '/api/proxy-targets' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await createProxyTarget(request, env), 201, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agents' && m === 'GET') { await withAdmin(request, env); await ensureV6Schema(env); return json(await listLatencyAgents(env), 200, env, { 'cache-control': 'no-store' }); }
   if (path === '/api/latency-agents' && m === 'POST') { await withAdmin(request, env); await ensureV6Schema(env); return json(await createLatencyAgent(request, env), 201, env, { 'cache-control': 'no-store' }); }
 
@@ -519,10 +507,6 @@ async function dispatchStatic(env, url, request, ctx) {
   const pingMatch = path.match(/^\/api\/ping-targets\/([^/]+)$/);
   if (pingMatch && m === 'PATCH') { await withAdmin(request, env); return json(await updatePingTarget(pathParam(pingMatch[1]), request, env), 200, env); }
   if (pingMatch && m === 'DELETE') { await withAdmin(request, env); return json(await deletePingTarget(pathParam(pingMatch[1]), env), 200, env); }
-
-  const proxyMatch = path.match(/^\/api\/proxy-targets\/([^/]+)$/);
-  if (proxyMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); const result = await updateProxyTarget(pathParam(proxyMatch[1]), request, env); await clearStatusCaches(url, env, ctx); return json(result, 200, env, { 'cache-control': 'no-store' }); }
-  if (proxyMatch && m === 'DELETE') { await withAdmin(request, env); await ensureV6Schema(env); const result = await deleteProxyTarget(pathParam(proxyMatch[1]), env); await clearStatusCaches(url, env, ctx); return json(result, 200, env, { 'cache-control': 'no-store' }); }
 
   const latencyAgentMatch = path.match(/^\/api\/latency-agents\/([^/]+)$/);
   if (latencyAgentMatch && m === 'PATCH') { await withAdmin(request, env); await ensureV6Schema(env); return json(await updateLatencyAgent(pathParam(latencyAgentMatch[1]), request, env), 200, env); }

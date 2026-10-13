@@ -1,14 +1,13 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.117",
-  "agent_version": "v1.1.117",
-  "source_ref": "app-v1.1.117",
-  "sums_sha256": "611b861c357f3d5ef27cf1b388ea949a598cc954654cd0e9e1d41353becd288e",
-  "published_at": "2026-10-05T08:00:00Z",
-  "title": "NIE-SLA 1.1.117",
+  "version": "1.1.119",
+  "agent_version": "v1.1.119",
+  "source_ref": "app-v1.1.119",
+  "sums_sha256": "8ef864a03ec726fcd07b263fdc88262474eae2579e80dc09d88d04cd5d167060",
+  "published_at": "2026-10-13T03:30:00Z",
+  "title": "NIE-SLA 1.1.119",
   "changelog": [
-    "磁盘显示：修复 VPS 详情页的磁盘总量与各挂载点已用空间只在 Agent 启动时采集一次、之后长期不刷新（例如 Proxmox 主机的 /var/lib/vz 会一直显示数天前的旧数值）；现在每次上报都用实时磁盘数据刷新。",
-    "磁盘列表同时过滤 /dev/fuse（/etc/pve 等）与 overlay 伪文件系统，不再把它们当作磁盘展示。"
+    "移除后台「代理可用性」功能（分享链接/订阅解析与代理检测目标管理），修复相关特征词导致 Cloudflare 自动停机的问题；其余功能不变。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

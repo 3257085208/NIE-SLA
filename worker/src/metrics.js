@@ -187,9 +187,8 @@ export function normalizeAgentProxyChecks(value, fallbackTs = nowSec()) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, MAX_AGENT_PROXY_CHECKS_PER_REPORT).flatMap((item) => {
     const targetId = String(item?.target_id || item?.id || '').trim().slice(0, 128);
-    const protocol = ['socks5', 'http', 'ss', 'vless', 'vmess', 'trojan', 'hysteria2', 'snell', 'anytls', 'tuic'].includes(String(item?.protocol || '').trim().toLowerCase())
-      ? String(item.protocol).trim().toLowerCase()
-      : '';
+    const rawProtocol = String(item?.protocol || '').trim().toLowerCase();
+    const protocol = /^[a-z][a-z0-9-]{0,31}$/.test(rawProtocol) ? rawProtocol : '';
     const ts = Math.floor(Number(item?.ts || fallbackTs));
     if (!targetId || !protocol || !Number.isFinite(ts) || ts <= 0) return [];
     const latency = item?.latency_ms == null ? null : Number(item.latency_ms);

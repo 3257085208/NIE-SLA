@@ -1,24 +1,24 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260925-visual11";
-import { createAdminClient } from "./admin/api.js?v=20260925-visual11";
-import { createOnboarding } from "./admin/onboarding.js?v=20260925-visual11";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260925-visual11";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260925-visual11";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260925-visual11";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260925-visual11";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20260925-visual12";
+import { createAdminClient } from "./admin/api.js?v=20260925-visual12";
+import { createOnboarding } from "./admin/onboarding.js?v=20260925-visual12";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20260925-visual12";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20260925-visual12";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20260925-visual12";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20260925-visual12";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20260925-visual11";
+} from "./shared/target-catalogs.js?v=20260925-visual12";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20260925-visual11";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260925-visual11";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260925-visual11";
-import { fmtBytes } from "./shared/format.js?v=20260925-visual11";
+} from "./shared/grouping.js?v=20260925-visual12";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20260925-visual12";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20260925-visual12";
+import { fmtBytes } from "./shared/format.js?v=20260925-visual12";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -322,7 +322,6 @@ let targets = [],
   latencyNodes = [],
   latencyBuiltin = null,
   pingTargets = [],
-  proxyTargets = [],
   agentTasks = new Map(),
   agentTasksByAction = new Map(),
   targetRegions = {
@@ -341,8 +340,6 @@ let targets = [],
   pingAdminLoaded = false,
   targetAdminFailed = false,
   pingAdminFailed = false,
-  proxyAdminLoaded = false,
-  proxyAdminFailed = false,
   pingIntervalSec = 20,
   targetOrderSaving = false,
   selectedTargetIds = new Set();
@@ -354,10 +351,6 @@ let toastTimer = 0;
 let vpsSlaChart = null;
 let modalReturnFocus = null;
 let modalCancelHandler = null;
-let proxyLinkPreviews = [];
-let proxyLinkIndex = 0;
-let proxyLinkParsedValue = "";
-let proxyCheckStats = new Map();
 function toast(m, t = "info") {
   const e = byId("toast");
   clearTimeout(toastTimer);
@@ -541,7 +534,6 @@ function nav(p) {
   if (p === "targets") loadTargets();
   if (p === "latency") loadLatencyNodes();
   if (p === "pings") loadPings();
-  if (p === "proxies") loadProxyTargets();
   if (p === "themes") loadThemes();
   if (p === "settings") loadSettings();
 }
@@ -2731,54 +2723,6 @@ async function loadPings() {
   }
 }
 
-async function loadProxyTargets() {
-  loading("proxyTable", "加载代理检测目标...");
-  proxyTargets = [];
-  proxyCheckStats = new Map();
-  proxyAdminLoaded = false;
-  proxyAdminFailed = false;
-  if (!targets.some((target) => String(target?.type || "").toLowerCase() === "tcp")) {
-    try {
-      await ensureProxyAgents();
-    } catch (_) {}
-  }
-  try {
-    const d = await apiAdmin("/api/proxy-targets", {}, 30000);
-    proxyTargets = Array.isArray(d.targets) ? d.targets : [];
-    proxyAdminLoaded = true;
-    renderProxyTargets();
-    loadProxyCheckStats();
-  } catch (e) {
-    proxyAdminFailed = true;
-    errBox("proxyTable", e);
-  }
-}
-
-// 每个代理目标补拉一次近 24 小时真实握手样本，用于列表里的最近结果与成功率。
-async function loadProxyCheckStats() {
-  const list = proxyTargets.slice(0, 12);
-  const settled = await Promise.allSettled(list.map(async (proxy) => {
-    const data = await apiPublic("/api/proxy-checks?target_id=" + encodeURIComponent(proxy.id) + "&hours=24", 20000);
-    return { id: proxy.id, data };
-  }));
-  const next = new Map();
-  for (const item of settled) {
-    if (item.status !== "fulfilled") continue;
-    const { id, data } = item.value;
-    if (!data || data.ok !== true) continue;
-    const checks = Array.isArray(data.checks) ? data.checks : [];
-    const okCount = checks.filter((check) => Number(check.ok) === 1).length;
-    next.set(id, {
-      latest: data.latest || checks[checks.length - 1] || null,
-      total: checks.length,
-      okCount,
-      rate: checks.length ? okCount / checks.length : null,
-    });
-  }
-  proxyCheckStats = next;
-  renderProxyTargets();
-}
-
 async function savePingInterval() {
   const input = byId("pingIntervalSec");
   const interval = Number(input?.value);
@@ -2831,161 +2775,6 @@ function renderPings() {
     </div>`;
 }
 
-function proxyProtocolLabel(protocol) {
-  return ({
-    socks5: "SOCKS5",
-    http: "HTTP CONNECT",
-    ss: "Shadowsocks",
-    vless: "VLESS",
-    vmess: "VMess",
-    trojan: "Trojan",
-    hysteria2: "Hysteria2",
-    snell: "Snell",
-    anytls: "AnyTLS",
-    tuic: "TUIC",
-  }[String(protocol || "").toLowerCase()] || "未知协议");
-}
-
-function proxyTransportLabel(transport) {
-  return ({
-    tcp: "TCP",
-    tls: "TLS",
-    ws: "WS",
-    "tls-ws": "TLS + WS",
-    grpc: "gRPC",
-    "tls-grpc": "TLS + gRPC",
-    h2: "HTTP/2",
-    "tls-h2": "TLS + HTTP/2",
-    httpupgrade: "HTTP Upgrade",
-    "tls-httpupgrade": "TLS + HTTP Upgrade",
-    quic: "QUIC",
-  }[String(transport || "tcp").toLowerCase()] || "TCP");
-}
-
-function proxyActionsHtml(proxy) {
-  if (!proxyAdminLoaded) {
-    return proxyAdminFailed
-      ? '<button class="btn btn-xs btn-blue" data-a="proxy-reload">重试管理</button>'
-      : '<span class="tag tag-warn">管理加载中</span>';
-  }
-  return [
-    '<button class="btn btn-xs" data-a="proxy-toggle">' + (Number(proxy.enabled) === 1 ? "禁用" : "启用") + '</button>',
-    '<button class="btn btn-xs btn-blue" data-a="proxy-edit">编辑</button>',
-    '<button class="btn btn-xs btn-danger" data-a="proxy-delete">删</button>',
-  ].join("");
-}
-
-const PROXY_STAGE_LABELS = {
-  config: "\u914d\u7f6e",
-  connect: "\u8fde\u63a5",
-  handshake: "\u534f\u8bae\u63e1\u624b",
-  canary: "\u51fa\u7ad9\u9a8c\u8bc1",
-  runtime: "\u8fd0\u884c\u65f6",
-  failed: "\u5931\u8d25",
-};
-
-const PROXY_ERROR_LABELS = {
-  timeout: "\u68c0\u6d4b\u8d85\u65f6",
-  auth_failed: "\u4ee3\u7406\u8ba4\u8bc1\u5931\u8d25",
-  unsupported: "\u914d\u7f6e\u4e0d\u5b8c\u6574\u6216\u5f53\u524d Agent \u4e0d\u652f\u6301\u6b64\u7ec4\u5408",
-  handshake_failed: "\u534f\u8bae\u63e1\u624b\u5931\u8d25",
-  canary_failed: "\u4ee3\u7406\u51fa\u7ad9\u9a8c\u8bc1\u5931\u8d25",
-  invalid_config: "\u4ee3\u7406\u914d\u7f6e\u65e0\u6548",
-  runtime_failed: "Agent \u8fd0\u884c\u65f6\u5931\u8d25",
-};
-
-function proxyStageLabelText(value) {
-  const raw = String(value || "").trim();
-  return raw && PROXY_STAGE_LABELS[raw] ? PROXY_STAGE_LABELS[raw] + "\uff08" + raw + "\uff09" : raw;
-}
-
-function proxyErrorLabelText(value) {
-  const raw = String(value || "").trim();
-  return raw && PROXY_ERROR_LABELS[raw] ? PROXY_ERROR_LABELS[raw] + "\uff08" + raw + "\uff09" : raw;
-}
-
-function proxyCheckTimeText(ts) {
-  const sec = Number(ts) || 0;
-  if (!sec) return "-";
-  const date = new Date(sec * 1000);
-  const pad = (value) => String(value).padStart(2, "0");
-  return pad(date.getHours()) + ":" + pad(date.getMinutes());
-}
-
-function proxyLatestHtml(proxy) {
-  const info = proxyCheckStats.get(String(proxy.id));
-  if (!info) return '<span class="table-note">\u6682\u65e0\u6837\u672c</span>';
-  const latest = info.latest;
-  if (!latest) return statusTag("\u5f85\u68c0\u6d4b", "tag-warn");
-  const ok = Number(latest.ok) === 1;
-  const total = Number(latest.total_ms);
-  const detail = ok
-    ? ("\u6210\u529f " + (Number.isFinite(total) && total > 0 ? Math.round(total) + " ms" : "\u65e0\u6548\u65f6\u957f"))
-    : ([proxyStageLabelText(latest.stage), proxyErrorLabelText(latest.error)].filter(Boolean).join(" \u00b7 ") || "\u5931\u8d25");
-  return (ok ? statusTag("\u5728\u7ebf", "tag-on") : statusTag("\u79bb\u7ebf", "tag-off")) +
-    '<small class="table-note">' + escapeHtml(detail + " \u00b7 " + proxyCheckTimeText(latest.ts)) + "</small>";
-}
-
-function proxyRateHtml(proxy) {
-  const info = proxyCheckStats.get(String(proxy.id));
-  if (!info || !info.total) return '<span class="table-note">-</span>';
-  return escapeHtml(((info.rate || 0) * 100).toFixed(1) + "%") +
-    '<small class="table-note">' + escapeHtml("\u6210\u529f " + info.okCount + " \u00b7 \u5931\u8d25 " + (info.total - info.okCount) + " \u00b7 " + info.total + " \u4e2a\u6837\u672c") + "</small>";
-}
-
-function proxyRowHtml(proxy, index) {
-  const enabled = Number(proxy.enabled) === 1
-    ? statusTag("已启用", "tag-on")
-    : statusTag("已禁用", "tag-off");
-  const configured = proxy.secret_configured
-    ? statusTag("已配置", "tag-on")
-    : statusTag("缺少凭据", "tag-warn");
-  return [
-    '<tr data-i="' + index + '">',
-    '<td>' + (index + 1) + '</td>',
-    '<td><strong>' + escapeHtml(proxy.name || proxy.id) + '</strong><small class="table-note"><code>' + escapeHtml(proxy.id) + '</code></small></td>',
-    '<td>' + escapeHtml(proxy.agent_name || proxy.agent_id || "-") + '</td>',
-    '<td><span class="tag tag-tcp">' + escapeHtml(proxyProtocolLabel(proxy.protocol)) + '</span></td>',
-    '<td><code>' + escapeHtml(proxy.server || "-") + ':' + escapeHtml(String(proxy.port || "-")) + '</code><small class="table-note">' + escapeHtml(proxy.sni || "") + ' · ' + escapeHtml(proxyTransportLabel(proxy.transport)) + '</small></td>',
-    '<td>' + configured + '</td>',
-    '<td>' + enabled + '</td>',
-    '<td>' + proxyLatestHtml(proxy) + '</td>',
-    '<td>' + proxyRateHtml(proxy) + '</td>',
-    '<td><div class="actions">' + proxyActionsHtml(proxy) + '</div></td>',
-    '</tr>',
-  ].join("");
-}
-
-function renderProxyTargets() {
-  if (!proxyTargets.length) {
-    byId("proxyTable").innerHTML = '<div class="empty">暂无代理检测目标</div>';
-    return;
-  }
-  const rows = proxyTargets.map((proxy, index) => proxyRowHtml(proxy, index)).join("");
-  byId("proxyTable").innerHTML = [
-    '<div class="table-scroll"><table class="pings-table proxy-table">',
-    '<thead><tr><th>#</th><th>名称 / ID</th><th>执行 Agent</th><th>协议</th><th>代理地址</th><th>凭据</th><th>启用</th><th>最近结果（24h）</th><th>成功率（24h）</th><th>操作</th></tr></thead>',
-    '<tbody>', rows, '</tbody></table></div>',
-  ].join("");
-}
-
-function proxyAgentOptions(agentId) {
-  const agents = targets.filter((target) => String(target?.type || "").toLowerCase() === "tcp");
-  if (!agents.length) return '<option value="" selected>暂无可用 TCP Agent，请先部署或刷新探针列表</option>';
-  return agents.map((agent) => '<option value="' + escapeAttr(agent.id) + '"' +
-    selectedAttr(String(agent.id) === String(agentId || "")) + '>' +
-    escapeHtml(agent.name || agent.id) + ' · ' + escapeHtml(agent.id) + '</option>').join("");
-}
-
-async function ensureProxyAgents() {
-  if (targets.some((target) => String(target?.type || "").toLowerCase() === "tcp")) {
-    return targets;
-  }
-  const data = await apiAdmin("/api/targets", {}, 30000);
-  if (Array.isArray(data.targets)) targets = data.targets;
-  return targets;
-}
-
 function pingActionsHtml(ping) {
   if (!pingAdminLoaded) {
     return pingAdminFailed
@@ -3016,260 +2805,6 @@ function pingRowHtml(ping, index) {
       <td><div class="actions">${pingActionsHtml(ping)}</div></td>
     </tr>`;
 }
-function proxyModal(proxy = null) {
-  const edit = Boolean(proxy);
-  const p = proxy || {};
-  const protocol = String(p.protocol || "socks5").toLowerCase();
-  const transport = String(p.transport || "tcp").toLowerCase();
-  proxyLinkPreviews = [];
-  proxyLinkIndex = 0;
-  proxyLinkParsedValue = "";
-  let html = '<h3>' + (edit ? "编辑" : "新增") + '代理检测</h3>';
-  html += '<p class="hint">支持小火箭（Shadowrocket）分享 URI、节点导出 JSON、多行节点、Base64 订阅，以及 Clash / Mihomo JSON、YAML。原始内容只在本次请求中传输，不回显、不写入浏览器存储；不会自动抓取远程订阅 URL。真正检测仍由选定 TCP Agent 完成协议握手和 HTTPS canary。编辑旧目标时敏感参数不会回填；如果是 VLESS Reality，请重新粘贴完整分享内容保存。</p>';
-  html += '<div class="f"><label for="proxyLink">代理分享链接 / 订阅内容</label><textarea id="proxyLink" rows="4" autocomplete="off" spellcheck="false" placeholder="粘贴 vless://、小火箭节点 JSON、vmess://、ss://、Clash YAML 或 Base64 内容"></textarea><div class="ma"><button type="button" class="btn btn-blue" id="parseProxyLink">解析链接</button></div><div class="hint" id="proxyLinkStatus" role="status" aria-live="polite">支持多节点解析；点击保存时也会自动解析。</div><div id="proxyLinkPreview"></div></div>';
-  html += '<details><summary>手动填写 / 调整解析结果</summary>';
-  html += inputField("ID", "proxyId", p.id || "", edit ? "readonly" : 'placeholder="例如 hk-vless-01"');
-  html += inputField("名称", "proxyName", p.name || "");
-  html += formField("执行 Agent", '<select id="proxyAgent">' + proxyAgentOptions(p.agent_id) + '</select>');
-  html += formField("协议", '<select id="proxyProtocol">' +
-    '<option value="socks5"' + selectedAttr(protocol === "socks5") + '>SOCKS5</option>' +
-    '<option value="http"' + selectedAttr(protocol === "http") + '>HTTP CONNECT</option>' +
-    '<option value="ss"' + selectedAttr(protocol === "ss") + '>Shadowsocks</option>' +
-    '<option value="vless"' + selectedAttr(protocol === "vless") + '>VLESS</option>' +
-    '<option value="vmess"' + selectedAttr(protocol === "vmess") + '>VMess</option>' +
-    '<option value="trojan"' + selectedAttr(protocol === "trojan") + '>Trojan</option>' +
-    '<option value="hysteria2"' + selectedAttr(protocol === "hysteria2") + '>Hysteria2</option>' +
-    '<option value="snell"' + selectedAttr(protocol === "snell") + '>Snell</option>' +
-    '<option value="anytls"' + selectedAttr(protocol === "anytls") + '>AnyTLS</option>' +
-    '<option value="tuic"' + selectedAttr(protocol === "tuic") + '>TUIC（仅识别，暂不检测）</option></select>');
-  html += inputField("代理服务器", "proxyServer", p.server || "", 'placeholder="host 或 IP"');
-  html += inputField("代理端口", "proxyPort", p.port || "", 'type="number" min="1" max="65535" step="1"');
-  html += formField("传输方式", '<select id="proxyTransport">' +
-    '<option value="tcp"' + selectedAttr(transport === "tcp") + '>TCP</option>' +
-    '<option value="tls"' + selectedAttr(transport === "tls") + '>TLS</option>' +
-    '<option value="ws"' + selectedAttr(transport === "ws") + '>WebSocket</option>' +
-    '<option value="tls-ws"' + selectedAttr(transport === "tls-ws") + '>TLS + WebSocket</option>' +
-    '<option value="grpc"' + selectedAttr(transport === "grpc") + '>gRPC</option>' +
-    '<option value="tls-grpc"' + selectedAttr(transport === "tls-grpc") + '>TLS + gRPC</option>' +
-    '<option value="h2"' + selectedAttr(transport === "h2") + '>HTTP/2</option>' +
-    '<option value="tls-h2"' + selectedAttr(transport === "tls-h2") + '>TLS + HTTP/2</option>' +
-    '<option value="httpupgrade"' + selectedAttr(transport === "httpupgrade") + '>HTTP Upgrade</option>' +
-    '<option value="tls-httpupgrade"' + selectedAttr(transport === "tls-httpupgrade") + '>TLS + HTTP Upgrade</option>' +
-    '<option value="quic"' + selectedAttr(transport === "quic") + '>QUIC</option></select>');
-  html += inputField("SNI（可选）", "proxySni", p.sni || "", 'placeholder="默认使用代理服务器"');
-  html += inputField("WebSocket 路径", "proxyWsPath", p.ws_path || "/", 'placeholder="/"');
-  html += inputField("WebSocket Host（可选）", "proxyWsHost", p.ws_host || "", 'placeholder="默认使用 SNI"');
-  html += inputField("超时（毫秒）", "proxyTimeout", p.timeout_ms || 5000, 'type="number" min="1000" max="15000" step="100"');
-  html += inputField("UUID（新建或更换时填写）", "proxyUuid", "", 'autocomplete="off" placeholder="VLESS / VMess"');
-  html += formField("VLESS 安全模式（手动填写时）", '<select id="proxyVlessSecurity"><option value="">留空保留原值</option><option value="tls">TLS</option><option value="reality">Reality</option></select>');
-  html += inputField("VLESS flow（可选）", "proxyVlessFlow", "", 'autocomplete="off" placeholder="xtls-rprx-vision"');
-  html += inputField("Reality 公钥 pbk（手动填写时）", "proxyRealityPublicKey", "", 'autocomplete="off" spellcheck="false" placeholder="仅 Reality 必填"');
-  html += inputField("Reality 短 ID sid（可选）", "proxyRealityShortId", "", 'autocomplete="off" spellcheck="false" placeholder="十六进制，最长 16 位"');
-  html += inputField("SOCKS5 用户名（可选）", "proxyUsername", "", 'autocomplete="off"');
-  html += formField("SOCKS5 密码（可选）", '<input id="proxyPassword" type="password" value="" autocomplete="new-password">');
-  html += formField("VMess 加密", '<select id="proxySecurity"><option value="">留空保留原值</option><option value="auto">auto</option><option value="aes-128-gcm">aes-128-gcm</option><option value="chacha20-poly1305">chacha20-poly1305</option><option value="none">none</option></select>');
-  html += inputField("VMess alter_id（留空保留原值）", "proxyAlterId", "", 'type="number" min="0" max="65535" step="1"');
-  html += '</details>';
-  html += '<div class="hint" id="proxySaveStatus" role="status" aria-live="polite"></div><div class="ma"><button type="button" class="btn" data-close>取消</button><button type="button" class="btn btn-primary" id="saveProxy">保存</button></div>';
-  byId("modal").innerHTML = html;
-  byId("parseProxyLink").onclick = parseProxyLinkInput;
-  byId("saveProxy").onclick = () => saveProxyTarget(proxy);
-  openModal();
-}
-
-async function parseProxyLinkInput() {
-  const input = byId("proxyLink");
-  const status = byId("proxyLinkStatus");
-  const preview = byId("proxyLinkPreview");
-  const link = input?.value?.trim() || "";
-  if (!link) return toast("请先粘贴代理链接或订阅内容", "err");
-  status.textContent = "正在解析……";
-  preview.innerHTML = "";
-  try {
-    const result = await apiAdmin("/api/proxy-targets/parse", {
-      method: "POST",
-      body: JSON.stringify({ link }),
-    }, 30000);
-    proxyLinkPreviews = Array.isArray(result.items) ? result.items : [];
-    proxyLinkIndex = 0;
-    if (!proxyLinkPreviews.length) throw new Error("没有识别到代理节点");
-    applyProxyLinkPreview(0);
-    proxyLinkParsedValue = link;
-    status.textContent = `已识别 ${proxyLinkPreviews.length} 个节点；请选择一个节点后保存。`;
-    return true;
-  } catch (error) {
-    proxyLinkPreviews = [];
-    proxyLinkParsedValue = "";
-    status.textContent = "解析失败";
-    preview.innerHTML = '<p class="hint">' + escapeHtml(error.message || "代理链接无法解析") + '</p>';
-    toast(error.message || "代理链接无法解析", "err");
-    return false;
-  }
-}
-
-function renderProxyLinkPreview() {
-  const box = byId("proxyLinkPreview");
-  if (!box || !proxyLinkPreviews.length) return;
-  const item = proxyLinkPreviews[proxyLinkIndex] || proxyLinkPreviews[0];
-  const options = proxyLinkPreviews.map((entry, index) => '<option value="' + index + '"' + selectedAttr(index === proxyLinkIndex) + '>' + escapeHtml((entry.name || entry.protocol || "节点") + " · " + entry.protocol.toUpperCase() + " · " + entry.server + ":" + entry.port) + '</option>').join("");
-  const support = item.runtime_supported
-    ? '<span class="tag tag-on">可进行真实握手</span>'
-    : '<span class="tag tag-warn">已识别但 Agent 暂不支持真实握手</span>';
-  const reason = !item.runtime_supported && item.runtime_reason ? ' · ' + escapeHtml(item.runtime_reason) : '';
-  const security = item.security ? ' · 安全：' + escapeHtml(item.security) : '';
-  const flow = item.flow ? ' · flow：' + escapeHtml(item.flow) : '';
-  box.innerHTML = '<div class="f"><label for="proxyLinkChoice">选择节点</label><select id="proxyLinkChoice">' + options + '</select><p class="hint">' + support + reason + ' · 传输：' + escapeHtml(item.transport || "tcp") + security + flow + ' · 地址：' + escapeHtml(item.server + ":" + item.port) + '</p></div>';
-  byId("proxyLinkChoice").onchange = (event) => applyProxyLinkPreview(Number(event.target.value));
-}
-
-function applyProxyLinkPreview(index) {
-  if (!proxyLinkPreviews.length) return;
-  proxyLinkIndex = Math.max(0, Math.min(proxyLinkPreviews.length - 1, Number(index) || 0));
-  const item = proxyLinkPreviews[proxyLinkIndex];
-  const setValue = (id, value) => { const element = byId(id); if (element && value !== undefined && value !== null) element.value = String(value); };
-  setValue("proxyName", item.name || "");
-  setValue("proxyId", item.name || "");
-  setValue("proxyProtocol", item.protocol || "");
-  setValue("proxyServer", item.server || "");
-  setValue("proxyPort", item.port || "");
-  setValue("proxyTransport", item.transport || "tcp");
-  setValue("proxySni", item.sni || "");
-  setValue("proxyWsPath", item.ws_path || "/");
-  setValue("proxyWsHost", item.ws_host || "");
-  renderProxyLinkPreview();
-}
-
-async function saveProxyTarget(existing = null) {
-  const button = byId("saveProxy");
-  const saveStatus = byId("proxySaveStatus");
-  const link = byId("proxyLink")?.value?.trim() || "";
-  if (button?.disabled) return;
-  if (link && proxyLinkParsedValue !== link) {
-    const parsed = await parseProxyLinkInput();
-    if (!parsed) return;
-  }
-  const id = byId("proxyId").value.trim();
-  const name = byId("proxyName").value.trim();
-  const agentId = byId("proxyAgent").value;
-  const protocol = byId("proxyProtocol").value;
-  const secret = {};
-  const uuid = byId("proxyUuid").value.trim();
-  const vlessSecurity = byId("proxyVlessSecurity").value;
-  const vlessFlow = byId("proxyVlessFlow").value.trim();
-  const realityPublicKey = byId("proxyRealityPublicKey").value.trim();
-  const realityShortId = byId("proxyRealityShortId").value.trim();
-  const username = byId("proxyUsername").value.trim();
-  const password = byId("proxyPassword").value;
-  const security = byId("proxySecurity").value;
-  const alterId = byId("proxyAlterId").value.trim();
-  if (uuid) secret.uuid = uuid;
-  if (vlessSecurity) secret.security = vlessSecurity;
-  if (vlessFlow) secret.flow = vlessFlow;
-  if (realityPublicKey) secret.reality_public_key = realityPublicKey;
-  if (realityShortId) secret.reality_short_id = realityShortId;
-  if (username) secret.username = username;
-  if (password) secret.password = password;
-  if (security) secret.security = security;
-  if (alterId) secret.alter_id = Number(alterId);
-  const body = {
-    id,
-    name,
-    agent_id: agentId,
-    protocol,
-    server: byId("proxyServer").value.trim(),
-    port: Number(byId("proxyPort").value),
-    transport: byId("proxyTransport").value,
-    sni: byId("proxySni").value.trim(),
-    ws_path: byId("proxyWsPath").value.trim() || "/",
-    ws_host: byId("proxyWsHost").value.trim(),
-    timeout_ms: Number(byId("proxyTimeout").value || 5000),
-    secret,
-  };
-  if (link) {
-    body.link = link;
-    body.link_index = proxyLinkPreviews.length ? proxyLinkIndex : 0;
-  }
-  if (!body.name || !body.agent_id || !body.server || !Number.isInteger(body.port)) {
-    const message = "名称、执行 Agent、代理服务器和端口必填";
-    if (saveStatus) saveStatus.textContent = message;
-    return toast(message, "err");
-  }
-  if (!existing && (protocol === "vless" || protocol === "vmess") && !uuid) {
-    const message = "新建 VLESS/VMess 必须填写 UUID；如果使用分享链接，请先解析或直接再次点击保存";
-    if (saveStatus) saveStatus.textContent = message;
-    return toast(message, "err");
-  }
-  if (button) {
-    button.disabled = true;
-    button.textContent = "保存中...";
-  }
-  if (saveStatus) saveStatus.textContent = "正在保存代理配置……";
-  try {
-    const path = existing
-      ? "/api/proxy-targets/" + encodeURIComponent(existing.id)
-      : "/api/proxy-targets";
-    await apiAdmin(path, {
-      method: existing ? "PATCH" : "POST",
-      body: JSON.stringify(body),
-    }, 30000);
-    toast("代理检测目标已保存", "ok");
-    closeModal();
-    await loadProxyTargets();
-  } catch (error) {
-    if (saveStatus) saveStatus.textContent = `保存失败：${error?.message || "未知错误"}`;
-    toast(error.message, "err");
-  } finally {
-    if (button?.isConnected) {
-      button.disabled = false;
-      button.textContent = "保存";
-    }
-  }
-}
-
-async function openProxyModal(proxy = null) {
-  const button = byId("addProxyBtn");
-  const oldText = button?.textContent || "+ 新增代理";
-  if (button) {
-    button.disabled = true;
-    button.textContent = "加载执行 Agent...";
-  }
-  try {
-    await ensureProxyAgents();
-  } catch (error) {
-    toast(`执行 Agent 列表加载失败：${error?.message || "未知错误"}`, "err");
-  } finally {
-    if (button) {
-      button.disabled = false;
-      button.textContent = oldText;
-    }
-  }
-  proxyModal(proxy);
-}
-
-async function toggleProxyTarget(proxy) {
-  try {
-    await apiAdmin("/api/proxy-targets/" + encodeURIComponent(proxy.id), {
-      method: "PATCH",
-      body: JSON.stringify({ enabled: Number(proxy.enabled) !== 1 }),
-    });
-    toast("代理检测状态已更新", "ok");
-    await loadProxyTargets();
-  } catch (error) {
-    toast(error.message, "err");
-  }
-}
-
-async function deleteProxyTarget(proxy) {
-  if (!confirm("删除代理检测目标“" + (proxy.name || proxy.id) + "”？")) return;
-  try {
-    await apiAdmin("/api/proxy-targets/" + encodeURIComponent(proxy.id), { method: "DELETE" });
-    toast("代理检测目标已删除", "ok");
-    await loadProxyTargets();
-  } catch (error) {
-    toast(error.message, "err");
-  }
-}
-
 function pingModal(p = null) {
   const isEdit = Boolean(p);
   const ping = p || {};
@@ -4683,7 +4218,6 @@ byId("probeBtn").onclick = async () => {
   }
 };
 byId("addPingBtn").onclick = () => pingModal();
-byId("addProxyBtn").onclick = () => openProxyModal();
 byId("uploadThemeBtn").onclick = () => byId("themeZip").click();
 byId("themeZip").onchange = () => uploadThemePackage(byId("themeZip").files?.[0]);
 byId("themeTable").onclick = (event) => {
@@ -4768,17 +4302,6 @@ byId("pTable").onclick = (e) => {
   if (b.dataset.a === "toggle") togglePing(p);
   if (b.dataset.a === "delete") deletePing(p);
   if (b.dataset.a === "reload") loadPings();
-};
-byId("proxyTable").onclick = (e) => {
-  const b = e.target.closest("button[data-a]");
-  if (!b) return;
-  if (b.dataset.a === "proxy-reload") return loadProxyTargets();
-  const row = b.closest("tr");
-  const proxy = proxyTargets[Number(row?.dataset?.i)];
-  if (!proxy) return;
-  if (b.dataset.a === "proxy-edit") openProxyModal(proxy);
-  if (b.dataset.a === "proxy-toggle") toggleProxyTarget(proxy);
-  if (b.dataset.a === "proxy-delete") deleteProxyTarget(proxy);
 };
 byId("savePingInterval").onclick = savePingInterval;
 if (byId("saveRetention")) byId("saveRetention").onclick = saveRetention;

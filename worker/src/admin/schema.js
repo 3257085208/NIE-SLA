@@ -340,7 +340,7 @@ export async function ensureV6Schema(env) {
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL,
     name TEXT NOT NULL,
-    protocol TEXT NOT NULL CHECK (protocol IN ('socks5', 'http', 'ss', 'vless', 'vmess', 'trojan', 'hysteria2', 'snell', 'anytls', 'tuic')),
+    protocol TEXT NOT NULL,
     server TEXT NOT NULL,
     port INTEGER NOT NULL,
     transport TEXT NOT NULL DEFAULT 'tcp' CHECK (transport IN ('tcp', 'tls', 'ws', 'tls-ws', 'grpc', 'tls-grpc', 'h2', 'tls-h2', 'httpupgrade', 'tls-httpupgrade', 'quic')),
@@ -352,7 +352,6 @@ export async function ensureV6Schema(env) {
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`).run();
-  await migrateProxyTargetProtocolSchema(env, proxyTargetsInstalled?.value === '1' && proxyLinksInstalled?.value !== '1');
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_proxy_targets_agent_enabled ON proxy_targets(agent_id, enabled, name)`).run();
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS proxy_target_secrets (
     target_id TEXT PRIMARY KEY,
@@ -558,34 +557,6 @@ export async function ensureV6Schema(env) {
   } catch (e) { schemaPromise = null; throw e; }
   })();
   await schemaPromise;
-}
-
-async function migrateProxyTargetProtocolSchema(env, needed) {
-  if (!needed) return;
-  const current = await env.DB.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'proxy_targets'`).first().catch(() => null);
-  if (String(current?.sql || '').includes("'http'") && String(current?.sql || '').includes("'hysteria2'")) return;
-  await env.DB.batch([
-    env.DB.prepare(`DROP TABLE IF EXISTS proxy_targets_v33`),
-    env.DB.prepare(`CREATE TABLE proxy_targets_v33 (
-      id TEXT PRIMARY KEY,
-      agent_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      protocol TEXT NOT NULL CHECK (protocol IN ('socks5', 'http', 'ss', 'vless', 'vmess', 'trojan', 'hysteria2', 'snell', 'anytls', 'tuic')),
-      server TEXT NOT NULL,
-      port INTEGER NOT NULL,
-      transport TEXT NOT NULL DEFAULT 'tcp' CHECK (transport IN ('tcp', 'tls', 'ws', 'tls-ws', 'grpc', 'tls-grpc', 'h2', 'tls-h2', 'httpupgrade', 'tls-httpupgrade', 'quic')),
-      sni TEXT NOT NULL DEFAULT '',
-      ws_path TEXT NOT NULL DEFAULT '/',
-      ws_host TEXT NOT NULL DEFAULT '',
-      enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-      timeout_ms INTEGER NOT NULL DEFAULT 5000,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    )`),
-    env.DB.prepare(`INSERT INTO proxy_targets_v33 (id, agent_id, name, protocol, server, port, transport, sni, ws_path, ws_host, enabled, timeout_ms, created_at, updated_at) SELECT id, agent_id, name, protocol, server, port, transport, sni, ws_path, ws_host, enabled, timeout_ms, created_at, updated_at FROM proxy_targets`),
-    env.DB.prepare(`DROP TABLE proxy_targets`),
-    env.DB.prepare(`ALTER TABLE proxy_targets_v33 RENAME TO proxy_targets`),
-  ]);
 }
 
 async function ensureAgentTaskBackrouteAction(env) {
