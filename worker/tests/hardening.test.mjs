@@ -77,6 +77,7 @@ assert.match(telemetrySource, /serializeAttachment\(\{ agent_id: agentId, lifecy
 assert.match(metricsSource, /export async function processAgentMetricsPayload/, 'HTTP and WebSocket metrics must share one validation/persistence path');
 assert.match(wranglerSource, /AGENT_METRICS_STATE_TO_D1 = "false"/, 'production must keep high-frequency Agent current state out of D1');
 assert.match(wranglerSource, /PROBE_LATEST_STATUS_TO_D1 = "false"/, 'production must keep high-frequency probe current state out of D1');
+assert.match(wranglerSource, /TARGET_SCHEDULE_FLUSH_SEC = "7200"/, 'production D1 schedule mirror must flush at the low-write two-hour cadence');
 assert.match(metricsSource, /skipStateD1/, 'the WebSocket metrics path must be able to skip the D1 current-state write');
 assert.match(metricsSource, /persistAgentMetricsStateFallback/, 'buffer failures must retain a D1 latest-state compatibility fallback');
 assert.match(metricsSource, /persistAgentTelemetryD1Fallback/, 'telemetry buffer failures must retain a bounded D1 history fallback');
