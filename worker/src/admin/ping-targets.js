@@ -1,7 +1,7 @@
 
 import { nowSec, clamp, parseBoolean, sanitizeAgentId, retentionSeconds } from '../utils.js';
 import { safeJson, requireAgentForId, requireAnyAgent, ApiError } from '../auth.js';
-import { writeAgentTelemetryR2History, loadAgentPingsR2History, pingLossPointsToRuns, pingPointsToSeries, summarizePingPointsByTarget } from '../metrics.js';
+import { writeAgentTelemetryR2History, loadAgentPingsR2History, pingLossPointsToRuns, pingPointsFromPayload, pingPointsToSeries, summarizePingPointsByTarget } from '../metrics.js';
 import { rateLimitByIp } from '../ratelimit.js';
 import { getPingIntervalSec, pingConfigPayload } from '../ping-config.js';
 import { normalizePingTarget, normalizeProbeProtocols, pingTargetProtocol } from '../ping-target-protocol.js';
@@ -214,6 +214,26 @@ export async function getAgentPings(env, url, ctx = null) {
       latency_ms: p.latency_ms == null ? null : Number(p.latency_ms),
       ok: Number(p.ok || 0),
     });
+  } catch (_) {}
+  try {
+    const fallbackRows = await env.DB.prepare(
+      `SELECT ts, data FROM agent_metrics_history WHERE agent_id = ? AND ts >= ? ORDER BY ts ASC LIMIT 10000`
+    ).bind(agentId, since).all();
+    for (const row of fallbackRows.results || []) {
+      let data;
+      try { data = JSON.parse(row.data); } catch (_) { continue; }
+      for (const p of pingPointsFromPayload(data?.pings)) {
+        const normalized = {
+          target_id: String(p.target_id || ''),
+          ts: Number(p.ts || row.ts || 0),
+          latency_ms: p.latency_ms == null ? null : Number(p.latency_ms),
+          ok: Number(p.ok || 0),
+        };
+        if (normalized.target_id && normalized.ts >= since && normalized.ts <= until && enabledTargetIds.has(normalized.target_id)) {
+          byKey.set(`${normalized.target_id}:${normalized.ts}`, normalized);
+        }
+      }
+    }
   } catch (_) {}
   const rawPings = [...byKey.values()].sort((a, b) => a.ts - b.ts || a.target_id.localeCompare(b.target_id));
   // TCP Ping history is a forensic view. Keep every stored point and never

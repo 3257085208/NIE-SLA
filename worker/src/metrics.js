@@ -947,6 +947,11 @@ async function loadAgentMetricsD1History(env, agentId, since, historyByTs) {
           pt.ts = pt.ts || r.ts;
           historyByTs.set(Number(pt.ts) || Number(r.ts), pt);
         }
+      } else if (Array.isArray(d.points)) {
+        for (const pt of d.points) {
+          pt.ts = pt.ts || r.ts;
+          historyByTs.set(Number(pt.ts) || Number(r.ts), pt);
+        }
       } else {
         d.ts = d.ts || r.ts;
         historyByTs.set(Number(d.ts) || Number(r.ts), d);
@@ -1882,9 +1887,13 @@ export async function persistAgentTelemetryD1Fallback(env, agentId, ts, rawPoint
   if (!env?.DB) return false;
   try {
     const points = limitSeries(rawPoints, Math.min(60, Number(env.AGENT_METRICS_POINTS_PER_REPORT || 6) || 6));
+    const fallback = {
+      schema: 'nie-sla-agent-metrics-fallback-v1',
+      points,
+      ...(rawPings.length ? { pings: { series: pingPointsToSeries(rawPings) } } : {}),
+    };
     await env.DB.prepare(`INSERT OR REPLACE INTO agent_metrics_history (agent_id, ts, data) VALUES (?, ?, ?)`)
-      .bind(agentId, ts, JSON.stringify(points)).run();
-    if (rawPings.length) await writePingHistory(env, agentId, rawPings, ts);
+      .bind(agentId, ts, JSON.stringify(fallback)).run();
     try {
       await env.DB.prepare(`DELETE FROM agent_metrics_history WHERE agent_id = ? AND ts < ?`)
         .bind(agentId, ts - retentionSeconds(env, 'AGENT_METRICS_RETENTION_HOURS', 6, 1, 72)).run();

@@ -31,11 +31,14 @@ const originalFetch = globalThis.fetch;
     },
   };
   const ts = 1_700_000_000;
-  assert.equal(await persistAgentTelemetryD1Fallback({ DB: db }, 'vps-fallback', ts, [{ ts, cpu: 12 }], []), true);
+  assert.equal(await persistAgentTelemetryD1Fallback({ DB: db }, 'vps-fallback', ts, [{ ts, cpu: 12 }], [{ target_id: 'ping-a', ts, latency_ms: 12, ok: 1 }]), true);
   assert.equal(writes.filter(item => /INSERT OR REPLACE INTO agent_metrics_history/.test(item.sql)).length, 1);
   assert.equal(writes[0].args[0], 'vps-fallback');
   assert.equal(writes[0].args[1], ts);
   assert.match(writes[0].args[2], /"cpu":12/);
+  const fallbackData = JSON.parse(writes[0].args[2]);
+  assert.equal(pingPointsFromPayload(fallbackData.pings).length, 1);
+  assert.equal(pingPointsFromPayload(fallbackData.pings)[0].target_id, 'ping-a');
   assert.equal(await persistAgentTelemetryD1Fallback({ DB: { prepare() { throw new Error('D1 unavailable'); } } }, 'vps-fallback', ts, [{ ts, cpu: 12 }], []), false);
 }
 

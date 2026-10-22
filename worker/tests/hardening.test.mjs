@@ -81,6 +81,9 @@ assert.match(metricsSource, /skipStateD1/, 'the WebSocket metrics path must be a
 assert.match(metricsSource, /persistAgentMetricsStateFallback/, 'buffer failures must retain a D1 latest-state compatibility fallback');
 assert.match(metricsSource, /persistAgentTelemetryD1Fallback/, 'telemetry buffer failures must retain a bounded D1 history fallback');
 assert.match(metricsSource, /history_d1_fallback/, 'successful degraded writes must be visible in the metrics acknowledgement');
+assert.match(metricsSource, /pings:\s*\{\s*series:\s*pingPointsToSeries\(rawPings\)\s*\}/, 'D1 telemetry fallback must store Ping as one compressed report row');
+const fallbackSource = metricsSource.slice(metricsSource.indexOf('export async function persistAgentTelemetryD1Fallback'), metricsSource.indexOf('async function writeAgentMetricState'));
+assert.doesNotMatch(fallbackSource, /writePingHistory\(/, 'D1 telemetry fallback must not write one ping_history row per sample');
 assert.match(telemetrySource, /persist latest agent state failed/, 'buffer failures must not silently lose the latest visible state');
 assert.doesNotMatch(telemetrySource.slice(telemetrySource.indexOf('webSocketMessage(socket'), telemetrySource.indexOf('scheduleReportDrain()')), /persistAgentMetricsStateFallback/, 'the per-message path must never write D1 (a slow D1 write stalls the shared DO)');
 assert.match(telemetrySource, /LATEST_STATE_PREFIX = 'latest:state:'/, 'the telemetry buffer must retain per-Agent latest state keys');
@@ -227,6 +230,7 @@ assert.match(routesSource, /path === '\/api\/v1\/pings\/batch' && m === 'GET'[\s
 assert.match(pingTargetsSource, /const PINGS_BATCH_MAX_HOURS = 24;/, 'the anonymous batch ping window must stay bounded');
 assert.match(pingTargetsSource, /Math\.min\(hours, PINGS_BATCH_MAX_HOURS\)/, 'the batch ping window must clamp the requested hours');
 assert.match(pingTargetsSource, /rateLimitByIp\(request, env, 120, 60[\s\S]{0,260}requireAnyAgent\(request, env\)/, 'agent ping submission must throttle before credential lookup');
+assert.match(pingTargetsSource, /SELECT ts, data FROM agent_metrics_history/, 'public Ping reads must include compressed fallback reports');
 assert.ok(
   adminAuthSource.indexOf('verifyPassword(password, credentials)') < adminAuthSource.indexOf('rateLimitStatusD1(env, accountKey'),
   'the account failure window must only gate rejected credentials, never a correct password',
