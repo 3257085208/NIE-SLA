@@ -3,7 +3,7 @@ import { recordAgentAvailability } from './agent-availability.js';
 import { agentStateTimestamp, bufferedAgentStateEnabled } from './agent-state.js';
 import { internalRequestAuthorized, internalRequestHeaders } from './auth.js';
 import { withS3Archive } from './r2s3.js';
-import { persistAgentMetricsStateFallback, persistAgentTraffic, processAgentMetricsPayload } from './metrics.js';
+import { getAgentMetrics, persistAgentMetricsStateFallback, persistAgentTraffic, processAgentMetricsPayload } from './metrics.js';
 import { readR2JsonResult } from './storage.js';
 import { encodeJsonBody, httpMetadataFor } from './r2-body.js';
 import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
@@ -22,6 +22,7 @@ const CHUNK_PREFIX = 'chunk:';
 const LEGACY_BUFFER_PREFIX = 'hour:';
 const EXPORT_PREFIX = 'export:';
 export const AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream';
+const PUBLIC_METRICS_READER_SHARDS = 16;
 const LATEST_STATE_PREFIX = 'latest:state:';
 const LAST_SEEN_PREFIX = 'last:seen:';
 const STORAGE_LIST_PAGE_LIMIT = 500;
@@ -96,6 +97,9 @@ export class TelemetryBuffer {
   async fetch(request) {
     const url = new URL(request.url);
     if (!internalRequestAuthorized(request, this.env)) return new Response(JSON.stringify({ ok: false, error: '未授权' }), { status: 401, headers: { 'content-type': 'application/json' } });
+    if (request.method === 'GET' && url.pathname === '/public-metrics') {
+      return getAgentMetrics(this.env, url, this.state);
+    }
     if (request.method === 'GET' && url.pathname === '/agent-metrics/ws' && String(request.headers.get('upgrade') || '').toLowerCase() === 'websocket') {
       return this.openAgentMetricsSocket(request);
     }
@@ -852,6 +856,19 @@ export async function appendBufferedAgentTelemetry(env, agentId, points, pings, 
   });
   if (!response.ok) throw new Error(`遥测缓冲写入失败：HTTP ${response.status}`);
   return response.json();
+}
+
+export async function readPublicAgentMetrics(env, sourceUrl) {
+  const agentId = sanitizeAgentId(sourceUrl.searchParams.get('agent_id') || env.DEFAULT_AGENT_ID || 'vps');
+  let shard = 0;
+  for (let i = 0; i < agentId.length; i++) shard = (shard * 31 + agentId.charCodeAt(i)) % PUBLIC_METRICS_READER_SHARDS;
+  // A fixed pool bounds instances for guessed IDs and keeps expensive public
+  // reads off the shared instance that accepts Agent reports and heartbeats.
+  const id = env.TELEMETRY_BUFFER.idFromName(`public-metrics-reader-v1-${shard}`);
+  const stub = env.TELEMETRY_BUFFER.get(id);
+  const url = new URL('https://nie-sla.internal/public-metrics');
+  url.search = sourceUrl.search;
+  return stub.fetch(url.toString(), { headers: internalRequestHeaders(env) });
 }
 
 export async function readBufferedAgentTelemetry(env, agentId, since, until) {

@@ -1,4 +1,5 @@
-import { readMigratedStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20260925-visual12";
+import { readMigratedStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20261022-v1120";
+import { readJsonResponse } from "../shared/api-response.js?v=20261022-v1120";
 
 const SESSION_KEY = "nie_sla_admin_session";
 const SESSION_EXP_KEY = "nie_sla_admin_session_exp";
@@ -36,12 +37,8 @@ export function createAdminClient({ apiBase, onUnauthorized, defaultTimeoutMs = 
 
   async function fetchJson(url, options = {}, label = "API") {
     const response = await fetch(url, options);
-    const text = await response.text();
-    try {
-      return { response, data: text ? JSON.parse(text) : {} };
-    } catch {
-      throw new Error(`${label} 返回非 JSON: ${text.slice(0, 120)}`);
-    }
+    const data = await readJsonResponse(response, `${label} 请求失败`);
+    return { response, data };
   }
 
   async function api(path, options = {}) {

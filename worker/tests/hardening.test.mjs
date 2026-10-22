@@ -79,6 +79,8 @@ assert.match(wranglerSource, /AGENT_METRICS_STATE_TO_D1 = "false"/, 'production 
 assert.match(wranglerSource, /PROBE_LATEST_STATUS_TO_D1 = "false"/, 'production must keep high-frequency probe current state out of D1');
 assert.match(metricsSource, /skipStateD1/, 'the WebSocket metrics path must be able to skip the D1 current-state write');
 assert.match(metricsSource, /persistAgentMetricsStateFallback/, 'buffer failures must retain a D1 latest-state compatibility fallback');
+assert.match(metricsSource, /persistAgentTelemetryD1Fallback/, 'telemetry buffer failures must retain a bounded D1 history fallback');
+assert.match(metricsSource, /history_d1_fallback/, 'successful degraded writes must be visible in the metrics acknowledgement');
 assert.match(telemetrySource, /persist latest agent state failed/, 'buffer failures must not silently lose the latest visible state');
 assert.doesNotMatch(telemetrySource.slice(telemetrySource.indexOf('webSocketMessage(socket'), telemetrySource.indexOf('scheduleReportDrain()')), /persistAgentMetricsStateFallback/, 'the per-message path must never write D1 (a slow D1 write stalls the shared DO)');
 assert.match(telemetrySource, /LATEST_STATE_PREFIX = 'latest:state:'/, 'the telemetry buffer must retain per-Agent latest state keys');
@@ -271,6 +273,15 @@ console.log('developer API tests passed');
   assert.equal(internalRequestAuthorized(new Request('https://nstatus.internal/', { headers: { 'x-nstatus-internal-secret': secret } }), env), true);
   assert.equal(internalRequestAuthorized(new Request('https://nstatus.internal/', { headers: { 'x-nstatus-internal-secret': 'wrong-secret' } }), env), false);
   assert.equal(internalRequestAuthorized(new Request('https://nstatus.internal/'), {}), false);
-  assert.deepEqual(internalRequestHeaders(env), { 'content-type': 'application/json', 'x-nie-sla-internal-secret': secret, 'x-nstatus-internal-secret': secret });
+  const headers = internalRequestHeaders(env);
+  assert.deepEqual(headers, {
+    'content-type': 'application/json',
+    'x-nie-sla-internal-binding': 'worker-binding-v1',
+    'x-nie-sla-internal-secret': secret,
+    'x-nstatus-internal-secret': secret,
+  });
+  assert.equal(internalRequestAuthorized(new Request('https://nie-sla.internal/', { headers }), env), true);
+  assert.equal(internalRequestAuthorized(new Request('https://nie-sla.internal/', { headers: internalRequestHeaders({}) }), {}), true);
+  assert.equal(internalRequestAuthorized(new Request('https://public.example/', { headers: internalRequestHeaders({}) }), {}), false);
 }
 console.log('internal DO auth tests passed');

@@ -190,16 +190,28 @@ export function internalScheduleSecret(env) {
   return String(env?.INTERNAL_CRON_SECRET || '').trim();
 }
 
+const INTERNAL_BINDING_HEADER = 'x-nie-sla-internal-binding';
+const INTERNAL_BINDING_VALUE = 'worker-binding-v1';
+
 export function internalRequestHeaders(env) {
   const secret = internalScheduleSecret(env);
-  return { 'content-type': 'application/json', ...(secret ? { 'x-nie-sla-internal-secret': secret, 'x-nstatus-internal-secret': secret } : {}) };
+  return {
+    'content-type': 'application/json',
+    [INTERNAL_BINDING_HEADER]: INTERNAL_BINDING_VALUE,
+    ...(secret ? { 'x-nie-sla-internal-secret': secret, 'x-nstatus-internal-secret': secret } : {}),
+  };
 }
 
 export function internalRequestAuthorized(request, env) {
   const expected = internalScheduleSecret(env);
-  if (!expected) return false;
   const presented = String(request.headers.get('x-nie-sla-internal-secret') || request.headers.get('x-nstatus-internal-secret') || '');
-  return constantTimeEqual(expected, presented);
+  if (expected && constantTimeEqual(expected, presented)) return true;
+  // Durable Object namespaces are reachable only through the Worker binding.
+  // The non-public .internal URL plus the binding marker keeps internal calls
+  // working if a deployment temporarily drops the optional shared secret.
+  let internalHost = false;
+  try { internalHost = new URL(request.url).hostname.endsWith('.internal'); } catch (_) {}
+  return internalHost && constantTimeEqual(INTERNAL_BINDING_VALUE, request.headers.get(INTERNAL_BINDING_HEADER) || '');
 }
 
 export class ApiError extends Error {

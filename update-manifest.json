@@ -1,13 +1,15 @@
 {
   "schema": "nie-sla-app-update-v1",
-  "version": "1.1.119",
-  "agent_version": "v1.1.119",
-  "source_ref": "app-v1.1.119",
-  "sums_sha256": "8ef864a03ec726fcd07b263fdc88262474eae2579e80dc09d88d04cd5d167060",
-  "published_at": "2026-10-13T03:30:00Z",
-  "title": "NIE-SLA 1.1.119",
+  "version": "1.1.120",
+  "agent_version": "v1.1.120",
+  "source_ref": "app-v1.1.120",
+  "sums_sha256": "da84018976955bfccf4877ac67aed6a420375b4d6ad3a71982a0751dd48b5592",
+  "published_at": "2026-10-21T13:08:59Z",
+  "title": "NIE-SLA 1.1.120",
   "changelog": [
-    "移除后台「代理可用性」功能（分享链接/订阅解析与代理检测目标管理），修复相关特征词导致 Cloudflare 自动停机的问题；其余功能不变。"
+    "Agent 上传失败改为 60–900 秒指数退避，避免 Cloudflare 故障时形成请求重试风暴。",
+    "Worker 内部调用在临时缺少共享 Secret 时保持可用，并在遥测历史缓冲失败时回退 D1。",
+    "前端会把 Cloudflare HTML 错误页转换为额度、限流或服务异常提示，不再显示 JSON 解析错误；Ping 失败增加冷却。"
   ],
   "release_url": "https://github.com/3257085208/NIE-SLA/blob/main/CHANGELOG.md"
 }

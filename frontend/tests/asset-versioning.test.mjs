@@ -3,7 +3,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
-const assetVersion = '20260925-visual12';
+const assetVersion = '20261022-v1120';
+const appVersion = '20261022-v1120';
 const isDuplicateCopy = (name) => /\s\d+(?:\.\d+)*\.js$/i.test(name);
 
 async function javascriptFiles(directory) {
@@ -42,7 +43,8 @@ for (const [htmlFile, assets] of Object.entries(htmlAssets)) {
   const source = await readFile(path.join(root, htmlFile), 'utf8');
   for (const asset of assets) {
     const escaped = asset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    assert.match(source, new RegExp(`${escaped}\\?v=${assetVersion}(?:["'])`), `${htmlFile} must version ${asset}`);
+    const version = asset === './app.js' ? appVersion : assetVersion;
+    assert.match(source, new RegExp(`${escaped}\\?v=${version}(?:["'])`), `${htmlFile} must version ${asset}`);
   }
 }
 

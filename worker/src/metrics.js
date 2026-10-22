@@ -1,11 +1,11 @@
 ﻿import { sanitizeAgentId, clamp, dayFromSec, nowSec, retentionSeconds, parseBoolean, publicCachePrivacyVersion, sanitizePublicAgentMetrics, MAX_AGENT_PAYLOAD_BYTES } from './utils.js';
 import { summarizeTraffic, summarizeTrafficWithPending, trafficSettingsFromTarget, hasTrafficBaseline } from './traffic.js';
-import { ApiError, requireAgentForId, requireAnyAgent, safeJson, json } from './auth.js';
+import { ApiError, requireAgentForId, requireAnyAgent, safeJson, json, internalScheduleSecret } from './auth.js';
 import { readR2Json, readR2JsonStrict, writeR2Json } from './storage.js';
 import { rateLimitByIp } from './ratelimit.js';
 import { recordAgentAvailability } from './agent-availability.js';
 import { ensureAgentCapabilitiesColumn, isMissingAgentCapabilitiesColumn, ensureAgentProxyChecksColumn } from './admin/schema.js';
-import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry, readBufferedAgentLatestState, touchBufferedAgentLastSeen } from './telemetry-buffer.js';
+import { appendBufferedAgentTelemetry, deleteBufferedAgentTelemetry, readBufferedAgentTelemetry, readBufferedAgentLatestState, readPublicAgentMetrics, touchBufferedAgentLastSeen } from './telemetry-buffer.js';
 import { bufferedAgentStateEnabled, newerAgentMetricRow } from './agent-state.js';
 import { getPingIntervalSec } from './ping-config.js';
 import { getAdaptiveReportInterval } from './adaptive-report.js';
@@ -309,17 +309,22 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
 
   let latestState = null;
   let mapped = null;
+  let storageWarning = '';
   try {
     const persisted = await persistAgentMetrics(env, { agentId, agentLabel, agentVersion, capabilities, agentProcess, metrics, state, vpsInfo, rawSamples: telemetrySamples, pings: telemetryPings, proxyChecks: telemetryProxyChecks, ts }, options);
-    if (persisted && typeof persisted === 'object' && 'latest_state' in persisted && options.wss === true) {
+    if (persisted && typeof persisted === 'object' && 'latest_state' in persisted) {
       latestState = persisted.latest_state;
       mapped = { points: persisted.mapped_points || [], pings: persisted.mapped_pings || [], proxyChecks: persisted.mapped_proxy_checks || [] };
+      storageWarning = String(persisted.storage_warning || '');
     } else {
       latestState = persisted;
     }
   } catch (err) {
     console.error('persistAgentMetrics failed:', String(err?.message || err));
-    throw new ApiError(500, '保存 Agent 监控数据失败', { 'cache-control': 'no-store' });
+    throw new ApiError(503, '保存 Agent 监控数据暂时不可用', {
+      'cache-control': 'no-store',
+      'retry-after': '300',
+    });
   }
 
   if (options.wss !== true) {
@@ -347,6 +352,7 @@ export async function processAgentMetricsPayload(env, body, ctx = null, expected
     ...(reportIntervalSec == null ? {} : { report_interval_sec: reportIntervalSec }),
     traffic_correction: await getTrafficCorrection(env, agentId),
   };
+  if (storageWarning) result.storage_warning = storageWarning;
   if (options.returnLatestState && latestState) result.latest_state = latestState;
   if (options.wss === true) {
     result.mapped_points = mapped?.points || [];
@@ -490,19 +496,29 @@ async function metricsEnvWithRetention(env) {
 }
 
 export async function getAgentMetricsCached(request, env, url, ctx = null) {
-  if (!globalThis.caches?.default || request.method !== 'GET') return getAgentMetrics(env, url, ctx);
+  if (!globalThis.caches?.default || request.method !== 'GET') return publicAgentMetricsResponse(env, url, ctx);
   const effectiveEnv = await metricsEnvWithRetention(env);
   const cacheUrl = normalizedMetricsCacheUrl(url, effectiveEnv);
   const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
   const cached = await caches.default.match(cacheKey);
   if (cached) return cached;
-  const response = await getAgentMetrics(effectiveEnv, url, ctx);
+  const response = await publicAgentMetricsResponse(effectiveEnv, url, ctx);
   if (response.ok) {
     const task = caches.default.put(cacheKey, response.clone());
     if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(task);
     else await task;
   }
   return response;
+}
+
+function publicAgentMetricsResponse(env, url, ctx) {
+  // Archive decompression, point selection and JSON encoding can exceed the
+  // request CPU budget even for a one-hour chart. Keep the edge response a
+  // stream; independent DO readers perform the existing history calculation.
+  if (env.TELEMETRY_BUFFER && internalScheduleSecret(env) && url.searchParams.get('history') !== '0') {
+    return readPublicAgentMetrics(env, url);
+  }
+  return getAgentMetrics(env, url, ctx);
 }
 
 export async function getAgentProxyChecks(env, url, ctx = null) {
@@ -1834,8 +1850,16 @@ async function persistAgentMetrics(env, data, options = {}) {
   if (!rawPoints.length) rawPoints.push(toPoint(state));
   const temperatureSensors = normalizeTemperatureSensors(vpsInfo?.temperature_sensors);
   if (temperatureSensors.length) rawPoints[rawPoints.length - 1].temperature_sensors = temperatureSensors;
+  let storageWarning = '';
   if (env.ARCHIVE && !wssFast) {
-    await writeAgentTelemetryR2History(env, agentId, rawPoints, rawPings, rawProxyChecks);
+    try {
+      await writeAgentTelemetryR2History(env, agentId, rawPoints, rawPings, rawProxyChecks);
+    } catch (error) {
+      console.error('telemetry history buffer failed; using D1 fallback:', String(error?.message || error));
+      const persistedFallback = await persistAgentTelemetryD1Fallback(env, agentId, ts, rawPoints, rawPings);
+      if (!persistedFallback) throw new Error('telemetry history temporarily unavailable');
+      storageWarning = 'history_d1_fallback';
+    }
   }
 
   if (rawPings.length > 0 && parseBoolean(env.AGENT_PINGS_TO_D1 ?? !env.ARCHIVE, !env.ARCHIVE)) await writePingHistory(env, agentId, rawPings, ts);
@@ -1851,7 +1875,25 @@ async function persistAgentMetrics(env, data, options = {}) {
   if (wssFast) {
     return { latest_state: latestState, mapped_points: rawPoints, mapped_pings: rawPings, mapped_proxy_checks: rawProxyChecks };
   }
-  return latestState;
+  return { latest_state: latestState, storage_warning: storageWarning };
+}
+
+export async function persistAgentTelemetryD1Fallback(env, agentId, ts, rawPoints, rawPings) {
+  if (!env?.DB) return false;
+  try {
+    const points = limitSeries(rawPoints, Math.min(60, Number(env.AGENT_METRICS_POINTS_PER_REPORT || 6) || 6));
+    await env.DB.prepare(`INSERT OR REPLACE INTO agent_metrics_history (agent_id, ts, data) VALUES (?, ?, ?)`)
+      .bind(agentId, ts, JSON.stringify(points)).run();
+    if (rawPings.length) await writePingHistory(env, agentId, rawPings, ts);
+    try {
+      await env.DB.prepare(`DELETE FROM agent_metrics_history WHERE agent_id = ? AND ts < ?`)
+        .bind(agentId, ts - retentionSeconds(env, 'AGENT_METRICS_RETENTION_HOURS', 6, 1, 72)).run();
+    } catch (_) {}
+    return true;
+  } catch (error) {
+    console.error('D1 telemetry fallback failed:', String(error?.message || error));
+    return false;
+  }
 }
 
 async function writeAgentMetricState(env, state) {

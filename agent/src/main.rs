@@ -57,6 +57,8 @@ const MAX_CONTROL_PROXY_TARGETS: usize = 200;
 const REPORT_MAX_PROXY_CHECKS: usize = 100;
 const MAX_PROXY_QUEUE_CAPACITY: usize = 1_000;
 const UPLOAD_STALL_SEC: u64 = 180;
+const UPLOAD_RETRY_BASE_SEC: u64 = 60;
+const UPLOAD_RETRY_MAX_SEC: u64 = 900;
 const DEFAULT_QUEUE_MAX_SAMPLES: usize = 86_400;
 const QUEUE_FLUSH_SEC: u64 = 10;
 const MIN_PING_QUEUE_CAPACITY: usize = 200;
@@ -566,7 +568,8 @@ fn run() -> Result<()> {
     let mut upload_generation: u64 = 0;
     let mut upload_body_buffer: Vec<u8> = Vec::new();
     let mut report_interval_sec = cfg.report_sec;
-    let mut retry_sec = report_interval_sec.clamp(10, 60);
+    let mut upload_failures: u32 = 0;
+    let mut retry_sec = next_upload_retry_sec(1);
     let (upload_tx, upload_rx) = mpsc::channel::<UploadResult>();
     let sample_period = Duration::from_secs(cfg.sample_sec);
     let mut next_sample = Instant::now();
@@ -602,8 +605,9 @@ fn run() -> Result<()> {
                     }
                     if let Some(interval) = upload.report_interval_sec {
                         report_interval_sec = normalize_report_interval(interval);
-                        retry_sec = report_interval_sec.clamp(10, 60);
                     }
+                    upload_failures = 0;
+                    retry_sec = next_upload_retry_sec(1);
                     last_upload_failed = false;
                     last_successful_upload = Instant::now();
                     if let Err(error) = write_telemetry_progress(&cfg) {
@@ -648,10 +652,14 @@ fn run() -> Result<()> {
                     );
                 }
                 Err(err) => {
+                    upload_failures = upload_failures.saturating_add(1);
+                    retry_sec = next_upload_retry_sec(upload_failures);
                     last_upload_failed = true;
                     eprintln!(
-                        "{{\"ok\":false,\"error\":{}}}",
-                        json_string(&err.to_string())
+                        "{{\"ok\":false,\"error\":{},\"retry_sec\":{},\"upload_failures\":{}}}",
+                        json_string(&err.to_string()),
+                        retry_sec,
+                        upload_failures
                     );
                 }
             }
@@ -2936,6 +2944,13 @@ fn upload_report_due(
     }
 }
 
+fn next_upload_retry_sec(failure_count: u32) -> u64 {
+    let exponent = failure_count.saturating_sub(1).min(4);
+    UPLOAD_RETRY_BASE_SEC
+        .saturating_mul(1_u64 << exponent)
+        .min(UPLOAD_RETRY_MAX_SEC)
+}
+
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
@@ -3496,6 +3511,16 @@ mod tests {
             Duration::from_secs(300),
             Duration::from_secs(60),
         ));
+    }
+
+    #[test]
+    fn upload_failure_retry_grows_exponentially_and_caps() {
+        assert_eq!(next_upload_retry_sec(1), 60);
+        assert_eq!(next_upload_retry_sec(2), 120);
+        assert_eq!(next_upload_retry_sec(3), 240);
+        assert_eq!(next_upload_retry_sec(4), 480);
+        assert_eq!(next_upload_retry_sec(5), 900);
+        assert_eq!(next_upload_retry_sec(u32::MAX), 900);
     }
 
     #[test]

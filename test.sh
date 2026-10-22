@@ -101,6 +101,7 @@ run_check "probe latest_status read gating tests" node --experimental-loader "$R
 run_check "probe run record throttling tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/probe-run-record.test.mjs"
 run_check "R2 state sync session tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/state-sync-session.test.mjs"
 run_check "durable telemetry buffer tests" node "$ROOT/worker/tests/telemetry-buffer.test.mjs"
+run_check "public metrics reader tests" node "$ROOT/worker/tests/public-metrics-reader.test.mjs"
 run_check "telemetry last-seen heartbeat tests" node "$ROOT/worker/tests/telemetry-last-seen.test.mjs"
 run_check "R2 S3 facade tests" node "$ROOT/worker/tests/r2s3.test.mjs"
 run_check "R2 JSON write verification tests" node "$ROOT/worker/tests/r2-write-verify.test.mjs"

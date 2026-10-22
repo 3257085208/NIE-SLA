@@ -1,9 +1,9 @@
-import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20260925-visual12';
+import { escapeAttr, escapeHtml } from './js/shared/html.js?v=20261022-v1120';
 import {
   billingCycleSuffix,
   isLifetimeBilling,
   normalizeBillingCycle,
-} from './js/shared/billing.js?v=20260925-visual12';
+} from './js/shared/billing.js?v=20261022-v1120';
 import {
   cssEscape,
   clampNumber,
@@ -18,11 +18,11 @@ import {
   normalizeCityName,
   pad,
   timeAgoSec,
-} from './js/shared/format.js?v=20260925-visual12';
-import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20260925-visual12';
-import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20260925-visual12';
-import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20260925-visual12';
-import { countryByCode } from './js/shared/target-catalogs.js?v=20260925-visual12';
+} from './js/shared/format.js?v=20261022-v1120';
+import { trafficForTarget, trafficProgressHtml } from './js/shared/traffic.js?v=20261022-v1120';
+import { GROUP_BY_OPTIONS, groupByDimension, normalizeGroupByMode, displayGroupName as sharedDisplayGroupName } from './js/shared/grouping.js?v=20261022-v1120';
+import { canShowTemperature, hasGpuData, hasTemperatureData, isValidTemperature } from './js/shared/hardware.js?v=20261022-v1120';
+import { countryByCode } from './js/shared/target-catalogs.js?v=20261022-v1120';
 import {
   clampChartRange,
   countChartGaps,
@@ -30,15 +30,16 @@ import {
   filterChecksByRange,
   hexToRgba,
   trimEmptyPointEdges,
-} from './js/shared/chart-data.js?v=20260925-visual12';
-import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20260925-visual12';
-import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20260925-visual12';
-import { unlockState } from './js/shared/unlock.js?v=20260925-visual12';
-import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20260925-visual12';
-import { targetSlaPercentage } from './js/shared/sla.js?v=20260925-visual12';
-import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20260925-visual12';
-import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20260925-visual12';
-import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20260925-visual12';
+} from './js/shared/chart-data.js?v=20261022-v1120';
+import { bindNodeQualityModal, buildNqModalHtml, targetHasNodeQuality } from './js/shared/nodequality.js?v=20261022-v1120';
+import { DEFAULT_APPEARANCE, normalizeAppearance } from './js/shared/appearance.js?v=20261022-v1120';
+import { unlockState } from './js/shared/unlock.js?v=20261022-v1120';
+import { normalizeBackrouteEntries } from './js/shared/backroute.js?v=20261022-v1120';
+import { targetSlaPercentage } from './js/shared/sla.js?v=20261022-v1120';
+import { failedPingTargetsNear, latestPingByTarget, nextPingTargetSelection, normalizeLatencySample, pingSampleWindowSec } from './js/shared/ping.js?v=20261022-v1120';
+import { initializeFrontendTheme, publishThemeStatus } from './js/themes.js?v=20261022-v1120';
+import { readMigratedStorage, writeStorage } from './js/shared/storage.js?v=20261022-v1120';
+import { readJsonResponse } from './js/shared/api-response.js?v=20261022-v1120';
 
 const $ = (sel) => document.querySelector(sel);
 const CHECKS_PAGE_SIZES = new Set([5, 10, 30, 50]);
@@ -361,7 +362,7 @@ async function loadStatus() {
       signal: controller.signal,
     });
 
-    const data = await res.json();
+    const data = await readJsonResponse(res, '状态数据加载失败');
 
     if (!res.ok || !data.ok) {
       throw new Error(data.error || `HTTP ${res.status}`);
@@ -998,7 +999,7 @@ async function fetchLatestProxyCheck(proxy) {
   if (!targetId) return null;
   const params = new URLSearchParams({ target_id: targetId, hours: '1', max_points: '1' });
   const response = await fetchWithTimeout(api(`/api/proxy-checks?${params}`), { cache: 'no-store' });
-  const data = await response.json().catch(() => null);
+  const data = await readJsonResponse(response, '代理状态加载失败').catch(() => null);
   if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
   const latest = normalizeProxyCheck(data.latest);
   if (latest) return latest;
@@ -1314,7 +1315,7 @@ async function openNodeQualityReport(targetId, targetName = '', returnTarget = n
   const load = async () => {
     try {
       const response = await fetchWithTimeout(api(`/api/nq/${encodeURIComponent(targetId)}`), { cache: 'no-store' });
-      const report = await response.json();
+      const report = await readJsonResponse(response, 'NodeQuality 报告加载失败');
       if (!response.ok || !report.ok) throw new Error(report.error || `HTTP ${response.status}`);
       report.name ||= targetName;
       root.innerHTML = buildNqModalHtml(report);
@@ -1676,8 +1677,8 @@ async function loadChecks(id, name, target = null, options = {}) {
     ]);
 
     const [data, latencyData] = await Promise.all([
-      checksRes.json(),
-      latencyRes?.ok ? latencyRes.json().catch(() => null) : null,
+      readJsonResponse(checksRes, '检查记录加载失败'),
+      latencyRes?.ok ? readJsonResponse(latencyRes, 'Latency 数据加载失败').catch(() => null) : null,
     ]);
 
     if (superseded()) return;
@@ -1742,7 +1743,7 @@ async function loadProxyChecks(proxy, options = {}) {
       max_points: '50000',
     });
     const response = await fetchWithTimeout(api(`/api/proxy-checks?${params}`), { cache: 'no-store' });
-    const data = await response.json().catch(() => null);
+    const data = await readJsonResponse(response, '代理历史加载失败').catch(() => null);
     if (superseded()) return;
     if (!response.ok || !data?.ok) throw new Error(data?.error || `HTTP ${response.status}`);
     const checks = (Array.isArray(data.checks) ? data.checks : []).map(normalizeProxyCheck).filter(Boolean).sort((a, b) => a.ts - b.ts);
@@ -1826,7 +1827,14 @@ async function ensureTargetMetricsLoaded() {
   const rendersMetricChart = includeHistory;
   const cacheKey = `${id}|${metric}|${hours}|${includeHistory ? 'history' : 'latest'}`;
   const cached = state.metricsCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < 30_000) {
+  if (cached?.error && Date.now() < cached.until) {
+    state.metricsLoading = false;
+    state.targetMetrics = null;
+    state.metricsError = cached.error;
+    if (rendersMetricChart) updateMetricsChart();
+    return;
+  }
+  if (cached?.data && Date.now() - cached.at < 30_000) {
     if (requestSeq === state.metricsRequestSeq && state.selectedId === id && state.selectedMetric === metric && state.selectedMetricRange === range) {
       if (rendersMetricChart) {
         state.metricsLoading = false;
@@ -1856,24 +1864,32 @@ async function ensureTargetMetricsLoaded() {
     } else {
       params.set('history', '0');
     }
-    const res = await fetchWithTimeout(api(`/api/agent/metrics?${params}`), { cache: 'no-store' });
+    const res = await fetchWithTimeout(
+      api(`/api/agent/metrics?${params}`),
+      { cache: 'default', headers: { accept: 'application/json' } },
+      includeHistory ? 30_000 : 15_000,
+    );
     if (requestSeq !== state.metricsRequestSeq || state.selectedId !== id || state.selectedMetric !== metric || state.selectedMetricRange !== range) return;
-    const data = await res.json().catch(() => null);
+    const data = await readJsonResponse(res, '监控数据加载失败');
     if (requestSeq !== state.metricsRequestSeq || state.selectedId !== id || state.selectedMetric !== metric || state.selectedMetricRange !== range) return;
-    state.targetMetrics = res.ok && data?.ok ? normalizeAgentMetricsPayload(data) : null;
+    if (!res.ok || !data?.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    state.targetMetrics = normalizeAgentMetricsPayload(data);
     if (rendersMetricChart) {
       state.metricsLoading = false;
-      state.metricsError = state.targetMetrics ? '' : '监控数据加载失败，请稍后重试。';
+      state.metricsError = '';
     }
-    if (state.targetMetrics) state.metricsCache.set(cacheKey, { at: Date.now(), data: state.targetMetrics });
+    state.metricsCache.set(cacheKey, { at: Date.now(), data: state.targetMetrics });
     if (state.selectedMetric !== 'latency' && state.selectedMetric !== 'ping') updateMetricsChart();
     renderVPSInfo();
-  } catch (_) {
+  } catch (error) {
     if (requestSeq === state.metricsRequestSeq && state.selectedId === id && state.selectedMetric === metric && state.selectedMetricRange === range) {
+      const message = `监控数据加载失败：${error?.message || '请稍后重试'}`;
+      const retryAfterMs = Math.max(60_000, Number(error?.retryAfterSec || 0) * 1000);
+      state.metricsCache.set(cacheKey, { at: Date.now(), error: message, until: Date.now() + retryAfterMs });
       state.targetMetrics = null;
       if (rendersMetricChart) {
         state.metricsLoading = false;
-        state.metricsError = '监控数据加载失败，请稍后重试。';
+        state.metricsError = message;
         updateMetricsChart();
       }
     }
@@ -2151,7 +2167,10 @@ async function updatePingChart() {
 
   try {
     const cached = state.pingsCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < 30_000) {
+    if (cached?.error && Date.now() < cached.until) {
+      throw new Error(cached.error);
+    }
+    if (cached && !cached.error && Date.now() - cached.at < 30_000) {
       if (isStale()) return;
       state.pingData = cached.data;
     } else {
@@ -2160,8 +2179,11 @@ async function updatePingChart() {
         hours: String(hours),
         format: 'series',
       });
-      const res = await fetchWithTimeout(api(`/api/agent/pings?${params}`), { cache: 'no-store' });
-      const data = await res.json();
+      const res = await fetchWithTimeout(api(`/api/agent/pings?${params}`), {
+        cache: 'default',
+        headers: { accept: 'application/json' },
+      });
+      const data = await readJsonResponse(res, 'Ping 数据加载失败');
       if (!data.ok) throw new Error(data.error || 'Ping 数据加载失败');
       if (isStale()) return;
       state.pingData = normalizePingPayload(data);
@@ -2169,6 +2191,12 @@ async function updatePingChart() {
     }
   } catch (err) {
     if (!isStale()) {
+      const retryAfterMs = Math.max(60_000, Number(err?.retryAfterSec || 0) * 1000);
+      state.pingsCache.set(cacheKey, {
+        at: Date.now(),
+        error: String(err?.message || 'Ping 数据加载失败'),
+        until: Date.now() + retryAfterMs,
+      });
       state.pingData = { pings: [] };
       els.chartMeta.textContent = `Ping 数据加载失败：${err.message}`;
       renderPingLossStats([]);
@@ -3076,22 +3104,16 @@ function updateMetricsChart() {
   } else {
     const field = fields[metric];
     const unit = units[metric];
-    const vals = history.map(p => Number(p[field]) || 0);
+    const points = history.map(p => ({ x: Number(p.ts), y: Number(p[field]) || 0 }));
+    const vals = points.map(point => point.y);
     const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
     const { min, max } = minMax(vals);
     const currentVal = metric === 'cpu' ? latest.cpu_percent : metric === 'mem' ? latest.memory?.percent : metric === 'disk' ? latest.disk?.percent : metric === 'load' ? latest.load?.load1 : metric === 'conns' ? (latest.net?.tcp_conns || 0) + (latest.net?.udp_conns || 0) : 0;
 
-    const stats = latest.stats;
-    const statsKeyMap = { cpu: 'cpu', mem: 'mem', disk: 'disk', load: 'load', conns: 'tcp_conns', diskio: null };
-    const statsKey = statsKeyMap[metric];
-    const s = statsKey ? stats?.[statsKey] : null;
-
-    els.chartMeta.textContent = s
-      ? `平均 ${s.avg}${unit} · 最大 ${s.max}${unit} · 最小 ${s.min}${unit} · ${history.length} 个采样点`
-      : `平均 ${avg.toFixed(1)}${unit} · 最小 ${min.toFixed(1)}${unit} · 最大 ${max.toFixed(1)}${unit} · ${history.length} 个采样点`;
+    // Batch statistics only cover the latest upload; summarize the plotted window.
+    els.chartMeta.textContent = `平均 ${avg.toFixed(1)}${unit} · 最小 ${min.toFixed(1)}${unit} · 最大 ${max.toFixed(1)}${unit} · ${history.length} 个采样点`;
     els.chartAvg.textContent = `当前：${currentVal != null ? Number(currentVal).toFixed(1) + unit : '-'}`;
 
-    const points = history.map(p => ({ x: Number(p.ts), y: Number(p[field]) || 0 }));
     const color = metric === 'load' ? '#2ea3ff' : '#159754';
 
     if (!state.chart) return;

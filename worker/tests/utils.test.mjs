@@ -3,7 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { agentStatusFields, assertPublicHttpUrl, buildMissedPoints, buildOpenMissedPoints, isPrivateHost, lastPersistedCheckAt, normalizeTarget, parseBoolean, publicCachePrivacyVersion, publicCheckPoint, sanitizeId, sanitizePublicAgentMetrics, sanitizePublicStatusPayload, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
 import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, requireLatencyAgentForId, safeJson } from '../src/auth.js';
 import { clearRateLimitD1, rateLimitD1, rateLimitStatusD1 } from '../src/ratelimit.js';
-import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, loadAgentProxyChecksR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, normalizeAgentMetricState, normalizeAgentVpsInfo, pingLossPointsToRuns, pingLossRunsToPoints, pingPointsFromPayload, pingPointsToSeries, proxyCheckPointsFromPayload, proxyCheckPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
+import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, loadAgentProxyChecksR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, normalizeAgentMetricState, normalizeAgentVpsInfo, persistAgentTelemetryD1Fallback, pingLossPointsToRuns, pingLossRunsToPoints, pingPointsFromPayload, pingPointsToSeries, proxyCheckPointsFromPayload, proxyCheckPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
 import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeAgentPublicBase, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
@@ -18,6 +18,26 @@ import { getLatencyAgentInstallCommand } from '../src/admin/latency-agents.js';
 
 globalThis.crypto ||= webcrypto;
 const originalFetch = globalThis.fetch;
+
+{
+  const writes = [];
+  const db = {
+    prepare(sql) {
+      return {
+        bind(...args) {
+          return { run: async () => { writes.push({ sql, args }); return { meta: { changes: 1 } }; } };
+        },
+      };
+    },
+  };
+  const ts = 1_700_000_000;
+  assert.equal(await persistAgentTelemetryD1Fallback({ DB: db }, 'vps-fallback', ts, [{ ts, cpu: 12 }], []), true);
+  assert.equal(writes.filter(item => /INSERT OR REPLACE INTO agent_metrics_history/.test(item.sql)).length, 1);
+  assert.equal(writes[0].args[0], 'vps-fallback');
+  assert.equal(writes[0].args[1], ts);
+  assert.match(writes[0].args[2], /"cpu":12/);
+  assert.equal(await persistAgentTelemetryD1Fallback({ DB: { prepare() { throw new Error('D1 unavailable'); } } }, 'vps-fallback', ts, [{ ts, cpu: 12 }], []), false);
+}
 
 assert.equal(parseBoolean(true, false), true);
 assert.equal(parseBoolean('true', false), true);

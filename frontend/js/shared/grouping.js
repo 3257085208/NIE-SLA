@@ -1,6 +1,6 @@
 ﻿
 
-import { escapeAttr, escapeHtml } from './html.js?v=20260925-visual12';
+import { escapeAttr, escapeHtml } from './html.js?v=20261022-v1120';
 
 export const GROUP_BY_OPTIONS = [
   { id: 'group', label: 'VPS / Web' },
