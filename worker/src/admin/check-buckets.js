@@ -62,9 +62,17 @@ function incidentEventStatement(env, targetId, action, startedAt, recoveredAt, c
   return null;
 }
 
-function touchActiveIncidentStatement(env, targetId, checkedAt, colo, error) {
-  return env.DB.prepare(`UPDATE incident_events SET last_checked_at = ?, last_error = ?, updated_at = ? WHERE target_id = ? AND recovered_at IS NULL`)
-    .bind(checkedAt, error ? String(error).slice(0, 500) : null, nowSec(), targetId);
+export function incidentHeartbeatSec(env = {}) {
+  return clamp(Number(env.INCIDENT_HEARTBEAT_SEC ?? 900) || 900, 60, 3600);
+}
+
+export function touchActiveIncidentStatement(env, targetId, checkedAt, colo, error) {
+  const lastError = error ? String(error).slice(0, 500) : null;
+  const heartbeatCutoff = Number(checkedAt) - incidentHeartbeatSec(env);
+  return env.DB.prepare(`UPDATE incident_events SET last_checked_at = ?, last_error = ?, updated_at = ?
+    WHERE target_id = ? AND recovered_at IS NULL
+      AND (last_checked_at IS NULL OR last_checked_at <= ? OR last_error IS NOT ?)`)
+    .bind(checkedAt, lastError, nowSec(), targetId, heartbeatCutoff, lastError);
 }
 
 function targetLastCheckedStatement(env, targetId, checkedAt) {
@@ -528,6 +536,10 @@ export async function applyProbeWriteBatch(env, targetId, checkedAt, bucketWrite
   const scheduleStmt = scheduleFlush === false ? null : targetProbeScheduleStatement(env, targetId, checkedAt, nextProbeAt);
   if (scheduleStmt) stmts.push(scheduleStmt);
   if (!stmts.length) return { ok: true, writes: 0, bucket_storage: bucketStorage };
+  if (Array.isArray(options?.statementCollector)) {
+    options.statementCollector.push(...stmts);
+    return { ok: true, writes: stmts.length, bucket_storage: bucketStorage, deferred: true };
+  }
   try {
     await env.DB.batch(stmts);
   } catch (error) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ProbeRegion } from '../src/index.js';
-import { alignRegionBatchResults, fastStatusDueInterval, groupTargetsByRegion, historyDueIntervalSec } from '../src/probe.js';
+import { alignRegionBatchResults, fastStatusDueInterval, groupTargetsByRegion, historyDueIntervalSec, regionBatchTimeoutMs } from '../src/probe.js';
 
 const NOW = 1_800_000_000;
 
@@ -88,4 +88,10 @@ test('region worker keeps target identity when a batch item rejects', async () =
   Object.defineProperty(target, 'type', { get() { throw new Error('synthetic probe rejection'); } });
   const result = await new ProbeRegion({}, {}).batchProbeCurrentStatus({ targets: [target] }, {});
   assert.deepEqual(result.results, [{ ok: false, target_id: 'reject-a', name: 'Reject A', error: 'synthetic probe rejection' }]);
+});
+
+test('region batch timeout leaves room for a full slow batch', () => {
+  assert.equal(regionBatchTimeoutMs({}, [{ timeout_ms: 3000 }]), 30000);
+  assert.equal(regionBatchTimeoutMs({ REGION_PROXY_EXTRA_TIMEOUT_MS: 8000 }, [{ timeout_ms: 3000 }]), 30000);
+  assert.equal(regionBatchTimeoutMs({}, [{ timeout_ms: 30000 }]), 34500);
 });

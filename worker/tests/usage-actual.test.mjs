@@ -50,6 +50,7 @@ function installFetch(d1Groups) {
             workers: [{ sum: { requests: 777, errors: 0 } }],
             d1: d1Groups,
             durableObjects: [{ sum: { requests: 123, wallTime: 456_000_000 } }],
+            durableObjectsDuration: [{ sum: { duration: 12_345 } }],
             r2: [
               { dimensions: { actionType: 'PutObject' }, sum: { requests: 9 } },
               { dimensions: { actionType: 'GetObject' }, sum: { requests: 90 } },
@@ -90,6 +91,7 @@ test('save then read keeps the token (round-trip)', async () => {
   assert.equal(result.d1_scope, 'account');
   assert.deepEqual(result.d1_by_database.map((row) => row.database_id), [OWN_DB_ID, SECOND_DB_ID]);
   assert.equal(result.actual.do_wall_time_sec, 456);
+  assert.equal(result.actual.do_duration_gbs, 12_345);
   assert.equal(result.actual.workers_calls, 777);
   assert.equal(result.actual.r2_class_a, 9);
   assert.equal(result.actual.r2_class_b, 90);

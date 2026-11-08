@@ -65,17 +65,27 @@ export class ProbeRegion {
     // to the shared history hub with one DO request instead of one per target.
     const historyEntries = [];
     const historyAppend = async (targetId, writes) => { historyEntries.push({ target_id: targetId, writes }); };
+    const statements = [];
     for (let i = 0; i < targets.length; i += concurrency) {
       const chunk = targets.slice(i, i + concurrency);
       const settled = await Promise.allSettled(chunk.map(async (target) => {
         const result = await probeTarget(target, await enrichCfContext(cf, this.env));
-        const saved = await saveCheck(this.env, target, checkedAt, result, previous[target.id] || null, { historyAppend });
+        const saved = await saveCheck(this.env, target, checkedAt, result, previous[target.id] || null, { historyAppend, statementCollector: statements });
         return { target_id: target.id, name: target.name, ...result, saved, state_update: saved.state_update };
       }));
       for (let index = 0; index < settled.length; index += 1) {
         const item = settled[index];
         if (item.status === 'fulfilled') results.push(item.value);
         else results.push(batchFailure(chunk[index], item.reason));
+      }
+    }
+    if (statements.length) {
+      try {
+        for (let i = 0; i < statements.length; i += 50) {
+          await this.env.DB.batch(statements.slice(i, i + 50));
+        }
+      } catch (error) {
+        console.error('region batch D1 writes failed:', String(error?.message || error));
       }
     }
     if (historyEntries.length) {
@@ -235,10 +245,16 @@ export async function runScheduledTasks(env, cron, options = {}) {
   return results;
 }
 
+export function resolveScheduledRunnerMode(env = {}) {
+  const secret = internalScheduleSecret(env);
+  const durable = parseBoolean(env.SCHEDULED_RUNNER_DO ?? false, false);
+  return durable && secret && env.REGION_PROXY ? 'durable' : 'worker';
+}
+
 async function dispatchScheduledTasks(env, cron) {
   const secret = internalScheduleSecret(env);
   const base = String(env.PUBLIC_WORKER_URL || env.PUBLIC_AGENT_API_BASE || '').trim().replace(/\/+$/, '');
-  if (secret && env.REGION_PROXY) {
+  if (resolveScheduledRunnerMode(env) === 'durable') {
     const id = env.REGION_PROXY.idFromName('nie-sla-scheduled-runner');
     const response = await env.REGION_PROXY.get(id).fetch('https://nie-sla.internal/scheduled', {
       method: 'POST',
@@ -359,18 +375,33 @@ function compactScheduledResults(results) {
   return out;
 }
 
-async function claimHourlyMaintenanceSlot(env, cron = '') {
-  if (String(cron || '').trim() === '0 * * * *') return true;
-  if (!env.DB) return new Date().getUTCMinutes() < 5;
-  const hour = Math.floor(Date.now() / 3600000);
-  const key = 'maintenance:hourly';
+export async function claimMaintenanceSlot(env, key, currentValue) {
+  if (!env?.DB) return false;
+  const current = Number(currentValue);
+  if (!Number.isFinite(current)) return false;
+  // The previous upsert ran on every minute even after the slot had already
+  // been claimed. Read the single marker first so unchanged rounds cost one
+  // row read and zero row writes; keep the conditional upsert as the cross-
+  // instance race breaker when the slot actually advances.
+  const existing = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`)
+    .bind(key)
+    .first()
+    .catch(() => null);
+  if (Number(existing?.value) >= current) return false;
   const now = Math.floor(Date.now() / 1000);
   const result = await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
     WHERE CAST(app_meta.value AS INTEGER) < ?`)
-    .bind(key, String(hour), now, hour)
+    .bind(key, String(current), now, current)
     .run();
   return Number(result?.meta?.changes || 0) > 0;
+}
+
+async function claimHourlyMaintenanceSlot(env, cron = '') {
+  if (String(cron || '').trim() === '0 * * * *') return true;
+  if (!env.DB) return new Date().getUTCMinutes() < 5;
+  const hour = Math.floor(Date.now() / 3600000);
+  return claimMaintenanceSlot(env, 'maintenance:hourly', hour);
 }
 
 // Expired probe buckets stay readable for 31 days and every read path filters
@@ -379,12 +410,5 @@ async function claimHourlyMaintenanceSlot(env, cron = '') {
 async function claimDailyMaintenanceSlot(env) {
   if (!env.DB) return new Date().getUTCHours() === 3;
   const day = Math.floor(Date.now() / 86400000);
-  const key = 'maintenance:daily';
-  const now = Math.floor(Date.now() / 1000);
-  const result = await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, ?, ?)
-    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
-    WHERE CAST(app_meta.value AS INTEGER) < ?`)
-    .bind(key, String(day), now, day)
-    .run();
-  return Number(result?.meta?.changes || 0) > 0;
+  return claimMaintenanceSlot(env, 'maintenance:daily', day);
 }

@@ -265,7 +265,10 @@ export async function submitAgentMetrics(request, env, ctx = null) {
     await requireAgentForId(request, env, agentId);
   }
   try {
-    return json(await processAgentMetricsPayload(env, body, ctx, agentId), 200, env, { 'cache-control': 'no-store' });
+    const previousState = bufferedAgentStateEnabled(env)
+      ? await readAgentLatestStateR2(env, agentId).catch(() => null)
+      : null;
+    return json(await processAgentMetricsPayload(env, body, ctx, agentId, { previousState }), 200, env, { 'cache-control': 'no-store' });
   } catch (err) {
     if (err instanceof ApiError) return json({ ok: false, error: err.message }, err.status, env, err.headers || null);
     throw err;
@@ -453,6 +456,11 @@ export async function getAgentMetrics(env, url, ctx = null) {
       return null;
     });
     latest = newerAgentMetricRow(latest, buffered);
+    const r2Latest = await readAgentLatestStateR2(env, agentId).catch((error) => {
+      console.error('R2 latest Agent metrics unavailable:', String(error?.message || error));
+      return null;
+    });
+    latest = newerAgentMetricRow(latest, r2Latest);
   }
   if (latest) {
     latest.traffic = await readAgentTraffic(env, agentId, latest);
@@ -467,6 +475,9 @@ export async function getAgentMetrics(env, url, ctx = null) {
   const d1Fallback = includeHistory && parseBoolean(env.AGENT_METRICS_D1_FALLBACK ?? !env.ARCHIVE, !env.ARCHIVE);
   if (includeHistory && d1Fallback) {
     await loadAgentMetricsD1History(env, agentId, since, historyByTs);
+  }
+  if (includeHistory && latest && latestTs >= since) {
+    historyByTs.set(latestTs, { ...toPoint(latest), ts: latestTs });
   }
   const rawHistory = [...historyByTs.entries()]
     .sort((a, b) => a[0] - b[0])
@@ -511,12 +522,16 @@ export async function getAgentMetricsCached(request, env, url, ctx = null) {
   return response;
 }
 
-function publicAgentMetricsResponse(env, url, ctx) {
+async function publicAgentMetricsResponse(env, url, ctx) {
   // Archive decompression, point selection and JSON encoding can exceed the
   // request CPU budget even for a one-hour chart. Keep the edge response a
   // stream; independent DO readers perform the existing history calculation.
   if (env.TELEMETRY_BUFFER && internalScheduleSecret(env) && url.searchParams.get('history') !== '0') {
-    return readPublicAgentMetrics(env, url);
+    try {
+      return await readPublicAgentMetrics(env, url);
+    } catch (error) {
+      console.error('public metrics DO reader failed; using direct R2 fallback:', String(error?.message || error));
+    }
   }
   return getAgentMetrics(env, url, ctx);
 }
@@ -1028,10 +1043,17 @@ export async function loadAgentProxyChecksR2History(env, agentId, since, until, 
 
 export async function writeAgentTelemetryR2History(env, agentId, points = [], pings = [], proxyChecks = []) {
   if (!env.ARCHIVE || (!points?.length && !pings?.length && !proxyChecks?.length)) return { ok: true, skipped: true };
-  const buffered = await appendBufferedAgentTelemetry(env, agentId, points, pings, proxyChecks);
-  if (buffered) return buffered;
-  const lock = await acquireAgentHistoryLock(env, agentId);
-  if (env.DB && !lock) throw new Error('Agent 历史数据正在写入，请重试本次上报');
+  try {
+    const buffered = await appendBufferedAgentTelemetry(env, agentId, points, pings, proxyChecks);
+    if (buffered) return buffered;
+  } catch (error) {
+    // A DO quota/outage must degrade to the direct, per-report R2 object path.
+    // Falling through to D1 here was the source of the quota cascade.
+    console.error('buffered telemetry append failed; writing direct R2:', String(error?.message || error));
+  }
+  const needsD1Lock = Boolean(env.DB) && !bufferedAgentStateEnabled(env);
+  const lock = needsD1Lock ? await acquireAgentHistoryLock(env, agentId) : null;
+  if (needsD1Lock && !lock) throw new Error('Agent 历史数据正在写入，请重试本次上报');
   try {
   const byHour = new Map();
   const ensureHour = (hour) => {
@@ -1227,6 +1249,42 @@ function agentPingsHourKey(env, agentId, hourStart) {
 function agentTelemetryHourKey(env, agentId, hourStart) {
   const dh = utcDayHour(hourStart);
   return `${agentMetricsR2Prefix(env)}/${sanitizeAgentId(agentId)}/${dh.day}/${dh.hour}/telemetry.json`;
+}
+
+export function agentLatestStateR2Key(env, agentId) {
+  return `${agentMetricsR2Prefix(env)}/${sanitizeAgentId(agentId)}/latest-state.json`;
+}
+
+export async function writeAgentLatestStateR2(env, state) {
+  const agentId = sanitizeAgentId(state?.agent_id);
+  if (!env?.ARCHIVE || !agentId || !state || typeof state !== 'object') return false;
+  await writeR2Json(env, agentLatestStateR2Key(env, agentId), state, {
+    schema: 'nie-sla-agent-metrics-latest-v1',
+  });
+  return true;
+}
+
+export async function readAgentLatestStateR2(env, agentId) {
+  const id = sanitizeAgentId(agentId);
+  if (!env?.ARCHIVE || !id) return null;
+  const value = await readR2Json(env, agentLatestStateR2Key(env, id), null);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (sanitizeAgentId(value.agent_id) !== id) return null;
+  return value;
+}
+
+export async function readAgentLatestStatesR2(env, agentIds = []) {
+  const ids = [...new Set((agentIds || []).map(sanitizeAgentId).filter(Boolean))];
+  if (!env?.ARCHIVE || !ids.length) return {};
+  const entries = await mapWithConcurrency(ids, 12, async (agentId) => {
+    try {
+      const state = await readAgentLatestStateR2(env, agentId);
+      return state ? [agentId, state] : null;
+    } catch (_) {
+      return null;
+    }
+  });
+  return Object.fromEntries(entries.filter(Boolean));
 }
 
 function hourFromAgentMetricsKey(key) {
@@ -1849,7 +1907,17 @@ async function persistAgentMetrics(env, data, options = {}) {
     capabilities: effectiveCapabilities,
     agent_process: effectiveAgentProcess,
   };
-  if (!options.skipStateD1) await writeAgentMetricState(env, latestState);
+  // Production keeps high-frequency current state in the TelemetryBuffer DO
+  // and now mirrors the same mode to HTTP fallback reports. Writing D1 here
+  // unconditionally made every Agent upload depend on D1's write quota.
+  if (!options.skipStateD1 && !bufferedAgentStateEnabled(env)) await writeAgentMetricState(env, latestState);
+  if (!wssFast && env.ARCHIVE) {
+    try {
+      await writeAgentLatestStateR2(env, latestState);
+    } catch (error) {
+      console.error('latest Agent state R2 mirror failed:', String(error?.message || error));
+    }
+  }
 
   const rawPoints = mapSamples(rawSamples);
   if (!rawPoints.length) rawPoints.push(toPoint(state));
@@ -1886,6 +1954,8 @@ async function persistAgentMetrics(env, data, options = {}) {
 export async function persistAgentTelemetryD1Fallback(env, agentId, ts, rawPoints, rawPings) {
   if (!env?.DB) return false;
   try {
+    const bucketSec = agentD1FallbackBucketSec(env);
+    const fallbackTs = Math.floor(Number(ts || 0) / bucketSec) * bucketSec;
     const points = limitSeries(rawPoints, Math.min(60, Number(env.AGENT_METRICS_POINTS_PER_REPORT || 6) || 6));
     const fallback = {
       schema: 'nie-sla-agent-metrics-fallback-v1',
@@ -1893,16 +1963,20 @@ export async function persistAgentTelemetryD1Fallback(env, agentId, ts, rawPoint
       ...(rawPings.length ? { pings: { series: pingPointsToSeries(rawPings) } } : {}),
     };
     await env.DB.prepare(`INSERT OR REPLACE INTO agent_metrics_history (agent_id, ts, data) VALUES (?, ?, ?)`)
-      .bind(agentId, ts, JSON.stringify(fallback)).run();
+      .bind(agentId, fallbackTs, JSON.stringify(fallback)).run();
     try {
       await env.DB.prepare(`DELETE FROM agent_metrics_history WHERE agent_id = ? AND ts < ?`)
-        .bind(agentId, ts - retentionSeconds(env, 'AGENT_METRICS_RETENTION_HOURS', 6, 1, 72)).run();
+        .bind(agentId, fallbackTs - retentionSeconds(env, 'AGENT_METRICS_RETENTION_HOURS', 6, 1, 72)).run();
     } catch (_) {}
     return true;
   } catch (error) {
     console.error('D1 telemetry fallback failed:', String(error?.message || error));
     return false;
   }
+}
+
+export function agentD1FallbackBucketSec(env = {}) {
+  return clamp(Number(env.AGENT_D1_FALLBACK_BUCKET_SEC || 900), 300, 3600);
 }
 
 async function writeAgentMetricState(env, state) {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { reconcileOpenIncidents } from '../src/admin/check-buckets.js';
+import { incidentHeartbeatSec, reconcileOpenIncidents, touchActiveIncidentStatement } from '../src/admin/check-buckets.js';
 import { nowSec } from '../src/utils.js';
 
 // The safety net must keep working while raw bucket writes stay off: it reads
@@ -80,6 +80,30 @@ function bufferedEnv(db, points) {
   const result = await reconcileOpenIncidents(env);
   assert.equal(result.changes, 0);
   assert.equal(db.updates.length, 0);
+}
+
+{
+  // Active-incident heartbeats write only on a changed error or after 15m.
+  let sql = '';
+  let values = [];
+  const env = {
+    INCIDENT_HEARTBEAT_SEC: '900',
+    DB: {
+      prepare(query) {
+        sql = query;
+        return {
+          bind(...params) { values = params; return this; },
+        };
+      },
+    },
+  };
+  touchActiveIncidentStatement(env, 'vps-d', now, 'SJC', '连接失败');
+  assert.match(sql, /last_error IS NOT \?/);
+  assert.match(sql, /last_checked_at <= \?/);
+  assert.deepEqual(values.slice(3), ['vps-d', now - 900, '连接失败']);
+  assert.equal(incidentHeartbeatSec(env), 900);
+  assert.equal(incidentHeartbeatSec({ INCIDENT_HEARTBEAT_SEC: '1' }), 60);
+  assert.equal(incidentHeartbeatSec({ INCIDENT_HEARTBEAT_SEC: '99999' }), 3600);
 }
 
 console.log('incident reconcile tests passed');

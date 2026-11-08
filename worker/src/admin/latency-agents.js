@@ -397,6 +397,7 @@ function latencySegmentKey(nodeId, segmentStart) {
 async function flushLatencyArchive(env, nodeId, points) {
   const row = await env.DB.prepare(`SELECT pending_results FROM latency_agents WHERE id = ?`).bind(nodeId).first().catch(() => null);
   const pending = parsePendingResults(row?.pending_results);
+  const flushMinSec = clamp(Number(env.LATENCY_ARCHIVE_FLUSH_MIN_SEC || ARCHIVE_FLUSH_MIN_SEC), 15, 300);
   const groups = new Map();
   for (const point of [...pending, ...points]) {
     const start = latencySegmentStart(point.checked_at);
@@ -410,7 +411,7 @@ async function flushLatencyArchive(env, nodeId, points) {
     const key = latencySegmentKey(nodeId, segmentStart);
     const existing = await readArchiveObjectStrict(env.ARCHIVE, key);
     const lastWriteAt = Number(existing?.updated_at || 0);
-    if (lastWriteAt > 0 && nowSec() - lastWriteAt < ARCHIVE_FLUSH_MIN_SEC) {
+    if (lastWriteAt > 0 && nowSec() - lastWriteAt < flushMinSec) {
       remaining.push(...additions);
       continue;
     }

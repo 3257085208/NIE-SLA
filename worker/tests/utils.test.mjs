@@ -3,7 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { agentStatusFields, assertPublicHttpUrl, buildMissedPoints, buildOpenMissedPoints, isPrivateHost, lastPersistedCheckAt, normalizeTarget, parseBoolean, publicCachePrivacyVersion, publicCheckPoint, sanitizeId, sanitizePublicAgentMetrics, sanitizePublicStatusPayload, shouldRunScheduledFollowups, trafficPeriodFromResetDay } from '../src/utils.js';
 import { agentScopedToken, latencyAgentScopedToken, requireAgentForId, requireAgentIdentity, requireAnyAgent, requireLatencyAgentForId, safeJson } from '../src/auth.js';
 import { clearRateLimitD1, rateLimitD1, rateLimitStatusD1 } from '../src/ratelimit.js';
-import { compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, loadAgentProxyChecksR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, normalizeAgentMetricState, normalizeAgentVpsInfo, persistAgentTelemetryD1Fallback, pingLossPointsToRuns, pingLossRunsToPoints, pingPointsFromPayload, pingPointsToSeries, proxyCheckPointsFromPayload, proxyCheckPointsToSeries, summarizePingPointsByTarget, writeAgentTelemetryR2History } from '../src/metrics.js';
+import { agentD1FallbackBucketSec, compactMetricPoints, compactPingPointsByTarget, loadAgentPingsR2History, loadAgentProxyChecksR2History, metricFieldsForRequest, metricPointsFromPayload, metricPointsToColumns, normalizeAgentMetricState, normalizeAgentVpsInfo, persistAgentTelemetryD1Fallback, pingLossPointsToRuns, pingLossRunsToPoints, pingPointsFromPayload, pingPointsToSeries, proxyCheckPointsFromPayload, proxyCheckPointsToSeries, readAgentLatestStateR2, readAgentLatestStatesR2, summarizePingPointsByTarget, writeAgentLatestStateR2, writeAgentTelemetryR2History } from '../src/metrics.js';
 import { runAlertChecks } from '../src/alerts.js';
 import { convertPriceToCny, getAgentUpdatePolicy, getExchangeRates, getPublicSettings, normalizeAgentPublicBase, normalizeCurrency, normalizeFrontendAppearance, updatePublicSettings } from '../src/admin/settings.js';
 import { normalizeTargetOrder } from '../src/admin/target-order.js';
@@ -34,12 +34,39 @@ const originalFetch = globalThis.fetch;
   assert.equal(await persistAgentTelemetryD1Fallback({ DB: db }, 'vps-fallback', ts, [{ ts, cpu: 12 }], [{ target_id: 'ping-a', ts, latency_ms: 12, ok: 1 }]), true);
   assert.equal(writes.filter(item => /INSERT OR REPLACE INTO agent_metrics_history/.test(item.sql)).length, 1);
   assert.equal(writes[0].args[0], 'vps-fallback');
-  assert.equal(writes[0].args[1], ts);
+  assert.equal(agentD1FallbackBucketSec({}), 900);
+  assert.equal(writes[0].args[1], Math.floor(ts / 900) * 900);
   assert.match(writes[0].args[2], /"cpu":12/);
   const fallbackData = JSON.parse(writes[0].args[2]);
   assert.equal(pingPointsFromPayload(fallbackData.pings).length, 1);
   assert.equal(pingPointsFromPayload(fallbackData.pings)[0].target_id, 'ping-a');
   assert.equal(await persistAgentTelemetryD1Fallback({ DB: { prepare() { throw new Error('D1 unavailable'); } } }, 'vps-fallback', ts, [{ ts, cpu: 12 }], []), false);
+}
+
+{
+  const r2 = fakeR2Env();
+  const state = { schema: 'nie-sla-agent-metrics-v1', agent_id: 'vps-r2-state', updated_at: '2026-10-23T00:00:00.000Z', cpu_percent: 12 };
+  assert.equal(await writeAgentLatestStateR2(r2, state), true);
+  assert.deepEqual(await readAgentLatestStateR2(r2, state.agent_id), state);
+  assert.deepEqual(await readAgentLatestStatesR2(r2, [state.agent_id, 'missing']), { [state.agent_id]: state });
+  assert.equal(await writeAgentLatestStateR2({}, state), false);
+}
+
+{
+  const r2 = fakeR2Env();
+  const env = {
+    ...r2,
+    DB: { prepare() { throw new Error('D1 lock must not be used in buffered mode'); } },
+    TELEMETRY_BUFFER: {
+      idFromName: () => 'telemetry-id',
+      get: () => ({ async fetch() { throw new Error('Exceeded allowed duration in Durable Objects free tier.'); } }),
+    },
+    AGENT_METRICS_STATE_TO_D1: 'false',
+  };
+  const ts = Math.floor(Date.now() / 1000);
+  const result = await writeAgentTelemetryR2History(env, 'vps-direct-r2', [{ ts, cpu: 12 }]);
+  assert.equal(result.ok, true);
+  assert.ok([...r2._objects.keys()].some(key => key.endsWith('/telemetry.json')), 'a DO quota failure must fall through to direct R2 history');
 }
 
 assert.equal(parseBoolean(true, false), true);

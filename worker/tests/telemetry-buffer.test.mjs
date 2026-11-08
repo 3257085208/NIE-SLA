@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { TelemetryBuffer } from '../src/telemetry-buffer.js';
+import { AGENT_METRICS_STREAM_INSTANCE, agentMetricsStreamInstance, TelemetryBuffer } from '../src/telemetry-buffer.js';
 import { nowSec } from '../src/utils.js';
 
 class FakeAgentSocket {
@@ -424,6 +424,15 @@ assert.equal(Object.keys(pagedStates).length, 1100, 'fleet aggregation must page
 assert.equal(pagedStates['agent-0000']?.cpu_percent, 0);
 assert.equal(pagedStates['agent-1099']?.cpu_percent, 1099);
 
+const timedStorage = memoryStorage();
+const timedBuffer = new TelemetryBuffer({ storage: timedStorage }, { ...testEnv(), TELEMETRY_REPORT_DRAIN_SEC: '300' });
+const beforeAlarm = Date.now();
+await timedBuffer.scheduleReportDrain();
+const scheduledAlarm = await timedStorage.getAlarm();
+assert.ok(scheduledAlarm >= beforeAlarm + 299_000 && scheduledAlarm <= Date.now() + 301_000, 'production report drains must be spaced about five minutes apart');
+assert.equal(agentMetricsStreamInstance({}), 'agent-metrics-stream-v2');
+assert.equal(agentMetricsStreamInstance({ AGENT_METRICS_STREAM_INSTANCE_NAME: 'agent-metrics-stream-next' }), 'agent-metrics-stream-next');
+
 // One shared stream instance owns every Agent's live buffer: chunks are keyed
 // per Agent, reads filter by Agent, hour flushes stay per-Agent R2 objects,
 // and deleting one Agent never touches another Agent's buffered points.
@@ -464,7 +473,7 @@ const migrationArchive = memoryR2();
 const legacyReadRequests = [];
 const migrationHits = [];
 const migrationBuffer = new TelemetryBuffer(
-  { storage: migrationStorage, id: { name: 'agent-metrics-stream' } },
+  { storage: migrationStorage, id: { name: AGENT_METRICS_STREAM_INSTANCE } },
   testEnv({
     ARCHIVE: migrationArchive,
     TELEMETRY_BUFFER: {

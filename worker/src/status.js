@@ -7,8 +7,9 @@ import { ensureV6Schema, syncEnvTargetsMaybe, getRecentIncidents, readCheckBucke
 import { summarizeTrafficWithPending, trafficPeriod, trafficSettingsFromTarget } from './traffic.js';
 import { compactStatusPayload, refreshLatencySources } from './status-payload.js';
 import { mergeAgentAvailabilityRows } from './agent-availability.js';
-import { bufferedAgentStateEnabled, mergeAgentMetricRows } from './agent-state.js';
+import { agentStateTimestamp, bufferedAgentStateEnabled, mergeAgentMetricRows } from './agent-state.js';
 import { readFleetLatestAgentStates } from './telemetry-buffer.js';
+import { readAgentLatestStatesR2 } from './metrics.js';
 
 export async function getStatusCached(request, env, url, ctx = null) {
   const ttl = clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300);
@@ -110,6 +111,7 @@ async function buildStatusPayload(env, url = null, options = {}) {
   const proxyTargetsPromise = optionalQuery(env.DB.prepare(`SELECT p.id, p.agent_id, p.name, p.protocol, p.transport FROM proxy_targets p INNER JOIN targets t ON t.id = p.agent_id WHERE p.enabled = 1 AND t.enabled = 1 ORDER BY p.agent_id, p.name LIMIT 500`).all(), 'Proxy target metadata unavailable');
   const contactsPromise = optionalQuery(env.DB.prepare(`SELECT agent_id, manager_seen_at, manager_version FROM agent_contacts`).all(), 'Agent manager contacts unavailable');
   const [targets, metricsResult, agentAvailabilityResult, latestResult, pingTargetsResult, proxyTargetsResult, bufferedMetrics, contactsResult] = await Promise.all([targetsPromise, metricsPromise, agentAvailabilityPromise, latestPromise, pingTargetsPromise, proxyTargetsPromise, bufferedMetricsPromise, contactsPromise]);
+  await supplementAgentStatesFromR2(env, bufferedMetrics, (targets.results || []).map(target => target.id));
   const metricRows = mergeAgentMetricRows(metricsResult.results, bufferedMetrics);
   const r2State = await readR2State(env).catch((error) => {
     console.error('R2 state unavailable:', String(error?.message || error));
@@ -509,6 +511,7 @@ async function attachAgentState(payload, env) {
       bufferedAgentStateEnabled(env) ? readFleetLatestAgentStates(env) : Promise.resolve({}),
       env.DB.prepare(`SELECT agent_id, manager_seen_at, manager_version FROM agent_contacts`).all().catch(() => ({ results: [] })),
     ]);
+    await supplementAgentStatesFromR2(env, bufferedMetrics, payload.targets.map(target => target.id));
     const contactMap = {};
     for (const row of contactRows.results || []) contactMap[sanitizeAgentId(row.agent_id)] = row;
     const metricRows = mergeAgentMetricRows(rows.results, bufferedMetrics);
@@ -546,6 +549,25 @@ async function attachAgentState(payload, env) {
   } catch (error) {
     console.error('Snapshot Agent state overlay failed:', String(error?.message || error));
     payload.warnings = [...new Set([...(payload.warnings || []), 'Agent state overlay unavailable'])];
+  }
+}
+
+export async function supplementAgentStatesFromR2(env, states, agentIds) {
+  if (!bufferedAgentStateEnabled(env) || !env?.ARCHIVE || !states || typeof states !== 'object') return;
+  const now = nowSec();
+  const offlineAfter = clamp(Number(env.AGENT_OFFLINE_AFTER_SEC || 900), 120, 3600);
+  const missingOrStale = [...new Set((agentIds || []).map(sanitizeAgentId).filter(Boolean))]
+    .filter((agentId) => {
+      const updatedAt = agentStateTimestamp(states[agentId]?.updated_at);
+      return !updatedAt || now - updatedAt > offlineAfter;
+    });
+  if (!missingOrStale.length) return;
+  const fallback = await readAgentLatestStatesR2(env, missingOrStale).catch(() => ({}));
+  for (const [agentId, state] of Object.entries(fallback)) {
+    const id = sanitizeAgentId(agentId);
+    if (!id) continue;
+    const current = states[id];
+    if (!current || agentStateTimestamp(state.updated_at) > agentStateTimestamp(current.updated_at)) states[id] = state;
   }
 }
 

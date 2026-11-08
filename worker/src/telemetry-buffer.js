@@ -18,10 +18,17 @@ const CHUNK_SEC = 300;
 const DEFAULT_FLUSH_SEC = 3600;
 const MIN_FLUSH_SEC = 600;
 const MAX_FLUSH_SEC = 86400;
+const DEFAULT_REPORT_DRAIN_SEC = 30;
 const CHUNK_PREFIX = 'chunk:';
 const LEGACY_BUFFER_PREFIX = 'hour:';
 const EXPORT_PREFIX = 'export:';
-export const AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream';
+export const AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream-v2';
+
+export function agentMetricsStreamInstance(env = {}) {
+  return String(env.AGENT_METRICS_STREAM_INSTANCE_NAME || AGENT_METRICS_STREAM_INSTANCE)
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .slice(0, 128) || AGENT_METRICS_STREAM_INSTANCE;
+}
 const PUBLIC_METRICS_READER_SHARDS = 16;
 const LATEST_STATE_PREFIX = 'latest:state:';
 const LAST_SEEN_PREFIX = 'last:seen:';
@@ -269,9 +276,10 @@ export class TelemetryBuffer {
   }
 
   async scheduleReportDrain() {
+    const drainDelayMs = clamp(Number(this.env.TELEMETRY_REPORT_DRAIN_SEC || DEFAULT_REPORT_DRAIN_SEC), 30, 900) * 1000;
     const existing = await this.state.storage.getAlarm();
-    if (existing != null && existing <= Date.now() + 30_000) return;
-    await this.state.storage.setAlarm(Date.now() + 30_000);
+    if (existing != null && existing <= Date.now() + drainDelayMs) return;
+    await this.state.storage.setAlarm(Date.now() + drainDelayMs);
   }
 
   webSocketClose() {}
@@ -529,7 +537,7 @@ export class TelemetryBuffer {
   async ensureLegacyBufferMigrated(rawAgentId) {
     const agentId = sanitizeAgentId(rawAgentId);
     if (!agentId || !this.env.TELEMETRY_BUFFER) return;
-    if (String(this.state?.id?.name || '') !== AGENT_METRICS_STREAM_INSTANCE) return;
+    if (String(this.state?.id?.name || '') !== agentMetricsStreamInstance(this.env)) return;
     if (this.migratedAgents.has(agentId)) return;
     const flagKey = `migrated:${agentId}`;
     try {
@@ -848,7 +856,7 @@ function parseBinaryMessage(message) {
 export async function appendBufferedAgentTelemetry(env, agentId, points, pings, proxyChecks = []) {
   if (!env.TELEMETRY_BUFFER) return null;
   const id = sanitizeAgentId(agentId);
-  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(agentMetricsStreamInstance(env)));
   const response = await stub.fetch('https://nie-sla.internal/append', {
     method: 'POST',
     headers: internalRequestHeaders(env),
@@ -874,7 +882,7 @@ export async function readPublicAgentMetrics(env, sourceUrl) {
 export async function readBufferedAgentTelemetry(env, agentId, since, until) {
   if (!env.TELEMETRY_BUFFER) return { points: [], pings: [], proxy_checks: [] };
   const id = sanitizeAgentId(agentId);
-  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(agentMetricsStreamInstance(env)));
   const url = new URL('https://nie-sla.internal/read');
   url.searchParams.set('agent_id', id);
   url.searchParams.set('since', String(Math.floor(Number(since) || 0)));
@@ -893,7 +901,7 @@ export async function readBufferedAgentLatestState(env, agentId) {
   if (!env.TELEMETRY_BUFFER) return null;
   const id = sanitizeAgentId(agentId);
   if (!id) return null;
-  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(agentMetricsStreamInstance(env)));
   const url = new URL('https://nie-sla.internal/latest');
   url.searchParams.set('agent_id', id);
   const response = await stub.fetch(url.toString(), { headers: internalRequestHeaders(env) });
@@ -904,7 +912,7 @@ export async function readBufferedAgentLatestState(env, agentId) {
 
 export async function readFleetLatestSnapshot(env) {
   if (!env.TELEMETRY_BUFFER) return { states: {}, lastSeen: {} };
-  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(agentMetricsStreamInstance(env)));
   const response = await stub.fetch('https://nie-sla.internal/fleet/latest', { headers: internalRequestHeaders(env) });
   if (!response.ok) return { states: {}, lastSeen: {} };
   const body = await response.json().catch(() => ({}));
@@ -924,7 +932,7 @@ export async function touchBufferedAgentLastSeen(env, agentId, seenAt = nowSec()
   if (!env.TELEMETRY_BUFFER) return false;
   const id = sanitizeAgentId(agentId);
   if (!id) return false;
-  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(agentMetricsStreamInstance(env)));
   const response = await stub.fetch('https://nie-sla.internal/last-seen', {
     method: 'POST',
     headers: internalRequestHeaders(env),
@@ -937,7 +945,7 @@ export async function deleteBufferedAgentLatestState(env, agentId) {
   if (!env.TELEMETRY_BUFFER) return { ok: true, skipped: true };
   const id = sanitizeAgentId(agentId);
   if (!id) return { ok: true, skipped: true };
-  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(agentMetricsStreamInstance(env)));
   const url = new URL('https://nie-sla.internal/latest');
   url.searchParams.set('agent_id', id);
   const response = await stub.fetch(url.toString(), { method: 'DELETE', headers: internalRequestHeaders(env) });
@@ -952,7 +960,7 @@ export async function deleteBufferedAgentTelemetry(env, agentId) {
   await deleteBufferedAgentLatestState(env, id);
   const url = new URL('https://nie-sla.internal/delete-agent');
   url.searchParams.set('agent_id', id);
-  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE));
+  const stub = env.TELEMETRY_BUFFER.get(env.TELEMETRY_BUFFER.idFromName(agentMetricsStreamInstance(env)));
   const response = await stub.fetch(url.toString(), { method: 'POST', headers: internalRequestHeaders(env) });
   if (!response.ok) throw new Error(`遥测缓冲删除失败：HTTP ${response.status}`);
   return response.json();

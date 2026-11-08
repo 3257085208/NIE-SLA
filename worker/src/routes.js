@@ -17,7 +17,7 @@ import { getAppUpdateInfo } from './app-update.js';
 import { deleteTheme, getPublicTheme, getThemeConfig, getThemeFile, listManagedThemes, updateTheme, updateThemeConfig, uploadTheme } from './themes.js';
 import { encryptionKeyStatus, migrateEncryptionMaterials } from './encryption-maintenance.js';
 import { createNodeQualityBrokerImages } from './nq-image-host.js';
-import { AGENT_METRICS_STREAM_INSTANCE } from './telemetry-buffer.js';
+import { agentMetricsStreamInstance } from './telemetry-buffer.js';
 
 function deny(retryAfter = null) {
   const headers = retryAfter == null ? null : { 'retry-after': String(Math.max(1, Math.ceil(Number(retryAfter) || 1))) };
@@ -204,7 +204,7 @@ async function dispatchStatic(env, url, request, ctx) {
     const agentId = sanitizeAgentId(url.searchParams.get('agent_id') || '');
     const identity = await requireAgentForId(request, env, agentId);
     if (!identity) throw new ApiError(401, '未授权');
-    const id = env.TELEMETRY_BUFFER.idFromName(AGENT_METRICS_STREAM_INSTANCE);
+    const id = env.TELEMETRY_BUFFER.idFromName(agentMetricsStreamInstance(env));
     const stub = env.TELEMETRY_BUFFER.get(id);
     const forwarded = new Request('https://nie-sla.internal/agent-metrics/ws', request);
     forwarded.headers.set('x-nie-sla-agent-id', agentId);

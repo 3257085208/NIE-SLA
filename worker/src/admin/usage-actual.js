@@ -68,6 +68,9 @@ export async function fetchActualUsage(env, hours = 24) {
         durableObjects: durableObjectsInvocationsAdaptiveGroups(limit: 1, filter: { ${window} }) {
           sum { requests wallTime }
         }
+        durableObjectsDuration: durableObjectsPeriodicGroups(limit: 1, filter: { ${window} }) {
+          sum { duration }
+        }
         r2: r2OperationsAdaptiveGroups(limit: 50, filter: { ${window} }) {
           dimensions { actionType }
           sum { requests }
@@ -111,6 +114,7 @@ export async function fetchActualUsage(env, hours = 24) {
   }
   const d1 = ownD1Ids.length ? d1Own : d1Total;
   const durable = sumOf(account.durableObjects);
+  const durableDuration = sumOf(account.durableObjectsDuration);
   const r2ClassA = new Set(['PutObject', 'CopyObject', 'ListObjects', 'ListObjectsV2', 'ListBuckets', 'HeadBucket', 'DeleteObject', 'DeleteObjects', 'CreateMultipartUpload', 'CompleteMultipartUpload', 'UploadPart', 'UploadPartCopy']);
   let r2A = 0;
   let r2B = 0;
@@ -129,6 +133,7 @@ export async function fetchActualUsage(env, hours = 24) {
       d1_queries: Number(d1.readQueries || 0) + Number(d1.writeQueries || 0),
       do_requests: Number(durable.requests || 0),
       do_wall_time_sec: Math.round(Number(durable.wallTime || 0) / 1_000_000),
+      do_duration_gbs: Number(durableDuration.duration || 0),
       r2_class_a: r2A,
       r2_class_b: r2B,
       r2_requests: r2A + r2B,

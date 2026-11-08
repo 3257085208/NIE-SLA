@@ -2,7 +2,7 @@ import { parseBoolean, nowSec } from '../utils.js';
 import { bufferedAgentStateEnabled, agentStateTimestamp } from '../agent-state.js';
 import { readFleetLatestAgentStates } from '../telemetry-buffer.js';
 
-export const MODEL_VERSION = 'usage-model-embedded-v1.4.2';
+export const MODEL_VERSION = 'usage-model-embedded-v1.4.3';
 
 // Structural constants mirrored from scripts/usage-model.mjs (usage-model-v1.4.2).
 // Output multipliers were fitted against five 6-hour Cloudflare dashboard
@@ -30,6 +30,7 @@ const CAL = Object.freeze({
   latestStatusMinIntervalSec: 900,
   indexWriteMultiplier: 3,
   queryPathMultiplier: 1.135,
+  doDurationGbsPerTargetDay: 150,
   rowsReadMultiplier: 2.65,
   rowsWrittenMultiplier: 1.92,
   output: {
@@ -46,6 +47,7 @@ const CAL = Object.freeze({
     workers_calls: 100_000,
     do_requests: 100_000,
     do_rows_written: 100_000,
+    do_duration_gbs: 13_000,
     d1_rows_written: 100_000,
     d1_rows_read: 5_000_000,
     r2_class_a: 1_000_000,
@@ -146,6 +148,7 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
 
   const doBase = wssMessages + probeTargets * probeCycles + cron + cron * 0.9;
   const doRequests = doBase * CAL.output.do_requests;
+  const doDurationGbs = targets * CAL.doDurationGbsPerTargetDay;
   const doRowsWritten =
     wssMessages * 1.2 +
     agents * periodic(seconds, 300) * 1.2 +
@@ -170,6 +173,7 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
       workers_calls: round(workersBase * CAL.output.workers_calls),
       do_requests: round(doRequests),
       do_rows_written: round(doRowsWritten),
+      do_duration_gbs: round(doDurationGbs),
       d1_rows_written: round(d1RowsWritten),
       d1_rows_read: round(d1RowsRead),
       r2_class_a: round(classA),
@@ -185,6 +189,7 @@ export function estimateUsage({ agents = 0, wssAgents = 0, targets = 0, pingTarg
       `D1 行写入包含索引行（内置放大系数 ${CAL.indexWriteMultiplier}）；R2 读操作默认只在抽样（每 50 次写入 1 次）回读校验。`,
       `latest_status ${latestStatusToD1 ? `按 ${CAL.latestStatusMinIntervalSec}s 下限写入（状态/错误码变化即时写入）` : '在 PROBE_LATEST_STATUS_TO_D1=false 时读与写均不计（生产 wrangler.toml 已关闭）'}；R2 状态锁按每轮 cron 1 次 acquire(INSERT)+release(DELETE)+token SELECT 计（2026-09-21→09-22 实测写查询 7,475/日，其中双次合并占 5,760）；读行乘子已按 2026-09-21→09-22 实测窗口（nie-sla-db 1,415,503 行）重拟合，写行乘子待上线后复验。`,
       'Latency 节点仅计入最近 30 分钟内活跃的节点；DO SQLite 写行为近似台账，以控制台为准。',
+      'DO duration 按 2026-11-08 生产实测（约 41 台 5.9k GB-s/day）折算为每目标 150 GB-s/day 的线性估计；批量并发未饱和时实际可能更低，以 Cloudflare 账单为准。',
     ],
   };
   for (const [key, value] of Object.entries(out.estimates)) {
@@ -279,7 +284,7 @@ export async function usageInputsFromEnv(env) {
   return { agents, wssAgents, targets, pingTargets, latencyNodes, trafficAgents, latestStatusToD1 };
 }
 
-export const CAPACITY_QUOTAS = ['workers_calls', 'do_requests', 'd1_rows_read', 'd1_rows_written', 'r2_class_a', 'r2_class_b'];
+export const CAPACITY_QUOTAS = ['workers_calls', 'do_requests', 'do_duration_gbs', 'd1_rows_read', 'd1_rows_written', 'r2_class_a', 'r2_class_b'];
 
 function capacityEstimateAt(base, perNode, extra) {
   return estimateUsage({

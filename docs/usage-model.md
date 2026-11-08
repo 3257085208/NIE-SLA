@@ -166,7 +166,10 @@ v1.3.3 新增 Durable Object（DO）请求台账：v1.3 把高频当前状态写
 区间：TelemetryBuffer 的 WSS 消息唤醒（Hibernation 下每条入站消息计一次）、
 ProbeHistoryBuffer 探测追加、ProbeRegion 定时调度执行（仅配置 REGION_PROXY 时，
 可用 `--no-region-proxy` 关闭）与 StatusStream 事件发布。Hibernation 下 DO 时长
-为毫秒级活跃处理，13k GB-s/日 的时长限额当前规模可忽略。DO 台账尚无实测校准，
+为毫秒级活跃处理；但 2026-11-08 生产实测表明 DO duration 是免费层当前首要瓶颈：
+修复前约 13.2k GB-s/day，修复后约 5.9k GB-s/day。站点容量面板的 embedded
+`usage-model-v1.4.3` 已按每目标 150 GB-s/day 加入保守的 `do_duration_gbs` 容量行；
+CLI 模型 v1.4.2 尚未包含该项，实际值以 Cloudflare 账单为准。DO 台账尚无实测校准，
 按源码路径直接推导。
 
 ## 使用命令

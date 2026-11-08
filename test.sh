@@ -79,6 +79,9 @@ for f in "$ROOT/worker/src"/*.js; do
 done
 run_check "worker utility tests" node "$ROOT/worker/tests/utils.test.mjs"
 run_check "worker hardening tests" node "$ROOT/worker/tests/hardening.test.mjs"
+run_check "scheduled dispatch mode tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/scheduled-dispatch.test.mjs"
+run_check "probe D1 write batch tests" node "$ROOT/worker/tests/probe-write-batch.test.mjs"
+run_check "adaptive report and HTTP metrics tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/adaptive-report.test.mjs"
 run_check "third-party theme package tests" node "$ROOT/worker/tests/themes.test.mjs"
 run_check "admin authentication tests" node "$ROOT/worker/tests/admin-auth.test.mjs"
 run_check "encryption key rotation tests" node "$ROOT/worker/tests/encryption-maintenance.test.mjs"
@@ -99,6 +102,8 @@ run_check "login route hardening tests" node --experimental-loader "$ROOT/worker
 run_check "fast-status probe cadence tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/probe-faststatus.test.mjs"
 run_check "probe latest_status read gating tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/probe-latest-status-read.test.mjs"
 run_check "probe run record throttling tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/probe-run-record.test.mjs"
+run_check "maintenance slot read-before-write tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/maintenance-slot.test.mjs"
+run_check "Agent R2 latest-state fallback tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/agent-state-r2-fallback.test.mjs"
 run_check "R2 state sync session tests" node --experimental-loader "$ROOT/worker/tests/cloudflare-sockets-loader.mjs" "$ROOT/worker/tests/state-sync-session.test.mjs"
 run_check "durable telemetry buffer tests" node "$ROOT/worker/tests/telemetry-buffer.test.mjs"
 run_check "public metrics reader tests" node "$ROOT/worker/tests/public-metrics-reader.test.mjs"

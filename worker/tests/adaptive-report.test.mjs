@@ -56,18 +56,36 @@ function viewerEnv(viewers, extra = {}) {
   return { env, state };
 }
 
-function mockD1() {
+function mockD1(writes = null) {
   return {
-    prepare() {
+    prepare(sql) {
       const statement = {
         bind() { return statement; },
         async first() { return null; },
         async all() { return { results: [] }; },
-        async run() { return { meta: { changes: 0 } }; },
+        async run() { writes?.push(sql); return { meta: { changes: 0 } }; },
       };
       return statement;
     },
     async batch() { return []; },
+  };
+}
+
+function metricsR2() {
+  const objects = new Map();
+  return {
+    objects,
+    ARCHIVE: {
+      async get(key) {
+        const value = objects.get(key);
+        return value ? { async json() { return structuredClone(value); } } : null;
+      },
+      async put(key, body) {
+        const value = JSON.parse(String(body));
+        objects.set(key, value);
+        return { size: String(body).length };
+      },
+    },
   };
 }
 
@@ -239,6 +257,27 @@ const metricsPayload = {
   const { env: disabledEnv } = viewerEnv(1, { DB: mockD1(), ADAPTIVE_REPORT_ENABLED: 'false' });
   const disabledResult = await processAgentMetricsPayload(disabledEnv, structuredClone(metricsPayload), null, 'vps-a');
   assert.equal('report_interval_sec' in disabledResult, false, 'disabled adaptive reporting must omit the field');
+}
+
+// 6b. In production buffered-state mode, the HTTP fallback must not write the
+// D1 current-state mirror and must persist a latest-state R2 fallback.
+{
+  resetAdaptiveReportCacheForTests();
+  const writes = [];
+  const r2 = metricsR2();
+  const { env } = viewerEnv(0, {
+    DB: mockD1(writes),
+    ARCHIVE: r2.ARCHIVE,
+    TELEMETRY_BUFFER: {
+      idFromName: () => 'telemetry-id',
+      get: () => ({ async fetch() { return Response.json({ ok: true }); } }),
+    },
+    AGENT_METRICS_STATE_TO_D1: 'false',
+  });
+  const result = await processAgentMetricsPayload(env, structuredClone(metricsPayload), null, 'vps-a');
+  assert.equal(result.ok, true);
+  assert.equal(writes.some(sql => /INSERT INTO agent_metrics_state/.test(sql)), false, 'HTTP metrics must honor AGENT_METRICS_STATE_TO_D1=false');
+  assert.ok([...r2.objects.keys()].some(key => key.endsWith('/latest-state.json')), 'HTTP metrics must persist an R2 latest-state fallback');
 }
 
 // 7. WSS metrics path: the same value must reach the metrics_ack (top level and

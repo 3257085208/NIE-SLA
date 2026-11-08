@@ -59,7 +59,7 @@ try {
   const body = JSON.parse(await response.text());
   const expected = await (await getAgentMetrics(readerEnv, url)).json();
   assert.deepEqual(body, expected, 'delegation preserves the full existing payload, field selection and precision');
-  assert.equal(body.series.dt.length, 600);
+  assert.equal(body.series.dt.length, 601, '600 historical points plus the R2 latest-state point must preserve the newest sample');
   assert.deepEqual(body.series.fields, ['cpu']);
   assert.equal(edgeArchiveReads, 0);
   assert.ok(archiveReads > 0);
@@ -86,6 +86,10 @@ try {
   for (const fallbackEnv of [
     { ...readerEnv, TELEMETRY_BUFFER: undefined },
     { ...readerEnv, INTERNAL_CRON_SECRET: '' },
+    { ...readerEnv, TELEMETRY_BUFFER: {
+      idFromName() { return 'broken-reader'; },
+      get() { return { async fetch() { throw new Error('Exceeded allowed duration in Durable Objects free tier.'); } }; },
+    } },
   ]) {
     const fallback = await getAgentMetricsCached(new Request(url), fallbackEnv, url);
     assert.equal(fallback.status, 200, 'deployments without an authenticated reader keep their existing read path');

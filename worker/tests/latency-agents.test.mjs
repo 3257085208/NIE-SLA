@@ -177,6 +177,20 @@ const nativeReadHistory = await getPublicLatency({ ...env, ARCHIVE_NATIVE: env.A
 assert.equal(nativeReadHistory.sources.length, 1, 'public Latency history must prefer the native R2 read plane');
 assert.equal(nativeReadHistory.sources[0].points.length, 2);
 
+env.LATENCY_ARCHIVE_FLUSH_MIN_SEC = '45';
+const directArchiveKey = [...env.ARCHIVE.objects.keys()][0];
+const directArchive = JSON.parse(env.ARCHIVE.objects.get(directArchiveKey).value);
+directArchive.updated_at = Math.floor(Date.now() / 1000) - 60;
+env.ARCHIVE.objects.set(directArchiveKey, { value: JSON.stringify(directArchive), options: {} });
+const directR2 = await submitLatencyAgentResults(jsonRequest({}), env, {
+  node_id: created.id,
+  results: [{ target_id: 'public-vps', checked_at: checkedAt + 1, latency_ms: 46, ok: true }],
+});
+assert.equal(directR2.storage, 'r2', 'a 45-second archive window must accept the next one-minute report directly');
+assert.equal(directR2.pending, undefined);
+assert.equal(database.prepare(`SELECT pending_results FROM latency_agents WHERE id = ?`).get(created.id).pending_results, '[]');
+assert.equal(JSON.parse(env.ARCHIVE.objects.get(directArchiveKey).value).points.length, 3);
+
 const corruptLatencyArchive = memoryR2();
 const archivedKey = [...env.ARCHIVE.objects.keys()][0];
 corruptLatencyArchive.objects.set(archivedKey, { value: '{not-json', options: {} });
