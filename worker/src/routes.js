@@ -401,8 +401,8 @@ async function dispatchStatic(env, url, request, ctx) {
 
   if (path === '/api/auth/config' && m === 'GET') return json(await adminAuthConfig(env), 200, env, { 'cache-control': 'no-store' });
   if (path === '/api/auth/login' && m === 'POST') {
-    if (!await rateLimitByIp(request, env, 1, 10, { durable: true, keyPrefix: 'login-ip-short' })) return deny(10);
-    if (!await rateLimitByIp(request, env, 5, 300, { durable: true, keyPrefix: 'login-ip-window' })) return deny(300);
+    if (!await rateLimitByIp(request, env, 5, 60, { durable: true, keyPrefix: 'login-ip-short' })) return deny(60);
+    if (!await rateLimitByIp(request, env, 8, 300, { durable: true, keyPrefix: 'login-ip-window' })) return deny(300);
     return json(await passwordLogin(request, env), 200, env, { 'cache-control': 'no-store' });
   }
   if (path === '/api/auth/account' && m === 'GET') { await withAdmin(request, env); return json(await getAdminAccount(env), 200, env, { 'cache-control': 'no-store' }); }

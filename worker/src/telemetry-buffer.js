@@ -9,6 +9,7 @@ import { encodeJsonBody, httpMetadataFor } from './r2-body.js';
 import { exportTelemetryHour, maxExportAttempts, normalizeExportAttempt, timeseriesExportEnabled } from './timeseries-export.js';
 import { getPingIntervalSec } from './ping-config.js';
 import { getAdaptiveReportInterval } from './adaptive-report.js';
+import { listTrafficCorrections } from './admin/traffic-corrections.js';
 import { pingTargetProtocol } from './ping-target-protocol.js';
 import { getCachedProxyControl, getProxyControlRows } from './admin/proxy-targets.js';
 import { decodeAgentMetricsProtobuf } from './telemetry-protobuf.js';
@@ -661,12 +662,7 @@ export class TelemetryBuffer {
       })).filter(row => row.id && row.target && ['tcp', 'http'].includes(row.protocol));
       let trafficCorrections = {};
       try {
-        const rows = await this.env.DB.prepare(`SELECT key, value FROM app_meta WHERE key LIKE 'traffic_corr:%'`).all();
-        for (const row of rows.results || []) {
-          try {
-            trafficCorrections[String(row.key).slice('traffic_corr:'.length)] = JSON.parse(row.value);
-          } catch (_) {}
-        }
+        trafficCorrections = await listTrafficCorrections(this.env);
       } catch (_) {}
       let proxyTargetsInternal = [];
       try {

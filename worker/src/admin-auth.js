@@ -45,6 +45,7 @@ export async function passwordLogin(request, env) {
   const password = String(body.password || '');
   const accountKey = await passwordFailureKey(username);
   const credentials = await resolveAdminCredentials(env);
+  if (!credentials) throw new ApiError(503, '尚未配置管理员账号密码，请先设置 ADMIN_PASSWORD 或运行 reset-admin');
   const usernameValid = credentials && constantTimeEqual(username, credentials.username);
   const passwordValid = credentials && await verifyPassword(password, credentials);
   if (!usernameValid || !passwordValid) {

@@ -15,6 +15,7 @@ const PROXY_TARGETS_SCHEMA_MARKER = 'schema:worker-v32-proxy-targets';
 const PROXY_LINKS_SCHEMA_MARKER = 'schema:worker-v33-proxy-links';
 const LATENCY_PENDING_SCHEMA_MARKER = 'schema:worker-v34-latency-pending';
 const PING_EXPECTED_STATUS_SCHEMA_MARKER = 'schema:worker-v35-ping-expected-status';
+const INCIDENT_SORT_SCHEMA_MARKER = 'schema:worker-v36-incident-sort';
 
 function createAgentTasksTableSql(tableName = 'agent_tasks', ifNotExists = false) {
   return `CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
@@ -83,6 +84,7 @@ export async function ensureV6Schema(env) {
   const proxyLinksInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(PROXY_LINKS_SCHEMA_MARKER).first().catch(() => null);
   const latencyPendingInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(LATENCY_PENDING_SCHEMA_MARKER).first().catch(() => null);
   const pingExpectedStatusInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(PING_EXPECTED_STATUS_SCHEMA_MARKER).first().catch(() => null);
+  const incidentSortInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(INCIDENT_SORT_SCHEMA_MARKER).first().catch(() => null);
   const legacySchemaInstalled = installed?.value === '1'
     && nextProbeInstalled?.value === '1'
     && probeBufferInstalled?.value === '1'
@@ -109,6 +111,12 @@ export async function ensureV6Schema(env) {
         marker: PING_EXPECTED_STATUS_SCHEMA_MARKER,
         statement: `ALTER TABLE ping_targets ADD COLUMN expected_status TEXT`,
         table: 'ping_targets',
+      },
+      {
+        installed: incidentSortInstalled,
+        marker: INCIDENT_SORT_SCHEMA_MARKER,
+        statement: `CREATE INDEX IF NOT EXISTS idx_incident_sort_at ON incident_events(COALESCE(recovered_at, started_at) DESC)`,
+        table: 'incident_events',
       },
     ]) {
       if (step.installed?.value === '1') continue;
@@ -203,6 +211,7 @@ export async function ensureV6Schema(env) {
   }
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_incident_target_active ON incident_events(target_id, recovered_at)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_incident_started ON incident_events(started_at DESC)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_incident_sort_at ON incident_events(COALESCE(recovered_at, started_at) DESC)`).run();
   await env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_incident_one_active ON incident_events(target_id) WHERE recovered_at IS NULL`).run();
 
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rate_limits (key TEXT NOT NULL, ts INTEGER NOT NULL)`).run();
@@ -553,6 +562,8 @@ export async function ensureV6Schema(env) {
     .bind(LATENCY_PENDING_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
     .bind(PING_EXPECTED_STATUS_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+    .bind(INCIDENT_SORT_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   schemaEnsured = true;
   } catch (e) { schemaPromise = null; throw e; }
   })();

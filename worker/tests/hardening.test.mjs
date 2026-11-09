@@ -36,6 +36,8 @@ assert.equal((routesSource.match(/path === '\/api\/agent\/tasks' && m === 'GET'/
 assert.match(routesSource, /\/api\/agent\/tasks' && m === 'GET'[\s\S]{0,600}runner_instance_id/, 'agent task claim route must accept runner_instance_id');
 assert.match(schemaSource, /schema:worker-v26-20260810-quota/, 'schema marker must advance for task owner tracking');
 assert.match(schemaSource, /schema:worker-v28-probe-buffer/, 'probe buffer migration must be tracked');
+assert.match(schemaSource, /schema:worker-v36-incident-sort/, 'incident sort index migration must be tracked');
+assert.match(schemaSource, /idx_incident_sort_at/, 'incident list must use an indexed COALESCE sort key');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN cancel_requested_at INTEGER/, 'running tasks must store a cancellation request timestamp');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN runner_instance_id TEXT/, 'running tasks must track the Agent Manager runner instance');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN runner_heartbeat_at INTEGER/, 'running tasks must track Manager heartbeats');
@@ -134,8 +136,8 @@ assert.doesNotMatch(wranglerSource, /!\/\*\.(?:css|js|json)"/, 'dynamic theme fi
 assert.doesNotMatch(adminAuthSource.slice(adminAuthSource.indexOf('export async function adminAuthConfig'), adminAuthSource.indexOf('export async function passwordLogin')), /admin_path/, 'anonymous auth config must not expose the admin path');
 assert.match(adminAuthSource, /if \(!githubEnabled\(env\)\) return new Response\(null, \{ status: 404/, 'a disabled OAuth callback must return 404 before resolving the admin path');
 assert.match(adminAuthSource, /throw new ApiError\(404, '未找到'\)/, 'disabled OAuth start and complete endpoints must return 404');
-assert.match(routesSource, /rateLimitByIp\(request, env, 1, 10,[\s\S]{0,180}rateLimitByIp\(request, env, 5, 300/, 'password login must enforce short and cumulative IP windows');
-assert.match(routesSource, /return deny\(10\)[\s\S]{0,180}return deny\(300\)/, 'password login rate limits must include Retry-After values');
+assert.match(routesSource, /rateLimitByIp\(request, env, 5, 60,[\s\S]{0,180}rateLimitByIp\(request, env, 8, 300/, 'password login must enforce short and cumulative IP windows');
+assert.match(routesSource, /return deny\(60\)[\s\S]{0,180}return deny\(300\)/, 'password login rate limits must include Retry-After values');
 assert.match(routesSource, /if \(path === '\/api\/v1\/latency' && m === 'GET'\) \{[\s\S]{0,220}allowPublicLatencyRequest\(request, env\)/, 'developer latency alias must share the durable public latency limiter');
 assert.match(routesSource, /appearance-script\.js[\s\S]{0,450}getPublicAppearanceScript/, 'custom appearance scripts must use the same-origin JavaScript endpoint');
 assert.doesNotMatch(routesSource, /appearance-script\.js[\s\S]{0,450}json\(/, 'custom appearance script endpoint must not wrap JavaScript in JSON');

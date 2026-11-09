@@ -59,18 +59,20 @@ function loginRequest(ip) {
 
 {
   const env = { DB: memoryDb(), ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
-  await assert.rejects(handleRequest(loginRequest('192.0.2.10'), env), error => error?.status === 401);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    await assert.rejects(handleRequest(loginRequest('192.0.2.10'), env), error => error?.status === 401);
+  }
   const limited = await handleRequest(loginRequest('192.0.2.10'), env);
   assert.equal(limited.status, 429);
-  assert.equal(limited.headers.get('retry-after'), '10');
+  assert.equal(limited.headers.get('retry-after'), '60');
 }
 
 {
   const db = memoryDb();
   const env = { DB: db, ADMIN_USERNAME: 'owner', ADMIN_PASSWORD: 'correct horse battery staple' };
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < 8; attempt++) {
     await assert.rejects(handleRequest(loginRequest('192.0.2.11'), env), error => error?.status === 401);
-    for (const row of db.rateLimits) if (row.key === 'login-ip-short:192.0.2.11') row.ts -= 11;
+    for (const row of db.rateLimits) if (row.key === 'login-ip-short:192.0.2.11') row.ts -= 61;
   }
   const limited = await handleRequest(loginRequest('192.0.2.11'), env);
   assert.equal(limited.status, 429);
