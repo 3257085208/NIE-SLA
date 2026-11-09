@@ -27,7 +27,7 @@ function memoryDb({ incidents = [], buckets = [] } = {}) {
         },
         async run() {
           if (/UPDATE incident_events SET recovered_at/i.test(sql)) {
-            updates.push({ recoveredAt: Number(values[0]), id: values[1] });
+            updates.push({ recoveredAt: Number(values[0]), id: values[values.length - 1] });
             return { meta: { changes: 1 } };
           }
           return { meta: { changes: 0 } };

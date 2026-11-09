@@ -37,7 +37,7 @@ export async function archiveDay(env, day) {
   }
   const dayStart = dayStartSecValue(day, env);
   const dayEnd = dayStart + 86400;
-  const incidents = await env.DB.prepare(`SELECT * FROM incident_events WHERE (started_at >= ? AND started_at < ?) OR (recovered_at >= ? AND recovered_at < ?) OR (started_at < ? AND recovered_at IS NULL) ORDER BY COALESCE(recovered_at, started_at) ASC`).bind(dayStart, dayEnd, dayStart, dayEnd, dayEnd).all();
+  const incidents = await env.DB.prepare(`SELECT * FROM incident_events WHERE (started_at >= ? AND started_at < ?) OR (recovered_at >= ? AND recovered_at < ?) OR (started_at < ? AND recovered_at IS NULL) ORDER BY sort_at ASC`).bind(dayStart, dayEnd, dayStart, dayEnd, dayEnd).all();
   const key = `daily-summary/${day}.json`;
   await writeR2Json(env, key, { schema: 'nie-sla-daily-summary-v6', day, exported_at: new Date().toISOString(), summaries, incidents: incidents.results || [] }, { day, rows: String(summaries.length) });
   return { ok: true, key, summary_rows: summaries.length, incident_rows: (incidents.results || []).length };
@@ -46,7 +46,7 @@ export async function archiveDay(env, day) {
 
 
 export async function getRecentIncidents(env, limit, maskIps, hidePorts = true) {
-  const rows = await env.DB.prepare(`SELECT i.id, i.target_id, i.started_at, i.recovered_at, i.last_checked_at, i.start_colo, i.recover_colo, i.last_error, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.probe_region FROM incident_events i LEFT JOIN targets t ON t.id = i.target_id ORDER BY COALESCE(i.recovered_at, i.started_at) DESC LIMIT ?`).bind(limit).all();
+  const rows = await env.DB.prepare(`SELECT i.id, i.target_id, i.started_at, i.recovered_at, i.last_checked_at, i.start_colo, i.recover_colo, i.last_error, t.name, t.group_name, t.type, t.target_host, t.target_port, t.url, t.probe_region FROM incident_events i LEFT JOIN targets t ON t.id = i.target_id ORDER BY i.sort_at DESC LIMIT ?`).bind(limit).all();
   return (rows.results || []).map(row => {
     const displayHost = row.type === 'tcp' ? publicHost(row.target_host, maskIps) : row.target_host;
     const displayUrl = row.type === 'http' ? publicUrl(row.url, env) : row.url;

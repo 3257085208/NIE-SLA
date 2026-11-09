@@ -36,8 +36,8 @@ assert.equal((routesSource.match(/path === '\/api\/agent\/tasks' && m === 'GET'/
 assert.match(routesSource, /\/api\/agent\/tasks' && m === 'GET'[\s\S]{0,600}runner_instance_id/, 'agent task claim route must accept runner_instance_id');
 assert.match(schemaSource, /schema:worker-v26-20260810-quota/, 'schema marker must advance for task owner tracking');
 assert.match(schemaSource, /schema:worker-v28-probe-buffer/, 'probe buffer migration must be tracked');
-assert.match(schemaSource, /schema:worker-v36-incident-sort/, 'incident sort index migration must be tracked');
-assert.match(schemaSource, /idx_incident_sort_at/, 'incident list must use an indexed COALESCE sort key');
+assert.match(schemaSource, /schema:worker-v37-incident-sort-key/, 'incident sort key migration must be tracked');
+assert.match(schemaSource, /idx_incident_sort_key/, 'incident list must use a stored indexed sort key');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN cancel_requested_at INTEGER/, 'running tasks must store a cancellation request timestamp');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN runner_instance_id TEXT/, 'running tasks must track the Agent Manager runner instance');
 assert.match(schemaSource, /ALTER TABLE agent_tasks ADD COLUMN runner_heartbeat_at INTEGER/, 'running tasks must track Manager heartbeats');

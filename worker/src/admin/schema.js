@@ -16,6 +16,7 @@ const PROXY_LINKS_SCHEMA_MARKER = 'schema:worker-v33-proxy-links';
 const LATENCY_PENDING_SCHEMA_MARKER = 'schema:worker-v34-latency-pending';
 const PING_EXPECTED_STATUS_SCHEMA_MARKER = 'schema:worker-v35-ping-expected-status';
 const INCIDENT_SORT_SCHEMA_MARKER = 'schema:worker-v36-incident-sort';
+const INCIDENT_SORT_KEY_SCHEMA_MARKER = 'schema:worker-v37-incident-sort-key';
 
 function createAgentTasksTableSql(tableName = 'agent_tasks', ifNotExists = false) {
   return `CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS ' : ''}${tableName} (
@@ -85,6 +86,7 @@ export async function ensureV6Schema(env) {
   const latencyPendingInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(LATENCY_PENDING_SCHEMA_MARKER).first().catch(() => null);
   const pingExpectedStatusInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(PING_EXPECTED_STATUS_SCHEMA_MARKER).first().catch(() => null);
   const incidentSortInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(INCIDENT_SORT_SCHEMA_MARKER).first().catch(() => null);
+  const incidentSortKeyInstalled = await env.DB.prepare(`SELECT value FROM app_meta WHERE key = ?`).bind(INCIDENT_SORT_KEY_SCHEMA_MARKER).first().catch(() => null);
   const legacySchemaInstalled = installed?.value === '1'
     && nextProbeInstalled?.value === '1'
     && probeBufferInstalled?.value === '1'
@@ -112,12 +114,6 @@ export async function ensureV6Schema(env) {
         statement: `ALTER TABLE ping_targets ADD COLUMN expected_status TEXT`,
         table: 'ping_targets',
       },
-      {
-        installed: incidentSortInstalled,
-        marker: INCIDENT_SORT_SCHEMA_MARKER,
-        statement: `CREATE INDEX IF NOT EXISTS idx_incident_sort_at ON incident_events(COALESCE(recovered_at, started_at) DESC)`,
-        table: 'incident_events',
-      },
     ]) {
       if (step.installed?.value === '1') continue;
       if (step.table) {
@@ -132,6 +128,17 @@ export async function ensureV6Schema(env) {
       await runOptionalSchemaChange(env, step.statement);
       await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
         .bind(step.marker, nowSec()).run();
+    }
+    if (incidentSortKeyInstalled?.value !== '1') {
+      const incidentTable = await env.DB.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'incident_events'`).first().catch(() => null);
+      if (incidentTable?.name) {
+        await runOptionalSchemaChange(env, `ALTER TABLE incident_events ADD COLUMN sort_at INTEGER`);
+        await env.DB.prepare(`UPDATE incident_events SET sort_at = COALESCE(recovered_at, started_at) WHERE sort_at IS NULL`).run();
+        await env.DB.prepare(`DROP INDEX IF EXISTS idx_incident_sort_at`).run();
+        await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_incident_sort_key ON incident_events(sort_at DESC)`).run();
+        await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+          .bind(INCIDENT_SORT_KEY_SCHEMA_MARKER, nowSec()).run();
+      }
     }
     schemaEnsured = true;
     return;
@@ -205,13 +212,15 @@ export async function ensureV6Schema(env) {
     // check-bucket source table; the regular bucket refresh will backfill it.
   }
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`).run();
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS incident_events (id TEXT PRIMARY KEY, target_id TEXT NOT NULL, started_at INTEGER NOT NULL, recovered_at INTEGER, last_checked_at INTEGER, start_colo TEXT, recover_colo TEXT, last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`).run();
-  for (const stmt of ['ALTER TABLE incident_events ADD COLUMN recovered_at INTEGER', 'ALTER TABLE incident_events ADD COLUMN last_checked_at INTEGER', 'ALTER TABLE incident_events ADD COLUMN start_colo TEXT', 'ALTER TABLE incident_events ADD COLUMN recover_colo TEXT', 'ALTER TABLE incident_events ADD COLUMN last_error TEXT']) {
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS incident_events (id TEXT PRIMARY KEY, target_id TEXT NOT NULL, started_at INTEGER NOT NULL, recovered_at INTEGER, last_checked_at INTEGER, start_colo TEXT, recover_colo TEXT, last_error TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, sort_at INTEGER)`).run();
+  for (const stmt of ['ALTER TABLE incident_events ADD COLUMN recovered_at INTEGER', 'ALTER TABLE incident_events ADD COLUMN last_checked_at INTEGER', 'ALTER TABLE incident_events ADD COLUMN start_colo TEXT', 'ALTER TABLE incident_events ADD COLUMN recover_colo TEXT', 'ALTER TABLE incident_events ADD COLUMN last_error TEXT', 'ALTER TABLE incident_events ADD COLUMN sort_at INTEGER']) {
     await runOptionalSchemaChange(env, stmt);
   }
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_incident_target_active ON incident_events(target_id, recovered_at)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_incident_started ON incident_events(started_at DESC)`).run();
-  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_incident_sort_at ON incident_events(COALESCE(recovered_at, started_at) DESC)`).run();
+  await env.DB.prepare(`UPDATE incident_events SET sort_at = COALESCE(recovered_at, started_at) WHERE sort_at IS NULL`).run();
+  await env.DB.prepare(`DROP INDEX IF EXISTS idx_incident_sort_at`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_incident_sort_key ON incident_events(sort_at DESC)`).run();
   await env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_incident_one_active ON incident_events(target_id) WHERE recovered_at IS NULL`).run();
 
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS rate_limits (key TEXT NOT NULL, ts INTEGER NOT NULL)`).run();
@@ -564,6 +573,8 @@ export async function ensureV6Schema(env) {
     .bind(PING_EXPECTED_STATUS_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
     .bind(INCIDENT_SORT_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
+  await env.DB.prepare(`INSERT INTO app_meta (key, value, updated_at) VALUES (?, '1', ?) ON CONFLICT(key) DO UPDATE SET value='1', updated_at=excluded.updated_at`)
+    .bind(INCIDENT_SORT_KEY_SCHEMA_MARKER, Math.floor(Date.now() / 1000)).run();
   schemaEnsured = true;
   } catch (e) { schemaPromise = null; throw e; }
   })();

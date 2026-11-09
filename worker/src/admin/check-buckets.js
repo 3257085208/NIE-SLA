@@ -52,12 +52,12 @@ export async function upsertLatestStatus(env, s) {
 function incidentEventStatement(env, targetId, action, startedAt, recoveredAt, colo, error) {
   const now = nowSec();
   if (action === 'started') {
-    return env.DB.prepare(`INSERT OR IGNORE INTO incident_events (id, target_id, started_at, last_checked_at, start_colo, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(`${targetId}-${startedAt}`, targetId, startedAt, startedAt, colo || null, error ? String(error).slice(0, 500) : null, now, now);
+    return env.DB.prepare(`INSERT OR IGNORE INTO incident_events (id, target_id, started_at, last_checked_at, start_colo, last_error, created_at, updated_at, sort_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(`${targetId}-${startedAt}`, targetId, startedAt, startedAt, colo || null, error ? String(error).slice(0, 500) : null, now, now, startedAt);
   }
   if (action === 'recovered') {
-    return env.DB.prepare(`UPDATE incident_events SET recovered_at = ?, last_checked_at = ?, recover_colo = ?, last_error = NULL, updated_at = ? WHERE target_id = ? AND recovered_at IS NULL`)
-      .bind(recoveredAt, recoveredAt || startedAt || null, colo || null, now, targetId);
+    return env.DB.prepare(`UPDATE incident_events SET recovered_at = ?, sort_at = ?, last_checked_at = ?, recover_colo = ?, last_error = NULL, updated_at = ? WHERE target_id = ? AND recovered_at IS NULL`)
+      .bind(recoveredAt, recoveredAt || startedAt || null, recoveredAt || startedAt || null, colo || null, now, targetId);
   }
   return null;
 }
@@ -701,8 +701,8 @@ export async function reconcileOpenIncidents(env) {
         if (ok && checkedAt >= since && checkedAt > recoveredAt) recoveredAt = checkedAt;
       }
       if (recoveredAt > 0) {
-        await env.DB.prepare(`UPDATE incident_events SET recovered_at = ? WHERE id = ? AND recovered_at IS NULL`)
-          .bind(recoveredAt, incident.id).run();
+        await env.DB.prepare(`UPDATE incident_events SET recovered_at = ?, sort_at = ? WHERE id = ? AND recovered_at IS NULL`)
+          .bind(recoveredAt, recoveredAt, incident.id).run();
         changes += 1;
       }
     }
