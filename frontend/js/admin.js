@@ -1,24 +1,24 @@
-import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20261109-dodur1";
-import { createAdminClient } from "./admin/api.js?v=20261109-dodur1";
-import { createOnboarding } from "./admin/onboarding.js?v=20261109-dodur1";
-import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20261109-dodur1";
-import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20261109-dodur1";
-import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20261109-dodur1";
-import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20261109-dodur1";
+import { agentInstallCommandFromPayload, agentRootlessInstallCommandFromPayload, latencyInstallCommandFromPayload, copyText } from "./install-command.js?v=20261109-quota1";
+import { createAdminClient } from "./admin/api.js?v=20261109-quota1";
+import { createOnboarding } from "./admin/onboarding.js?v=20261109-quota1";
+import { latestAgentTaskMaps, shouldOpenNodeQualityReport } from "./admin/task-history.js?v=20261109-quota1";
+import { nqOptionsHtml, readNqOptions } from "./admin/nq-options.js?v=20261109-quota1";
+import { dailyFleetSlaSeries, targetSlaPercentage } from "./shared/sla.js?v=20261109-quota1";
+import { bindNodeQualityModal, buildNqModalHtml, normalizeNqReportLink, renderUnlockServicesReportHtml, trimReportAdFooter } from "./shared/nodequality.js?v=20261109-quota1";
 import {
   CURRENCIES,
   PROVIDERS,
-} from "./shared/target-catalogs.js?v=20261109-dodur1";
+} from "./shared/target-catalogs.js?v=20261109-quota1";
 import {
   groupByDimension,
   groupByMenuHtml,
   lineTypeOptionsHtml,
   normalizeGroupByMode,
   displayGroupName as sharedDisplayGroupName,
-} from "./shared/grouping.js?v=20261109-dodur1";
-import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20261109-dodur1";
-import { escapeAttr, escapeHtml } from "./shared/html.js?v=20261109-dodur1";
-import { fmtBytes } from "./shared/format.js?v=20261109-dodur1";
+} from "./shared/grouping.js?v=20261109-quota1";
+import { readMigratedStorage, writeStorage } from "./shared/storage.js?v=20261109-quota1";
+import { escapeAttr, escapeHtml } from "./shared/html.js?v=20261109-quota1";
+import { fmtBytes } from "./shared/format.js?v=20261109-quota1";
 
 const CONFIG = window.NIE_SLA_CONFIG || window.NSTATUS_CONFIG || {};
 const API = String(
@@ -100,7 +100,7 @@ async function loadUsageActualData() {
   dataBox.innerHTML = '<small class="muted">查询中...</small>';
   let actual;
   try {
-    actual = await apiAdmin("/api/usage-actual?hours=24", {}, 30_000);
+    actual = await apiAdmin("/api/usage-actual?hours=24&day=1", {}, 30_000);
   } catch (error) {
     dataBox.innerHTML = `<div class="error">查询失败：${escapeHtml(error?.message || "未知错误")}</div>`;
     return;
@@ -109,25 +109,35 @@ async function loadUsageActualData() {
     dataBox.innerHTML = `<div class="error">${escapeHtml(actual?.error || "查询失败")}</div>`;
     return;
   }
+  const windowScale = actual.window_mode === "utc-day" ? Number(actual.window_hours || 0) / 24 : 1;
   const compare = (key, label) => {
     const actualValue = actual.actual[key];
-    const estimate = usageEstimateData?.estimates?.[key];
+    const estimate = usageEstimateData?.estimates?.[key] ? usageEstimateData.estimates[key] * windowScale : null;
     const actualText = actualValue == null ? "控制台查看" : Math.round(actualValue).toLocaleString();
     const delta = actualValue != null && estimate ? `（偏差 ${(((actualValue - estimate) / estimate) * 100).toFixed(1)}%）` : "";
     const estimateText = estimate ? Math.round(estimate).toLocaleString() : "-";
     return `<div class="usage-row"><span class="usage-label">${escapeHtml(label)}</span><span class="usage-value">${actualText}</span><span class="usage-value muted">估 ${estimateText}${delta}</span></div>`;
   };
   const estimateNote = usageEstimateData ? "" : '<small class="muted">模型估算尚未加载，偏差列暂缺。</small>';
+  const projection = actual.projection || {};
+  const projectionRow = (key, label) => {
+    if (actual.actual[key] == null || projection[key] == null) return "";
+    return `<span class="muted">${escapeHtml(label)} ${Math.round(Number(actual.actual[key])).toLocaleString()} → 预测 ${Math.round(Number(projection[key])).toLocaleString()}</span>`;
+  };
+  const dayText = actual.window_mode === "utc-day"
+    ? `<small>当前 UTC 日（${Number(actual.window_hours || 0).toFixed(2)}h） · ${projectionRow("do_duration_gbs", "DO duration")} · ${projectionRow("d1_rows_read", "D1 读")}</small>`
+    : "";
   dataBox.innerHTML = `
+    ${dayText}
     <div class="usage-rows">
-      <div class="usage-row"><span class="usage-label">维度</span><span class="usage-value"><b>实际</b></span><span class="usage-value muted">模型估算</span></div>
+      <div class="usage-row"><span class="usage-label">维度</span><span class="usage-value"><b>实际</b></span><span class="usage-value muted">模型估算（当前窗口）</span></div>
       ${compare("do_requests", "DO 请求")}
       ${compare("do_duration_gbs", "DO duration (GB-s)")}
       ${compare("do_rows_written", "DO SQLite 写行")}
       ${compare("d1_rows_written", "D1 写行")}
       ${compare("d1_rows_read", "D1 读行")}
     </div>
-    <small class="muted">最近 ${escapeHtml(String(actual.window_hours || 24))}h 实测${actual.cached ? "（缓存）" : ""}${estimateNote}</small>`;
+    <small class="muted">${actual.window_mode === "utc-day" ? "当前 UTC 日" : `最近 ${escapeHtml(String(actual.window_hours || 24))}h`} 实测${actual.cached ? "（缓存）" : ""}${estimateNote}</small>`;
 }
 
 async function loadUsageEstimate() {
@@ -171,12 +181,20 @@ async function loadUsageStorage() {
       ? `${Number(r2.objects || 0).toLocaleString()} 个对象 · ${escapeHtml(fmtBytes(Number(r2.bytes || 0)))}${r2.truncated ? `（达到 ${Number(r2.list_limit || 10000).toLocaleString()} 个统计上限，未完整列举）` : ""}`
       : `不可用：${escapeHtml(r2.error || "未绑定 ARCHIVE")}`;
     const quotas = data.capacity?.quotas || {};
-    const capacityRows = Object.entries(quotas).map(([key, quota]) => {
+    const capacityEntries = Object.entries(quotas);
+    const capacityRows = capacityEntries.map(([key, quota]) => {
       const [label] = USAGE_LABELS[key] || [key, 0];
       return `<div class="usage-row"><span class="usage-label">${escapeHtml(label)}</span><span class="usage-value">还能加 <b>${Number(quota.extra_nodes_80 || 0).toLocaleString()}</b> 台（80%）· ${Number(quota.extra_nodes_100 || 0).toLocaleString()} 台（100%）</span></div>`;
     }).join("");
+    const tightest = capacityEntries.reduce((best, [key, quota]) => {
+      const value = Number(quota.extra_nodes_80 || 0);
+      return !best || value < best.value ? { key, value } : best;
+    }, null);
+    const overall80 = tightest ? tightest.value : 0;
+    const overall100 = tightest ? Number(quotas[tightest.key]?.extra_nodes_100 || 0) : 0;
+    const tightestLabel = tightest ? (USAGE_LABELS[tightest.key]?.[0] || tightest.key) : "无";
     const capacityText = capacityRows
-      ? `<small>容量预估：${escapeHtml(data.capacity?.model_version || "")} · 在保持当前配置与频率下，各免费额度还可新增的 VPS 台数</small><div class="usage-rows">${capacityRows}</div>`
+      ? `<small>容量预估：${escapeHtml(data.capacity?.model_version || "")} · 在保持当前配置与频率下，各免费额度还可新增的 VPS 台数</small><div class="usage-row"><span class="usage-label">综合瓶颈（${escapeHtml(tightestLabel)}）</span><span class="usage-value">还能加 <b>${overall80.toLocaleString()}</b> 台（80%）· ${overall100.toLocaleString()} 台（100%）</span></div><div class="usage-rows">${capacityRows}</div>`
       : `<small class="muted">容量预估暂不可用${data.capacity_error ? `：${escapeHtml(data.capacity_error)}` : ""}</small>`;
     box.innerHTML = `<div class="usage-model-box">
       <small>D1 表行数：共 ${Number(d1.total_rows || 0).toLocaleString()} 行 · ${d1.database_size_available ? `库文件约 ${escapeHtml(fmtBytes(Number(d1.database_bytes || 0)))}` : "库文件大小不可用"}</small>

@@ -430,7 +430,7 @@ const beforeAlarm = Date.now();
 await timedBuffer.scheduleReportDrain();
 const scheduledAlarm = await timedStorage.getAlarm();
 assert.ok(scheduledAlarm >= beforeAlarm + 299_000 && scheduledAlarm <= Date.now() + 301_000, 'production report drains must be spaced about five minutes apart');
-assert.equal(agentMetricsStreamInstance({}), 'agent-metrics-stream-v2');
+assert.equal(agentMetricsStreamInstance({}), 'agent-metrics-stream-v3');
 assert.equal(agentMetricsStreamInstance({ AGENT_METRICS_STREAM_INSTANCE_NAME: 'agent-metrics-stream-next' }), 'agent-metrics-stream-next');
 
 // One shared stream instance owns every Agent's live buffer: chunks are keyed

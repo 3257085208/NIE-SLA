@@ -1,4 +1,4 @@
-import { pad } from './format.js?v=20261109-dodur1';
+import { pad } from './format.js?v=20261109-quota1';
 
 export function formatDateOnly(sec) {
   if (!sec) return '-';

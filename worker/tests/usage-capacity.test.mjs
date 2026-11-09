@@ -7,7 +7,7 @@ const fleet = { agents: 34, wssAgents: 31, targets: 38, pingTargets: 5, latencyN
 test('capacity fixture follows the embedded model point estimate', () => {
   const capacity = estimateCapacity(fleet);
   const estimate = estimateUsage(fleet);
-  assert.equal(capacity.model_version, 'usage-model-embedded-v1.4.3');
+  assert.equal(capacity.model_version, 'usage-model-embedded-v1.4.4');
   assert.equal(capacity.window_hours, 24);
   assert.deepEqual(capacity.per_node, { agents: 1, wss_agents: 1, targets: 1, ping_targets: 0, latency_nodes: 0, traffic_agents: 0 });
 
@@ -30,8 +30,8 @@ test('capacity fixture follows the embedded model point estimate', () => {
   assert.equal(capacity.quotas.do_duration_gbs.extra_nodes_80, 31);
   assert.equal(capacity.quotas.do_duration_gbs.extra_nodes_100, 48);
   assert.equal(capacity.quotas.do_requests.extra_nodes_100, 92);
-  assert.equal(capacity.quotas.d1_rows_read.extra_nodes_80, 105);
-  assert.equal(capacity.quotas.d1_rows_read.extra_nodes_100, 152);
+  assert.equal(capacity.quotas.d1_rows_read.extra_nodes_80, 31);
+  assert.equal(capacity.quotas.d1_rows_read.extra_nodes_100, 60);
   assert.equal(capacity.quotas.d1_rows_written.extra_nodes_80, 61);
   assert.equal(capacity.quotas.d1_rows_written.extra_nodes_100, 92);
   assert.equal(capacity.quotas.r2_class_a.extra_nodes_100, 15702);

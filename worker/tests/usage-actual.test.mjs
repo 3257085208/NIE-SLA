@@ -122,6 +122,20 @@ test('single-database accounts fall back to that database', async () => {
   assert.deepEqual(result.d1_database_ids, [OWN_DB_ID]);
 });
 
+test('quota-day mode reports the current UTC day and a day-end projection', async () => {
+  installFetch(BOTH_GROUPS);
+  const env = mockEnv();
+  await saveUsageActualConfig(env, { apiToken: TOKEN, accountTag: ACCOUNT_TAG });
+  const result = await fetchActualUsage(env, 24, { quotaDay: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.window_mode, 'utc-day');
+  assert.match(result.day_start, /T00:00:00Z$/);
+  assert.ok(result.window_hours > 0 && result.window_hours <= 24);
+  assert.ok(result.projection.workers_calls >= result.actual.workers_calls);
+  assert.ok(result.projection.do_duration_gbs >= result.actual.do_duration_gbs);
+  assert.ok(Math.abs(result.projection.do_duration_gbs - result.actual.do_duration_gbs * 24 / result.window_hours) <= 50);
+});
+
 test('unconfigured account reports a clear error, not a crash', async () => {
   const result = await fetchActualUsage(mockEnv(), 24);
   assert.equal(result.ok, false);

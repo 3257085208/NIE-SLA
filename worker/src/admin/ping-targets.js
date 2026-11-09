@@ -169,8 +169,10 @@ export async function getAgentPings(env, url, ctx = null) {
   // Random agent_id values would trigger a per-hour R2 scan and instantiate a
   // fresh DO for every guess; unknown agents short-circuit before any of that
   // (fail-open on D1 errors, matching the metrics endpoint).
-  const known = await env.DB.prepare(`SELECT 1 AS ok FROM targets WHERE id = ? UNION SELECT 1 AS ok FROM agent_metrics_state WHERE agent_id = ? LIMIT 1`)
-    .bind(agentId, agentId).first().catch(() => ({ ok: 1 }));
+  const bufferedState = bufferedAgentStateEnabled(env);
+  const known = bufferedState
+    ? await env.DB.prepare(`SELECT 1 AS ok FROM targets WHERE id = ? LIMIT 1`).bind(agentId).first().catch(() => ({ ok: 1 }))
+    : await env.DB.prepare(`SELECT 1 AS ok FROM targets WHERE id = ? UNION SELECT 1 AS ok FROM agent_metrics_state WHERE agent_id = ? LIMIT 1`).bind(agentId, agentId).first().catch(() => ({ ok: 1 }));
   if (!known) {
     return {
       ok: true,
@@ -191,11 +193,11 @@ export async function getAgentPings(env, url, ctx = null) {
   const since = requestedUntil - hours * 3600;
   let until = requestedUntil;
   try {
-    const row = await env.DB.prepare(`SELECT updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first();
-    const buffered = bufferedAgentStateEnabled(env)
-      ? await readBufferedAgentLatestState(env, agentId).catch(() => null)
-      : null;
-    const latest = newerAgentMetricRow(row, buffered);
+    let latest = bufferedState ? await readBufferedAgentLatestState(env, agentId).catch(() => null) : null;
+    if (!latest) {
+      const row = await env.DB.prepare(`SELECT updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first();
+      latest = bufferedState ? row : newerAgentMetricRow(row, null);
+    }
     const latestTs = Math.floor(new Date(latest?.updated_at || 0).getTime() / 1000);
     if (latestTs > 0) until = Math.min(requestedUntil, latestTs + 600);
   } catch (_) {}
@@ -215,7 +217,7 @@ export async function getAgentPings(env, url, ctx = null) {
       ok: Number(p.ok || 0),
     });
   } catch (_) {}
-  try {
+  if (!byKey.size) try {
     const fallbackRows = await env.DB.prepare(
       `SELECT ts, data FROM agent_metrics_history WHERE agent_id = ? AND ts >= ? ORDER BY ts ASC LIMIT 10000`
     ).bind(agentId, since).all();

@@ -403,6 +403,25 @@ export function pingSeriesToPoints(seriesList) {
   return { pings, error: '' };
 }
 
+function agentMetricsStateRow(row) {
+  if (!row) return null;
+  const net = parseJsonSafe(row.net);
+  if (net) { delete net.rx_raw; delete net.tx_raw; delete net.rx_bytes; delete net.tx_bytes; }
+  return {
+    schema: 'nie-sla-agent-metrics-v1', agent_id: row.agent_id, agent_label: row.agent_label,
+    agent_version: row.agent_version || null,
+    updated_at: row.updated_at, cpu_percent: row.cpu_percent,
+    process_count: Number(row.process_count || 0) || 0,
+    thread_count: Number(row.thread_count || row.process_count || 0) || 0,
+    memory: parseJsonSafe(row.memory), load: parseJsonSafe(row.load), disk: parseJsonSafe(row.disk),
+    net, diskio: parseJsonSafe(row.diskio),
+    stats: row.stats ? parseJsonSafe(row.stats) : null, uptime_sec: row.uptime_sec,
+    vps_info: row.vps_info ? parseJsonSafe(row.vps_info) : null,
+    pings: row.pings ? parseJsonSafe(row.pings) : [],
+    proxy_checks: row.proxy_checks ? parseJsonSafe(row.proxy_checks) : [],
+  };
+}
+
 export async function getAgentMetrics(env, url, ctx = null) {
   if (!env.DB) return json({ ok: true, latest: null, history: [] }, 200, env);
   env = await metricsEnvWithRetention(env);
@@ -414,42 +433,29 @@ export async function getAgentMetrics(env, url, ctx = null) {
   const fields = metricFieldsForRequest(url.searchParams.get('metric') || url.searchParams.get('fields') || '');
   // Random agent_id values used to trigger a per-hour R2 scan and instantiate a
   // fresh DO for every guess. Unknown agents short-circuit before any of that.
+  const bufferedState = bufferedAgentStateEnabled(env);
   if (includeHistory) {
-    const known = await env.DB.prepare(`SELECT 1 AS ok FROM targets WHERE id = ? UNION SELECT 1 AS ok FROM agent_metrics_state WHERE agent_id = ? LIMIT 1`)
-      .bind(agentId, agentId).first().catch(() => ({ ok: 1 }));
+    const known = bufferedState
+      ? await env.DB.prepare(`SELECT 1 AS ok FROM targets WHERE id = ? LIMIT 1`).bind(agentId).first().catch(() => ({ ok: 1 }))
+      : await env.DB.prepare(`SELECT 1 AS ok FROM targets WHERE id = ? UNION SELECT 1 AS ok FROM agent_metrics_state WHERE agent_id = ? LIMIT 1`).bind(agentId, agentId).first().catch(() => ({ ok: 1 }));
     if (!known) {
-      return json({ ok: true, agent_id: agentId, latest: null, history: [], source: 'unknown-agent', hours, max_points: maxPoints }, 200, env, { 'cache-control': 'public, max-age=20' });
+      return json({ ok: true, agent_id: agentId, latest: null, history: [], source: 'unknown-agent', hours, max_points: maxPoints }, 200, env, { 'cache-control': 'public, max-age=20, s-maxage=20, stale-while-revalidate=60' });
     }
   }
 
   let latest = null;
   let latestTs = 0;
   const warnings = [];
-  try {
-    const row = await env.DB.prepare(`SELECT * FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first();
-    if (row) {
-      const net = parseJsonSafe(row.net);
-      if (net) { delete net.rx_raw; delete net.tx_raw; delete net.rx_bytes; delete net.tx_bytes; }
-      latest = {
-        schema: 'nie-sla-agent-metrics-v1', agent_id: row.agent_id, agent_label: row.agent_label,
-        agent_version: row.agent_version || null,
-        updated_at: row.updated_at, cpu_percent: row.cpu_percent,
-        process_count: Number(row.process_count || 0) || 0,
-        thread_count: Number(row.thread_count || row.process_count || 0) || 0,
-        memory: parseJsonSafe(row.memory), load: parseJsonSafe(row.load), disk: parseJsonSafe(row.disk),
-        net, diskio: parseJsonSafe(row.diskio),
-        stats: row.stats ? parseJsonSafe(row.stats) : null, uptime_sec: row.uptime_sec,
-        vps_info: row.vps_info ? parseJsonSafe(row.vps_info) : null,
-        pings: row.pings ? parseJsonSafe(row.pings) : [],
-        proxy_checks: row.proxy_checks ? parseJsonSafe(row.proxy_checks) : [],
-      };
+  if (!bufferedState) {
+    try {
+      latest = agentMetricsStateRow(await env.DB.prepare(`SELECT * FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first());
+    } catch (error) {
+      console.error('latest Agent metrics unavailable:', String(error?.message || error));
+      warnings.push('Latest Agent metrics unavailable');
     }
-  } catch (error) {
-    console.error('latest Agent metrics unavailable:', String(error?.message || error));
-    warnings.push('Latest Agent metrics unavailable');
   }
 
-  if (bufferedAgentStateEnabled(env)) {
+  if (bufferedState) {
     const buffered = await readBufferedAgentLatestState(env, agentId).catch((error) => {
       console.error('buffered latest Agent metrics unavailable:', String(error?.message || error));
       warnings.push('Buffered latest Agent metrics unavailable');
@@ -461,6 +467,14 @@ export async function getAgentMetrics(env, url, ctx = null) {
       return null;
     });
     latest = newerAgentMetricRow(latest, r2Latest);
+    if (!latest) {
+      try {
+        latest = agentMetricsStateRow(await env.DB.prepare(`SELECT * FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first());
+      } catch (error) {
+        console.error('latest Agent metrics D1 fallback unavailable:', String(error?.message || error));
+        warnings.push('Latest Agent metrics unavailable');
+      }
+    }
   }
   if (latest) {
     latest.traffic = await readAgentTraffic(env, agentId, latest);
@@ -498,7 +512,7 @@ export async function getAgentMetrics(env, url, ctx = null) {
   if (parseBoolean(env.PUBLIC_STATUS_AGENT_DETAILS ?? false, false)) payload.traffic = await readAgentTraffic(env, agentId);
   if (responseFormat === 'columns') payload.series = metricPointsToColumns(history, fields);
 
-  return json(payload, 200, env, { 'cache-control': 'public, max-age=15' });
+  return json(payload, 200, env, { 'cache-control': 'public, max-age=15, s-maxage=15, stale-while-revalidate=60' });
 }
 
 async function metricsEnvWithRetention(env) {
@@ -563,15 +577,16 @@ export async function getAgentProxyChecks(env, url, ctx = null) {
   }
 
   let latestState = null;
-  try {
-    const row = await env.DB.prepare(`SELECT proxy_checks, updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(target.agent_id).first();
-    latestState = row ? { proxy_checks: parseJsonSafe(row.proxy_checks), updated_at: row.updated_at || null } : null;
-  } catch (error) {
-    warnings.push('代理最新状态暂时不可用');
-  }
   if (bufferedAgentStateEnabled(env)) {
-    const buffered = await readBufferedAgentLatestState(env, target.agent_id).catch(() => null);
-    if (buffered && (!latestState || agentStateTimestamp(buffered.updated_at) >= agentStateTimestamp(latestState.updated_at))) latestState = buffered;
+    latestState = await readBufferedAgentLatestState(env, target.agent_id).catch(() => null);
+  }
+  if (!latestState) {
+    try {
+      const row = await env.DB.prepare(`SELECT proxy_checks, updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(target.agent_id).first();
+      latestState = row ? { proxy_checks: parseJsonSafe(row.proxy_checks), updated_at: row.updated_at || null } : null;
+    } catch (error) {
+      warnings.push('代理最新状态暂时不可用');
+    }
   }
 
   const byKey = new Map();
@@ -606,7 +621,7 @@ export async function getAgentProxyChecks(env, url, ctx = null) {
     retention_hours: clamp(Number(env.PROXY_CHECK_R2_RETENTION_HOURS || MAX_AGENT_PROXY_HISTORY_HOURS), 1, MAX_AGENT_PROXY_HISTORY_HOURS),
     query: { hours, max_points: maxPoints, public_max_hours: publicMaxHours, hard_max_points: hardMax },
     warnings,
-  }, 200, env, { 'cache-control': 'public, max-age=15' });
+  }, 200, env, { 'cache-control': 'public, max-age=15, s-maxage=15, stale-while-revalidate=60' });
 }
 
 export async function getAgentProxyChecksCached(request, env, url, ctx = null) {
@@ -754,16 +769,15 @@ async function readAgentTraffic(env, agentId, metricOverride = null) {
   const settings = await agentTrafficSettings(env, agentId);
   if (!settings.enabled || !agentId) return summarizeTraffic(null, settings);
   try {
-    const [row, d1Metric] = await Promise.all([
-      env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? AND month = ?`).bind(agentId, settings.month).first(),
-      metricOverride
-        ? Promise.resolve(metricOverride)
-        : env.DB.prepare(`SELECT net, updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first(),
-    ]);
-    let metric = d1Metric;
-    if (!metricOverride && bufferedAgentStateEnabled(env)) {
-      const buffered = await readBufferedAgentLatestState(env, agentId).catch(() => null);
-      metric = newerAgentMetricRow(metric, buffered);
+    const row = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? AND month = ?`).bind(agentId, settings.month).first();
+    let metric = metricOverride;
+    if (!metric) {
+      if (bufferedAgentStateEnabled(env)) {
+        metric = await readBufferedAgentLatestState(env, agentId).catch(() => null);
+      }
+      if (!metric) {
+        metric = await env.DB.prepare(`SELECT net, updated_at FROM agent_metrics_state WHERE agent_id = ?`).bind(agentId).first().catch(() => null);
+      }
     }
     return summarizeTrafficWithPending(row, settings, metric);
   } catch (_) {
@@ -818,14 +832,13 @@ export async function rebuildAgentTrafficPeriod(env, agentId, target = null, ts 
       .bind(agentId).first();
   }
   const settings = trafficSettingsFromTarget(source, env, ts);
-  const [latest, d1Metric] = await Promise.all([
-    env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? ORDER BY updated_at DESC, month DESC LIMIT 1`).bind(id).first(),
-    env.DB.prepare(`SELECT net FROM agent_metrics_state WHERE agent_id = ?`).bind(id).first().catch(() => null),
-  ]);
-  let metric = d1Metric;
+  const latest = await env.DB.prepare(`SELECT * FROM agent_traffic_monthly WHERE agent_id = ? ORDER BY updated_at DESC, month DESC LIMIT 1`).bind(id).first();
+  let metric = null;
   if (bufferedAgentStateEnabled(env)) {
-    const buffered = await readBufferedAgentLatestState(env, id).catch(() => null);
-    metric = newerAgentMetricRow(metric, buffered);
+    metric = await readBufferedAgentLatestState(env, id).catch(() => null);
+  }
+  if (!metric) {
+    metric = await env.DB.prepare(`SELECT net FROM agent_metrics_state WHERE agent_id = ?`).bind(id).first().catch(() => null);
   }
   const daily = await dailyTrafficSum(env, id, settings.period_start, settings.period_end);
   const includeActive = dayInTrafficPeriod(latest?.active_day, settings);

@@ -7,14 +7,14 @@ const fleet = { agents: 34, wssAgents: 31, targets: 38, pingTargets: 5, latencyN
 
 test('estimate stays within metered reality envelopes (2026-09-16 calibration)', () => {
   const r = estimateUsage(fleet);
-  assert.equal(r.model_version, 'usage-model-embedded-v1.4.3');
+  assert.equal(r.model_version, 'usage-model-embedded-v1.4.4');
   assert.equal(r.inputs.public_rps, 0.42);
   assert.equal(r.inputs.latest_status_to_d1, true);
   assert.ok(r.estimates.workers_calls > 30_000 && r.estimates.workers_calls < 42_000, `workers ${r.estimates.workers_calls}`);
   assert.ok(r.estimates.do_requests > 25_000 && r.estimates.do_requests < 38_000, `do requests ${r.estimates.do_requests}`);
   assert.ok(r.estimates.do_rows_written > 30_000 && r.estimates.do_rows_written < 55_000, `do rows ${r.estimates.do_rows_written}`);
   assert.ok(r.estimates.d1_rows_written > 35_000 && r.estimates.d1_rows_written < 46_000, `d1 written ${r.estimates.d1_rows_written}`);
-  assert.ok(r.estimates.d1_rows_read > 1_400_000 && r.estimates.d1_rows_read < 2_200_000, `d1 read ${r.estimates.d1_rows_read}`);
+  assert.ok(r.estimates.d1_rows_read > 2_400_000 && r.estimates.d1_rows_read < 3_200_000, `d1 read ${r.estimates.d1_rows_read}`);
   assert.ok(r.estimates.r2_class_b > r.estimates.r2_class_a * 3, 'r2 b must stay far above a');
   assert.ok(r.estimates.d1_rows_read > r.estimates.d1_rows_written * 20, 'row reads must dwarf row writes');
   assert.equal(r.estimates.do_duration_gbs, 5700);

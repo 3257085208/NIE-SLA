@@ -39,7 +39,8 @@ async function gql(token, query, variables) {
   return body.data;
 }
 
-export async function fetchActualUsage(env, hours = 24) {
+export async function fetchActualUsage(env, hours = 24, options = {}) {
+  const quotaDay = options?.quotaDay === true;
   let token, accountTag;
   try {
     token = await getMeta(env, CONFIG_TOKEN_KEY);
@@ -49,9 +50,13 @@ export async function fetchActualUsage(env, hours = 24) {
   }
   if (!token || !accountTag) return { ok: false, error: '尚未配置 Cloudflare API Token，请先在上方保存' };
   const now = Date.now();
-  if (cache?.hours === hours && cache.expiresAt > now) return { ok: true, ...cache.data, cached: true };
+  const cacheKey = `${quotaDay ? 'day' : 'hours'}:${hours}`;
+  if (cache?.key === cacheKey && cache.expiresAt > now) return { ok: true, ...cache.data, cached: true };
 
-  const since = new Date(now - Math.min(168, Math.max(1, hours)) * 3_600_000).toISOString().slice(0, 19) + 'Z';
+  const dayStartMs = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate());
+  const windowStartMs = quotaDay ? dayStartMs : now - Math.min(168, Math.max(1, hours)) * 3_600_000;
+  const elapsedHours = Math.max(0.01, (now - windowStartMs) / 3_600_000);
+  const since = new Date(windowStartMs).toISOString().slice(0, 19) + 'Z';
   const until = new Date(now).toISOString().slice(0, 19) + 'Z';
   const window = `datetime_geq: "${since}", datetime_lt: "${until}"`;
 
@@ -124,20 +129,29 @@ export async function fetchActualUsage(env, hours = 24) {
     if (r2ClassA.has(type)) r2A += count;
     else r2B += count;
   }
+  const actual = {
+    workers_calls: sumAll(account.workers, 'requests'),
+    d1_rows_written: Number(d1.rowsWritten || 0),
+    d1_rows_read: Number(d1.rowsRead || 0),
+    d1_queries: Number(d1.readQueries || 0) + Number(d1.writeQueries || 0),
+    do_requests: Number(durable.requests || 0),
+    do_wall_time_sec: Math.round(Number(durable.wallTime || 0) / 1_000_000),
+    do_duration_gbs: Number(durableDuration.duration || 0),
+    r2_class_a: r2A,
+    r2_class_b: r2B,
+    r2_requests: r2A + r2B,
+  };
+  const projection = {};
+  for (const [key, value] of Object.entries(actual)) {
+    if (key === 'do_wall_time_sec') continue;
+    projection[key] = Math.round(Number(value || 0) * 24 / elapsedHours);
+  }
   const result = {
-    window_hours: Math.min(168, Math.max(1, hours)),
-    actual: {
-      workers_calls: sumAll(account.workers, 'requests'),
-      d1_rows_written: Number(d1.rowsWritten || 0),
-      d1_rows_read: Number(d1.rowsRead || 0),
-      d1_queries: Number(d1.readQueries || 0) + Number(d1.writeQueries || 0),
-      do_requests: Number(durable.requests || 0),
-      do_wall_time_sec: Math.round(Number(durable.wallTime || 0) / 1_000_000),
-      do_duration_gbs: Number(durableDuration.duration || 0),
-      r2_class_a: r2A,
-      r2_class_b: r2B,
-      r2_requests: r2A + r2B,
-    },
+    window_mode: quotaDay ? 'utc-day' : 'rolling',
+    window_hours: quotaDay ? Math.round(elapsedHours * 100) / 100 : Math.min(168, Math.max(1, hours)),
+    day_start: quotaDay ? since : null,
+    projection,
+    actual,
     d1_scope: configuredD1Ids.length ? 'configured' : (singleD1Id ? 'single' : 'account'),
     d1_database_ids: ownD1Ids,
     d1_by_database: d1ByDatabase,
@@ -149,6 +163,6 @@ export async function fetchActualUsage(env, hours = 24) {
     unavailable: ['DO SQLite 行写入（GraphQL 未暴露，请在控制台查看）'],
     fetched_at: Math.floor(now / 1000),
   };
-  cache = { hours, expiresAt: now + CACHE_TTL_MS, data: result };
+  cache = { key: cacheKey, hours, expiresAt: now + CACHE_TTL_MS, data: result };
   return { ok: true, ...result };
 }

@@ -97,7 +97,7 @@ PROBE_HISTORY_BUFFER = "true"
 PROBE_HISTORY_R2_PREFIX = "probe-history-v1"
 AGENT_AUTO_UPDATE_DEFAULT = "true"
 AGENT_D1_FALLBACK_BUCKET_SEC = "900"
-AGENT_METRICS_STREAM_INSTANCE_NAME = "agent-metrics-stream-v2"
+AGENT_METRICS_STREAM_INSTANCE_NAME = "agent-metrics-stream-v3"
 
 [[d1_databases]]
 binding = "DB"

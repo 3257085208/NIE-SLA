@@ -22,7 +22,7 @@ const DEFAULT_REPORT_DRAIN_SEC = 30;
 const CHUNK_PREFIX = 'chunk:';
 const LEGACY_BUFFER_PREFIX = 'hour:';
 const EXPORT_PREFIX = 'export:';
-export const AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream-v2';
+export const AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream-v3';
 
 export function agentMetricsStreamInstance(env = {}) {
   return String(env.AGENT_METRICS_STREAM_INSTANCE_NAME || AGENT_METRICS_STREAM_INSTANCE)

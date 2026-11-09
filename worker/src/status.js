@@ -480,7 +480,8 @@ export async function getStatusSnapshot(env, url) {
     payload.frontend = { ...(payload.frontend || {}), ...frontend };
     if (!liveOverlay) await attachAgentState(payload, env);
     if (url?.searchParams.get('lite') === '1') payload = compactStatusPayload(payload);
-    return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300)}`, 'x-nie-sla-source': 'r2-status-snapshot', 'x-nstatus-source': 'r2-status-snapshot', 'x-nie-sla-live': liveOverlay ? 'snapshot' : 'overlay', 'x-nstatus-live': liveOverlay ? 'snapshot' : 'overlay' });
+    const snapshotTtl = clamp(Number(env.STATUS_CACHE_TTL || 20), 0, 300);
+    return json(sanitizePublicStatusPayload(payload, env), 200, env, { 'cache-control': `public, max-age=${snapshotTtl}, s-maxage=${snapshotTtl}, stale-while-revalidate=${Math.max(10, Math.min(60, snapshotTtl * 2))}`, 'x-nie-sla-source': 'r2-status-snapshot', 'x-nstatus-source': 'r2-status-snapshot', 'x-nie-sla-live': liveOverlay ? 'snapshot' : 'overlay', 'x-nstatus-live': liveOverlay ? 'snapshot' : 'overlay' });
   } catch (error) {
     console.error('Status snapshot read failed:', String(error?.message || error));
     return null;

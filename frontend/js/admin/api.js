@@ -1,5 +1,5 @@
-import { readMigratedStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20261109-dodur1";
-import { readJsonResponse } from "../shared/api-response.js?v=20261109-dodur1";
+import { readMigratedStorage, removeStorage, writeStorage } from "../shared/storage.js?v=20261109-quota1";
+import { readJsonResponse } from "../shared/api-response.js?v=20261109-quota1";
 
 const SESSION_KEY = "nie_sla_admin_session";
 const SESSION_EXP_KEY = "nie_sla_admin_session_exp";

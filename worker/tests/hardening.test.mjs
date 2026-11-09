@@ -97,8 +97,8 @@ assert.doesNotMatch(fallbackSource, /writePingHistory\(/, 'D1 telemetry fallback
 assert.match(telemetrySource, /persist latest agent state failed/, 'buffer failures must not silently lose the latest visible state');
 assert.doesNotMatch(telemetrySource.slice(telemetrySource.indexOf('webSocketMessage(socket'), telemetrySource.indexOf('scheduleReportDrain()')), /persistAgentMetricsStateFallback/, 'the per-message path must never write D1 (a slow D1 write stalls the shared DO)');
 assert.match(telemetrySource, /LATEST_STATE_PREFIX = 'latest:state:'/, 'the telemetry buffer must retain per-Agent latest state keys');
-assert.match(telemetrySource, /AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream-v2'/, 'latest-state readers must target the current shared WSS Durable Object instance');
-assert.match(wranglerSource, /AGENT_METRICS_STREAM_INSTANCE_NAME = "agent-metrics-stream-v2"/, 'production must be able to rotate a stuck telemetry DO instance without changing protocols');
+assert.match(telemetrySource, /AGENT_METRICS_STREAM_INSTANCE = 'agent-metrics-stream-v3'/, 'latest-state readers must target the current shared WSS Durable Object instance');
+assert.match(wranglerSource, /AGENT_METRICS_STREAM_INSTANCE_NAME = "agent-metrics-stream-v3"/, 'production must be able to rotate a stuck telemetry DO instance without changing protocols');
 assert.doesNotMatch(telemetrySource, /idFromName\(`agent:\$\{id\}`\)[\s\S]{0,200}\/latest/, 'per-Agent latest state must never be read from the chunk-buffer instance');
 assert.match(telemetrySource, /startAfter/, 'unbounded storage.list() calls must page with a continuation cursor');
 assert.match(wranglerSource, /REGION_PROXY_BATCH_ENABLED = "true"/, 'production config must enable region batching');
